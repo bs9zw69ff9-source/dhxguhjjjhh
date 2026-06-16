@@ -105,6 +105,8 @@ const FILES = {
   FACTION_AUDIT:  "./faction_audit.json",
   MENU_GRANTS:    "./menu_grants.json",
   BLACKLIST:      "./blacklist.json",
+  PLAYER_NOTES:   "./player_notes.json",
+  LASTSEEN:       "./lastseen.json",
 };
 
 const DEFAULTS = {
@@ -120,6 +122,8 @@ const DEFAULTS = {
   [FILES.FACTION_AUDIT]:  "[]",
   [FILES.MENU_GRANTS]:    "{}",
   [FILES.BLACKLIST]:      "{}",
+  [FILES.PLAYER_NOTES]:   "{}",
+  [FILES.LASTSEEN]:       "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -237,6 +241,10 @@ const loadMenuGrants    = () => safeRead(FILES.MENU_GRANTS,    {});
 const saveMenuGrants    = (d) => safeWrite(FILES.MENU_GRANTS,   d);
 const loadBlacklist     = () => safeRead(FILES.BLACKLIST,      {});
 const saveBlacklist     = (d) => safeWrite(FILES.BLACKLIST,     d);
+const loadPlayerNotes   = () => safeRead(FILES.PLAYER_NOTES,   {});
+const savePlayerNotes   = (d) => safeWrite(FILES.PLAYER_NOTES,  d);
+const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
+const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
 
 /* ================================================================
    MOD LOG WRITER  (serialized)
@@ -252,6 +260,67 @@ function writeModLog(entry) {
 function getPlayerHistory(playerId) {
   const id = playerId.toLowerCase();
   return loadModLog().filter(e => e.playerId?.toLowerCase() === id);
+}
+
+/* ================================================================
+   PLAYER NOTES  (freeform staff notes on ANY courier — serialized)
+   ================================================================ */
+function getPlayerNotes(playerId) {
+  return loadPlayerNotes()[playerId.toLowerCase()] ?? [];
+}
+async function addPlayerNote(playerId, text, by) {
+  const key = playerId.toLowerCase();
+  let count = 0;
+  await update(FILES.PLAYER_NOTES, {}, (notes) => {
+    if (!notes[key]) notes[key] = [];
+    notes[key].push({ text, by, at: Date.now() });
+    if (notes[key].length > 100) notes[key].splice(0, notes[key].length - 100);
+    count = notes[key].length;
+    return notes;
+  });
+  return count;
+}
+async function clearPlayerNotes(playerId) {
+  const key = playerId.toLowerCase();
+  let count = 0;
+  await update(FILES.PLAYER_NOTES, {}, (notes) => {
+    count = notes[key]?.length ?? 0;
+    delete notes[key];
+    return notes;
+  });
+  return count;
+}
+
+/* ================================================================
+   LAST-SEEN TRACKING  (updated from the player-cache refresh loop)
+   ================================================================ */
+function recordLastSeen(names, now = Date.now()) {
+  if (!names || !names.length) return;
+  const seen = loadLastSeen();
+  for (const name of names) {
+    if (name) seen[String(name).toLowerCase()] = now;
+  }
+  saveLastSeen(seen);
+}
+function getLastSeen(playerId) {
+  return loadLastSeen()[playerId.toLowerCase()] ?? null;
+}
+
+/* ================================================================
+   WARNING REMOVAL  (delete a single warning by 1-based index)
+   ================================================================ */
+async function removeWarningAt(playerId, index1Based) {
+  const key = playerId.toLowerCase();
+  let removed = null, remaining = 0;
+  await update(FILES.WARNS, {}, (warns) => {
+    const list = warns[key];
+    if (!list || index1Based < 1 || index1Based > list.length) return warns;
+    removed = list.splice(index1Based - 1, 1)[0];
+    if (!list.length) delete warns[key];
+    else remaining = list.length;
+    return warns;
+  });
+  return { removed, remaining };
 }
 
 /* ================================================================
@@ -887,6 +956,7 @@ function tickPlaytime() {
   const pt = loadPlaytime();
   for (const id of online) if (id) pt[id] = (pt[id] ?? 0) + 1;
   savePlaytime(pt);
+  recordLastSeen([...online]);
 }
 
 /* ================================================================
@@ -1307,6 +1377,25 @@ const commands = [
   new SlashCommandBuilder().setName("clearwarnings")
     .setDescription("🔒 Admin — Clear all warnings for a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("delwarn")
+    .setDescription("🛡️ Mod — Remove a single warning by its number (see /warnings)")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("number").setDescription("Warning number to remove (from /warnings)").setRequired(true).setMinValue(1)),
+  new SlashCommandBuilder().setName("seen")
+    .setDescription("Show when a courier was last seen online")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("note")
+    .setDescription("Staff notes on a courier")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("🛡️ Mod — Add a staff note to a courier")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("note").setDescription("Note text").setRequired(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("🛡️ Mod — View staff notes on a courier")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("clear")
+      .setDescription("🔒 Admin — Delete all staff notes on a courier")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))),
   new SlashCommandBuilder().setName("history")
     .setDescription("View full moderation history for a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
@@ -1542,8 +1631,8 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings"];
-  const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history"];
+  const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
+  const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "blacklist"];
 
@@ -1604,15 +1693,17 @@ client.on("interactionCreate", async (interaction) => {
           )
           .addFields(
             { name: "🌐  Public",
-              value: "`/help` `/ping` `/listplayers` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings`\n`/faction list` `/faction overview` `/faction audit`" },
+              value: "`/help` `/ping` `/listplayers` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction overview` `/faction audit`" },
             { name: "🛡️  Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
                 "`/warn <id> <reason> <server>` — Issue warning *(auto-bans at 3/5/7)*",
+                "`/delwarn <id> <number>` — Remove a single warning",
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
                 "`/unban <id> <server>` — Lift exile",
                 "`/announce <msg> <server>` — Broadcast via RCON Notify",
                 "`/history <id>` — View mod action history",
+                "`/note add|list <id>` — Staff notes on a courier",
                 "`/givecaps <id> <amount> [reason]` — Give caps to a courier",
                 "`/faction transfer <id> <from> <to> [rank]` — Move player between factions",
               ].join("\n") },
@@ -1631,6 +1722,7 @@ client.on("interactionCreate", async (interaction) => {
               value: [
                 "`/permban` `/hardban` `/addnote` `/hardbanlist`",
                 "`/clearwarnings <id>` — Wipe all warnings for a courier",
+                "`/note clear <id>` — Delete all staff notes for a courier",
                 "`/cleartempbans` `/setroles`",
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
@@ -1902,6 +1994,111 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       /* ─────────────────────────────────────────────────────
+         DELWARN  (remove one warning by number)
+         ───────────────────────────────────────────────────── */
+      case "delwarn": {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const number   = interaction.options.getInteger("number");
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        const { removed, remaining } = await removeWarningAt(playerId, number);
+        if (!removed) {
+          return interaction.reply({ embeds: [warningEmbed("No Such Warning",
+            `Warning **#${number}** does not exist for \`${playerId}\`.\n\nUse \`/warnings ${playerId}\` to see valid numbers.`)], ephemeral: true });
+        }
+        writeModLog({ action: "delwarn", playerId, reason: removed.reason, by: interaction.user.tag });
+        const ts = Math.floor(removed.at / 1000);
+        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🧹  Warning Removed")
+          .setDescription(`${DIVIDER}`)
+          .addFields(
+            { name: "🎯  Courier",        value: `\`${playerId}\``,                       inline: true },
+            { name: "🗑️  Removed #",       value: `**${number}**`,                          inline: true },
+            { name: "📊  Remaining",       value: `**${remaining}** warning${remaining !== 1 ? "s" : ""}`, inline: true },
+            { name: "⚖️  Was",             value: `*${removed.reason}*  ·  by *${removed.by}*  ·  <t:${ts}:R>`, inline: false },
+            { name: "🛡️  Removed By",      value: `${interaction.user}`,                    inline: false },
+          ).setFooter({ text: "Single warning removed — others renumbered" }).setTimestamp();
+        await logAction(embed);
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         SEEN  (last time a courier was online)
+         ───────────────────────────────────────────────────── */
+      case "seen": {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        const key    = playerId.toLowerCase();
+        const onS1   = playerCache.server1.some(n => n.toLowerCase() === key);
+        const onS2   = playerCache.server2.some(n => n.toLowerCase() === key);
+        const online = onS1 || onS2;
+        const last   = getLastSeen(playerId);
+        let color, desc;
+        if (online) {
+          const where = [onS1 && "Server 1", onS2 && "Server 2"].filter(Boolean).join("  +  ");
+          color = NV.IRRAD_GREEN;
+          desc  = `🟢  **Online right now** on ${where}.`;
+        } else if (last) {
+          color = NV.AMBER;
+          desc  = `🔴  Last seen <t:${Math.floor(last / 1000)}:R>  ·  <t:${Math.floor(last / 1000)}:F>`;
+        } else {
+          color = NV.DEAD_GREY;
+          desc  = "❔  No sighting on record. This courier hasn't been seen online since the bot started tracking.";
+        }
+        const embed = new EmbedBuilder().setColor(color).setTitle(`📡  Last Seen — ${playerId}`)
+          .setDescription(`${DIVIDER}\n${desc}`)
+          .setFooter({ text: "Presence sampled every 60s" }).setTimestamp();
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         NOTE  (freeform staff notes on any courier)
+         ───────────────────────────────────────────────────── */
+      case "note": {
+        const sub      = interaction.options.getSubcommand();
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+
+        if (sub === "add") {
+          const text  = interaction.options.getString("note").trim().slice(0, 500);
+          if (!text) return interaction.reply({ embeds: [errorEmbed("Empty Note", "The note cannot be empty.")], ephemeral: true });
+          const count = await addPlayerNote(playerId, text, interaction.user.tag);
+          writeModLog({ action: "note-add", playerId, reason: text, by: interaction.user.tag });
+          const embed = successEmbed("Note Added", `Staff note added to \`${playerId}\` *(now ${count} note${count !== 1 ? "s" : ""})*.\n\n**Note:** ${text}\n**By:** ${interaction.user}`);
+          await logAction(embed);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        if (sub === "clear") {
+          if (!hasAdminRole(interaction.member)) {
+            return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+          }
+          const count = await clearPlayerNotes(playerId);
+          if (!count) return interaction.reply({ embeds: [warningEmbed("No Notes", `\`${playerId}\` has no staff notes to clear.`)], ephemeral: true });
+          writeModLog({ action: "note-clear", playerId, count, by: interaction.user.tag });
+          const embed = successEmbed("Notes Cleared", `**${count}** staff note${count !== 1 ? "s" : ""} deleted for \`${playerId}\`.\n\n**By:** ${interaction.user}`);
+          await logAction(embed);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        // sub === "list"
+        const notes = getPlayerNotes(playerId);
+        if (!notes.length) {
+          return interaction.reply({ embeds: [
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`📝  No Staff Notes — ${playerId}`)
+              .setDescription("This courier has no staff notes on record.\n\nUse `/note add` to record one.").setTimestamp()
+          ], ephemeral: true });
+        }
+        const lines = notes.map((n, i) => {
+          const ts = Math.floor(n.at / 1000);
+          return `\`${String(i + 1).padStart(2, "0")}\`  ${n.text}  ·  *${n.by}*  ·  <t:${ts}:R>`;
+        });
+        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`📝  Staff Notes — ${playerId}`)
+          .setDescription(`**${notes.length}** note${notes.length !== 1 ? "s" : ""} on record\n\n${DIVIDER}`);
+        for (const f of chunkFields(lines, "Notes")) embed.addFields(f);
+        embed.setFooter({ text: "Staff notes · internal only" }).setTimestamp();
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
          HISTORY
          ───────────────────────────────────────────────────── */
       case "history": {
@@ -1914,7 +2111,7 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
           ], ephemeral: true });
         }
-        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
+        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
         const lines = history.slice(-30).reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
           const icon   = ICONS[e.action] ?? "📌";
@@ -3114,6 +3311,8 @@ client.on("interactionCreate", async (interaction) => {
         const warns    = loadWarns()[playerId.toLowerCase()] ?? [];
         const tb       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const history  = getPlayerHistory(playerId);
+        const notes    = getPlayerNotes(playerId);
+        const lastSeen = getLastSeen(playerId);
 
         const fStr = factions === null ? "⚠️  Folder unreadable"
           : !factions.length ? "*No faction access*"
@@ -3137,6 +3336,8 @@ client.on("interactionCreate", async (interaction) => {
             { name: "📡  Status",        value: statusStr,                                                          inline: true },
             { name: "⏱️  Playtime",      value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*No record*", inline: true },
             { name: "⚠️  Warnings",      value: warns.length ? `**${warns.length}** on record` : "Clean record",    inline: true },
+            { name: "👁️  Last Seen",     value: online ? "🟢  Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
+            { name: "📝  Staff Notes",   value: notes.length ? `**${notes.length}** — use \`/note list ${playerId}\`` : "*None*", inline: true },
             { name: "⚔️  Faction Ranks", value: fStr,                                                               inline: false },
           );
 
@@ -3175,4 +3376,21 @@ client.on("interactionCreate", async (interaction) => {
 /* ================================================================
    STARTUP
    ================================================================ */
-client.login(process.env.DISCORD_TOKEN);
+// Only log in when run directly (`node index.js`). When required as a
+// module (e.g. from tests) the helpers are exported instead, so unit tests
+// can exercise the pure logic without opening a Discord connection.
+if (require.main === module) {
+  client.login(process.env.DISCORD_TOKEN);
+}
+
+module.exports = {
+  FILES,
+  // player notes
+  getPlayerNotes, addPlayerNote, clearPlayerNotes,
+  // last seen
+  recordLastSeen, getLastSeen,
+  // warnings
+  removeWarningAt,
+  // owner / access
+  isOwner, isBlacklisted,
+};
