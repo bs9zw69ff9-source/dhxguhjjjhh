@@ -2405,20 +2405,20 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles on any server.').setTimestamp()
           ]});
         }
-        const sections = [];
-        if (tempBans.length) sections.push(
-          `**⏳  Temporary Exiles (${tempBans.length})**\n` +
-          tempBans.map(b => `·  \`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`).join("\n")
-        );
-        if (pb1.length) sections.push(`**💀  Permanent — Server 1 (${pb1.length})**\n` + pb1.map(b => `·  \`${extractId(b)}\``).join("\n"));
-        if (pb2.length) sections.push(`**💀  Permanent — Server 2 (${pb2.length})**\n` + pb2.map(b => `·  \`${extractId(b)}\``).join("\n"));
-        const total = tempBans.length + pb1.length + pb2.length;
-        let desc = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}\n\n` + sections.join(`\n\n${DIVIDER}\n\n`);
-        if (desc.length > 4090) desc = desc.slice(0, 4087) + "…";
-        return interaction.editReply({ embeds: [
+        // Flatten every exile into a single tagged line so long lists paginate
+        // cleanly instead of being truncated at Discord's 4096-char limit.
+        const lines = [
+          ...tempBans.map(b => `⏳  \`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
+          ...pb1.map(b => `💀  \`${extractId(b)}\`  ·  *Permanent · S1*`),
+          ...pb2.map(b => `💀  \`${extractId(b)}\`  ·  *Permanent · S2*`),
+        ];
+        const total = lines.length;
+        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ⏳ ${tempBans.length} temp  ·  💀 ${pb1.length + pb2.length} permanent`;
+        return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.LEGION_RED).setTitle(`📜  Exile Registry — ${serverLabel(server)}`)
-            .setDescription(desc).setFooter({ text: `${total} exile${total !== 1 ? "s" : ""} active` }).setTimestamp()
-        ]});
+            .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setFooter({ text: `${total} exile${total !== 1 ? "s" : ""} active` }).setTimestamp(),
+          { perPage: 15 });
       }
 
       /* ─────────────────────────────────────────────────────

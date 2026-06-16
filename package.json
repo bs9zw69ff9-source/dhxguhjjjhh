@@ -1,0 +1,20 @@
+{
+  "name": "mojave-authority-bot",
+  "version": "3.2.2",
+  "description": "Fallout: New Vegas themed Discord moderation bot for Pavlov VR servers (RCON bans, warnings, factions, wages, donators, and more).",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/run.js",
+    "check": "node --check index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  },
+  "license": "MIT",
+  "private": true
+}
