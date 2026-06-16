@@ -1,0 +1,19 @@
+Mojave Authority Bot
+Copyright (c) 2026 bs9zw69ff9-source. All rights reserved.
+
+This product is proprietary software. See the LICENSE file for terms.
+
+Authorship and ownership are evidenced by:
+  - this NOTICE and the copyright headers in the source files,
+  - the in-application attribution shown in /help and /ping,
+  - the project's version-control (git) commit history.
+
+Unauthorized copying, modification, distribution, or hosting of this
+software, in whole or in part, is prohibited. If you believe a copy of this
+software is being distributed or operated without authorization, the
+copyright holder may pursue remedies including DMCA takedown notices.
+
+Third-party dependencies are the property of their respective owners and are
+used under their own licenses:
+  - discord.js (Apache-2.0)
+  - dotenv (BSD-2-Clause)

@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 bs9zw69ff9-source. All rights reserved. Proprietary — see LICENSE. */
 /* ================================================================
    Self-contained unit tests for the bot's pure logic.
    ================================================================

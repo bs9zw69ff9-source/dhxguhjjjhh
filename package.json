@@ -3,6 +3,7 @@
   "version": "3.2.2",
   "description": "Fallout: New Vegas themed Discord moderation bot for Pavlov VR servers (RCON bans, warnings, factions, wages, donators, and more).",
   "main": "index.js",
+  "author": "bs9zw69ff9-source",
   "scripts": {
     "start": "node index.js",
     "test": "node test/run.js",
@@ -15,6 +16,6 @@
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5"
   },
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true
 }

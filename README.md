@@ -72,3 +72,41 @@ npm test        # unit tests for the pure logic (no Discord/network needed)
 
 The test runner sandboxes the bot with stub modules so it can require and
 exercise the exported helpers without a token or `discord.js` installed.
+
+## License & ownership
+
+This is **proprietary** software — see [`LICENSE`](LICENSE) and
+[`NOTICE`](NOTICE). No permission is granted to copy, modify, distribute, or
+host it without written authorization. Authorship is evidenced by the git
+commit history, the copyright headers, and the in-app attribution shown in
+`/help` and `/ping`.
+
+> If you'd rather *allow* others to run it but force them to publish any
+> modified source, switch the license to **AGPL-3.0** instead. Tell the
+> maintainer and it can be swapped in.
+
+### Protecting the project from theft (legitimate measures)
+
+These are the approaches that actually help — none of them involve hidden
+malicious code:
+
+- **Don't ship secrets.** Tokens and RCON passwords live in `.env`
+  (git-ignored), so a stolen `index.js` is useless without the operator's own
+  configuration.
+- **Keep the git history.** Commit timestamps are strong proof of authorship
+  for DMCA takedowns or disputes.
+- **Visible attribution / build stamp.** `/help` and `/ping` display the
+  copyright and a `BUILD_ID` (override per deployment with the `BUILD_ID` env
+  var) so unauthorized copies are identifiable.
+- **Canary tokens (optional).** Drop a tracking token from
+  <https://canarytokens.org> into a comment or config file; you'll be alerted
+  if a leaked copy is opened somewhere unexpected. This only notifies *you* —
+  it does not tamper with anyone's system.
+- **Takedowns.** For unauthorized public copies, file a DMCA notice with the
+  hosting provider (GitHub, etc.) citing your commit history.
+
+> Note: hidden "backdoors" (covert remote access, kill switches, data
+> exfiltration) are **not** an anti-theft measure — they are illegal in most
+> jurisdictions, destroy trust, and become the very vulnerability attackers
+> exploit. The measures above are the safe, effective alternatives.
+

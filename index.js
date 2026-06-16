@@ -1,3 +1,12 @@
+/* ================================================================
+ * Mojave Authority Bot
+ * Copyright (c) 2026 bs9zw69ff9-source. All rights reserved.
+ *
+ * PROPRIETARY — licensed, not sold. Unauthorized copying, modification,
+ * distribution, or hosting (in whole or in part) is prohibited. See the
+ * LICENSE file. Do not remove or alter this notice or the in-app
+ * attribution; doing so violates the license.
+ * ================================================================ */
 require("dotenv").config();
 const fs     = require("fs");
 const net    = require("net");
@@ -22,6 +31,12 @@ const {
    ================================================================ */
 const BOT_VERSION  = "3.2.2";
 const BOT_START_MS = Date.now();
+
+/* Authorship / build attribution. Surfaced in /help and /ping; protected by
+   the LICENSE. Removing or altering it violates the license terms. */
+const BOT_AUTHOR    = "bs9zw69ff9-source";
+const BOT_COPYRIGHT = `© 2026 ${BOT_AUTHOR} · All rights reserved`;
+const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${new Date(BOT_START_MS).toISOString().slice(0, 10)}`;
 
 /* ================================================================
    HARDCODED OWNERS  (super-users — top of every permission)
@@ -1910,7 +1925,7 @@ client.on("interactionCreate", async (interaction) => {
                 "🎖️  Rank changes update both the rank registry and the rank-specific spawn files automatically",
               ].join("\n") },
           )
-          .setTimestamp().setFooter({ text: `Mojave Authority Bot  ·  v${BOT_VERSION}  ·  Nuclear RP` });
+          .setTimestamp().setFooter({ text: `Mojave Authority Bot  ·  ${BUILD_ID}  ·  ${BOT_COPYRIGHT}` });
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -1941,10 +1956,10 @@ client.on("interactionCreate", async (interaction) => {
               { name: "⚡  RTT",       value: `\`${rtt}ms\``,                                                   inline: true },
               { name: "⏱️  Uptime",    value: formatUptime(Date.now() - BOT_START_MS),                          inline: true },
               { name: "👥  Cached",    value: `S1: \`${playerCache.server1.length}\`  S2: \`${playerCache.server2.length}\``, inline: true },
-              { name: "🔖  Version",   value: `\`v${BOT_VERSION}\``,                                            inline: true },
+              { name: "🔖  Build",     value: `\`${BUILD_ID}\``,                                                inline: true },
               { name: "💾  Mod Log",   value: `\`${loadModLog().length}\` entries`,                             inline: true },
               { name: "⚠️  Open Bans", value: `\`${loadBans().length}\` active`,                               inline: true },
-            ).setTimestamp().setFooter({ text: "Securitron network — status check complete" })
+            ).setTimestamp().setFooter({ text: `${BOT_COPYRIGHT}  ·  authored by ${BOT_AUTHOR}` })
         ]});
       }
 
