@@ -2983,9 +2983,18 @@ client.on("interactionCreate", async (interaction) => {
               .join("\n") || "*No senior members*";
             const barFull = Math.round((total / cap) * 10);
             const bar     = "█".repeat(Math.min(barFull, 10)) + "░".repeat(Math.max(10 - barFull, 0));
+            const rankCaps = getFactionRankCaps(faction);
+            const cappedStr = Object.keys(rankCaps).length
+              ? "\n" + (cfg ? cfg.order : Object.keys(rankCaps))
+                  .filter(r => rankCaps[r] > 0)
+                  .map(r => {
+                    const c = countFactionRank(faction, r);
+                    return `${getFactionRankBadge(faction, r)} ${c}/${rankCaps[r]}${c > rankCaps[r] ? "⚠️" : ""}`;
+                  }).join("  ·  ")
+              : "";
             fields.push({
               name:  `⚔️  ${faction}`,
-              value: `\`${bar}\`  **${total}/${cap}**\n${topStr}`,
+              value: `\`${bar}\`  **${total}/${cap}**\n${topStr}${cappedStr}`,
               inline: true,
             });
           }
