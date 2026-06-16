@@ -3,10 +3,10 @@ const fs     = require("fs");
 const net    = require("net");
 const crypto = require("crypto");
 const path   = require("path");
-const os     = require("os");
 const {
   Client,
   GatewayIntentBits,
+  ActivityType,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -15,8 +15,6 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
 } = require("discord.js");
 
 /* ================================================================
@@ -236,7 +234,7 @@ const saveFactionRanks  = (d) => safeWrite(FILES.FACTION_RANKS, d);
 const loadFactionConfig = () => safeRead(FILES.FACTION_CONFIG, {});
 const saveFactionConfig = (d) => safeWrite(FILES.FACTION_CONFIG,d);
 const loadFactionAudit  = () => safeRead(FILES.FACTION_AUDIT,  []);
-const saveFactionAudit  = (d) => safeWrite(FILES.FACTION_AUDIT, d);
+// (writes go through the serialized writeFactionAudit() — no direct saver needed)
 const loadMenuGrants    = () => safeRead(FILES.MENU_GRANTS,    {});
 const saveMenuGrants    = (d) => safeWrite(FILES.MENU_GRANTS,   d);
 const loadBlacklist     = () => safeRead(FILES.BLACKLIST,      {});
@@ -734,6 +732,49 @@ function chunkFields(lines, firstLabel, contLabel = firstLabel + " (cont.)", max
   return fields;
 }
 
+/** Split an array of single-line strings into pages of at most `perPage`. */
+function splitPages(lines, perPage) {
+  const pages = [];
+  for (let i = 0; i < lines.length; i += perPage) pages.push(lines.slice(i, i + perPage));
+  return pages.length ? pages : [[]];
+}
+
+/* ================================================================
+   INTERACTIVE PAGINATOR
+   ================================================================
+   Renders a list across pages with ◀ ▶ buttons. `buildEmbed(pageLines,
+   pageIndex, totalPages)` returns the EmbedBuilder for a page. Uses the
+   same awaitMessageComponent flow as the confirm dialogs elsewhere.
+   ================================================================ */
+async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemeral = false, idleMs = 120_000 } = {}) {
+  const pages = splitPages(lines, perPage);
+  const total = pages.length;
+  let page = 0;
+  const row = (p) => new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("pg_prev").setEmoji("◀️").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+    new ButtonBuilder().setCustomId("pg_ind").setLabel(`Page ${p + 1} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+    new ButtonBuilder().setCustomId("pg_next").setEmoji("▶️").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
+  );
+  const render = (p) => ({ embeds: [buildEmbed(pages[p], p, total)], components: total > 1 ? [row(p)] : [] });
+
+  if (interaction.deferred || interaction.replied) await interaction.editReply(render(page));
+  else await interaction.reply({ ...render(page), ephemeral });
+  if (total <= 1) return;
+
+  const msg = await interaction.fetchReply();
+  for (;;) {
+    let btn;
+    try {
+      btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: idleMs, filter: i => i.user.id === interaction.user.id });
+    } catch {
+      try { await interaction.editReply({ components: [] }); } catch {}
+      return;
+    }
+    page = btn.customId === "pg_prev" ? Math.max(0, page - 1) : Math.min(total - 1, page + 1);
+    await btn.update(render(page));
+  }
+}
+
 /* ================================================================
    EMBED BUILDERS
    ================================================================ */
@@ -917,16 +958,27 @@ const playerCache = {
 };
 const CACHE_TTL_MS = 90_000;
 
+/** Pull trimmed, non-empty player names out of a parsed RefreshList payload. */
+function extractPlayerNames(data) {
+  return (data?.PlayerList ?? [])
+    .map(p => String(p.Username ?? p.username ?? p.PlayerName ?? p.name ?? p.Name ?? "").trim())
+    .filter(Boolean);
+}
+
+/** Update the cached player list for one server from a parsed payload. */
+function setPlayerCacheFromData(server, data) {
+  if (!data?.Successful) return false;
+  playerCache[server] = extractPlayerNames(data);
+  playerCache.lastUpdated[server] = Date.now();
+  return true;
+}
+
 async function refreshPlayerCache(server = "server1") {
   try {
-    const raw  = await sendRcon("RefreshList", server);
-    const data = parseRcon(raw);
-    if (!data?.Successful) return;
-    playerCache[server] = (data.PlayerList ?? [])
-      .map(p => String(p.Username ?? p.username ?? p.PlayerName ?? p.name ?? p.Name ?? "").trim())
-      .filter(Boolean);
-    playerCache.lastUpdated[server] = Date.now();
-    logger.debug("Cache", `${server}: ${playerCache[server].length} players`);
+    const data = parseRcon(await sendRcon("RefreshList", server));
+    if (setPlayerCacheFromData(server, data)) {
+      logger.debug("Cache", `${server}: ${playerCache[server].length} players`);
+    }
   } catch (err) {
     logger.warn("Cache", `${server} refresh failed: ${err.message}`);
   }
@@ -1465,11 +1517,11 @@ const commands = [
     .addStringOption(o => o.setName("reason").setDescription("Grounds for exile").setRequired(true).addChoices(...BAN_REASONS)),
   new SlashCommandBuilder().setName("unban")
     .setDescription("Lift a courier's exile")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID to pardon").setRequired(true))
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID to pardon").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("checkban")
     .setDescription("Check if a courier is currently exiled")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true))
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("banlist").setDescription("View all active exiles").addStringOption(serverOption),
   new SlashCommandBuilder().setName("permban")
@@ -1487,7 +1539,7 @@ const commands = [
     .addStringOption(o => o.setName("notes").setDescription("Additional context")),
   new SlashCommandBuilder().setName("addnote")
     .setDescription("🔒 Admin — Append a note to a hard ban record")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true))
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("note").setDescription("Note to append").setRequired(true)),
   new SlashCommandBuilder().setName("hardbanlist").setDescription("🔒 Admin — View the hard ban registry"),
   new SlashCommandBuilder().setName("cleartempbans").setDescription("🔒 Admin — Clear all temporary exiles (confirmation required)"),
@@ -1622,6 +1674,14 @@ const commands = [
    ================================================================ */
 client.once("ready", async () => {
   logger.info("Bot", `${client.user.tag} online — v${BOT_VERSION}`);
+  try {
+    client.user.setPresence({
+      activities: [{ name: "over the Mojave  ·  /help", type: ActivityType.Watching }],
+      status: "online",
+    });
+  } catch (err) {
+    logger.warn("Bot", `Could not set presence: ${err.message}`);
+  }
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
   try {
     const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
@@ -1850,14 +1910,12 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply();
         if (server === "both") {
           const [r1, r2] = await Promise.all([sendRcon("RefreshList", "server1"), sendRcon("RefreshList", "server2")]);
-          const d1 = parseRcon(r1), d2 = parseRcon(r2);
-          if (d1?.Successful) { playerCache.server1 = (d1.PlayerList ?? []).map(p => String(p.Username ?? p.username ?? p.name ?? "").trim()).filter(Boolean); playerCache.lastUpdated.server1 = Date.now(); }
-          if (d2?.Successful) { playerCache.server2 = (d2.PlayerList ?? []).map(p => String(p.Username ?? p.username ?? p.name ?? "").trim()).filter(Boolean); playerCache.lastUpdated.server2 = Date.now(); }
+          setPlayerCacheFromData("server1", parseRcon(r1));
+          setPlayerCacheFromData("server2", parseRcon(r2));
           return interaction.editReply({ embeds: [buildPlayerListEmbed(r1, "server1"), buildPlayerListEmbed(r2, "server2")] });
         }
         const result = await sendRcon("RefreshList", server);
-        const d = parseRcon(result);
-        if (d?.Successful) { playerCache[server] = (d.PlayerList ?? []).map(p => String(p.Username ?? p.username ?? p.name ?? "").trim()).filter(Boolean); playerCache.lastUpdated[server] = Date.now(); }
+        setPlayerCacheFromData(server, parseRcon(result));
         return interaction.editReply({ embeds: [buildPlayerListEmbed(result, server)] });
       }
 
@@ -2175,18 +2233,18 @@ client.on("interactionCreate", async (interaction) => {
           ], ephemeral: true });
         }
         const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
-        const lines = history.slice(-30).reverse().map(e => {
+        const lines = history.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
           const icon   = ICONS[e.action] ?? "📌";
           const detail = e.reason ? ` — *${e.reason}*` : e.amount ? ` — *${e.amount > 0 ? "+" : ""}${e.amount} caps*` : e.faction ? ` — *${e.faction}*` : "";
           return `${icon}  \`${e.action}\`${detail}  ·  by **${e.by ?? "System"}**  ·  <t:${ts}:R>`;
         });
-        const embed = new EmbedBuilder().setColor(NV.AMBER)
-          .setTitle(`📋  Moderation History — ${playerId}`)
-          .setDescription(`**${history.length}** total action${history.length !== 1 ? "s" : ""} on record *(showing last 30)*\n\n${DIVIDER}`);
-        for (const f of chunkFields(lines, "Actions (newest first)")) embed.addFields(f);
-        embed.setTimestamp().setFooter({ text: "Mod log — full history retained" });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.AMBER)
+            .setTitle(`📋  Moderation History — ${playerId}`)
+            .setDescription(`**${history.length}** total action${history.length !== 1 ? "s" : ""} on record *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Mod log — full history retained" }).setTimestamp(),
+          { perPage: 12, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -2500,11 +2558,12 @@ client.on("interactionCreate", async (interaction) => {
             `↳  Banned <t:${ts}:R> by **${e.bannedBy}**`,
           ].filter(Boolean).join("\n");
         });
-        const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Registry — Persona Non Grata")
-          .setDescription(`> *${randomQuote("hardban")}*\n\n${DIVIDER}\n**${registry.length}** flagged  ·  *Use \`/addnote <id>\` to append notes.*`);
-        for (const f of chunkFields(lines, `Flagged Couriers (${registry.length})`)) embed.addFields(f);
-        embed.setFooter({ text: "Hard ban registry · admin only" }).setTimestamp();
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        const header = `> *${randomQuote("hardban")}*\n\n${DIVIDER}\n**${registry.length}** flagged  ·  *Use \`/addnote <id>\` to append notes.*`;
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Registry — Persona Non Grata")
+            .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n\n")}`)
+            .setFooter({ text: "Hard ban registry · admin only" }).setTimestamp(),
+          { perPage: 6, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3310,11 +3369,12 @@ client.on("interactionCreate", async (interaction) => {
           const next  = w.lastPaidAt ? Math.floor((w.lastPaidAt + WAGE_INTERVAL_MS) / 1000) : null;
           return `\`${String(i + 1).padStart(2, "0")}\`  **${w.playerId}**  ·  ${tier.label} *(+${tier.amount}/wk)*  ·  ${bal !== null ? `${bal.toLocaleString()} caps` : "*no ledger*"}${next ? `  ·  next <t:${next}:R>` : ""}`;
         });
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💰  Weekly Payroll — The House's Ledger")
-          .setDescription(`> *"The House always pays its debts."*\n\n${DIVIDER}\n**${wages.length}** enrolled  ·  ${tierSummary}  ·  **${totalPay.toLocaleString()} caps/week total**\n${DIVIDER}`);
-        for (const f of chunkFields(lines, "📋  Enrolled Couriers")) embed.addFields(f);
-        embed.setFooter({ text: "Wages disbursed automatically every 7 days" }).setTimestamp();
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        const header = `> *"The House always pays its debts."*\n\n${DIVIDER}\n**${wages.length}** enrolled  ·  ${tierSummary}  ·  **${totalPay.toLocaleString()} caps/week total**`;
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.GOLD).setTitle("💰  Weekly Payroll — The House's Ledger")
+            .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Wages disbursed automatically every 7 days" }).setTimestamp(),
+          { perPage: 12, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3522,4 +3582,6 @@ module.exports = {
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
   isOwner, isBlacklisted,
+  // ui / parsing helpers
+  splitPages, extractPlayerNames,
 };
