@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The bot's dependencies aren't needed to run the suite: the test
+      # runner sandboxes the bot with stub modules. So CI just syntax-checks
+      # and runs the self-contained tests — no install, no network, no token.
+      - name: Syntax check
+        run: node --check index.js
+      - name: Unit tests
+        run: node test/run.js

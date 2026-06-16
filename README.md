@@ -1,5 +1,7 @@
 # Mojave Authority Bot
 
+![CI](https://github.com/bs9zw69ff9-source/bot/actions/workflows/ci.yml/badge.svg)
+
 A Fallout: New Vegas–themed Discord moderation bot for **Pavlov VR** servers.
 It drives the game servers over RCON and adds bans, warnings with
 auto-escalation, faction whitelists/ranks, a caps economy with weekly wages
@@ -72,6 +74,34 @@ npm test        # unit tests for the pure logic (no Discord/network needed)
 
 The test runner sandboxes the bot with stub modules so it can require and
 exercise the exported helpers without a token or `discord.js` installed.
+
+CI (GitHub Actions) runs the syntax check and the test suite on every push —
+see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Deployment
+
+### Docker
+
+```bash
+docker build -t mojave-authority-bot .
+docker run --env-file .env -v "$PWD/data:/app/data" mojave-authority-bot
+```
+
+The bot persists runtime state as JSON files in its working directory, so
+mount a volume to keep that data across restarts. If it also manages faction
+spawn/rank files or the donator file on the game-server host, mount those
+paths too and point `DONATOR_PATH` (and the faction paths in `index.js`) at
+the mounted location.
+
+### Bare metal
+
+```bash
+npm install --omit=dev
+npm start
+```
+
+Use a process manager (systemd, pm2) to keep it running and restart on
+failure.
 
 ## License & ownership
 
