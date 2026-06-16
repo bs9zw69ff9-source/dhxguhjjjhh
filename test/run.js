@@ -87,6 +87,15 @@ const ok = (cond, msg) => {
   fs.writeFileSync(bot.FILES.BLACKLIST, JSON.stringify({ "55": { by: "a", at: 1 } }));
   ok(bot.isBlacklisted("55") && !bot.isBlacklisted("56"), "blacklist lookup");
 
+  console.log("Faction rank caps:");
+  ok(bot.getFactionRankCap("NCR", "Officer") === null, "unset rank cap -> null (unlimited)");
+  await bot.setFactionRankCap("NCR", "Officer", 2);
+  ok(bot.getFactionRankCap("NCR", "Officer") === 2, "set cap -> 2");
+  ok(JSON.stringify(bot.getFactionRankCaps("NCR")) === '{"Officer":2}', "getFactionRankCaps reflects config");
+  await bot.setFactionRankCap("NCR", "Officer", 0);
+  ok(bot.getFactionRankCap("NCR", "Officer") === null, "cap 0 clears -> unlimited");
+  ok(JSON.stringify(bot.getFactionRankCaps("NCR")) === "{}", "cleared cap removed from config");
+
   console.log("UI / parsing helpers:");
   ok(JSON.stringify(bot.splitPages([1,2,3,4,5], 2)) === "[[1,2],[3,4],[5]]", "splitPages chunks");
   ok(JSON.stringify(bot.splitPages([], 5)) === "[[]]", "splitPages empty -> one page");

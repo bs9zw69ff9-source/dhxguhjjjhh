@@ -526,6 +526,46 @@ function setFactionCap(faction, cap) {
   });
 }
 
+/* ---- Per-rank caps (within a faction) ----
+   Stored under cfg[faction].rankCaps = { [rankName]: number }.
+   A missing entry (or 0) means that rank is uncapped. */
+function getFactionRankCap(faction, rank) {
+  const cap = loadFactionConfig()[faction]?.rankCaps?.[rank];
+  return cap > 0 ? cap : null;                       // null = unlimited
+}
+
+function getFactionRankCaps(faction) {
+  return loadFactionConfig()[faction]?.rankCaps ?? {};
+}
+
+function setFactionRankCap(faction, rank, cap) {
+  return update(FILES.FACTION_CONFIG, {}, (cfg) => {
+    if (!cfg[faction]) cfg[faction] = {};
+    if (!cfg[faction].rankCaps) cfg[faction].rankCaps = {};
+    if (cap > 0) cfg[faction].rankCaps[rank] = cap;
+    else delete cfg[faction].rankCaps[rank];          // 0 clears the cap
+    return cfg;
+  });
+}
+
+/** Number of members currently holding `rank` in `faction`. */
+function countFactionRank(faction, rank) {
+  const members = getFactionMembers(faction);
+  if (!members) return 0;
+  return members.filter(m => m.rank === rank).length;
+}
+
+/**
+ * Returns { ok, cap, count } describing whether one more member can be
+ * assigned `rank`. ok=true when uncapped or below the cap.
+ */
+function rankHasRoom(faction, rank) {
+  const cap = getFactionRankCap(faction, rank);
+  if (cap === null) return { ok: true, cap: null, count: 0 };
+  const count = countFactionRank(faction, rank);
+  return { ok: count < cap, cap, count };
+}
+
 const FACTION_ROLES_PATH  = "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/FactionRoles";
 const FACTION_DEFAULT_CAP = 50;
 
@@ -1623,7 +1663,12 @@ const commands = [
     .addSubcommand(s => s.setName("setcap")
       .setDescription("🔒 Admin — Set the maximum member cap for a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addIntegerOption(o => o.setName("cap").setDescription("Maximum number of members (1–500)").setRequired(true).setMinValue(1).setMaxValue(500))),
+      .addIntegerOption(o => o.setName("cap").setDescription("Maximum number of members (1–500)").setRequired(true).setMinValue(1).setMaxValue(500)))
+    .addSubcommand(s => s.setName("setrankcap")
+      .setDescription("🔒 Admin — Set the per-rank member cap within a faction")
+      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => o.setName("rank").setDescription("Rank to cap (faction-specific)").setRequired(true).setAutocomplete(true))
+      .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500))),
 
   new SlashCommandBuilder().setName("manual")
     .setDescription("🔒 Admin — Send a raw RCON command")
@@ -1851,6 +1896,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/blacklist add|remove|list <user>` — Bar a Discord user from all commands",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
+                "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
               ].join("\n") },
             { name: "⚔️  Faction Ranks (per faction)",
               value: rankSummaryLines },
@@ -2887,6 +2933,36 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
+        /* ── setrankcap (admin only) ── */
+        if (sub === "setrankcap") {
+          if (!hasAdminRole(interaction.member)) {
+            return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+          }
+          const faction = interaction.options.getString("faction");
+          const rank    = interaction.options.getString("rank");
+          const cap     = interaction.options.getInteger("cap");
+          const validRanks = getFactionRankOrder(faction);
+          if (!validRanks.includes(rank)) {
+            return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
+              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], ephemeral: true });
+          }
+          await setFactionRankCap(faction, rank, cap);
+          writeModLog({ action: "faction-setrankcap", faction, rank, cap, by: interaction.user.tag });
+          const current = countFactionRank(faction, rank);
+          const capStr  = cap > 0 ? `**${cap}**` : "**Unlimited**";
+          const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Rank Cap Updated")
+            .setDescription(`${DIVIDER}`)
+            .addFields(
+              { name: "⚔️  Faction",     value: faction,                                                              inline: true },
+              { name: "🎖️  Rank",        value: rankBadge(faction, rank),                                             inline: true },
+              { name: "📏  New Cap",      value: capStr,                                                               inline: true },
+              { name: "👥  Currently",    value: `${current}${cap > 0 ? ` / ${cap}${current > cap ? "  ⚠️  over cap!" : ""}` : ""}`, inline: true },
+              { name: "🔒  Set By",       value: `${interaction.user}`,                                                inline: false },
+            ).setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" }).setTimestamp();
+          await logAction(embed);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
         /* ── overview (public) ── */
         if (sub === "overview") {
           const fields = [];
@@ -2953,7 +3029,10 @@ client.on("interactionCreate", async (interaction) => {
           const rankOrder = getFactionRankOrder(faction).slice().reverse();
           const summary   = rankOrder.map(r => {
             const n = members.filter(m => m.rank === r).length;
-            return n ? `${getFactionRankBadge(faction, r)} ${r}: **${n}**` : null;
+            const rcap = getFactionRankCap(faction, r);
+            if (!n && !rcap) return null;
+            const count = rcap ? `${n}/${rcap}${n > rcap ? "⚠️" : ""}` : `${n}`;
+            return `${getFactionRankBadge(faction, r)} ${r}: **${count}**`;
           }).filter(Boolean).join("  ·  ");
           const embed = new EmbedBuilder().setColor(NV.GOLD)
             .setTitle(`⚔️  ${faction} — Roster (Page ${safePage}/${totalPages})`)
@@ -3025,6 +3104,11 @@ client.on("interactionCreate", async (interaction) => {
           }
           const oldRank = getFactionRank(faction, playerId);
           if (oldRank !== rank) {
+            const room = rankHasRoom(faction, rank);
+            if (!room.ok) {
+              return interaction.reply({ embeds: [errorEmbed("Rank Full",
+                `**${rank}** in **${faction}** is at its cap (**${room.count}/${room.cap}**).\n\nPromote someone out first, or raise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
+            }
             removePlayerFromRankFile(faction, playerId, oldRank);
             addPlayerToRankFile(faction, playerId, rank);
           }
@@ -3078,6 +3162,11 @@ client.on("interactionCreate", async (interaction) => {
           }
           if (toLines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
             return interaction.reply({ embeds: [warningEmbed("Already a Member", `\`${playerId}\` is already whitelisted in **${toFaction}**.`)], ephemeral: true });
+          }
+          const toRoom = rankHasRoom(toFaction, newRank);
+          if (!toRoom.ok) {
+            return interaction.reply({ embeds: [errorEmbed("Rank Full",
+              `**${newRank}** in **${toFaction}** is at its cap (**${toRoom.count}/${toRoom.cap}**).\n\nChoose a different rank, or raise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
           }
           const oldRank = getFactionRank(fromFaction, playerId);
           const updatedFrom = fromLines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
@@ -3134,6 +3223,11 @@ client.on("interactionCreate", async (interaction) => {
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
             return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/faction setcap\` to increase the limit, or remove a member first.`)], ephemeral: true });
+          }
+          const addRoom = rankHasRoom(faction, rank);
+          if (!addRoom.ok) {
+            return interaction.reply({ embeds: [errorEmbed("Rank Full",
+              `**${rank}** in **${faction}** is at its cap (**${addRoom.count}/${addRoom.cap}**).\n\nAdd them at a different rank, or raise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
           }
           lines.push(playerId);
           if (!writeFactionFile(spawn, lines)) {
@@ -3584,4 +3678,6 @@ module.exports = {
   isOwner, isBlacklisted,
   // ui / parsing helpers
   splitPages, extractPlayerNames,
+  // faction rank caps
+  getFactionRankCap, getFactionRankCaps, setFactionRankCap,
 };
