@@ -26,6 +26,19 @@ const BOT_VERSION  = "3.2.2";
 const BOT_START_MS = Date.now();
 
 /* ================================================================
+   HARDCODED OWNERS  (super-users — top of every permission)
+   ================================================================
+   These Discord user IDs are baked into the source. They bypass ALL
+   permission checks (admin/mod/faction leader), skip rate limits, and
+   can never be blacklisted. The only way to change this list is to edit
+   the code — it is not exposed through any command or data file.
+   ================================================================ */
+const OWNER_IDS = new Set([
+  "1014251293159731310",
+]);
+function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
+
+/* ================================================================
    STRUCTURED LOGGER
    ================================================================ */
 const LOG_FILE = "./bot.log";
@@ -569,14 +582,17 @@ function sanitizeMessage(raw) {
    ROLE CHECKS
    ================================================================ */
 function hasAdminRole(member) {
+  if (isOwner(member?.id)) return true;
   const { adminRoleId } = loadRoles();
   return !adminRoleId || member.roles.cache.has(adminRoleId);
 }
 function hasModRole(member) {
+  if (isOwner(member?.id)) return true;
   const { modRoleId } = loadRoles();
   return !modRoleId || member.roles.cache.has(modRoleId);
 }
 function hasFactionLeaderRole(member) {
+  if (isOwner(member?.id)) return true;
   const { factionLeaderRoleId } = loadRoles();
   return factionLeaderRoleId && member.roles.cache.has(factionLeaderRoleId);
 }
@@ -1484,8 +1500,9 @@ process.on("unhandledRejection", r   => logger.error("Unhandled", String(r)));
    ================================================================ */
 client.on("interactionCreate", async (interaction) => {
 
-  /* ── Blacklist gate — barred users get nothing, on every interaction ── */
-  if (isBlacklisted(interaction.user.id)) {
+  /* ── Blacklist gate — barred users get nothing, on every interaction.
+        Owners are immune and can never be blacklisted. ── */
+  if (isBlacklisted(interaction.user.id) && !isOwner(interaction.user.id)) {
     if (interaction.isAutocomplete()) return interaction.respond([]).catch(() => {});
     if (interaction.isChatInputCommand()) {
       return interaction.reply({ embeds: [blacklistedEmbed(getBlacklistEntry(interaction.user.id))], ephemeral: true }).catch(() => {});
@@ -1544,7 +1561,7 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
-  if (!ADMIN_COMMANDS.includes(name) && !PUBLIC.includes(name)) {
+  if (!ADMIN_COMMANDS.includes(name) && !PUBLIC.includes(name) && !isOwner(interaction.user.id)) {
     if (!checkRateLimit(interaction.user.id, name, 4000)) {
       return interaction.reply({ embeds: [rateLimitEmbed()], ephemeral: true });
     }
@@ -2342,6 +2359,9 @@ client.on("interactionCreate", async (interaction) => {
           }
           if (target.id === client.user.id) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Target", "You can't blacklist the bot.")], ephemeral: true });
+          }
+          if (isOwner(target.id)) {
+            return interaction.reply({ embeds: [errorEmbed("Invalid Target", "That user is a hardcoded owner and cannot be blacklisted.")], ephemeral: true });
           }
           const bl = loadBlacklist();
           if (bl[target.id]) {
