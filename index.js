@@ -531,6 +531,11 @@ function setFactionCap(faction, cap) {
 const FACTION_ROLES_PATH  = "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/FactionRoles";
 const FACTION_DEFAULT_CAP = 50;
 
+/* Donator whitelist file. Override the location with the DONATOR_PATH env
+   var; defaults to the ModSave config dir alongside the faction role files. */
+const DONATOR_FILE = process.env.DONATOR_PATH
+  || "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/donator.txt";
+
 const SPAWN_FILE_MAP = {
   "NCR":                 "ncrspawn.txt",
   "Legion":              "legionspawn.txt",
@@ -978,6 +983,53 @@ function writeFactionFile(spawnFile, lines) {
     logger.error("Faction", `Write failed for ${spawnFile}: ${err.message}`);
     return false;
   }
+}
+
+/* ================================================================
+   DONATOR WHITELIST FILE  (one player ID per line in DONATOR_FILE)
+   ================================================================ */
+function readDonatorFile() {
+  try {
+    return fs.readFileSync(DONATOR_FILE, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  } catch (err) {
+    if (err.code === "ENOENT") return [];          // not created yet — treat as empty
+    logger.error("Donator", `Read failed: ${err.message}`);
+    return null;                                    // real I/O error
+  }
+}
+
+function writeDonatorFile(lines) {
+  try {
+    fs.mkdirSync(path.dirname(DONATOR_FILE), { recursive: true });
+    fs.writeFileSync(DONATOR_FILE, lines.join("\n") + "\n", "utf8");
+    return true;
+  } catch (err) {
+    logger.error("Donator", `Write failed: ${err.message}`);
+    return false;
+  }
+}
+
+function isDonator(playerId) {
+  const id = playerId.toLowerCase();
+  return (readDonatorFile() ?? []).some(l => l.toLowerCase() === id);
+}
+
+/** Returns { ok, already } — already=true if the player was already listed. */
+function addDonator(playerId) {
+  const lines = readDonatorFile();
+  if (lines === null) return { ok: false, already: false };
+  if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) return { ok: true, already: true };
+  lines.push(playerId);
+  return { ok: writeDonatorFile(lines), already: false };
+}
+
+/** Returns { ok, missing } — missing=true if the player wasn't listed. */
+function removeDonator(playerId) {
+  const lines = readDonatorFile();
+  if (lines === null) return { ok: false, missing: false };
+  const filtered = lines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
+  if (filtered.length === lines.length) return { ok: true, missing: true };
+  return { ok: writeDonatorFile(filtered), missing: false };
 }
 
 function getPlayerFactions(playerId) {
@@ -1450,6 +1502,16 @@ const commands = [
       .addUserOption(o => o.setName("user").setDescription("Discord user to un-blacklist").setRequired(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("View all blacklisted Discord users")),
+  new SlashCommandBuilder().setName("donator")
+    .setDescription("🔒 Admin — Manage the donator whitelist file")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("Add a player to the donator file")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("remove")
+      .setDescription("Remove a player from the donator file")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("List all players in the donator file")),
   new SlashCommandBuilder().setName("setroles")
     .setDescription("🔒 Admin — Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
@@ -1634,7 +1696,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "blacklist"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "blacklist", "donator"];
 
   const name = interaction.commandName;
 
@@ -1727,6 +1789,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
                 "`/blacklist add|remove|list <user>` — Bar a Discord user from all commands",
+                "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
               ].join("\n") },
             { name: "⚔️  Faction Ranks (per faction)",
@@ -2111,7 +2174,7 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
           ], ephemeral: true });
         }
-        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
+        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
         const lines = history.slice(-30).reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
           const icon   = ICONS[e.action] ?? "📌";
@@ -2587,6 +2650,68 @@ client.on("interactionCreate", async (interaction) => {
           saveBlacklist(bl);
           writeModLog({ action: "blacklist-remove", targetUserId: target.id, by: interaction.user.tag });
           const embed = successEmbed("Blacklist Lifted", `<@${target.id}> can use bot commands again.\n\n**Lifted by:** ${interaction.user}`);
+          await logAction(embed);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        break;
+      }
+
+      /* ─────────────────────────────────────────────────────
+         DONATOR  (admin — manage the donator whitelist file)
+         ───────────────────────────────────────────────────── */
+      case "donator": {
+        const sub = interaction.options.getSubcommand();
+
+        if (sub === "list") {
+          const lines = readDonatorFile();
+          if (lines === null) {
+            return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Could not read the donator file.\n\`${DONATOR_FILE}\``)], ephemeral: true });
+          }
+          if (!lines.length) {
+            return interaction.reply({ embeds: [
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("💎  Donator List — Empty")
+                .setDescription("No players are in the donator file yet.\n\nUse `/donator add` to enrol someone.").setTimestamp()
+            ], ephemeral: true });
+          }
+          const out = lines.map((id, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${id}**`);
+          const embed = new EmbedBuilder().setColor(NV.GOLD)
+            .setTitle(`💎  Donators — ${lines.length}`)
+            .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}`);
+          for (const f of chunkFields(out, "Donators")) embed.addFields(f);
+          embed.setFooter({ text: DONATOR_FILE }).setTimestamp();
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+
+        if (sub === "add") {
+          const { ok, already } = addDonator(playerId);
+          if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], ephemeral: true });
+          if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], ephemeral: true });
+          writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💎  Donator Added")
+            .setDescription(`> *"A generous soul joins the ranks of the Strip's patrons."*\n\n${DIVIDER}`)
+            .addFields(
+              { name: "🎯  Courier", value: `\`${playerId}\``,        inline: true },
+              { name: "🔒  Added By", value: `${interaction.user}`,   inline: true },
+            ).setFooter({ text: "Written to the donator file." }).setTimestamp();
+          await logAction(embed);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        if (sub === "remove") {
+          const { ok, missing } = removeDonator(playerId);
+          if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], ephemeral: true });
+          if (missing) return interaction.reply({ embeds: [warningEmbed("Not a Donator", `\`${playerId}\` is not in the donator file.`)], ephemeral: true });
+          writeModLog({ action: "donator-remove", playerId, by: interaction.user.tag });
+          const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("💎  Donator Removed")
+            .setDescription(`${DIVIDER}`)
+            .addFields(
+              { name: "🎯  Courier",   value: `\`${playerId}\``,      inline: true },
+              { name: "🔒  Removed By", value: `${interaction.user}`, inline: true },
+            ).setFooter({ text: "Removed from the donator file." }).setTimestamp();
           await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
@@ -3313,6 +3438,7 @@ client.on("interactionCreate", async (interaction) => {
         const history  = getPlayerHistory(playerId);
         const notes    = getPlayerNotes(playerId);
         const lastSeen = getLastSeen(playerId);
+        const donator  = isDonator(playerId);
 
         const fStr = factions === null ? "⚠️  Folder unreadable"
           : !factions.length ? "*No faction access*"
@@ -3338,6 +3464,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "⚠️  Warnings",      value: warns.length ? `**${warns.length}** on record` : "Clean record",    inline: true },
             { name: "👁️  Last Seen",     value: online ? "🟢  Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
             { name: "📝  Staff Notes",   value: notes.length ? `**${notes.length}** — use \`/note list ${playerId}\`` : "*None*", inline: true },
+            { name: "💎  Donator",       value: donator ? "✅  Yes" : "❌  No",                                       inline: true },
             { name: "⚔️  Faction Ranks", value: fStr,                                                               inline: false },
           );
 
@@ -3391,6 +3518,8 @@ module.exports = {
   recordLastSeen, getLastSeen,
   // warnings
   removeWarningAt,
+  // donators
+  DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
   isOwner, isBlacklisted,
 };
