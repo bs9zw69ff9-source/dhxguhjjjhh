@@ -444,18 +444,24 @@ const FACTION_RANKS = {
     },
   },
   "Legion": {
-    order:   ["Recruit", "Legionnaire", "Veteran Legionnaire", "Legate"],
+    order:   ["Recruit", "Legionnaire", "Prime Legionary", "Veteran Legionnaire", "Centurion", "Praetorian", "Legate"],
     default: "Recruit",
     badges:  {
       "Recruit":             "🪖",
       "Legionnaire":         "⚔️",
+      "Prime Legionary":     "🗡️",
       "Veteran Legionnaire": "🎖️",
+      "Centurion":           "🏅",
+      "Praetorian":          "🛡️",
       "Legate":              "👑",
     },
     rankFiles: {
       "Recruit":             "legionrecruit.txt",
       "Legionnaire":         "legionlegionnaire.txt",
+      "Prime Legionary":     "legionprimelegionary.txt",
       "Veteran Legionnaire": "legionveteranlegionnaire.txt",
+      "Centurion":           "legioncenturion.txt",
+      "Praetorian":          "legionpraetorian.txt",
       "Legate":              "legionlegate.txt",
     },
   },
@@ -474,14 +480,16 @@ const FACTION_RANKS = {
     },
   },
   "Khans": {
-    order:   ["Low Rank", "High Rank"],
+    order:   ["Low Rank", "Mid Rank", "High Rank"],
     default: "Low Rank",
     badges:  {
       "Low Rank":  "🪖",
+      "Mid Rank":  "⚔️",
       "High Rank": "👑",
     },
     rankFiles: {
       "Low Rank":  "khanslowrank.txt",
+      "Mid Rank":  "khanmidrank.txt",
       "High Rank": "khansspawn.txt",
     },
   },
