@@ -103,6 +103,9 @@ const ok = (cond, msg) => {
   const data = { PlayerList: [ { Username: " Al " }, { username: "Bo" }, { PlayerName: "Ca" }, { name: "Da" }, { Name: "Ev" }, {}, { Username: "  " } ] };
   ok(JSON.stringify(bot.extractPlayerNames(data)) === '["Al","Bo","Ca","Da","Ev"]', "extractPlayerNames variants/trim/blank");
   ok(JSON.stringify(bot.extractPlayerNames(null)) === "[]", "extractPlayerNames null-safe");
+  ok(bot.bar(5, 10, 10) === "█████░░░░░", "bar renders half meter");
+  ok(bot.bar(0, 0, 6) === "░░░░░░", "bar handles max=0 safely");
+  ok(bot.bar(99, 10, 4) === "████", "bar clamps over-full to width");
 
   console.log(`\n${pass} passed, ${fail} failed`);
   try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch {}

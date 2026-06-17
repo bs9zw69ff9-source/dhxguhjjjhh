@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **UI overhaul** — unified visual identity across embeds: a branded author
+  header with the bot's avatar, consistent timestamps/footers, avatar
+  thumbnails on showcase embeds, refined section rules, status pips, and
+  unicode meter bars. Applied to `/help`, `/ping`, `/stats`, `/serverinfo`,
+  `/find`, the leaderboard, the player list, every paginated list, and all
+  moderation-action confirmations.
+
 ### Added
 - **Per-rank caps** within each faction: `/faction setrankcap <faction> <rank> <cap>`
   (0 = unlimited). Enforced on `/faction add`, `/faction rank`, and

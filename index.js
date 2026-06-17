@@ -810,7 +810,7 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
     new ButtonBuilder().setCustomId("pg_ind").setLabel(`Page ${p + 1} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
     new ButtonBuilder().setCustomId("pg_next").setEmoji("▶️").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
   );
-  const render = (p) => ({ embeds: [buildEmbed(pages[p], p, total)], components: total > 1 ? [row(p)] : [] });
+  const render = (p) => ({ embeds: [brand(buildEmbed(pages[p], p, total))], components: total > 1 ? [row(p)] : [] });
 
   if (interaction.deferred || interaction.replied) await interaction.editReply(render(page));
   else await interaction.reply({ ...render(page), ephemeral });
@@ -834,63 +834,98 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
    EMBED BUILDERS
    ================================================================ */
 const DIVIDER = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬";
+const RULE    = "─────────────────────────────";
+const BRAND_NAME = "MOJAVE AUTHORITY";
 
+/* ================================================================
+   VISUAL SYSTEM  (consistent branding across every embed)
+   ================================================================ */
+function brandIcon() { try { return client.user?.displayAvatarURL?.({ size: 128 }) ?? null; } catch { return null; } }
+
+/** Stamp an embed with the bot's identity: author header (+ avatar),
+    timestamp, and optional thumbnail / footer. One look, everywhere. */
+function brand(embed, { thumb = false, footer } = {}) {
+  const icon = brandIcon();
+  embed.setAuthor(icon ? { name: BRAND_NAME, iconURL: icon } : { name: BRAND_NAME });
+  if (thumb && icon) embed.setThumbnail(icon);
+  if (footer) embed.setFooter(typeof footer === "string" ? { text: footer } : footer);
+  embed.setTimestamp();
+  return embed;
+}
+
+/** Unicode progress/meter bar, e.g. ███████░░░░░ */
+function bar(value, max, width = 12) {
+  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  const filled = Math.round(ratio * width);
+  return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
+}
+const pip = (ok) => (ok ? "🟢" : "🔴");
+
+/* A blockquote-styled hero line used at the top of feature embeds. */
+function hero(quoteText) { return `> *${quoteText}*\n${RULE}`; }
+
+/* ================================================================
+   EMBED BUILDERS
+   ================================================================ */
 function successEmbed(title, description, quoteCategory = "system") {
-  return new EmbedBuilder().setColor(NV.AMBER)
-    .setTitle(`✅  ${title}`).setDescription(description)
-    .setFooter({ text: randomQuote(quoteCategory) }).setTimestamp();
+  return brand(new EmbedBuilder().setColor(NV.AMBER)
+    .setTitle(`✅  ${title}`)
+    .setDescription(`${description}`),
+    { footer: { text: randomQuote(quoteCategory) } });
 }
 function errorEmbed(title, description) {
-  return new EmbedBuilder().setColor(NV.RUST_RED)
-    .setTitle(`☢️  ${title}`).setDescription(description)
-    .setFooter({ text: "Securitron network active. Incident logged." }).setTimestamp();
+  return brand(new EmbedBuilder().setColor(NV.RUST_RED)
+    .setTitle(`☢️  ${title}`)
+    .setDescription(`${description}`),
+    { footer: { text: "Securitron network active · incident logged" } });
 }
 function warningEmbed(title, description) {
-  return new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle(`⚠️  ${title}`).setDescription(description).setTimestamp();
+  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
+    .setTitle(`⚠️  ${title}`)
+    .setDescription(`${description}`));
 }
 function adminOnlyEmbed() {
-  return new EmbedBuilder().setColor(NV.DEEP_BLACK)
+  return brand(new EmbedBuilder().setColor(NV.DEEP_BLACK)
     .setTitle("🎰  Access Denied — Mr. House's Domain")
-    .setDescription('> *"I didn\'t survive two centuries to be overruled by the uninvited."*\n\nThis command is restricted to **Administrators** only.')
-    .setFooter({ text: "Unauthorized access attempt logged." }).setTimestamp();
+    .setDescription('> *"I didn\'t survive two centuries to be overruled by the uninvited."*\n\nThis command is restricted to **Administrators** only.'),
+    { footer: { text: "Unauthorized access attempt logged" } });
 }
 function modOnlyEmbed() {
-  return new EmbedBuilder().setColor(NV.DEAD_GREY)
+  return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
     .setTitle("🛡️  Clearance Required")
-    .setDescription('> *"You don\'t have the credentials for this, friend."*\n\nThis command requires the **Moderator** role.')
-    .setFooter({ text: "Access restricted. Civilian status confirmed." }).setTimestamp();
+    .setDescription('> *"You don\'t have the credentials for this, friend."*\n\nThis command requires the **Moderator** role.'),
+    { footer: { text: "Access restricted · civilian status confirmed" } });
 }
 function blacklistedEmbed(entry) {
   const reason = entry?.reason ? `\n\n**Reason:** ${entry.reason}` : "";
-  return new EmbedBuilder().setColor(NV.LEGION_RED)
+  return brand(new EmbedBuilder().setColor(NV.LEGION_RED)
     .setTitle("⛔  Blacklisted — Access Revoked")
-    .setDescription(`> *"You're persona non grata around here. The Securitrons won't lift a finger for you."*\n\nYou have been **blacklisted** from using this bot. All commands are unavailable to you.${reason}`)
-    .setFooter({ text: "Contact an administrator if you believe this is a mistake." }).setTimestamp();
+    .setDescription(`> *"You're persona non grata around here. The Securitrons won't lift a finger for you."*\n\nYou have been **blacklisted** from using this bot. All commands are unavailable to you.${reason}`),
+    { footer: { text: "Contact an administrator if you believe this is a mistake" } });
 }
 function factionLeaderOnlyEmbed() {
-  return new EmbedBuilder().setColor(NV.NCR_TAN)
+  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
     .setTitle("⚔️  Faction Authority Required")
-    .setDescription('> *"Only faction leaders pull strings around here, stranger."*\n\nRequires the **Faction Leader** role (or Moderator).')
-    .setFooter({ text: "Faction access not verified." }).setTimestamp();
+    .setDescription('> *"Only faction leaders pull strings around here, stranger."*\n\nRequires the **Faction Leader** role (or Moderator).'),
+    { footer: { text: "Faction access not verified" } });
 }
 function factionLeaderStrictEmbed() {
-  return new EmbedBuilder().setColor(NV.NCR_TAN)
+  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
     .setTitle("⚔️  Faction Leader Authority Required")
-    .setDescription('> *"Rank assignments are the sole domain of faction leadership."*\n\nThis action requires the **Faction Leader** role specifically.')
-    .setFooter({ text: "Rank authority not verified." }).setTimestamp();
+    .setDescription('> *"Rank assignments are the sole domain of faction leadership."*\n\nThis action requires the **Faction Leader** role specifically.'),
+    { footer: { text: "Rank authority not verified" } });
 }
 function emptyIdEmbed() {
-  return new EmbedBuilder().setColor(NV.NCR_TAN)
+  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
     .setTitle("📭  No Courier ID Provided")
-    .setDescription("A valid **Courier ID** or username is required.\n\n💡 *Start typing in the player field — autocomplete surfaces anyone currently online.*")
-    .setFooter({ text: "Tip: Manual IDs are accepted if the player is offline." }).setTimestamp();
+    .setDescription("A valid **Courier ID** or username is required.\n\n💡 *Start typing in the player field — autocomplete surfaces anyone currently online.*"),
+    { footer: { text: "Tip: manual IDs are accepted if the player is offline" } });
 }
 function rateLimitEmbed() {
-  return new EmbedBuilder().setColor(NV.DEAD_GREY)
+  return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
     .setTitle("⏱️  Slow Down, Courier")
-    .setDescription("You're issuing commands too quickly. Wait a moment and try again.")
-    .setFooter({ text: "Rate limit active." }).setTimestamp();
+    .setDescription("You're issuing commands too quickly. Wait a moment and try again."),
+    { footer: { text: "Rate limit active" } });
 }
 
 /* ================================================================
@@ -1234,26 +1269,27 @@ function writePlayerBalance(playerId, amount) {
 function buildPlayerListEmbed(raw, server) {
   const data   = parseRcon(raw);
   const label  = serverLabel(server);
-  const embed  = new EmbedBuilder().setTitle(`${serverEmoji(server)}  Active Couriers — ${label}`).setTimestamp();
+  const embed  = new EmbedBuilder().setTitle(`${serverEmoji(server)}  Active Couriers — ${label}`);
 
   if (!data?.Successful) {
-    return embed.setColor(NV.RUST_RED).setDescription(
-      "### ☢️  Signal Lost\nCannot reach the server.\n\n**Possible causes:**\n· Server offline\n· RCON credentials wrong in `.env`\n· Network blocked"
-    ).setFooter({ text: "Connection failed" });
+    return brand(embed.setColor(NV.RUST_RED).setDescription(
+      `${hero("Signal lost — cannot reach the server.")}\n**Possible causes:**\n· Server offline\n· RCON credentials wrong in \`.env\`\n· Network blocked`
+    ), { footer: { text: `${label} · connection failed` } });
   }
   const players = data.PlayerList ?? [];
   if (!players.length) {
-    return embed.setColor(NV.IRRAD_GREEN)
-      .setDescription("### 🌵  Wasteland is Quiet\n*No couriers online.*\nBe the first one out there.")
-      .setFooter({ text: `${label} · 0 online` });
+    return brand(embed.setColor(NV.IRRAD_GREEN)
+      .setDescription(`${hero("The wasteland is quiet.")}\n*No couriers online — be the first one out there.*`),
+      { footer: { text: `${label} · 0 online` } });
   }
   const lines = players.map((p, i) => {
     const name = p.name ?? p.Name ?? p.username ?? p.Username ?? "Unknown";
     const id   = p.id   ?? p.Id   ?? p.uniqueId ?? "";
     return `\`${String(i + 1).padStart(2, "0")}\`  **${name}**${id ? `  ·  \`${id}\`` : ""}`;
   }).join("\n");
-  return embed.setColor(NV.IRRAD_GREEN).setDescription(lines)
-    .setFooter({ text: `${label} · ${players.length} courier${players.length !== 1 ? "s" : ""} online` });
+  return brand(embed.setColor(NV.IRRAD_GREEN)
+    .setDescription(`${hero(`**${players.length}** courier${players.length !== 1 ? "s" : ""} active on ${label}.`)}\n${lines}`),
+    { footer: { text: `${label} · ${players.length} online` } });
 }
 
 /* ================================================================
@@ -1363,7 +1399,7 @@ async function processWagePayout() {
     .setDescription(`> *${randomQuote("wages")}*\n\n${DIVIDER}\n**${results.paid.length}** paid  ·  **${results.skipped.length}** skipped  ·  **${results.failed.length}** failed`)
     .setFooter({ text: "The House always pays its debts." }).setTimestamp();
   for (const f of chunkFields(lines, "📋  Payout Ledger")) embed.addFields(f);
-  await logAction(embed);
+  brand(embed); await logAction(embed);
 }
 
 /* ================================================================
@@ -1392,15 +1428,20 @@ function rankLabel(i) {
 function buildLeaderboardEmbed() {
   const entries = buildLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.GOLD)
-    .setTitle(`☢️  New Vegas Caps — Top ${LEADERBOARD_TOP_N}`)
-    .setFooter({ text: `Updated every 6h  ·  v${BOT_VERSION}` }).setTimestamp();
-  if (!entries) return embed.setColor(NV.RUST_RED).setDescription("### ☢️  Vault Records Inaccessible\n`MODSAVE_PATH` not configured or unreadable.\nCheck your `.env` file.");
-  if (!entries.length) return embed.setColor(NV.IRRAD_GREEN).setDescription("### 🌵  No Ledgers Found\nNo cap records on file yet.");
-  return embed.setDescription(
-    `> *"War never changes. But caps? Caps fluctuate."*\n\n${DIVIDER}\n` +
-    entries.map((e, i) => `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} caps`).join("\n") +
-    `\n${DIVIDER}`
-  );
+    .setTitle(`💰  New Vegas Caps — Top ${LEADERBOARD_TOP_N}`);
+  if (!entries) return brand(embed.setColor(NV.RUST_RED)
+    .setDescription(`${hero("Vault records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
+    { footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+  if (!entries.length) return brand(embed.setColor(NV.IRRAD_GREEN)
+    .setDescription(`${hero("No ledgers found.")}\nNo cap records on file yet.`),
+    { footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+  const top = entries[0]?.balance || 1;
+  const body = entries.map((e, i) => {
+    const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
+    return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} caps${meter}`;
+  }).join("\n");
+  return brand(embed.setDescription(`${hero("War never changes. But caps? Caps fluctuate.")}\n${body}`),
+    { thumb: true, footer: { text: `Updated every 6h · ${BUILD_ID}` } });
 }
 
 let lastLeaderboardMsgId = null;
@@ -1925,7 +1966,8 @@ client.on("interactionCreate", async (interaction) => {
                 "🎖️  Rank changes update both the rank registry and the rank-specific spawn files automatically",
               ].join("\n") },
           )
-          .setTimestamp().setFooter({ text: `Mojave Authority Bot  ·  ${BUILD_ID}  ·  ${BOT_COPYRIGHT}` });
+          .setFooter({ text: `${BUILD_ID}  ·  ${BOT_COPYRIGHT}` });
+        brand(embed, { thumb: true });
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -1942,25 +1984,29 @@ client.on("interactionCreate", async (interaction) => {
         const rtt  = Date.now() - start;
         const s1ok = r1.status === "fulfilled" && parseRcon(r1.value)?.Successful;
         const s2ok = r2.status === "fulfilled" && parseRcon(r2.value)?.Successful;
-        const color = (s1ok && s2ok) ? NV.IRRAD_GREEN : (s1ok || s2ok) ? NV.AMBER : NV.RUST_RED;
-        const headline = (s1ok && s2ok) ? "All systems nominal — Securitron network active."
-          : (s1ok || s2ok) ? "Partial connectivity — one server unreachable."
-          : "⚠️  Both servers unreachable — check RCON config.";
-        return interaction.editReply({ embeds: [
-          new EmbedBuilder().setColor(color).setTitle("📡  System Status — Mojave Authority Bot")
-            .setDescription(`> *${headline}*\n\n${DIVIDER}`)
-            .addFields(
-              { name: "🤖  Bot",       value: `🟢  Online\n\`${client.ws.ping}ms\``,                           inline: true },
-              { name: "1️⃣  Server 1", value: s1ok ? "🟢  Reachable" : "🔴  Unreachable",                      inline: true },
-              { name: "2️⃣  Server 2", value: s2ok ? "🟢  Reachable" : "🔴  Unreachable",                      inline: true },
-              { name: "⚡  RTT",       value: `\`${rtt}ms\``,                                                   inline: true },
-              { name: "⏱️  Uptime",    value: formatUptime(Date.now() - BOT_START_MS),                          inline: true },
-              { name: "👥  Cached",    value: `S1: \`${playerCache.server1.length}\`  S2: \`${playerCache.server2.length}\``, inline: true },
-              { name: "🔖  Build",     value: `\`${BUILD_ID}\``,                                                inline: true },
-              { name: "💾  Mod Log",   value: `\`${loadModLog().length}\` entries`,                             inline: true },
-              { name: "⚠️  Open Bans", value: `\`${loadBans().length}\` active`,                               inline: true },
-            ).setTimestamp().setFooter({ text: `${BOT_COPYRIGHT}  ·  authored by ${BOT_AUTHOR}` })
-        ]});
+        const okCount = (s1ok ? 1 : 0) + (s2ok ? 1 : 0);
+        const color = okCount === 2 ? NV.IRRAD_GREEN : okCount === 1 ? NV.AMBER : NV.RUST_RED;
+        const headline = okCount === 2 ? "All systems nominal — Securitron network active."
+          : okCount === 1 ? "Partial connectivity — one server unreachable."
+          : "Both servers unreachable — check RCON config.";
+        const wsPing = Math.max(0, client.ws.ping);
+        const health = `${pip(true)}${pip(s1ok)}${pip(s2ok)}`;
+        const embed = new EmbedBuilder().setColor(color)
+          .setTitle("📡  System Status")
+          .setDescription(`${hero(headline)}\n${health}  ·  **${okCount + 1}/3** nodes online`)
+          .addFields(
+            { name: "🤖  Bot",        value: `${pip(true)}  Online\n\`gateway ${wsPing}ms\``,                    inline: true },
+            { name: "1️⃣  Server 1",   value: s1ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
+            { name: "2️⃣  Server 2",   value: s2ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
+            { name: "⚡  RTT",        value: `\`${bar(Math.min(rtt, 1000), 1000, 10)}\`\n\`${rtt}ms\``,           inline: true },
+            { name: "⏱️  Uptime",     value: `\`${formatUptime(Date.now() - BOT_START_MS)}\``,                    inline: true },
+            { name: "👥  Cached",     value: `S1 \`${playerCache.server1.length}\` · S2 \`${playerCache.server2.length}\``, inline: true },
+            { name: "💾  Mod Log",    value: `\`${loadModLog().length}\` entries`,                                inline: true },
+            { name: "⚠️  Open Bans",  value: `\`${loadBans().length}\` active`,                                  inline: true },
+            { name: "🔖  Build",      value: `\`${BUILD_ID}\``,                                                   inline: true },
+          );
+        brand(embed, { thumb: true, footer: { text: `${BOT_COPYRIGHT}  ·  authored by ${BOT_AUTHOR}` } });
+        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -2008,16 +2054,16 @@ client.on("interactionCreate", async (interaction) => {
         const infos   = await Promise.all(servers.map(fetchInfo));
         const embeds  = infos.map((info, i) => {
           const srv = servers[i];
-          return new EmbedBuilder()
+          const e = new EmbedBuilder()
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
             .setTitle(`${serverEmoji(srv)}  ${info.serverName}`)
+            .setDescription(`${pip(info.ok)}  ${info.ok ? "Online" : "Offline"}  ·  \`${bar(info.players, Number(info.maxPlayers) || info.players || 1, 10)}\``)
             .addFields(
               { name: "🗺️  Map",     value: info.mapLabel,                          inline: true },
               { name: "🎮  Mode",    value: info.gameMode,                          inline: true },
               { name: "👥  Players", value: `${info.players} / ${info.maxPlayers}`, inline: true },
-              { name: "📡  Status",  value: info.ok ? "🟢  Online" : "🔴  Offline", inline: true },
-            )
-            .setTimestamp().setFooter({ text: `${serverLabel(srv)} · live data` });
+            );
+          return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
         return interaction.editReply({ embeds });
       }
@@ -2046,9 +2092,8 @@ client.on("interactionCreate", async (interaction) => {
         }
         if (!matches.length) {
           return interaction.editReply({ embeds: [
-            new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("🔍  No Matches Found")
-              .setDescription(`No couriers matching **"${query}"** are online on either server.\n\n*Try a shorter search term, or check \`/listplayers\` for the full list.*`)
-              .setTimestamp()
+            brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("🔍  No Matches Found")
+              .setDescription(`${hero(`No couriers matching "${query}" are online.`)}\n*Try a shorter search term, or check \`/listplayers\`.*`))
           ]});
         }
         const lines = matches.map((m) => {
@@ -2058,10 +2103,9 @@ client.on("interactionCreate", async (interaction) => {
           return `\`[${srvStr}]\`  **${m.name}**${hb}${warn ? `  ·  ⚠️ ${warn} warn${warn !== 1 ? "s" : ""}` : ""}`;
         });
         return interaction.editReply({ embeds: [
-          new EmbedBuilder().setColor(NV.AMBER).setTitle(`🔍  Search Results — "${query}"`)
-            .setDescription(lines.join("\n"))
-            .setFooter({ text: `${matches.length} match${matches.length !== 1 ? "es" : ""} · 🔨 = hard banned  ·  ⚠️ = warnings on record` })
-            .setTimestamp()
+          brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`🔍  Search Results — "${query}"`)
+            .setDescription(`${hero(`**${matches.length}** match${matches.length !== 1 ? "es" : ""} found.`)}\n${lines.join("\n")}`),
+            { footer: { text: `🔨 = hard banned  ·  ⚠️ = warnings on record` } })
         ]});
       }
 
@@ -2084,7 +2128,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🛡️  By",      value: `${interaction.user}`,                              inline: true },
             { name: "📋  Reason",  value: reason,                                             inline: false },
           ).setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -2121,7 +2165,7 @@ client.on("interactionCreate", async (interaction) => {
           if (next) embed.addFields({ name: "📊  Progress", value: `${count}/${next.count} warnings — next: **${next.label}**`, inline: false });
         }
         embed.setFooter({ text: `Total warnings: ${count}` }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -2171,7 +2215,7 @@ client.on("interactionCreate", async (interaction) => {
         saveWarns(warns);
         writeModLog({ action: "clearwarnings", playerId, count, by: interaction.user.tag });
         const embed = successEmbed("Warnings Cleared", `**${count}** warning${count !== 1 ? "s" : ""} cleared for \`${playerId}\`.\n\n**Cleared by:** ${interaction.user}`);
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -2198,7 +2242,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "⚖️  Was",             value: `*${removed.reason}*  ·  by *${removed.by}*  ·  <t:${ts}:R>`, inline: false },
             { name: "🛡️  Removed By",      value: `${interaction.user}`,                    inline: false },
           ).setFooter({ text: "Single warning removed — others renumbered" }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -2245,7 +2289,7 @@ client.on("interactionCreate", async (interaction) => {
           const count = await addPlayerNote(playerId, text, interaction.user.tag);
           writeModLog({ action: "note-add", playerId, reason: text, by: interaction.user.tag });
           const embed = successEmbed("Note Added", `Staff note added to \`${playerId}\` *(now ${count} note${count !== 1 ? "s" : ""})*.\n\n**Note:** ${text}\n**By:** ${interaction.user}`);
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2257,7 +2301,7 @@ client.on("interactionCreate", async (interaction) => {
           if (!count) return interaction.reply({ embeds: [warningEmbed("No Notes", `\`${playerId}\` has no staff notes to clear.`)], ephemeral: true });
           writeModLog({ action: "note-clear", playerId, count, by: interaction.user.tag });
           const embed = successEmbed("Notes Cleared", `**${count}** staff note${count !== 1 ? "s" : ""} deleted for \`${playerId}\`.\n\n**By:** ${interaction.user}`);
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2341,7 +2385,7 @@ client.on("interactionCreate", async (interaction) => {
           )
           .setFooter({ text: replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires" })
           .setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -2367,7 +2411,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🛡️  Pardoned By", value: `${interaction.user}`, inline: true },
             { name: "📋  Record",       value: removed ? "✅  Temp ban record cleared." : "ℹ️  No temp ban record — RCON Unban sent.", inline: false },
           ).setFooter({ text: randomQuote("unban") }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -2506,7 +2550,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  Admin",    value: `${interaction.user}`,                              inline: false },
           ).setFooter({ text: randomQuote("ban") }).setTimestamp();
         if (notes) embed.addFields({ name: "📝  Notes", value: notes });
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -2559,7 +2603,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "🔒  Updated By",    value: `${interaction.user}`,                                                 inline: false },
             ).setFooter({ text: "Hard ban registry updated" }).setTimestamp();
           if (notes) embed.addFields({ name: "📝  Note Added", value: notes });
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.editReply({ embeds: [embed] });   // ← CHANGED
         }
         registry.push({ primaryId: playerId, linkedIds: linkedId ? [linkedId] : [], reason, server: serverLabel(server), bannedBy: interaction.user.tag, bannedAt: Date.now(), updatedAt: null, updatedBy: null });
@@ -2580,7 +2624,7 @@ client.on("interactionCreate", async (interaction) => {
         if (linkedId) embed.addFields({ name: "🔗  Linked Account", value: `\`${linkedId}\`  — also banned and linked`, inline: false });
         if (notes)    embed.addFields({ name: "📝  Notes", value: notes, inline: false });
         embed.addFields({ name: "🔒  Admin", value: `${interaction.user}`, inline: false }).setFooter({ text: randomQuote("hardban") }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
       }
 
@@ -2597,7 +2641,7 @@ client.on("interactionCreate", async (interaction) => {
         ns[hb.primaryId].push({ text: note, by: interaction.user.tag, at: Date.now() });
         saveNotes(ns);
         const embed = successEmbed("Note Appended", `Note added to \`${hb.primaryId}\`'s hard ban record.\n\n**Note:** ${note}\n**Added by:** ${interaction.user}`);
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -2662,7 +2706,7 @@ client.on("interactionCreate", async (interaction) => {
           const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🧹  Temp Bans Cleared")
             .setDescription(`> *"Clean slate."*\n\n${DIVIDER}\n**${ok.length}** released${fail.length ? `  ·  **${fail.length}** failed` : ""}\n\n${lines.join("\n")}`)
             .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return btn.editReply({ embeds: [embed], components: [] });
         } catch {
           return interaction.editReply({ embeds: [warningEmbed("Timed Out", "Confirmation expired. No changes made.")], components: [] });
@@ -2697,7 +2741,7 @@ client.on("interactionCreate", async (interaction) => {
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🔑  Role Permissions Updated")
           .setDescription(changes.join("\n"))
           .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -2757,7 +2801,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "📋  Reason", value: reason ?? "*No reason provided*",     inline: false },
               { name: "🔒  By",     value: `${interaction.user}`,                inline: false },
             ).setFooter({ text: "User can no longer use any bot command." }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2770,7 +2814,7 @@ client.on("interactionCreate", async (interaction) => {
           saveBlacklist(bl);
           writeModLog({ action: "blacklist-remove", targetUserId: target.id, by: interaction.user.tag });
           const embed = successEmbed("Blacklist Lifted", `<@${target.id}> can use bot commands again.\n\n**Lifted by:** ${interaction.user}`);
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2817,7 +2861,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "🎯  Courier", value: `\`${playerId}\``,        inline: true },
               { name: "🔒  Added By", value: `${interaction.user}`,   inline: true },
             ).setFooter({ text: "Written to the donator file." }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2832,7 +2876,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "🎯  Courier",   value: `\`${playerId}\``,      inline: true },
               { name: "🔒  Removed By", value: `${interaction.user}`, inline: true },
             ).setFooter({ text: "Removed from the donator file." }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2878,7 +2922,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🛡️  By",       value: `${interaction.user}`,                              inline: true },
             { name: "📡  Delivery", value: deliveryNote,                                       inline: false },
           ).setFooter({ text: "RCON Notify broadcast" }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
       }
 
@@ -2915,7 +2959,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: isGive ? "🔒  Granted By" : "🔒  Revoked By", value: `${interaction.user}`, inline: false },
             { name: isGive ? "♻️  Persistence" : "🗑️  Persistence", value: isGive ? "✅  Will be re-applied automatically on rejoin." : "✅  Removed from persistent store — will not reapply.", inline: false },
           ).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
       }
 
@@ -2944,7 +2988,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "👥  Current Size",  value: `${current} / ${cap}${current > cap ? "  ⚠️  over cap!" : ""}`, inline: true },
               { name: "🔒  Set By",        value: `${interaction.user}`,                                          inline: false },
             ).setFooter({ text: "Cap enforced on /faction add" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -2974,7 +3018,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "👥  Currently",    value: `${current}${cap > 0 ? ` / ${cap}${current > cap ? "  ⚠️  over cap!" : ""}` : ""}`, inline: true },
               { name: "🔒  Set By",       value: `${interaction.user}`,                                                inline: false },
             ).setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
@@ -3149,7 +3193,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "⚔️  Assigned By", value: `${interaction.user}`,            inline: true },
               { name: "📁  Rank Files",  value: `Removed from \`${getFactionRankConfig(faction)?.rankFiles[oldRank] ?? "n/a"}\`\nAdded to \`${getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a"}\``, inline: false },
             ).setFooter({ text: "Rank change logged · rank files updated on disk" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
 
@@ -3221,7 +3265,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "🛡️  Transferred By", value: `${interaction.user}`,                                     inline: true },
               { name: "📁  Rank Files",     value: `Cleared from **${fromFaction}** rank files\nAdded to \`${getFactionRankConfig(toFaction)?.rankFiles[newRank] ?? "n/a"}\``, inline: false },
             ).setFooter({ text: "Both faction files updated · rank files updated on disk · audit logged" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
 
@@ -3275,7 +3319,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "🔒  Added By",       value: `${interaction.user}`,       inline: true },
               { name: "📁  Rank File",      value: `\`${rankFile}\``,           inline: true },
             ).setFooter({ text: "Main spawn file + rank file updated · audit logged" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
 
@@ -3311,7 +3355,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "👥  Roster Size", value: `${lines.length} / ${cap}`,   inline: true },
               { name: "🔒  Removed By",  value: `${interaction.user}`,        inline: true },
             ).setFooter({ text: "Removed from spawn file and all rank files · audit logged" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
 
@@ -3381,7 +3425,7 @@ client.on("interactionCreate", async (interaction) => {
             .setDescription(`> *"Find new ground, soldier."*\n\n${DIVIDER}`)
             .addFields({ name: "🖥️  Server", value: `${serverEmoji(server)}  ${serverLabel(server)}`, inline: true }, { name: "🔒  By", value: `${interaction.user}`, inline: true })
             .setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return btn.editReply({ embeds: [embed], components: [] });
         } catch {
           return interaction.editReply({ embeds: [warningEmbed("Timed Out", "Confirmation expired. No changes made.")], components: [] });
@@ -3412,7 +3456,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "💵  New Balance",value: `**${newBal.toLocaleString()} caps**`,      inline: true },
               { name: "🔒  By",        value: `${interaction.user}`,                      inline: false },
             ).setFooter({ text: randomQuote("caps") }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
         if (existing?.tier === tierKey) {
@@ -3430,7 +3474,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "⬆️  New",    value: `**${tier.label}** (+${tier.amount}/wk)`,             inline: true },
               { name: "🔒  By",     value: `${interaction.user}`,                                inline: false },
             ).setFooter({ text: "Payroll updated — takes effect next cycle" }).setTimestamp();
-          await logAction(embed);
+          brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
         wages.push({ playerId, tier: tierKey, addedBy: interaction.user.tag, addedAt: Date.now(), lastPaidAt: null, updatedAt: null, updatedBy: null });
@@ -3446,7 +3490,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  By",        value: `${interaction.user}`,                                          inline: true },
             { name: "⏰  Next Payout",value: "Within 7 days of enrolment",                                  inline: true },
           ).setFooter({ text: randomQuote("wages") }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -3468,7 +3512,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  By",    value: `${interaction.user}`,                                       inline: true },
             { name: "ℹ️  Note",  value: "Existing balance unchanged. No further weekly payouts.",    inline: false },
           ).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -3539,7 +3583,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "📋  Reason",     value: reason,                                 inline: false },
             { name: "🔒  By",        value: `${interaction.user}`,                  inline: false },
           ).setFooter({ text: randomQuote("caps") }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -3565,7 +3609,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "💸  Amount",value: `**${amount.toLocaleString()} caps**`,                                       inline: true },
             { name: "🔒  By",    value: `${interaction.user}`,                                                       inline: false },
           ).setFooter({ text: randomQuote("caps") }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -3591,7 +3635,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "📋  Reason",      value: reason,                                               inline: false },
             { name: "🔒  By",         value: `${interaction.user}`,                                inline: false },
           ).setFooter({ text: "Manual cap adjustment · logged" }).setTimestamp();
-        await logAction(embed);
+        brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -3629,12 +3673,12 @@ client.on("interactionCreate", async (interaction) => {
         const color = hb ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`📋  Courier Dossier — ${playerId}`)
+          .setTitle(`🪪  Courier Dossier — ${playerId}`)
           .setDescription(
-            hb ? `> *"Not welcome under any name."*\n\n${DIVIDER}` :
-            tb ? `> *"Currently serving exile — ${formatTimeLeft(tb.expires)} remaining."*\n\n${DIVIDER}` :
-            online ? `> *"Currently active on the Strip."*\n\n${DIVIDER}` :
-            `> *"Offline — last tracked playtime shown."*\n\n${DIVIDER}`
+            hb ? hero("Not welcome under any name.") :
+            tb ? hero(`Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
+            online ? hero("Currently active on the Strip.") :
+            hero("Offline — last tracked playtime shown.")
           )
           .addFields(
             { name: "📡  Status",        value: statusStr,                                                          inline: true },
@@ -3660,7 +3704,7 @@ client.on("interactionCreate", async (interaction) => {
           embed.addFields({ name: "📋  Mod Actions", value: `**${history.length}** total — use \`/history ${playerId}\` to view`, inline: false });
         }
 
-        embed.setFooter({ text: "Playtime tracked every 60s since bot deployment" }).setTimestamp();
+        brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });
         return interaction.reply({ embeds: [embed] });
       }
 
@@ -3701,7 +3745,7 @@ module.exports = {
   // owner / access
   isOwner, isBlacklisted,
   // ui / parsing helpers
-  splitPages, extractPlayerNames,
+  splitPages, extractPlayerNames, bar,
   // faction rank caps
   getFactionRankCap, getFactionRankCaps, setFactionRankCap,
 };
