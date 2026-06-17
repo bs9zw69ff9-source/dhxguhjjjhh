@@ -53,6 +53,8 @@ function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 
 /* Roles granted when a staff application is accepted (see /acceptstaffapp). */
 const STAFF_ROLE_IDS = ["1500874387857997824", "1498172888224628776"];
+/* Channel where accepted-staff welcome announcements are posted. */
+const STAFF_ANNOUNCE_CHANNEL = "1516187330145161278";
 
 /* ================================================================
    STRUCTURED LOGGER
@@ -2885,6 +2887,28 @@ client.on("interactionCreate", async (interaction) => {
           logger.warn("StaffApp", `Role grant failed for ${user.id}: ${err.message}`);
         }
 
+        // public welcome announcement
+        let announced = false, announceErr = null;
+        try {
+          const ch = await client.channels.fetch(STAFF_ANNOUNCE_CHANNEL);
+          if (ch?.isTextBased()) {
+            const welcome = brand(new EmbedBuilder().setColor(NV.AMBER)
+              .setTitle("🎉  New Staff Member!")
+              .setDescription(
+                `Everyone give a warm welcome to <@${user.id}> — they've **joined the Nuclear RP Staff Team!** ☢️\n\n` +
+                `Show them the ropes and treat them like one of the crew. Welcome aboard! 🤝`
+              )
+              .setFooter({ text: "Nuclear RP Staff Team" }));
+            await ch.send({ content: `<@${user.id}>`, embeds: [welcome] });
+            announced = true;
+          } else {
+            announceErr = "channel is not text-based";
+          }
+        } catch (err) {
+          announceErr = err.message;
+          logger.warn("StaffApp", `Announce failed: ${err.message}`);
+        }
+
         writeModLog({ action: "staffapp-accept", targetUserId: user.id, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(rolesGranted ? NV.IRRAD_GREEN : NV.NCR_TAN)
           .setTitle("✅  Staff Application Accepted")
@@ -2893,6 +2917,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
             { name: "📨  DM",        value: sent ? "✅  Acceptance DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
             { name: "🎖️  Roles",     value: rolesGranted ? `✅  Granted <@&${STAFF_ROLE_IDS[0]}> & <@&${STAFF_ROLE_IDS[1]}>` : `⚠️  Could not grant roles — ${roleErr || "check the bot's role position & Manage Roles permission"}`, inline: false },
+            { name: "📢  Announced",  value: announced ? `✅  Posted in <#${STAFF_ANNOUNCE_CHANNEL}>` : `⚠️  Couldn't post announcement — ${announceErr || "check the channel ID & bot permissions"}`, inline: false },
             { name: "🔒  By",        value: `${interaction.user}`, inline: false },
           );
         brand(embed); await logAction(embed);
