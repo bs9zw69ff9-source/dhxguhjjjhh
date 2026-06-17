@@ -24,10 +24,6 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
-  StringSelectMenuBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
 } = require("discord.js");
 
 /* ================================================================
@@ -1516,196 +1512,92 @@ const ALL_RANK_NAMES = [...new Set(
   Object.values(FACTION_RANKS).flatMap(cfg => cfg.order)
 )].map(r => ({ name: r, value: r }));
 
-/* ================================================================
-   TOPIC MENU SYSTEM  (select-menu + modal driven commands)
-   ================================================================
-   Commands are grouped by topic into a handful of parent commands. Running
-   a parent (e.g. /bans) shows a dropdown of that group's actions; picking
-   one opens a modal to collect inputs, which is then dispatched to the same
-   handler logic as before. A few commands that need Discord role/user/choice
-   pickers (faction, setroles, blacklist) stay as native commands, since a
-   text modal can't reproduce those pickers.
-   ================================================================ */
-
-// Modal field shorthands.  style: "short" | "para"
-const F = {
-  player:     { id: "playerid", label: "Courier ID / username",            style: "short", required: true,  max: 64 },
-  playerInfo: { id: "playerid", label: "Courier ID / username",            style: "short", required: true,  max: 64 },
-  server:     { id: "server",   label: "Server: server1 / server2 / both", style: "short", required: false, placeholder: "both", max: 16 },
-  reasonOpt:  { id: "reason",   label: "Reason (optional)",                 style: "para",  required: false, max: 300 },
-  reasonReq:  { id: "reason",   label: "Reason",                            style: "para",  required: true,  max: 300 },
-  duration:   { id: "duration", label: "Duration: 1h 6h 1d 3d 5d 1w 2w 1mo 3mo 6mo 1y", style: "short", required: true, placeholder: "1d", max: 8 },
-  notesOpt:   { id: "notes",    label: "Notes (optional)",                  style: "para",  required: false, max: 300 },
-  noteReq:    { id: "note",     label: "Note",                              style: "para",  required: true,  max: 500 },
-  amount:     { id: "amount",   label: "Amount (caps)",                     style: "short", required: true,  placeholder: "100", max: 12 },
-  amountSigned:{id: "amount",   label: "Amount (+credit / -debit)",         style: "short", required: true,  placeholder: "-50", max: 12 },
-};
-
-const MENU_GROUPS = {
-  bans: {
-    label: "Bans & Exiles", emoji: "📜", description: "Temp/permanent bans, hard bans, ban records",
-    actions: [
-      { key: "tempban",       label: "Temp ban",          emoji: "⏳", tier: "mod",   fields: [F.player, F.duration, F.server, F.reasonReq] },
-      { key: "unban",         label: "Unban / lift exile", emoji: "🔓", tier: "mod",  fields: [F.player, F.server] },
-      { key: "checkban",      label: "Check ban status",  emoji: "🔎", tier: "public", fields: [F.player, F.server] },
-      { key: "banlist",       label: "View ban list",     emoji: "📜", tier: "public", fields: [F.server] },
-      { key: "permban",       label: "Permanent ban",     emoji: "💀", tier: "admin", fields: [F.player, F.server, F.reasonReq, F.notesOpt] },
-      { key: "hardban",       label: "Hard ban (+ alts)", emoji: "🔨", tier: "admin", fields: [F.player, F.server, F.reasonReq, { id: "linked_id", label: "Linked alt ID (optional)", style: "short", required: false, max: 64 }, F.notesOpt] },
-      { key: "addnote",       label: "Add hard-ban note", emoji: "📝", tier: "admin", fields: [F.player, F.noteReq] },
-      { key: "hardbanlist",   label: "Hard ban registry", emoji: "🗂️", tier: "admin", fields: [] },
-      { key: "cleartempbans", label: "Clear all temp bans", emoji: "🧹", tier: "admin", fields: [] },
-    ],
-  },
-  moderation: {
-    label: "Moderation", emoji: "🛡️", description: "Kicks, warnings, notes, player dossiers",
-    actions: [
-      { key: "kick",          label: "Kick",              emoji: "👢", tier: "mod",   fields: [F.player, F.server, F.reasonOpt] },
-      { key: "warn",          label: "Warn",              emoji: "⚠️", tier: "mod",   fields: [F.player, F.reasonReq, F.server] },
-      { key: "delwarn",       label: "Remove one warning", emoji: "🧽", tier: "mod",  fields: [F.player, { id: "number", label: "Warning number (see warnings)", style: "short", required: true, placeholder: "1", max: 4 }] },
-      { key: "warnings",      label: "View warnings",     emoji: "📋", tier: "public", fields: [F.player] },
-      { key: "clearwarnings", label: "Clear all warnings", emoji: "🧹", tier: "admin", fields: [F.player] },
-      { key: "history",       label: "Mod history",       emoji: "🗒️", tier: "mod",   fields: [F.player] },
-      { key: "note_add",      label: "Add staff note",    emoji: "📝", tier: "mod",   cmd: "note", sub: "add",   fields: [F.player, F.noteReq] },
-      { key: "note_list",     label: "View staff notes",  emoji: "📑", tier: "mod",   cmd: "note", sub: "list",  fields: [F.player] },
-      { key: "note_clear",    label: "Clear staff notes", emoji: "🗑️", tier: "admin", cmd: "note", sub: "clear", fields: [F.player] },
-      { key: "stats",         label: "Player dossier",    emoji: "🪪", tier: "public", fields: [F.player] },
-      { key: "seen",          label: "Last seen",         emoji: "👁️", tier: "public", fields: [F.player] },
-    ],
-  },
-  economy: {
-    label: "Economy & Caps", emoji: "💰", description: "Balances, gifts, transfers, wages",
-    actions: [
-      { key: "checkbalance",  label: "Check balance",     emoji: "💵", tier: "public", fields: [F.player] },
-      { key: "givecaps",      label: "Give caps",         emoji: "💸", tier: "mod",   fields: [F.player, F.amount, F.reasonOpt] },
-      { key: "transfercaps",  label: "Transfer caps",     emoji: "💱", tier: "admin", fields: [{ id: "from_id", label: "From courier ID", style: "short", required: true, max: 64 }, { id: "to_id", label: "To courier ID", style: "short", required: true, max: 64 }, F.amount] },
-      { key: "adjustcaps",    label: "Adjust caps",       emoji: "⚙️", tier: "admin", fields: [F.player, F.amountSigned, F.reasonOpt] },
-      { key: "addwage",       label: "Add wage / payout", emoji: "🪙", tier: "fl",    fields: [F.player, { id: "tier", label: "Tier: low_rank/mid_rank/high_rank/mercenary", style: "short", required: true, placeholder: "low_rank", max: 16 }] },
-      { key: "removewage",    label: "Remove from payroll", emoji: "📤", tier: "fl",  fields: [F.player] },
-      { key: "wagelist",      label: "View payroll",      emoji: "📃", tier: "public", fields: [] },
-    ],
-  },
-  server: {
-    label: "Server", emoji: "🖥️", description: "Status, players, broadcasts, map, raw RCON",
-    actions: [
-      { key: "ping",          label: "Ping / status",     emoji: "📡", tier: "public", fields: [] },
-      { key: "listplayers",   label: "List players",      emoji: "👥", tier: "public", fields: [F.server] },
-      { key: "serverinfo",    label: "Server info",       emoji: "🗺️", tier: "public", fields: [F.server] },
-      { key: "find",          label: "Find player",       emoji: "🔍", tier: "public", fields: [{ id: "name", label: "Name (partial or full)", style: "short", required: true, max: 64 }] },
-      { key: "announce",      label: "Announce",          emoji: "📢", tier: "mod",   fields: [{ id: "message", label: "Message (max 200)", style: "para", required: true, max: 200 }, F.server] },
-      { key: "rotatemap",     label: "Rotate map",        emoji: "🔄", tier: "admin", fields: [F.server] },
-      { key: "manual",        label: "Manual RCON",       emoji: "🛰️", tier: "admin", fields: [{ id: "command", label: "Raw RCON command", style: "short", required: true, max: 200 }, F.server] },
-    ],
-  },
-  config: {
-    label: "Admin / Config", emoji: "🔧", description: "Menu grants and donator file",
-    actions: [
-      { key: "givemenu",      label: "Grant menu",        emoji: "🎛️", tier: "admin", fields: [F.player, F.server, { id: "menu", label: "Menu: staff / faction", style: "short", required: true, placeholder: "staff", max: 16 }] },
-      { key: "stripmenu",     label: "Revoke menu",       emoji: "🗑️", tier: "admin", fields: [F.player, F.server, { id: "menu", label: "Menu: staff / faction", style: "short", required: true, placeholder: "staff", max: 16 }] },
-      { key: "donator_add",   label: "Add donator",       emoji: "💎", tier: "admin", cmd: "donator", sub: "add",    fields: [F.player] },
-      { key: "donator_remove",label: "Remove donator",    emoji: "➖", tier: "admin", cmd: "donator", sub: "remove", fields: [F.player] },
-      { key: "donator_list",  label: "List donators",     emoji: "📃", tier: "admin", cmd: "donator", sub: "list",   fields: [] },
-    ],
-  },
-};
-
-// Flat lookup: action key -> action (with its group key attached).
-const ACTION_BY_KEY = {};
-for (const [groupKey, group] of Object.entries(MENU_GROUPS)) {
-  for (const a of group.actions) ACTION_BY_KEY[a.key] = { ...a, group: groupKey };
-}
-
-// Permission tiers for the native (non-menu) commands.
-const NATIVE_TIERS = { help: "public", faction: "fl", setroles: "admin", blacklist: "admin" };
-
-/* ---- permission + access helpers ---- */
-function accessDenialEmbed(tier, member) {
-  if (tier === "admin") return hasAdminRole(member) ? null : adminOnlyEmbed();
-  if (tier === "fl")    return (hasModRole(member) || hasFactionLeaderRole(member)) ? null : factionLeaderOnlyEmbed();
-  if (tier === "mod")   return hasModRole(member) ? null : modOnlyEmbed();
-  return null; // public
-}
-
-function normalizeServer(raw) {
-  const s = String(raw ?? "").trim().toLowerCase();
-  if (!s || ["both", "all", "b"].includes(s)) return "both";
-  if (["2", "s2", "server2", "server 2", "two"].includes(s)) return "server2";
-  return "server1";
-}
-
-/* Bridges option reads so the same handler works for chat commands, modal
-   submissions, and (input-less) select menus. */
-function optionAccessor(interaction) {
-  const isChat = interaction.isChatInputCommand && interaction.isChatInputCommand();
-  if (isChat) {
-    const op = interaction.options;
-    return {
-      getString:  (n) => op.getString(n),
-      getInteger: (n) => op.getInteger(n),
-      getRole:    (n) => op.getRole(n),
-      getUser:    (n) => op.getUser(n),
-      getSubcommand: () => op.getSubcommand(),
-      getFocused: (x) => op.getFocused(x),
-    };
-  }
-  // modal submit or select menu — read from text fields if present
-  const read = (n) => {
-    try { const v = interaction.fields?.getTextInputValue(n); return v == null || v === "" ? null : v; }
-    catch { return null; }
-  };
-  return {
-    getString:  (n) => (n === "server" ? normalizeServer(read(n)) : read(n)),
-    getInteger: (n) => { const v = read(n); if (v == null) return null; const x = parseInt(v, 10); return Number.isNaN(x) ? null : x; },
-    getRole:    () => null,
-    getUser:    () => null,
-    getSubcommand: () => interaction.__sub ?? null,
-    getFocused: () => ({ name: "", value: "" }),
-  };
-}
-
-/* ---- menu + modal builders ---- */
-function buildGroupMenuMessage(member, groupKey) {
-  const group = MENU_GROUPS[groupKey];
-  const allowed = group.actions.filter(a => !accessDenialEmbed(a.tier, member));
-  const embed = new EmbedBuilder().setColor(NV.AMBER)
-    .setTitle(`${group.emoji}  ${group.label}`)
-    .setDescription(`> *Choose an action from the menu below.*\n\n${DIVIDER}\n${group.description}`)
-    .setFooter({ text: `${BOT_COPYRIGHT}` }).setTimestamp();
-  if (!allowed.length) {
-    embed.setColor(NV.DEAD_GREY).setDescription("You don't have access to any actions in this group.");
-    return { embeds: [embed], ephemeral: true };
-  }
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(`grp:${groupKey}`)
-    .setPlaceholder(`${group.label} — pick an action…`)
-    .addOptions(allowed.slice(0, 25).map(a => ({
-      label: a.label.slice(0, 100),
-      value: a.key,
-      emoji: a.emoji,
-      description: `${a.tier === "public" ? "Everyone" : a.tier === "mod" ? "Moderator" : a.tier === "fl" ? "Faction leader" : "Admin"}${a.fields.length ? "" : " · runs immediately"}`.slice(0, 100),
-    })));
-  return { embeds: [embed], components: [new ActionRowBuilder().addComponents(select)], ephemeral: true };
-}
-
-function buildActionModal(action) {
-  const modal = new ModalBuilder().setCustomId(`act:${action.key}`).setTitle(action.label.slice(0, 45));
-  for (const f of action.fields.slice(0, 5)) {
-    const input = new TextInputBuilder()
-      .setCustomId(f.id)
-      .setLabel(f.label.slice(0, 45))
-      .setStyle(f.style === "para" ? TextInputStyle.Paragraph : TextInputStyle.Short)
-      .setRequired(!!f.required);
-    if (f.placeholder) input.setPlaceholder(f.placeholder);
-    if (f.max) input.setMaxLength(f.max);
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-  }
-  return modal;
-}
-
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
-  // Topic hub commands — each opens a dropdown of its actions (modals collect input)
-  ...Object.entries(MENU_GROUPS).map(([key, g]) =>
-    new SlashCommandBuilder().setName(key).setDescription(`${g.emoji} ${g.label} — ${g.description}`.slice(0, 100))),
+  new SlashCommandBuilder().setName("ping").setDescription("Bot and server health check with uptime"),
+  new SlashCommandBuilder().setName("listplayers").setDescription("List active couriers on a server").addStringOption(serverOption),
+  new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count").addStringOption(serverOption),
+  new SlashCommandBuilder().setName("find")
+    .setDescription("Search for a player by partial name across both servers")
+    .addStringOption(o => o.setName("name").setDescription("Partial or full player name").setRequired(true)),
+  new SlashCommandBuilder().setName("kick")
+    .setDescription("Eject a courier from the server")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("reason").setDescription("Reason for ejection")),
+  new SlashCommandBuilder().setName("warn")
+    .setDescription("Issue a warning to a courier — auto-escalates to bans at thresholds")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for warning").setRequired(true).addChoices(...BAN_REASONS))
+    .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("warnings")
+    .setDescription("Check a courier's warning history")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("clearwarnings")
+    .setDescription("🔒 Admin — Clear all warnings for a courier")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("delwarn")
+    .setDescription("🛡️ Mod — Remove a single warning by its number (see /warnings)")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("number").setDescription("Warning number to remove (from /warnings)").setRequired(true).setMinValue(1)),
+  new SlashCommandBuilder().setName("seen")
+    .setDescription("Show when a courier was last seen online")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("note")
+    .setDescription("Staff notes on a courier")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("🛡️ Mod — Add a staff note to a courier")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("note").setDescription("Note text").setRequired(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("🛡️ Mod — View staff notes on a courier")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("clear")
+      .setDescription("🔒 Admin — Delete all staff notes on a courier")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))),
+  new SlashCommandBuilder().setName("history")
+    .setDescription("View full moderation history for a courier")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("tempban")
+    .setDescription("Exile a courier for a set period")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("duration").setDescription("How long to exile").setRequired(true)
+      .addChoices(
+        { name: "1 Hour",   value: "1h"  }, { name: "6 Hours",  value: "6h"  }, { name: "1 Day",    value: "1d"  },
+        { name: "3 Days",   value: "3d"  }, { name: "5 Days",   value: "5d"  }, { name: "1 Week",   value: "1w"  },
+        { name: "2 Weeks",  value: "2w"  }, { name: "1 Month",  value: "1mo" }, { name: "3 Months", value: "3mo" },
+        { name: "6 Months", value: "6mo" }, { name: "1 Year",   value: "1y"  }
+      ))
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("reason").setDescription("Grounds for exile").setRequired(true).addChoices(...BAN_REASONS)),
+  new SlashCommandBuilder().setName("unban")
+    .setDescription("Lift a courier's exile")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID to pardon").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("checkban")
+    .setDescription("Check if a courier is currently exiled")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("banlist").setDescription("View all active exiles").addStringOption(serverOption),
+  new SlashCommandBuilder().setName("permban")
+    .setDescription("🔒 Admin — Permanently exile a courier")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
+    .addStringOption(o => o.setName("notes").setDescription("Additional context")),
+  new SlashCommandBuilder().setName("hardban")
+    .setDescription("🔒 Admin — Hard ban + repeat offender registry")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
+    .addStringOption(o => o.setName("linked_id").setDescription("Known alt account to link and ban"))
+    .addStringOption(o => o.setName("notes").setDescription("Additional context")),
+  new SlashCommandBuilder().setName("addnote")
+    .setDescription("🔒 Admin — Append a note to a hard ban record")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("note").setDescription("Note to append").setRequired(true)),
+  new SlashCommandBuilder().setName("hardbanlist").setDescription("🔒 Admin — View the hard ban registry"),
+  new SlashCommandBuilder().setName("cleartempbans").setDescription("🔒 Admin — Clear all temporary exiles (confirmation required)"),
   new SlashCommandBuilder().setName("blacklist")
     .setDescription("🔒 Admin — Bar a Discord user from using ALL bot commands")
     .addSubcommand(s => s.setName("add")
@@ -1717,11 +1609,37 @@ const commands = [
       .addUserOption(o => o.setName("user").setDescription("Discord user to un-blacklist").setRequired(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("View all blacklisted Discord users")),
+  new SlashCommandBuilder().setName("donator")
+    .setDescription("🔒 Admin — Manage the donator whitelist file")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("Add a player to the donator file")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("remove")
+      .setDescription("Remove a player from the donator file")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("List all players in the donator file")),
   new SlashCommandBuilder().setName("setroles")
     .setDescription("🔒 Admin — Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
     .addRoleOption(o => o.setName("faction_leader_role").setDescription("Faction Leader role")),
+  new SlashCommandBuilder().setName("announce")
+    .setDescription("📢 Mod — Broadcast a message to a server via RCON")
+    .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
+    .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("givemenu")
+    .setDescription("🔒 Admin — Grant RCON menu access to a courier")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("menu").setDescription("Menu to grant").setRequired(true)
+      .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
+  new SlashCommandBuilder().setName("stripmenu")
+    .setDescription("🔒 Admin — Revoke RCON menu access from a courier")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("menu").setDescription("Menu to revoke").setRequired(true)
+      .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -1766,6 +1684,49 @@ const commands = [
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("rank").setDescription("Rank to cap (faction-specific)").setRequired(true).setAutocomplete(true))
       .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500))),
+
+  new SlashCommandBuilder().setName("manual")
+    .setDescription("🔒 Admin — Send a raw RCON command")
+    .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true))
+    .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("rotatemap")
+    .setDescription("🔒 Admin — Rotate the map (confirmation required)")
+    .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("addwage")
+    .setDescription("Enrol a courier in payroll or issue a one-time mercenary payment")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("tier").setDescription("Payment tier").setRequired(true)
+      .addChoices(
+        { name: "Low Rank  — 400 caps/week",       value: "low_rank"  },
+        { name: "Mid Rank  — 500 caps/week",       value: "mid_rank"  },
+        { name: "High Rank — 650 caps/week",       value: "high_rank" },
+        { name: "Mercenary — 200 caps (one-time)", value: "mercenary" }
+      )),
+  new SlashCommandBuilder().setName("removewage")
+    .setDescription("Remove a courier from the weekly payroll")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("wagelist").setDescription("View all couriers on the weekly payroll"),
+  new SlashCommandBuilder().setName("checkbalance")
+    .setDescription("Check a courier's caps balance")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("givecaps")
+    .setDescription("Give caps to a courier (faction leader / mod command)")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("amount").setDescription("Caps to give").setRequired(true).setMinValue(1).setMaxValue(10000))
+    .addStringOption(o => o.setName("reason").setDescription("Reason (shown in logs)")),
+  new SlashCommandBuilder().setName("transfercaps")
+    .setDescription("🔒 Admin — Move caps between two courier ledgers")
+    .addStringOption(o => o.setName("from_id").setDescription("Courier to deduct from").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("to_id").setDescription("Courier to credit").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("amount").setDescription("Number of caps to transfer").setRequired(true).setMinValue(1)),
+  new SlashCommandBuilder().setName("adjustcaps")
+    .setDescription("🔒 Admin — Manually add or subtract caps from a courier's ledger")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("amount").setDescription("Caps to add (positive) or subtract (negative)").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for adjustment (logged)")),
+  new SlashCommandBuilder().setName("stats")
+    .setDescription("Courier dossier: playtime, factions, balance, and mod history")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
 ].map(c => c.toJSON());
 
 /* ================================================================
@@ -1822,12 +1783,11 @@ client.on("interactionCreate", async (interaction) => {
 
   /* ── Autocomplete ─────────────────────────────────────── */
   if (interaction.isAutocomplete()) {
-    const o = interaction.options;
-    const focused  = o.getFocused(true);
+    const focused  = interaction.options.getFocused(true);
     const cmdName  = interaction.commandName;
 
     if (focused.name === "rank" && cmdName === "faction") {
-      const faction = o.getString("faction");
+      const faction = interaction.options.getString("faction");
       if (faction) {
         const order = getFactionRankOrder(faction);
         const query = focused.value.toLowerCase();
@@ -1841,7 +1801,7 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.respond(matches.slice(0, 25)).catch(() => {});
     }
 
-    const server  = o.getString("server") ?? null;
+    const server  = interaction.options.getString("server") ?? null;
     const query   = focused.value.toLowerCase();
     const choices = getPlayerChoices(server, query);
     if (query && !choices.find(c => c.value.toLowerCase() === query)) {
@@ -1850,53 +1810,34 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.respond(choices.slice(0, 25)).catch(() => {});
   }
 
-  if (interaction.isChatInputCommand())  return handleChatCommand(interaction);
-  if (interaction.isStringSelectMenu() && interaction.customId.startsWith("grp:")) return handleGroupSelect(interaction);
-  if (interaction.isModalSubmit()       && interaction.customId.startsWith("act:")) return handleModalSubmit(interaction);
-});
+  if (!interaction.isChatInputCommand()) return;
 
-/* ================================================================
-   COMMAND DISPATCH  (chat hubs → select menu → modal → runCommand)
-   ================================================================ */
-async function handleChatCommand(interaction) {
+  /* ── Permission routing ───────────────────────────────── */
+  const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
+  const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
+  const FL_COMMANDS    = ["addwage", "removewage", "faction"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "blacklist", "donator"];
+
   const name = interaction.commandName;
-  // Topic hub command → show its action dropdown (actions filtered by access)
-  if (MENU_GROUPS[name]) {
-    return interaction.reply(buildGroupMenuMessage(interaction.member, name));
-  }
-  // Native command (help, faction, setroles, blacklist)
-  const tier   = NATIVE_TIERS[name] ?? "public";
-  const denied = accessDenialEmbed(tier, interaction.member);
-  if (denied) return interaction.reply({ embeds: [denied], ephemeral: true });
-  if (tier === "fl" && !isOwner(interaction.user.id) && !checkRateLimit(interaction.user.id, name, 4000)) {
-    return interaction.reply({ embeds: [rateLimitEmbed()], ephemeral: true });
-  }
-  return runCommand(interaction, name);
-}
 
-async function handleGroupSelect(interaction) {
-  const action = ACTION_BY_KEY[interaction.values?.[0]];
-  if (!action) return interaction.reply({ embeds: [errorEmbed("Unknown Action", "That action is no longer available.")], ephemeral: true });
-  const denied = accessDenialEmbed(action.tier, interaction.member);
-  if (denied) return interaction.reply({ embeds: [denied], ephemeral: true });
-  if (action.fields && action.fields.length) {
-    return interaction.showModal(buildActionModal(action)).catch(() => {});
+  if (!PUBLIC.includes(name)) {
+    if (ADMIN_COMMANDS.includes(name) && !hasAdminRole(interaction.member)) {
+      return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+    }
+    if (FL_COMMANDS.includes(name) && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
+      return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], ephemeral: true });
+    }
+    if (MOD_COMMANDS.includes(name) && !hasModRole(interaction.member)) {
+      return interaction.reply({ embeds: [modOnlyEmbed()], ephemeral: true });
+    }
   }
-  interaction.__sub = action.sub ?? null;          // input-less action → run now
-  return runCommand(interaction, action.cmd ?? action.key);
-}
 
-async function handleModalSubmit(interaction) {
-  const action = ACTION_BY_KEY[interaction.customId.slice(4)];
-  if (!action) return interaction.reply({ embeds: [errorEmbed("Unknown Action", "That action is no longer available.")], ephemeral: true });
-  const denied = accessDenialEmbed(action.tier, interaction.member);
-  if (denied) return interaction.reply({ embeds: [denied], ephemeral: true });
-  interaction.__sub = action.sub ?? null;
-  return runCommand(interaction, action.cmd ?? action.key);
-}
+  if (!ADMIN_COMMANDS.includes(name) && !PUBLIC.includes(name) && !isOwner(interaction.user.id)) {
+    if (!checkRateLimit(interaction.user.id, name, 4000)) {
+      return interaction.reply({ embeds: [rateLimitEmbed()], ephemeral: true });
+    }
+  }
 
-async function runCommand(interaction, name) {
-  const o = optionAccessor(interaction);
   try {
     switch (name) {
 
@@ -1930,27 +1871,48 @@ async function runCommand(interaction, name) {
           .setDescription(
             `> *"War. War never changes. But the rules of the Strip — those we enforce."*\n\n${DIVIDER}\n` +
             `**Your Access:** ${badge}\n🛡️ Mod: ${mStr}  ·  🔒 Admin: ${aStr}  ·  ⚔️ Faction: ${fStr}\n${DIVIDER}\n\n` +
-            `💡 *Commands are grouped by topic. Run a group command below, pick an action from the dropdown, and fill in the pop-up form.*`
+            `💡 *Autocomplete works in all Courier ID and Rank fields — faction ranks are filtered per faction.*`
           )
           .addFields(
-            { name: "🗂️  Command Groups",
+            { name: "🌐  Public",
+              value: "`/help` `/ping` `/listplayers` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction overview` `/faction audit`" },
+            { name: "🛡️  Moderator",
               value: [
-                "📜  `/bans` — temp/permanent bans, hard bans, ban records",
-                "🛡️  `/moderation` — kicks, warnings, notes, dossiers, last-seen",
-                "💰  `/economy` — balances, gifts, transfers, wages",
-                "🖥️  `/server` — status, players, broadcasts, map, raw RCON",
-                "🔧  `/config` — menu grants & donator file",
-                "*Each opens a dropdown; only actions you can use are shown.*",
+                "`/kick <id> <server> [reason]` — Eject",
+                "`/warn <id> <reason> <server>` — Issue warning *(auto-bans at 3/5/7)*",
+                "`/delwarn <id> <number>` — Remove a single warning",
+                "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
+                "`/unban <id> <server>` — Lift exile",
+                "`/announce <msg> <server>` — Broadcast via RCON Notify",
+                "`/history <id>` — View mod action history",
+                "`/note add|list <id>` — Staff notes on a courier",
+                "`/givecaps <id> <amount> [reason]` — Give caps to a courier",
+                "`/faction transfer <id> <from> <to> [rank]` — Move player between factions",
               ].join("\n") },
-            { name: "⚔️  Faction (native command)",
+            { name: "⚔️  Faction Leader",
               value: [
-                "`/faction add|remove|rank|transfer <id> <faction> [rank]`",
-                "`/faction list|overview|audit <faction> [page]`",
-                "`/faction setcap|setrankcap <faction> [rank] <cap>` *(admin)*",
-                "*Kept native so faction & rank pickers + autocomplete still work.*",
+                "`/faction add <id> <faction> [rank]` — Whitelist player (optional starting rank)",
+                "`/faction remove <id> <faction>` — Remove from whitelist",
+                "`/faction rank <id> <faction> <rank>` — Set member rank *(FL only)*",
+                "`/faction list <faction> [page]` — Paginated roster with ranks",
+                "`/faction overview` — All factions at a glance",
+                "`/faction audit <faction> [page]` — Add/remove/rank change log",
+                "`/addwage <id> <tier>` — Enrol in payroll or issue mercenary pay",
+                "`/removewage <id>` — Remove from payroll",
               ].join("\n") },
-            { name: "🔑  Other native commands",
-              value: "`/help`  ·  `/setroles` *(admin — role pickers)*  ·  `/blacklist add|remove|list` *(admin — user picker)*" },
+            { name: "🔒  Admin",
+              value: [
+                "`/permban` `/hardban` `/addnote` `/hardbanlist`",
+                "`/clearwarnings <id>` — Wipe all warnings for a courier",
+                "`/note clear <id>` — Delete all staff notes for a courier",
+                "`/cleartempbans` `/setroles`",
+                "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
+                "`/rotatemap` `/manual`",
+                "`/blacklist add|remove|list <user>` — Bar a Discord user from all commands",
+                "`/donator add|remove|list <id>` — Manage the donator whitelist file",
+                "`/faction setcap <faction> <cap>` — Set faction size limit",
+                "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
+              ].join("\n") },
             { name: "⚔️  Faction Ranks (per faction)",
               value: rankSummaryLines },
             { name: "⚙️  Automation",
@@ -2005,7 +1967,7 @@ async function runCommand(interaction, name) {
          LISTPLAYERS
          ───────────────────────────────────────────────────── */
       case "listplayers": {
-        const server = o.getString("server");
+        const server = interaction.options.getString("server");
         await interaction.deferReply();
         if (server === "both") {
           const [r1, r2] = await Promise.all([sendRcon("RefreshList", "server1"), sendRcon("RefreshList", "server2")]);
@@ -2022,7 +1984,7 @@ async function runCommand(interaction, name) {
          SERVERINFO
          ───────────────────────────────────────────────────── */
       case "serverinfo": {
-        const server = o.getString("server");
+        const server = interaction.options.getString("server");
         await interaction.deferReply();
         const fetchInfo = async (srv) => {
           try {
@@ -2064,7 +2026,7 @@ async function runCommand(interaction, name) {
          FIND
          ───────────────────────────────────────────────────── */
       case "find": {
-        const query = o.getString("name").toLowerCase();
+        const query = interaction.options.getString("name").toLowerCase();
         await interaction.deferReply({ ephemeral: true });
         await Promise.all([refreshPlayerCache("server1"), refreshPlayerCache("server2")]);
         const matches = [];
@@ -2107,9 +2069,9 @@ async function runCommand(interaction, name) {
          KICK  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "kick": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const server   = o.getString("server");
-        const reason   = o.getString("reason") ?? "No reason provided";
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const server   = interaction.options.getString("server");
+        const reason   = interaction.options.getString("reason") ?? "No reason provided";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
         await sendRconBoth(`Kick ${playerId}`, server);
@@ -2130,9 +2092,9 @@ async function runCommand(interaction, name) {
          WARN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "warn": {
-        const playerId  = sanitizeId(o.getString("playerid"));
-        const reasonKey = o.getString("reason");
-        const server    = o.getString("server") ?? "server1";
+        const playerId  = sanitizeId(interaction.options.getString("playerid"));
+        const reasonKey = interaction.options.getString("reason");
+        const server    = interaction.options.getString("server") ?? "server1";
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                         // ← ADDED
@@ -2167,7 +2129,7 @@ async function runCommand(interaction, name) {
          WARNINGS
          ───────────────────────────────────────────────────── */
       case "warnings": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const all   = loadWarns()[playerId.toLowerCase()] ?? [];
         const count = all.length;
@@ -2197,7 +2159,7 @@ async function runCommand(interaction, name) {
          CLEARWARNINGS
          ───────────────────────────────────────────────────── */
       case "clearwarnings": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const warns = loadWarns();
         const key   = playerId.toLowerCase();
@@ -2217,8 +2179,8 @@ async function runCommand(interaction, name) {
          DELWARN  (remove one warning by number)
          ───────────────────────────────────────────────────── */
       case "delwarn": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const number   = o.getInteger("number");
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const number   = interaction.options.getInteger("number");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const { removed, remaining } = await removeWarningAt(playerId, number);
         if (!removed) {
@@ -2244,7 +2206,7 @@ async function runCommand(interaction, name) {
          SEEN  (last time a courier was online)
          ───────────────────────────────────────────────────── */
       case "seen": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const key    = playerId.toLowerCase();
         const onS1   = playerCache.server1.some(n => n.toLowerCase() === key);
@@ -2273,12 +2235,12 @@ async function runCommand(interaction, name) {
          NOTE  (freeform staff notes on any courier)
          ───────────────────────────────────────────────────── */
       case "note": {
-        const sub      = o.getSubcommand();
-        const playerId = sanitizeId(o.getString("playerid"));
+        const sub      = interaction.options.getSubcommand();
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
 
         if (sub === "add") {
-          const text  = o.getString("note").trim().slice(0, 500);
+          const text  = interaction.options.getString("note").trim().slice(0, 500);
           if (!text) return interaction.reply({ embeds: [errorEmbed("Empty Note", "The note cannot be empty.")], ephemeral: true });
           const count = await addPlayerNote(playerId, text, interaction.user.tag);
           writeModLog({ action: "note-add", playerId, reason: text, by: interaction.user.tag });
@@ -2322,7 +2284,7 @@ async function runCommand(interaction, name) {
          HISTORY
          ───────────────────────────────────────────────────── */
       case "history": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const history = getPlayerHistory(playerId);
         if (!history.length) {
@@ -2350,10 +2312,10 @@ async function runCommand(interaction, name) {
          TEMPBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "tempban": {
-        const playerId    = sanitizeId(o.getString("playerid"));
-        const durationKey = o.getString("duration");
-        const server      = o.getString("server");
-        const reasonKey   = o.getString("reason");
+        const playerId    = sanitizeId(interaction.options.getString("playerid"));
+        const durationKey = interaction.options.getString("duration");
+        const server      = interaction.options.getString("server");
+        const reasonKey   = interaction.options.getString("reason");
         const reason      = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
@@ -2387,8 +2349,8 @@ async function runCommand(interaction, name) {
          UNBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "unban": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const server   = o.getString("server");
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
         await sendRconBoth(`Unban ${playerId}`, server);
@@ -2413,8 +2375,8 @@ async function runCommand(interaction, name) {
          CHECKBAN
          ───────────────────────────────────────────────────── */
       case "checkban": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const server   = o.getString("server");
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const hb = findHardBanByAnyId(playerId);
         if (hb) {
@@ -2479,7 +2441,7 @@ async function runCommand(interaction, name) {
          BANLIST
          ───────────────────────────────────────────────────── */
       case "banlist": {
-        const server = o.getString("server");
+        const server = interaction.options.getString("server");
         await interaction.deferReply();
         const tempBans   = loadBans();
         const tempBanIds = new Set(tempBans.map(b => b.playerId.toLowerCase()));
@@ -2524,10 +2486,10 @@ async function runCommand(interaction, name) {
          PERMBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "permban": {
-        const playerId  = sanitizeId(o.getString("playerid"));
-        const server    = o.getString("server");
-        const reasonKey = o.getString("reason");
-        const notes     = o.getString("notes") ?? null;
+        const playerId  = sanitizeId(interaction.options.getString("playerid"));
+        const server    = interaction.options.getString("server");
+        const reasonKey = interaction.options.getString("reason");
+        const notes     = interaction.options.getString("notes") ?? null;
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
@@ -2552,11 +2514,11 @@ async function runCommand(interaction, name) {
          HARDBAN  ← deferReply added (after all non-RCON early returns)
          ───────────────────────────────────────────────────── */
       case "hardban": {
-        const playerId  = sanitizeId(o.getString("playerid"));
-        const server    = o.getString("server");
-        const reasonKey = o.getString("reason");
-        const linkedId  = sanitizeId(o.getString("linked_id") ?? "");
-        const notes     = o.getString("notes") ?? null;
+        const playerId  = sanitizeId(interaction.options.getString("playerid"));
+        const server    = interaction.options.getString("server");
+        const reasonKey = interaction.options.getString("reason");
+        const linkedId  = sanitizeId(interaction.options.getString("linked_id") ?? "");
+        const notes     = interaction.options.getString("notes") ?? null;
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const registry = loadHardBans();
@@ -2626,8 +2588,8 @@ async function runCommand(interaction, name) {
          ADDNOTE
          ───────────────────────────────────────────────────── */
       case "addnote": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const note     = o.getString("note").trim();
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const note     = interaction.options.getString("note").trim();
         const hb = findHardBanByAnyId(playerId);
         if (!hb) return interaction.reply({ embeds: [errorEmbed("Not in Registry", `\`${playerId}\` has no hard ban record. Use \`/hardban\` to add them first.`)], ephemeral: true });
         const ns = loadNotes();
@@ -2711,9 +2673,9 @@ async function runCommand(interaction, name) {
          SETROLES
          ───────────────────────────────────────────────────── */
       case "setroles": {
-        const modRole   = o.getRole("mod_role");
-        const adminRole = o.getRole("admin_role");
-        const flRole    = o.getRole("faction_leader_role");
+        const modRole   = interaction.options.getRole("mod_role");
+        const adminRole = interaction.options.getRole("admin_role");
+        const flRole    = interaction.options.getRole("faction_leader_role");
         if (!modRole && !adminRole && !flRole) {
           const c = loadRoles();
           return interaction.reply({ embeds: [
@@ -2743,7 +2705,7 @@ async function runCommand(interaction, name) {
          BLACKLIST  (admin — bar a Discord user from all commands)
          ───────────────────────────────────────────────────── */
       case "blacklist": {
-        const sub = o.getSubcommand();
+        const sub = interaction.options.getSubcommand();
 
         if (sub === "list") {
           const bl      = loadBlacklist();
@@ -2768,10 +2730,10 @@ async function runCommand(interaction, name) {
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
-        const target = o.getUser("user");
+        const target = interaction.options.getUser("user");
 
         if (sub === "add") {
-          const reason = o.getString("reason")?.trim() || null;
+          const reason = interaction.options.getString("reason")?.trim() || null;
           if (target.id === interaction.user.id) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Target", "You can't blacklist yourself.")], ephemeral: true });
           }
@@ -2819,7 +2781,7 @@ async function runCommand(interaction, name) {
          DONATOR  (admin — manage the donator whitelist file)
          ───────────────────────────────────────────────────── */
       case "donator": {
-        const sub = o.getSubcommand();
+        const sub = interaction.options.getSubcommand();
 
         if (sub === "list") {
           const lines = readDonatorFile();
@@ -2841,7 +2803,7 @@ async function runCommand(interaction, name) {
           return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
 
         if (sub === "add") {
@@ -2881,8 +2843,8 @@ async function runCommand(interaction, name) {
          ANNOUNCE
          ───────────────────────────────────────────────────── */
       case "announce": {
-        const message = sanitizeMessage(o.getString("message"));
-        const server  = o.getString("server");
+        const message = sanitizeMessage(interaction.options.getString("message"));
+        const server  = interaction.options.getString("server");
         if (!message.trim()) return interaction.reply({ embeds: [errorEmbed("Empty Message", "Cannot broadcast an empty message.")], ephemeral: true });
         await interaction.deferReply();
         const { s1, s2 } = await sendRconBoth(`Notify ${message}`, server);
@@ -2925,9 +2887,9 @@ async function runCommand(interaction, name) {
          ───────────────────────────────────────────────────── */
       case "givemenu":
       case "stripmenu": {
-        const playerId  = sanitizeId(o.getString("playerid"));
-        const server    = o.getString("server");
-        const menuValue = o.getString("menu");
+        const playerId  = sanitizeId(interaction.options.getString("playerid"));
+        const server    = interaction.options.getString("server");
+        const menuValue = interaction.options.getString("menu");
         const menuMeta  = MENUS.find(m => m.value === menuValue);
         const menuId    = menuMeta?.menuId ?? menuValue;
         const isGive    = name === "givemenu";
@@ -2961,15 +2923,15 @@ async function runCommand(interaction, name) {
          FACTION — all subcommands
          ───────────────────────────────────────────────────── */
       case "faction": {
-        const sub = o.getSubcommand();
+        const sub = interaction.options.getSubcommand();
 
         /* ── setcap (admin only) ── */
         if (sub === "setcap") {
           if (!hasAdminRole(interaction.member)) {
             return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
           }
-          const faction = o.getString("faction");
-          const cap     = o.getInteger("cap");
+          const faction = interaction.options.getString("faction");
+          const cap     = interaction.options.getInteger("cap");
           await setFactionCap(faction, cap);
           writeModLog({ action: "faction-setcap", faction, cap, by: interaction.user.tag });
           const spawn   = SPAWN_FILE_MAP[faction];
@@ -2991,9 +2953,9 @@ async function runCommand(interaction, name) {
           if (!hasAdminRole(interaction.member)) {
             return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
           }
-          const faction = o.getString("faction");
-          const rank    = o.getString("rank");
-          const cap     = o.getInteger("cap");
+          const faction = interaction.options.getString("faction");
+          const rank    = interaction.options.getString("rank");
+          const cap     = interaction.options.getInteger("cap");
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
@@ -3066,8 +3028,8 @@ async function runCommand(interaction, name) {
 
         /* ── list (public, paginated) ── */
         if (sub === "list") {
-          const faction  = o.getString("faction");
-          const page     = Math.max(1, o.getInteger("page") ?? 1);
+          const faction  = interaction.options.getString("faction");
+          const page     = Math.max(1, interaction.options.getInteger("page") ?? 1);
           const members  = getFactionMembers(faction);
           if (members === null) {
             return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], ephemeral: true });
@@ -3109,8 +3071,8 @@ async function runCommand(interaction, name) {
 
         /* ── audit (public, paginated) ── */
         if (sub === "audit") {
-          const faction   = o.getString("faction");
-          const page      = Math.max(1, o.getInteger("page") ?? 1);
+          const faction   = interaction.options.getString("faction");
+          const page      = Math.max(1, interaction.options.getInteger("page") ?? 1);
           const allAudit  = loadFactionAudit().filter(e => e.faction === faction).reverse();
           if (!allAudit.length) {
             return interaction.reply({ embeds: [
@@ -3149,9 +3111,9 @@ async function runCommand(interaction, name) {
           if (!hasFactionLeaderRole(interaction.member)) {
             return interaction.reply({ embeds: [factionLeaderStrictEmbed()], ephemeral: true });
           }
-          const playerId = sanitizeId(o.getString("playerid"));
-          const faction  = o.getString("faction");
-          const rank     = o.getString("rank");
+          const playerId = sanitizeId(interaction.options.getString("playerid"));
+          const faction  = interaction.options.getString("faction");
+          const rank     = interaction.options.getString("rank");
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
@@ -3196,10 +3158,10 @@ async function runCommand(interaction, name) {
           if (!hasModRole(interaction.member)) {
             return interaction.reply({ embeds: [modOnlyEmbed()], ephemeral: true });
           }
-          const playerId    = sanitizeId(o.getString("playerid"));
-          const fromFaction = o.getString("from_faction");
-          const toFaction   = o.getString("to_faction");
-          const rawRank     = o.getString("rank");
+          const playerId    = sanitizeId(interaction.options.getString("playerid"));
+          const fromFaction = interaction.options.getString("from_faction");
+          const toFaction   = interaction.options.getString("to_faction");
+          const rawRank     = interaction.options.getString("rank");
           const newRank     = rawRank ?? getFactionDefaultRank(toFaction);
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
           if (fromFaction === toFaction) {
@@ -3265,9 +3227,9 @@ async function runCommand(interaction, name) {
 
         /* ── add ── */
         if (sub === "add") {
-          const playerId = sanitizeId(o.getString("playerid"));
-          const faction  = o.getString("faction");
-          const rawRank  = o.getString("rank");
+          const playerId = sanitizeId(interaction.options.getString("playerid"));
+          const faction  = interaction.options.getString("faction");
+          const rawRank  = interaction.options.getString("rank");
           const rank     = rawRank ?? getFactionDefaultRank(faction);
           const spawn    = SPAWN_FILE_MAP[faction];
           if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], ephemeral: true });
@@ -3319,8 +3281,8 @@ async function runCommand(interaction, name) {
 
         /* ── remove ── */
         if (sub === "remove") {
-          const playerId = sanitizeId(o.getString("playerid"));
-          const faction  = o.getString("faction");
+          const playerId = sanitizeId(interaction.options.getString("playerid"));
+          const faction  = interaction.options.getString("faction");
           const spawn    = SPAWN_FILE_MAP[faction];
           if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], ephemeral: true });
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
@@ -3360,8 +3322,8 @@ async function runCommand(interaction, name) {
          MANUAL
          ───────────────────────────────────────────────────── */
       case "manual": {
-        const command = o.getString("command");
-        const server  = o.getString("server");
+        const command = interaction.options.getString("command");
+        const server  = interaction.options.getString("server");
         await interaction.deferReply({ ephemeral: true });
         try {
           if (server === "both") {
@@ -3398,7 +3360,7 @@ async function runCommand(interaction, name) {
          ROTATEMAP
          ───────────────────────────────────────────────────── */
       case "rotatemap": {
-        const server = o.getString("server");
+        const server = interaction.options.getString("server");
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("rm_confirm").setLabel("Yes, rotate now").setStyle(ButtonStyle.Danger).setEmoji("🔄"),
           new ButtonBuilder().setCustomId("rm_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
@@ -3430,8 +3392,8 @@ async function runCommand(interaction, name) {
          ADDWAGE
          ───────────────────────────────────────────────────── */
       case "addwage": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const tierKey  = o.getString("tier");
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const tierKey  = interaction.options.getString("tier");
         const tier     = WAGE_TIERS[tierKey];
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         if (!tier)     return interaction.reply({ embeds: [errorEmbed("Invalid Tier", "Unknown payment tier.")], ephemeral: true });
@@ -3492,7 +3454,7 @@ async function runCommand(interaction, name) {
          REMOVEWAGE
          ───────────────────────────────────────────────────── */
       case "removewage": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const wages   = loadWages();
         const removed = wages.find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
@@ -3537,7 +3499,7 @@ async function runCommand(interaction, name) {
          CHECKBALANCE
          ───────────────────────────────────────────────────── */
       case "checkbalance": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const fp = getPlayerFilePath(playerId);
         if (!fp) return interaction.reply({ embeds: [errorEmbed("Vault Offline", "`MODSAVE_PATH` not set in `.env`.")], ephemeral: true });
@@ -3561,9 +3523,9 @@ async function runCommand(interaction, name) {
          GIVECAPS
          ───────────────────────────────────────────────────── */
       case "givecaps": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const amount   = o.getInteger("amount");
-        const reason   = o.getString("reason") ?? "Cap gift";
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const amount   = interaction.options.getInteger("amount");
+        const reason   = interaction.options.getString("reason") ?? "Cap gift";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const current = readPlayerBalance(playerId) ?? 0;
         const newBal  = current + amount;
@@ -3585,9 +3547,9 @@ async function runCommand(interaction, name) {
          TRANSFERCAPS
          ───────────────────────────────────────────────────── */
       case "transfercaps": {
-        const fromId = sanitizeId(o.getString("from_id"));
-        const toId   = sanitizeId(o.getString("to_id"));
-        const amount = o.getInteger("amount");
+        const fromId = sanitizeId(interaction.options.getString("from_id"));
+        const toId   = sanitizeId(interaction.options.getString("to_id"));
+        const amount = interaction.options.getInteger("amount");
         if (!fromId || !toId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         if (fromId.toLowerCase() === toId.toLowerCase()) return interaction.reply({ embeds: [errorEmbed("Invalid Transfer", "Cannot transfer caps to the same courier.")], ephemeral: true });
         const fromBal = readPlayerBalance(fromId);
@@ -3611,9 +3573,9 @@ async function runCommand(interaction, name) {
          ADJUSTCAPS
          ───────────────────────────────────────────────────── */
       case "adjustcaps": {
-        const playerId = sanitizeId(o.getString("playerid"));
-        const amount   = o.getInteger("amount");
-        const reason   = o.getString("reason") ?? "Manual adjustment";
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const amount   = interaction.options.getInteger("amount");
+        const reason   = interaction.options.getString("reason") ?? "Manual adjustment";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const current = readPlayerBalance(playerId) ?? 0;
         const newBal  = Math.max(0, current + amount);
@@ -3637,7 +3599,7 @@ async function runCommand(interaction, name) {
          STATS
          ───────────────────────────────────────────────────── */
       case "stats": {
-        const playerId = sanitizeId(o.getString("playerid"));
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const playtime = loadPlaytime();
         const minutes  = playtime[playerId] ?? null;
@@ -3704,9 +3666,9 @@ async function runCommand(interaction, name) {
 
     }
   } catch (err) {
-    logger.error("Command", `/${name}: ${err.message}`, { stack: err.stack });
+    logger.error("Command", `/${interaction.commandName}: ${err.message}`, { stack: err.stack });
     const reply = {
-      embeds: [errorEmbed("System Failure", `An internal error occurred processing \`${name}\`.\n\n\`\`\`${err.message?.slice(0, 200) ?? "unknown"}\`\`\`\nCheck the server logs for the full stack trace.`)],
+      embeds: [errorEmbed("System Failure", `An internal error occurred processing \`/${interaction.commandName}\`.\n\n\`\`\`${err.message?.slice(0, 200) ?? "unknown"}\`\`\`\nCheck the server logs for the full stack trace.`)],
       ephemeral: true,
     };
     try {
@@ -3714,7 +3676,7 @@ async function runCommand(interaction, name) {
       return interaction.reply(reply);
     } catch {}
   }
-}
+});
 
 /* ================================================================
    STARTUP
@@ -3742,6 +3704,4 @@ module.exports = {
   splitPages, extractPlayerNames,
   // faction rank caps
   getFactionRankCap, getFactionRankCaps, setFactionRankCap,
-  // topic menu system
-  MENU_GROUPS, ACTION_BY_KEY, normalizeServer,
 };

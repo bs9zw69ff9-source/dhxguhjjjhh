@@ -29,7 +29,7 @@ fs.writeFileSync(path.join(nm, "discord.js", "index.js"), `
 function chainable(){const p=new Proxy(function(){},{get(t,k){if(k==='toJSON')return()=>({});if(k==='then')return undefined;return()=>p;},apply(){return p;}});return p;}
 class Chain{constructor(){return chainable();}}
 const e=new Proxy({},{get:()=>1});
-module.exports={Client:Chain,GatewayIntentBits:e,ActivityType:e,REST:Chain,Routes:e,SlashCommandBuilder:Chain,EmbedBuilder:Chain,ActionRowBuilder:Chain,ButtonBuilder:Chain,ButtonStyle:e,ComponentType:e,StringSelectMenuBuilder:Chain,ModalBuilder:Chain,TextInputBuilder:Chain,TextInputStyle:e};
+module.exports={Client:Chain,GatewayIntentBits:e,ActivityType:e,REST:Chain,Routes:e,SlashCommandBuilder:Chain,EmbedBuilder:Chain,ActionRowBuilder:Chain,ButtonBuilder:Chain,ButtonStyle:e,ComponentType:e};
 `);
 
 fs.copyFileSync(path.join(__dirname, "..", "index.js"), path.join(sandbox, "index.js"));
@@ -96,16 +96,6 @@ const ok = (cond, msg) => {
   await bot.setFactionRankCap("NCR", "Officer", 0);
   ok(bot.getFactionRankCap("NCR", "Officer") === null, "cap 0 clears -> unlimited");
   ok(JSON.stringify(bot.getFactionRankCaps("NCR")) === "{}", "cleared cap removed from config");
-
-  console.log("Topic menu system:");
-  ok(["bans","moderation","economy","server","config"].every(g => bot.MENU_GROUPS[g]), "all topic groups defined");
-  ok(bot.ACTION_BY_KEY.tempban && bot.ACTION_BY_KEY.tempban.group === "bans", "action keys map to their group");
-  ok(bot.ACTION_BY_KEY.note_add.cmd === "note" && bot.ACTION_BY_KEY.note_add.sub === "add", "split sub-action carries cmd+sub");
-  ok(bot.ACTION_BY_KEY.tempban.fields.some(f => f.id === "playerid"), "action carries modal field specs");
-  // every action references a real handler-able command name + every modal action has fields
-  ok(Object.values(bot.ACTION_BY_KEY).every(a => (a.fields || []).length <= 5), "no modal exceeds Discord's 5-input limit");
-  ok(["public","mod","fl","admin"].includes(bot.ACTION_BY_KEY.permban.tier), "actions carry a valid tier");
-  ok(bot.normalizeServer("s2") === "server2" && bot.normalizeServer("") === "both" && bot.normalizeServer("1") === "server1", "normalizeServer maps inputs");
 
   console.log("UI / parsing helpers:");
   ok(JSON.stringify(bot.splitPages([1,2,3,4,5], 2)) === "[[1,2],[3,4],[5]]", "splitPages chunks");
