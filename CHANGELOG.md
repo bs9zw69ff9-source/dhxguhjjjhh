@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **Commands consolidated into topic groups** (`/bans`, `/moderation`,
+  `/economy`, `/server`, `/config`). Running a group shows a dropdown of its
+  actions; picking one opens a modal to collect inputs. Driven by a single
+  action registry (one source of truth for menus, modals, and permissions);
+  existing handler logic is reused via an option-accessor bridge.
+  `/faction`, `/setroles`, and `/blacklist` stay native (they need
+  role/user/choice pickers a text modal can't provide).
+
 ### Added
 - **Per-rank caps** within each faction: `/faction setrankcap <faction> <rank> <cap>`
   (0 = unlimited). Enforced on `/faction add`, `/faction rank`, and

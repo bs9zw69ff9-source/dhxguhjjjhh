@@ -40,14 +40,28 @@ to change it.
 
 ## Commands
 
-| Tier | Commands |
-|------|----------|
-| 🌐 Public | `/help` `/ping` `/listplayers` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen` · `/faction list\|overview\|audit` |
-| 🛡️ Moderator | `/kick` `/warn` `/delwarn` `/tempban` `/unban` `/announce` `/history` `/note add\|list` `/givecaps` `/faction transfer` |
-| ⚔️ Faction Leader | `/faction add\|remove\|rank` `/addwage` `/removewage` |
-| 🔒 Admin | `/permban` `/hardban` `/addnote` `/hardbanlist` `/clearwarnings` `/note clear` `/cleartempbans` `/setroles` `/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps` `/rotatemap` `/manual` `/blacklist` `/donator` `/faction setcap` |
+Commands are grouped by **topic**. Run a group command, pick an action from
+the dropdown, and fill in the pop-up form. The dropdown only shows actions
+your role can use.
 
-Roles are mapped to tiers with `/setroles`. If a tier's role is unset, that
+| Group | Actions |
+|-------|---------|
+| 📜 `/bans` | tempban, unban, checkban, banlist, permban, hardban, add-note, hardban list, clear temp bans |
+| 🛡️ `/moderation` | kick, warn, remove-warning, warnings, clear-warnings, history, staff notes (add/list/clear), dossier, last-seen |
+| 💰 `/economy` | check balance, give caps, transfer caps, adjust caps, add/remove wage, payroll list |
+| 🖥️ `/server` | ping, list players, server info, find, announce, rotate map, manual RCON |
+| 🔧 `/config` | grant/revoke menu, donator add/remove/list |
+
+**Native commands** (kept as normal slash commands because they need Discord
+role/user/choice pickers a text modal can't provide):
+
+- `/help` — your access level + how the menus work
+- `/faction add|remove|rank|transfer|list|overview|audit|setcap|setrankcap`
+- `/setroles` — map Discord roles to mod/admin/faction-leader tiers (admin)
+- `/blacklist add|remove|list` — bar a Discord user from everything (admin)
+
+Each action is gated by tier (public / moderator / faction-leader / admin).
+Roles are mapped to tiers with `/setroles`; if a tier's role is unset, that
 tier is unrestricted.
 
 ### Automation
