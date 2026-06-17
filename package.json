@@ -6,9 +6,8 @@
   "author": "bs9zw69ff9-source",
   "scripts": {
     "start": "node index.js",
-    "web": "node web/server.js",
     "test": "node test/run.js",
-    "check": "node --check index.js && node --check web/server.js"
+    "check": "node --check index.js"
   },
   "engines": {
     "node": ">=18"

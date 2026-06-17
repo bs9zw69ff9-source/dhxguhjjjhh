@@ -4,12 +4,23 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-### Added (companion web app)
-- A zero-dependency, **public** web dashboard (`web/`, `npm run web`) that
-  reads the bot's data + live RCON: **Servers**, **Leaderboard**,
-  **Factions**, and **Courier Lookup** pages, with a Pip-Boy/New-Vegas CRT UI.
+### Fixed (debug pass)
+- **Temp-ban writes are now serialized.** `tempban`, `unban`, `permban`,
+  `hardban`, `cleartempbans`, the 60s expiry sweep, and warn auto-escalation
+  all go through `update()` (`upsertTempBan`/`removeBans`) instead of raw
+  `saveBans()`, eliminating lost-update races between commands and the timer.
+  The expiry sweep and mass-clear now remove only the IDs they actually
+  lifted, preserving bans added concurrently.
+- **`/clearwarnings`** now uses the serialized `update()` like `issueWarn`/
+  `delwarn` (they previously mixed serialized + unserialized writes on the
+  same file).
+- **`/transfercaps`** rolls back the sender's debit if the recipient credit
+  fails, so caps can no longer vanish mid-transfer.
+- Removed remaining case-sensitive ban-list comparisons.
+- Removed dead code (`saveBans`, `saveWarns`).
 
 ### Removed
+- The companion web app (`web/`) was removed.
 - **`/blacklist` command** — the command-blacklist is now configured via the
   `BLACKLIST_IDS` env var (comma/space/newline-separated user IDs; restart to
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.

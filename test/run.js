@@ -108,23 +108,20 @@ const ok = (cond, msg) => {
   ok(bot.bar(0, 0, 6) === "░░░░░░", "bar handles max=0 safely");
   ok(bot.bar(99, 10, 4) === "████", "bar clamps over-full to width");
 
+  console.log("Serialized temp-ban writes:");
+  await bot.upsertTempBan({ playerId: "Banned1", reason: "x", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
+  await bot.upsertTempBan({ playerId: "banned1", reason: "y", expires: Date.now() + 1e6, durationLabel: "2d", moderator: "m", server: "both" });
+  ok(bot.loadBans().filter(b => b.playerId.toLowerCase() === "banned1").length === 1, "upsert dedupes case-insensitively (no duplicate)");
+  ok(bot.loadBans().find(b => b.playerId.toLowerCase() === "banned1").reason === "y", "upsert replaces the existing entry");
+  await bot.upsertTempBan({ playerId: "Banned2", reason: "z", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
+  await bot.removeBans("BANNED1");
+  ok(!bot.loadBans().some(b => b.playerId.toLowerCase() === "banned1"), "removeBans removes case-insensitively");
+  ok(bot.loadBans().some(b => b.playerId === "Banned2"), "removeBans leaves other bans intact");
+
   console.log("Punishment DM status field:");
   ok(bot.dmStatusField(null, null) === null, "no linked account -> no field");
   ok(bot.dmStatusField(true, { id: "42" }).value.includes("delivered"), "delivered field mentions success");
   ok(bot.dmStatusField(false, { id: "42" }).value.includes("Couldn't DM"), "failed field mentions failure");
-
-  console.log("Web app (public):");
-  const web = require(path.join(__dirname, "..", "web", "server.js"));
-  ok(typeof web.factionRosters === "function" && typeof web.courierProfile === "function", "web exports public aggregators");
-  const fr = web.factionRosters();
-  ok(Array.isArray(fr) && fr.some(f => f.name === "NCR"), "factionRosters returns all factions");
-  ok(web.leaderboard() === null, "leaderboard null when MODSAVE_PATH unset");
-  ok(web.balanceOf("nobody") === null, "balanceOf null when no ledger");
-  ok(web.isDonator("nobody") === false, "isDonator false for unknown");
-  ok(Array.isArray(web.playerFactions("nobody")), "playerFactions returns an array");
-  const prof = await web.courierProfile("Test_Courier");
-  ok(prof && prof.id === "Test_Courier" && Array.isArray(prof.factions), "courierProfile shape ok");
-  ok((await web.courierProfile("")) === null, "courierProfile rejects empty id");
 
   console.log(`\n${pass} passed, ${fail} failed`);
   try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch {}

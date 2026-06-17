@@ -228,7 +228,21 @@ function update(file, fallback, mutator) {
 
 /* ---- Typed loaders / savers ---- */
 const loadBans          = () => safeRead(FILES.TEMPBAN,        []);
-const saveBans          = (d) => safeWrite(FILES.TEMPBAN,       d);
+/* Serialized temp-ban mutations — go through update() so concurrent commands
+   and the 60s expiry sweep can't clobber each other's writes. */
+const _sameId = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+function upsertTempBan(entry) {
+  return update(FILES.TEMPBAN, [], (bans) => {
+    const next = bans.filter(b => !_sameId(b.playerId, entry.playerId));
+    next.push(entry);
+    return next;
+  });
+}
+/** Remove one or more player IDs from the temp-ban list (case-insensitive). */
+function removeBans(...ids) {
+  const drop = ids.filter(Boolean).map(s => String(s).toLowerCase());
+  return update(FILES.TEMPBAN, [], (bans) => bans.filter(b => !drop.includes(String(b.playerId).toLowerCase())));
+}
 const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" });
 const saveRoles         = (d) => safeWrite(FILES.ROLES,         d);
 const loadWages         = () => safeRead(FILES.WAGES,          []);
@@ -240,7 +254,7 @@ const saveHardBans      = (d) => safeWrite(FILES.HARDBAN,       d);
 const loadNotes         = () => safeRead(FILES.NOTES,          {});
 const saveNotes         = (d) => safeWrite(FILES.NOTES,         d);
 const loadWarns         = () => safeRead(FILES.WARNS,          {});
-const saveWarns         = (d) => safeWrite(FILES.WARNS,         d);
+/* warnings are mutated via the serialized update() (issueWarn / delwarn / clearwarnings) */
 const loadModLog        = () => safeRead(FILES.MODLOG,         []);
 const saveModLog        = (d) => safeWrite(FILES.MODLOG,        d);
 const loadFactionRanks  = () => safeRead(FILES.FACTION_RANKS,  {});
@@ -1357,11 +1371,7 @@ async function issueWarn(playerId, reason, moderator, server, interaction) {
     const { ms, label } = BAN_DURATIONS[escalation.duration];
     const expires        = Date.now() + ms;
     await sendRconBoth(`Ban ${sanitizeId(playerId)}`, server);
-    await update(FILES.TEMPBAN, [], (bans) => {
-      const filtered = bans.filter(b => b.playerId.toLowerCase() !== key);
-      filtered.push({ playerId, reason: `Auto-ban: ${escalation.label}`, expires, durationLabel: label, moderator: "Auto-Escalation", server });
-      return filtered;
-    });
+    await upsertTempBan({ playerId, reason: `Auto-ban: ${escalation.label}`, expires, durationLabel: label, moderator: "Auto-Escalation", server });
     escalated = { type: "tempban", label };
     writeModLog({ action: "auto-tempban", playerId, reason: escalation.label, duration: label });
   } else if (escalation && escalation.action === "permban") {
@@ -1377,15 +1387,14 @@ async function issueWarn(playerId, reason, moderator, server, interaction) {
    TEMP BAN EXPIRY
    ================================================================ */
 async function processExpiredBans() {
-  const bans = loadBans(), now = Date.now();
-  const active = [];
-  let changed = false;
-  for (const ban of bans) {
-    if (ban.expires > now) { active.push(ban); continue; }
+  const now = Date.now();
+  const lifted = [];
+  for (const ban of loadBans()) {
+    if (ban.expires > now) continue;
     try {
       await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server1");
       await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server2");
-      changed = true;
+      lifted.push(ban.playerId);
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
       await logAction(
@@ -1400,10 +1409,10 @@ async function processExpiredBans() {
       );
     } catch (err) {
       logger.error("Bans", `Unban failed for ${ban.playerId}: ${err.message}`);
-      active.push(ban);
+      // leave it on the list; retried next sweep
     }
   }
-  if (changed) saveBans(active);
+  if (lifted.length) await removeBans(...lifted);   // serialized — preserves concurrent additions
 }
 
 /* ================================================================
@@ -2257,14 +2266,16 @@ client.on("interactionCreate", async (interaction) => {
       case "clearwarnings": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        const warns = loadWarns();
         const key   = playerId.toLowerCase();
-        const count = warns[key]?.length ?? 0;
+        let count = 0;
+        await update(FILES.WARNS, {}, (warns) => {
+          count = warns[key]?.length ?? 0;
+          if (count) delete warns[key];
+          return warns;
+        });
         if (!count) {
           return interaction.reply({ embeds: [warningEmbed("No Warnings", `\`${playerId}\` has no warnings to clear.`)], ephemeral: true });
         }
-        delete warns[key];
-        saveWarns(warns);
         writeModLog({ action: "clearwarnings", playerId, count, by: interaction.user.tag });
         const embed = successEmbed("Warnings Cleared", `**${count}** warning${count !== 1 ? "s" : ""} cleared for \`${playerId}\`.\n\n**Cleared by:** ${interaction.user}`);
         brand(embed); await logAction(embed);
@@ -2417,12 +2428,9 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply();                          // ← ADDED
         const { ms, label } = BAN_DURATIONS[durationKey];
         const expires        = Date.now() + ms;
-        const existing       = loadBans();
-        const replaced       = existing.find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
-        const newBans        = existing.filter(b => b.playerId.toLowerCase() !== playerId.toLowerCase());
-        newBans.push({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
+        const replaced       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await sendRconBoth(`Ban ${playerId}`, server);
-        saveBans(newBans);
+        await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
         writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         const ts = Math.floor(expires / 1000);
         const embed = new EmbedBuilder().setColor(NV.RUST_RED).setTitle("⏳  Courier Exiled from the Mojave")
@@ -2460,11 +2468,9 @@ client.on("interactionCreate", async (interaction) => {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
         await sendRconBoth(`Unban ${playerId}`, server);
-        const before  = loadBans().length;
-        const newBans = loadBans().filter(b => b.playerId.toLowerCase() !== playerId.toLowerCase());
-        saveBans(newBans);
+        const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        await removeBans(playerId);
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
-        const removed = before !== newBans.length;
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🔓  Exile Lifted — Welcome Back to the Strip")
           .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
           .addFields(
@@ -2600,7 +2606,7 @@ client.on("interactionCreate", async (interaction) => {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
         await sendRconBoth(`Ban ${playerId}`, server);
-        saveBans(loadBans().filter(b => b.playerId.toLowerCase() !== playerId.toLowerCase()));
+        await removeBans(playerId);   // a permanent ban supersedes any temp ban
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("💀  Permanent Exile Issued")
           .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
@@ -2661,10 +2667,7 @@ client.on("interactionCreate", async (interaction) => {
           saveHardBans(registry);
           await sendRconBoth(`Ban ${playerId}`, server);
           if (linkedId) await sendRconBoth(`Ban ${linkedId}`, server);
-          saveBans(loadBans().filter(b => {
-            const id = b.playerId.toLowerCase();
-            return id !== playerId.toLowerCase() && (!linkedId || id !== linkedId.toLowerCase());
-          }));
+          await removeBans(playerId, linkedId);
           writeModLog({ action: "hardban-update", playerId, linkedId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Record Updated").setDescription(`${DIVIDER}`)
             .addFields(
@@ -2682,7 +2685,7 @@ client.on("interactionCreate", async (interaction) => {
         if (notes) { const ns = loadNotes(); ns[playerId] = [{ text: notes, by: interaction.user.tag, at: Date.now() }]; saveNotes(ns); }
         await sendRconBoth(`Ban ${playerId}`, server);
         if (linkedId) await sendRconBoth(`Ban ${linkedId}`, server);
-        saveBans(loadBans().filter(b => b.playerId !== playerId && b.playerId !== linkedId));
+        await removeBans(playerId, linkedId);
         writeModLog({ action: "hardban", playerId, linkedId, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Issued — Persona Non Grata")
           .setDescription(`> *${randomQuote("hardban")}*\n\n${DIVIDER}`)
@@ -2780,7 +2783,7 @@ client.on("interactionCreate", async (interaction) => {
             try { await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server1"); await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server2"); ok.push(ban.playerId); }
             catch { fail.push(ban.playerId); }
           }
-          saveBans(bans.filter(b => fail.includes(b.playerId)));
+          await removeBans(...ok);   // drop only those actually lifted; keep failures & any concurrent additions
           writeModLog({ action: "cleartempbans", count: ok.length, by: interaction.user.tag });
           const lines = [...ok.map(id => `✅  \`${id}\``), ...fail.map(id => `☢️  \`${id}\`  — failed, kept on record`)];
           const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🧹  Temp Bans Cleared")
@@ -3604,7 +3607,15 @@ client.on("interactionCreate", async (interaction) => {
         if (fromBal === null) return interaction.reply({ embeds: [errorEmbed("No Ledger", `\`${fromId}\` has no ledger file.`)], ephemeral: true });
         if (fromBal < amount) return interaction.reply({ embeds: [errorEmbed("Insufficient Caps", `\`${fromId}\` only has **${fromBal.toLocaleString()} caps**.`)], ephemeral: true });
         const toBal = readPlayerBalance(toId) ?? 0;
-        if (!writePlayerBalance(fromId, fromBal - amount) || !writePlayerBalance(toId, toBal + amount)) return interaction.reply({ embeds: [errorEmbed("Write Failed", "Transfer failed. Check `MODSAVE_PATH`.")], ephemeral: true });
+        // Two separate ledger files — write sequentially and roll the debit
+        // back if the credit fails, so caps can never vanish mid-transfer.
+        if (!writePlayerBalance(fromId, fromBal - amount)) {
+          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not debit the sender. Check `MODSAVE_PATH`.")], ephemeral: true });
+        }
+        if (!writePlayerBalance(toId, toBal + amount)) {
+          writePlayerBalance(fromId, fromBal);   // refund — transfer aborted
+          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not credit the recipient — transfer rolled back, no caps moved.")], ephemeral: true });
+        }
         writeModLog({ action: "transfercaps", fromId, toId, amount, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💱  Caps Transfer Complete").setDescription(`${DIVIDER}`)
           .addFields(
@@ -3744,6 +3755,8 @@ module.exports = {
   recordLastSeen, getLastSeen,
   // warnings
   removeWarningAt,
+  // bans (serialized)
+  loadBans, upsertTempBan, removeBans,
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
