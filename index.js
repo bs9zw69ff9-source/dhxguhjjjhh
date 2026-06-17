@@ -1040,6 +1040,46 @@ async function logAction(embed) {
 }
 
 /* ================================================================
+   PUNISHMENT DM NOTICE
+   ================================================================
+   When a moderator links a Discord account to a punishment, DM that user a
+   branded breakdown of what happened. Returns true (sent), false (DM
+   failed — DMs closed/blocked), or null (no account was linked).
+   ================================================================ */
+async function dmPunishmentNotice(discordUser, { action, color, playerId, reason, fields = [] }) {
+  if (!discordUser) return null;
+  const embed = brand(new EmbedBuilder().setColor(color)
+    .setTitle(`📨  Moderation Notice — ${action}`)
+    .setDescription(hero("A moderation action has been taken on your account."))
+    .addFields(
+      { name: "🎯  Courier",  value: `\`${playerId}\``, inline: true },
+      { name: "⚖️  Action",   value: `**${action}**`,   inline: true },
+      ...(reason ? [{ name: "📋  Reason", value: reason, inline: false }] : []),
+      ...fields,
+    ),
+    { thumb: true, footer: { text: "You received this because a moderator linked your Discord account to this action." } });
+  try {
+    await discordUser.send({ embeds: [embed] });
+    return true;
+  } catch (err) {
+    logger.warn("DM", `Could not DM ${discordUser.id}: ${err.message}`);
+    return false;
+  }
+}
+
+/** Builds the "📨 Player Notified" status field for the moderator's reply. */
+function dmStatusField(sent, discordUser) {
+  if (sent === null) return null;
+  return {
+    name: "📨  Player Notified",
+    value: sent
+      ? `✅  DM delivered to <@${discordUser.id}>`
+      : `⚠️  Couldn't DM <@${discordUser.id}> — their DMs are closed or the bot is blocked.`,
+    inline: false,
+  };
+}
+
+/* ================================================================
    PLAYER CACHE
    ================================================================ */
 const playerCache = {
@@ -1565,12 +1605,14 @@ const commands = [
     .setDescription("Eject a courier from the server")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("reason").setDescription("Reason for ejection")),
+    .addStringOption(o => o.setName("reason").setDescription("Reason for ejection"))
+    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("warn")
     .setDescription("Issue a warning to a courier — auto-escalates to bans at thresholds")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for warning").setRequired(true).addChoices(...BAN_REASONS))
-    .addStringOption(serverOption),
+    .addStringOption(serverOption)
+    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("warnings")
     .setDescription("Check a courier's warning history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
@@ -1610,7 +1652,8 @@ const commands = [
         { name: "6 Months", value: "6mo" }, { name: "1 Year",   value: "1y"  }
       ))
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("reason").setDescription("Grounds for exile").setRequired(true).addChoices(...BAN_REASONS)),
+    .addStringOption(o => o.setName("reason").setDescription("Grounds for exile").setRequired(true).addChoices(...BAN_REASONS))
+    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("unban")
     .setDescription("Lift a courier's exile")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID to pardon").setRequired(true).setAutocomplete(true))
@@ -1625,14 +1668,16 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
-    .addStringOption(o => o.setName("notes").setDescription("Additional context")),
+    .addStringOption(o => o.setName("notes").setDescription("Additional context"))
+    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("hardban")
     .setDescription("🔒 Admin — Hard ban + repeat offender registry")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
     .addStringOption(o => o.setName("linked_id").setDescription("Known alt account to link and ban"))
-    .addStringOption(o => o.setName("notes").setDescription("Additional context")),
+    .addStringOption(o => o.setName("notes").setDescription("Additional context"))
+    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("addnote")
     .setDescription("🔒 Admin — Append a note to a hard ban record")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
@@ -1964,6 +2009,7 @@ client.on("interactionCreate", async (interaction) => {
                 "🏥  RCON health check every **5 min**",
                 `⚠️  Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
                 "🎖️  Rank changes update both the rank registry and the rank-specific spawn files automatically",
+                "📨  `/kick` `/warn` `/tempban` `/permban` `/hardban` accept an optional **discord_user** — the bot DMs them their punishment details",
               ].join("\n") },
           )
           .setFooter({ text: `${BUILD_ID}  ·  ${BOT_COPYRIGHT}` });
@@ -2128,6 +2174,12 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🛡️  By",      value: `${interaction.user}`,                              inline: true },
             { name: "📋  Reason",  value: reason,                                             inline: false },
           ).setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
+        const kDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+          action: "Kick", color: NV.NCR_TAN, playerId, reason,
+          fields: [{ name: "🖥️  Server", value: serverLabel(server), inline: true }],
+        });
+        const kDmField = dmStatusField(kDm, interaction.options.getUser("discord_user"));
+        if (kDmField) embed.addFields(kDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
@@ -2165,6 +2217,14 @@ client.on("interactionCreate", async (interaction) => {
           if (next) embed.addFields({ name: "📊  Progress", value: `${count}/${next.count} warnings — next: **${next.label}**`, inline: false });
         }
         embed.setFooter({ text: `Total warnings: ${count}` }).setTimestamp();
+        const wExtra = [{ name: "⚠️  Warning #", value: `**${count}**`, inline: true }];
+        if (escalated?.type === "tempban") wExtra.push({ name: "🔴  Escalation", value: `Auto temp-ban: **${escalated.label}**`, inline: false });
+        else if (escalated?.type === "permban") wExtra.push({ name: "🔴  Escalation", value: "Auto **permanent ban**", inline: false });
+        const wDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+          action: "Warning", color: escalated ? NV.RUST_RED : NV.NCR_TAN, playerId, reason, fields: wExtra,
+        });
+        const wDmField = dmStatusField(wDm, interaction.options.getUser("discord_user"));
+        if (wDmField) embed.addFields(wDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
@@ -2385,6 +2445,16 @@ client.on("interactionCreate", async (interaction) => {
           )
           .setFooter({ text: replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires" })
           .setTimestamp();
+        const tbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+          action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
+          fields: [
+            { name: "⏱️  Duration", value: `**${label}**`,            inline: true },
+            { name: "🖥️  Server",   value: serverLabel(server),       inline: true },
+            { name: "🔓  Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false },
+          ],
+        });
+        const tbDmField = dmStatusField(tbDm, interaction.options.getUser("discord_user"));
+        if (tbDmField) embed.addFields(tbDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
@@ -2550,6 +2620,15 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  Admin",    value: `${interaction.user}`,                              inline: false },
           ).setFooter({ text: randomQuote("ban") }).setTimestamp();
         if (notes) embed.addFields({ name: "📝  Notes", value: notes });
+        const pbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+          action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
+          fields: [
+            { name: "⏱️  Sentence", value: "**Permanent**",      inline: true },
+            { name: "🖥️  Server",   value: serverLabel(server),  inline: true },
+          ],
+        });
+        const pbDmField = dmStatusField(pbDm, interaction.options.getUser("discord_user"));
+        if (pbDmField) embed.addFields(pbDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
@@ -2624,6 +2703,15 @@ client.on("interactionCreate", async (interaction) => {
         if (linkedId) embed.addFields({ name: "🔗  Linked Account", value: `\`${linkedId}\`  — also banned and linked`, inline: false });
         if (notes)    embed.addFields({ name: "📝  Notes", value: notes, inline: false });
         embed.addFields({ name: "🔒  Admin", value: `${interaction.user}`, inline: false }).setFooter({ text: randomQuote("hardban") }).setTimestamp();
+        const hbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+          action: "Hard Ban", color: NV.LEGION_RED, playerId, reason,
+          fields: [
+            { name: "⏱️  Sentence", value: "**Permanent · all servers**", inline: true },
+            { name: "🖥️  Server",   value: serverLabel(server),           inline: true },
+          ],
+        });
+        const hbDmField = dmStatusField(hbDm, interaction.options.getUser("discord_user"));
+        if (hbDmField) embed.addFields(hbDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
       }
@@ -3745,7 +3833,7 @@ module.exports = {
   // owner / access
   isOwner, isBlacklisted,
   // ui / parsing helpers
-  splitPages, extractPlayerNames, bar,
+  splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
   getFactionRankCap, getFactionRankCaps, setFactionRankCap,
 };

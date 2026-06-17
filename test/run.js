@@ -107,6 +107,11 @@ const ok = (cond, msg) => {
   ok(bot.bar(0, 0, 6) === "░░░░░░", "bar handles max=0 safely");
   ok(bot.bar(99, 10, 4) === "████", "bar clamps over-full to width");
 
+  console.log("Punishment DM status field:");
+  ok(bot.dmStatusField(null, null) === null, "no linked account -> no field");
+  ok(bot.dmStatusField(true, { id: "42" }).value.includes("delivered"), "delivered field mentions success");
+  ok(bot.dmStatusField(false, { id: "42" }).value.includes("Couldn't DM"), "failed field mentions failure");
+
   console.log(`\n${pass} passed, ${fail} failed`);
   try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch {}
   process.exit(fail ? 1 : 0);

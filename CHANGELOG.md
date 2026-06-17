@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Punishment DMs** — `/kick`, `/warn`, `/tempban`, `/permban`, and
+  `/hardban` accept an optional `discord_user`. When provided, the bot DMs
+  that account a branded breakdown of their punishment (action, reason,
+  duration/expiry, server), and the moderator's reply shows whether the DM
+  was delivered or the user's DMs were closed.
+
 ### Changed
 - **UI overhaul** — unified visual identity across embeds: a branded author
   header with the bot's avatar, consistent timestamps/footers, avatar
