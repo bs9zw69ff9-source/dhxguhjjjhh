@@ -51,6 +51,9 @@ const OWNER_IDS = new Set([
 ]);
 function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 
+/* Roles granted when a staff application is accepted (see /acceptstaffapp). */
+const STAFF_ROLE_IDS = ["1500874387857997824", "1498172888224628776"];
+
 /* ================================================================
    STRUCTURED LOGGER
    ================================================================ */
@@ -1104,6 +1107,12 @@ function dmStatusField(sent, discordUser) {
   };
 }
 
+/** Send a single branded embed as a DM. Returns true (sent) or false (failed). */
+async function dmEmbed(discordUser, embed) {
+  try { await discordUser.send({ embeds: [brand(embed)] }); return true; }
+  catch (err) { logger.warn("DM", `Could not DM ${discordUser.id}: ${err.message}`); return false; }
+}
+
 /* ================================================================
    PLAYER CACHE
    ================================================================ */
@@ -1719,6 +1728,13 @@ const commands = [
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
     .addRoleOption(o => o.setName("faction_leader_role").setDescription("Faction Leader role")),
+  new SlashCommandBuilder().setName("acceptstaffapp")
+    .setDescription("🔒 Admin — Accept a staff application: DM the applicant and grant staff roles")
+    .addUserOption(o => o.setName("user").setDescription("The accepted applicant").setRequired(true)),
+  new SlashCommandBuilder().setName("denystaffapp")
+    .setDescription("🔒 Admin — Deny a staff application: DM the applicant (no other action)")
+    .addUserOption(o => o.setName("user").setDescription("The denied applicant").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Optional reason shown in the DM")),
   new SlashCommandBuilder().setName("announce")
     .setDescription("📢 Mod — Broadcast a message to a server via RCON")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
@@ -1911,7 +1927,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp"];
 
   const name = interaction.commandName;
 
@@ -2004,6 +2020,8 @@ client.on("interactionCreate", async (interaction) => {
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
+                "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
+                "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
               ].join("\n") },
@@ -2834,6 +2852,85 @@ client.on("interactionCreate", async (interaction) => {
           .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         ACCEPT STAFF APP  (DM the applicant + grant staff roles)
+         ───────────────────────────────────────────────────── */
+      case "acceptstaffapp": {
+        const user = interaction.options.getUser("user");
+        await interaction.deferReply({ ephemeral: true });
+
+        const dm = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
+          .setTitle("🎉  Welcome to the Nuclear RP Staff Team!")
+          .setDescription(
+            `> *Congratulations, courier — your application rose above the rest of the wasteland.*\n\n` +
+            `You've been **accepted onto the Nuclear RP Staff Team!** 🎉\n\n` +
+            `We're genuinely excited to have you aboard. Your staff roles have been applied automatically — ` +
+            `hop into the server and you'll see your new access. Take a moment to read through the staff guidelines, ` +
+            `stay active and approachable, and never hesitate to lean on senior staff when you need a hand.\n\n` +
+            `Welcome to the team. Let's keep the Mojave running smoothly together. ☢️`
+          )
+          .setFooter({ text: "Nuclear RP Staff Team" });
+        const sent = await dmEmbed(user, dm);
+
+        // grant the staff roles
+        let rolesGranted = false, roleErr = null;
+        try {
+          const member = await interaction.guild.members.fetch(user.id);
+          await member.roles.add(STAFF_ROLE_IDS, `Staff application accepted by ${interaction.user.tag}`);
+          rolesGranted = true;
+        } catch (err) {
+          roleErr = err.message;
+          logger.warn("StaffApp", `Role grant failed for ${user.id}: ${err.message}`);
+        }
+
+        writeModLog({ action: "staffapp-accept", targetUserId: user.id, by: interaction.user.tag });
+        const embed = new EmbedBuilder().setColor(rolesGranted ? NV.IRRAD_GREEN : NV.NCR_TAN)
+          .setTitle("✅  Staff Application Accepted")
+          .setDescription(`${hero("A new recruit joins the ranks.")}`)
+          .addFields(
+            { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
+            { name: "📨  DM",        value: sent ? "✅  Acceptance DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
+            { name: "🎖️  Roles",     value: rolesGranted ? `✅  Granted <@&${STAFF_ROLE_IDS[0]}> & <@&${STAFF_ROLE_IDS[1]}>` : `⚠️  Could not grant roles — ${roleErr || "check the bot's role position & Manage Roles permission"}`, inline: false },
+            { name: "🔒  By",        value: `${interaction.user}`, inline: false },
+          );
+        brand(embed); await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         DENY STAFF APP  (DM the applicant — nothing else)
+         ───────────────────────────────────────────────────── */
+      case "denystaffapp": {
+        const user   = interaction.options.getUser("user");
+        const reason = interaction.options.getString("reason");
+        await interaction.deferReply({ ephemeral: true });
+
+        const dm = new EmbedBuilder().setColor(NV.NCR_TAN)
+          .setTitle("Staff Application — Update")
+          .setDescription(
+            `> *Thank you for putting yourself forward for the Nuclear RP Staff Team.*\n\n` +
+            `After a careful review, we've decided **not to move forward with your application at this time.**\n\n` +
+            `Please don't take it to heart — this isn't the end of the road. Keep being active, positive, and helpful ` +
+            `in the community, and you're very welcome to apply again when applications next open. We'd love to see you try again.\n\n` +
+            `Thank you for wanting to help keep the Mojave running. ☢️`
+          )
+          .setFooter({ text: "Nuclear RP Staff Team" });
+        if (reason) dm.addFields({ name: "📋  Note from the team", value: reason });
+        const sent = await dmEmbed(user, dm);
+
+        // Deny does nothing else — no roles, no logging beyond this reply.
+        const embed = new EmbedBuilder().setColor(NV.NCR_TAN)
+          .setTitle("📪  Staff Application Denied")
+          .setDescription(`${hero("Application closed.")}`)
+          .addFields(
+            { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
+            { name: "📨  DM",        value: sent ? "✅  Denial DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
+            { name: "🔒  By",        value: `${interaction.user}`, inline: false },
+          );
+        brand(embed);
+        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────

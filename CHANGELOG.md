@@ -26,6 +26,11 @@ All notable changes to this project are documented here.
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
 
 ### Added
+- **Staff applications** — `/acceptstaffapp <user>` DMs the applicant a
+  welcome and grants the two staff roles; `/denystaffapp <user> [reason]`
+  DMs a denial and does nothing else. (admin)
+- **New faction ranks** — Legion: Prime Legionary, Centurion, Praetorian;
+  Khans: Mid Rank.
 - **Punishment DMs** — `/kick`, `/warn`, `/tempban`, `/permban`, and
   `/hardban` accept an optional `discord_user`. When provided, the bot DMs
   that account a branded breakdown of their punishment (action, reason,
