@@ -2864,14 +2864,12 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply({ ephemeral: true });
 
         const dm = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
-          .setTitle("🎉  Welcome to the Nuclear RP Staff Team!")
+          .setTitle("Nuclear RP — Staff Application Accepted")
           .setDescription(
-            `> *Congratulations, courier — your application rose above the rest of the wasteland.*\n\n` +
-            `You've been **accepted onto the Nuclear RP Staff Team!** 🎉\n\n` +
-            `We're genuinely excited to have you aboard. Your staff roles have been applied automatically — ` +
-            `hop into the server and you'll see your new access. Take a moment to read through the staff guidelines, ` +
-            `stay active and approachable, and never hesitate to lean on senior staff when you need a hand.\n\n` +
-            `Welcome to the team. Let's keep the Mojave running smoothly together. ☢️`
+            `You've been **accepted to the Nuclear RP staff team.**\n\n` +
+            `Your staff roles have been applied — you should see your new access in the server shortly. ` +
+            `Please read through the staff guidelines and reach out to senior staff if you have any questions.\n\n` +
+            `Welcome aboard.`
           )
           .setFooter({ text: "Nuclear RP Staff Team" });
         const sent = await dmEmbed(user, dm);
@@ -2893,11 +2891,8 @@ client.on("interactionCreate", async (interaction) => {
           const ch = await client.channels.fetch(STAFF_ANNOUNCE_CHANNEL);
           if (ch?.isTextBased()) {
             const welcome = brand(new EmbedBuilder().setColor(NV.AMBER)
-              .setTitle("🎉  New Staff Member!")
-              .setDescription(
-                `Everyone give a warm welcome to <@${user.id}> — they've **joined the Nuclear RP Staff Team!** ☢️\n\n` +
-                `Show them the ropes and treat them like one of the crew. Welcome aboard! 🤝`
-              )
+              .setTitle("New Staff Member")
+              .setDescription(`<@${user.id}> has joined the **Nuclear RP staff team.** Welcome to the team.`)
               .setFooter({ text: "Nuclear RP Staff Team" }));
             await ch.send({ content: `<@${user.id}>`, embeds: [welcome] });
             announced = true;
@@ -2912,7 +2907,7 @@ client.on("interactionCreate", async (interaction) => {
         writeModLog({ action: "staffapp-accept", targetUserId: user.id, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(rolesGranted ? NV.IRRAD_GREEN : NV.NCR_TAN)
           .setTitle("✅  Staff Application Accepted")
-          .setDescription(`${hero("A new recruit joins the ranks.")}`)
+          .setDescription(RULE)
           .addFields(
             { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
             { name: "📨  DM",        value: sent ? "✅  Acceptance DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
@@ -2933,13 +2928,12 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply({ ephemeral: true });
 
         const dm = new EmbedBuilder().setColor(NV.NCR_TAN)
-          .setTitle("Staff Application — Update")
+          .setTitle("Nuclear RP — Staff Application Update")
           .setDescription(
-            `> *Thank you for putting yourself forward for the Nuclear RP Staff Team.*\n\n` +
-            `After a careful review, we've decided **not to move forward with your application at this time.**\n\n` +
-            `Please don't take it to heart — this isn't the end of the road. Keep being active, positive, and helpful ` +
-            `in the community, and you're very welcome to apply again when applications next open. We'd love to see you try again.\n\n` +
-            `Thank you for wanting to help keep the Mojave running. ☢️`
+            `Thanks for applying to the Nuclear RP staff team.\n\n` +
+            `After review, we've decided **not to accept your application at this time.** ` +
+            `You're welcome to apply again when applications reopen.\n\n` +
+            `Thanks for your interest.`
           )
           .setFooter({ text: "Nuclear RP Staff Team" });
         if (reason) dm.addFields({ name: "📋  Note from the team", value: reason });
@@ -2948,7 +2942,7 @@ client.on("interactionCreate", async (interaction) => {
         // Deny does nothing else — no roles, no logging beyond this reply.
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN)
           .setTitle("📪  Staff Application Denied")
-          .setDescription(`${hero("Application closed.")}`)
+          .setDescription(RULE)
           .addFields(
             { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
             { name: "📨  DM",        value: sent ? "✅  Denial DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
