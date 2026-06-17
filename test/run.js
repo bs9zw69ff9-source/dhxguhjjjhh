@@ -42,6 +42,7 @@ process.env.RCON_PORT_1     = "1";
 process.env.RCON_PASSWORD_1 = "x";
 process.env.LOG_LEVEL       = "ERROR";
 process.env.DONATOR_PATH    = path.join(sandbox, "donator.txt");
+process.env.BLACKLIST_IDS   = "55, 66";
 
 const bot = require(path.join(sandbox, "index.js"));
 
@@ -85,8 +86,8 @@ const ok = (cond, msg) => {
 
   console.log("Access control:");
   ok(bot.isOwner("1014251293159731310") && !bot.isOwner("9"), "hardcoded owner");
-  fs.writeFileSync(bot.FILES.BLACKLIST, JSON.stringify({ "55": { by: "a", at: 1 } }));
-  ok(bot.isBlacklisted("55") && !bot.isBlacklisted("56"), "blacklist lookup");
+  ok(bot.isBlacklisted("55") && bot.isBlacklisted("66"), "BLACKLIST_IDS env parsed (comma/space separated)");
+  ok(!bot.isBlacklisted("56"), "non-listed id not blacklisted");
 
   console.log("Faction rank caps:");
   ok(bot.getFactionRankCap("NCR", "Officer") === null, "unset rank cap -> null (unlimited)");

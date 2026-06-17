@@ -84,6 +84,7 @@ function validateConfig() {
   const optional = [
     "RCON_HOST_2", "RCON_PORT_2", "RCON_PASSWORD_2",
     "MODSAVE_PATH", "MOD_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
+    "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
   ];
   const missing  = required.filter(k => !process.env[k]);
   const absent   = optional.filter(k => !process.env[k]);
@@ -117,7 +118,6 @@ const FILES = {
   FACTION_CONFIG: "./faction_config.json",
   FACTION_AUDIT:  "./faction_audit.json",
   MENU_GRANTS:    "./menu_grants.json",
-  BLACKLIST:      "./blacklist.json",
   PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
 };
@@ -134,7 +134,6 @@ const DEFAULTS = {
   [FILES.FACTION_CONFIG]: "{}",
   [FILES.FACTION_AUDIT]:  "[]",
   [FILES.MENU_GRANTS]:    "{}",
-  [FILES.BLACKLIST]:      "{}",
   [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
@@ -252,8 +251,6 @@ const loadFactionAudit  = () => safeRead(FILES.FACTION_AUDIT,  []);
 // (writes go through the serialized writeFactionAudit() — no direct saver needed)
 const loadMenuGrants    = () => safeRead(FILES.MENU_GRANTS,    {});
 const saveMenuGrants    = (d) => safeWrite(FILES.MENU_GRANTS,   d);
-const loadBlacklist     = () => safeRead(FILES.BLACKLIST,      {});
-const saveBlacklist     = (d) => safeWrite(FILES.BLACKLIST,     d);
 const loadPlayerNotes   = () => safeRead(FILES.PLAYER_NOTES,   {});
 const savePlayerNotes   = (d) => safeWrite(FILES.PLAYER_NOTES,  d);
 const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
@@ -726,9 +723,15 @@ function hasFactionLeaderRole(member) {
 
 /* ================================================================
    COMMAND BLACKLIST  (Discord users barred from ALL bot commands)
+   ================================================================
+   The blacklist lives in the BLACKLIST_IDS env var — a comma / space /
+   newline separated list of Discord user IDs. Edit .env and restart to
+   change it. Owners (OWNER_IDS) are always exempt.
    ================================================================ */
-function isBlacklisted(userId)  { return !!loadBlacklist()[String(userId)]; }
-function getBlacklistEntry(userId) { return loadBlacklist()[String(userId)] ?? null; }
+const BLACKLIST_IDS = new Set(
+  String(process.env.BLACKLIST_IDS ?? "").split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+);
+function isBlacklisted(userId)  { return BLACKLIST_IDS.has(String(userId)); }
 
 /* ================================================================
    UTILITY HELPERS
@@ -1684,17 +1687,6 @@ const commands = [
     .addStringOption(o => o.setName("note").setDescription("Note to append").setRequired(true)),
   new SlashCommandBuilder().setName("hardbanlist").setDescription("🔒 Admin — View the hard ban registry"),
   new SlashCommandBuilder().setName("cleartempbans").setDescription("🔒 Admin — Clear all temporary exiles (confirmation required)"),
-  new SlashCommandBuilder().setName("blacklist")
-    .setDescription("🔒 Admin — Bar a Discord user from using ALL bot commands")
-    .addSubcommand(s => s.setName("add")
-      .setDescription("Blacklist a Discord user from every command")
-      .addUserOption(o => o.setName("user").setDescription("Discord user to blacklist").setRequired(true))
-      .addStringOption(o => o.setName("reason").setDescription("Reason (shown to the user and logged)")))
-    .addSubcommand(s => s.setName("remove")
-      .setDescription("Remove a Discord user from the blacklist")
-      .addUserOption(o => o.setName("user").setDescription("Discord user to un-blacklist").setRequired(true)))
-    .addSubcommand(s => s.setName("list")
-      .setDescription("View all blacklisted Discord users")),
   new SlashCommandBuilder().setName("donator")
     .setDescription("🔒 Admin — Manage the donator whitelist file")
     .addSubcommand(s => s.setName("add")
@@ -1862,7 +1854,7 @@ client.on("interactionCreate", async (interaction) => {
   if (isBlacklisted(interaction.user.id) && !isOwner(interaction.user.id)) {
     if (interaction.isAutocomplete()) return interaction.respond([]).catch(() => {});
     if (interaction.isChatInputCommand()) {
-      return interaction.reply({ embeds: [blacklistedEmbed(getBlacklistEntry(interaction.user.id))], ephemeral: true }).catch(() => {});
+      return interaction.reply({ embeds: [blacklistedEmbed()], ephemeral: true }).catch(() => {});
     }
     return;
   }
@@ -1902,7 +1894,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "blacklist", "donator"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator"];
 
   const name = interaction.commandName;
 
@@ -1994,7 +1986,6 @@ client.on("interactionCreate", async (interaction) => {
                 "`/cleartempbans` `/setroles`",
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
-                "`/blacklist add|remove|list <user>` — Bar a Discord user from all commands",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
@@ -2010,6 +2001,7 @@ client.on("interactionCreate", async (interaction) => {
                 `⚠️  Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
                 "🎖️  Rank changes update both the rank registry and the rank-specific spawn files automatically",
                 "📨  `/kick` `/warn` `/tempban` `/permban` `/hardban` accept an optional **discord_user** — the bot DMs them their punishment details",
+                "⛔  Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
               ].join("\n") },
           )
           .setFooter({ text: `${BUILD_ID}  ·  ${BOT_COPYRIGHT}` });
@@ -2831,82 +2823,6 @@ client.on("interactionCreate", async (interaction) => {
           .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         BLACKLIST  (admin — bar a Discord user from all commands)
-         ───────────────────────────────────────────────────── */
-      case "blacklist": {
-        const sub = interaction.options.getSubcommand();
-
-        if (sub === "list") {
-          const bl      = loadBlacklist();
-          const entries = Object.entries(bl);
-          if (!entries.length) {
-            return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("⛔  Blacklist — Empty")
-                .setDescription("No Discord users are currently blacklisted.").setTimestamp()
-            ], ephemeral: true });
-          }
-          const lines = entries
-            .sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0))
-            .map(([uid, e], i) => {
-              const ts = e.at ? `  ·  <t:${Math.floor(e.at / 1000)}:R>` : "";
-              return `\`${String(i + 1).padStart(2, "0")}\`  <@${uid}> \`${uid}\`${e.reason ? `  —  *${e.reason}*` : ""}  ·  by **${e.by ?? "?"}**${ts}`;
-            });
-          const embed = new EmbedBuilder().setColor(NV.LEGION_RED)
-            .setTitle(`⛔  Command Blacklist — ${entries.length} user${entries.length !== 1 ? "s" : ""}`)
-            .setDescription(`> *"Names in the little black book don't get served."*\n\n${DIVIDER}`);
-          for (const f of chunkFields(lines, "Blacklisted Users")) embed.addFields(f);
-          embed.setFooter({ text: "Blacklisted users are barred from every bot command." }).setTimestamp();
-          return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-
-        const target = interaction.options.getUser("user");
-
-        if (sub === "add") {
-          const reason = interaction.options.getString("reason")?.trim() || null;
-          if (target.id === interaction.user.id) {
-            return interaction.reply({ embeds: [errorEmbed("Invalid Target", "You can't blacklist yourself.")], ephemeral: true });
-          }
-          if (target.id === client.user.id) {
-            return interaction.reply({ embeds: [errorEmbed("Invalid Target", "You can't blacklist the bot.")], ephemeral: true });
-          }
-          if (isOwner(target.id)) {
-            return interaction.reply({ embeds: [errorEmbed("Invalid Target", "That user is a hardcoded owner and cannot be blacklisted.")], ephemeral: true });
-          }
-          const bl = loadBlacklist();
-          if (bl[target.id]) {
-            return interaction.reply({ embeds: [warningEmbed("Already Blacklisted", `<@${target.id}> is already blacklisted.\n\nUse \`/blacklist remove\` to lift it.`)], ephemeral: true });
-          }
-          bl[target.id] = { reason, by: interaction.user.tag, at: Date.now() };
-          saveBlacklist(bl);
-          writeModLog({ action: "blacklist-add", targetUserId: target.id, reason, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("⛔  User Blacklisted")
-            .setDescription(`> *"Consider their access revoked. Every command, every server."*\n\n${DIVIDER}`)
-            .addFields(
-              { name: "🎯  User",   value: `<@${target.id}>  \`${target.id}\``, inline: false },
-              { name: "📋  Reason", value: reason ?? "*No reason provided*",     inline: false },
-              { name: "🔒  By",     value: `${interaction.user}`,                inline: false },
-            ).setFooter({ text: "User can no longer use any bot command." }).setTimestamp();
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-
-        if (sub === "remove") {
-          const bl = loadBlacklist();
-          if (!bl[target.id]) {
-            return interaction.reply({ embeds: [warningEmbed("Not Blacklisted", `<@${target.id}> is not on the blacklist.`)], ephemeral: true });
-          }
-          delete bl[target.id];
-          saveBlacklist(bl);
-          writeModLog({ action: "blacklist-remove", targetUserId: target.id, by: interaction.user.tag });
-          const embed = successEmbed("Blacklist Lifted", `<@${target.id}> can use bot commands again.\n\n**Lifted by:** ${interaction.user}`);
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-
-        break;
       }
 
       /* ─────────────────────────────────────────────────────

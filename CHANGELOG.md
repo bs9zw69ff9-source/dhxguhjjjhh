@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Removed
+- **`/blacklist` command** — the command-blacklist is now configured via the
+  `BLACKLIST_IDS` env var (comma/space/newline-separated user IDs; restart to
+  apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
+
 ### Added
 - **Punishment DMs** — `/kick`, `/warn`, `/tempban`, `/permban`, and
   `/hardban` accept an optional `discord_user`. When provided, the bot DMs

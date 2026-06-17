@@ -38,6 +38,12 @@ One or more Discord user IDs are hardcoded in `OWNER_IDS` at the top of
 never be blacklisted. This list is intentionally code-only — edit the source
 to change it.
 
+### Command blacklist
+
+Discord users barred from **all** bot commands are listed in the
+`BLACKLIST_IDS` env var (comma / space / newline separated user IDs). Edit
+`.env` and restart to change it. Owners are always exempt.
+
 ## Commands
 
 | Tier | Commands |
@@ -45,7 +51,7 @@ to change it.
 | 🌐 Public | `/help` `/ping` `/listplayers` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen` · `/faction list\|overview\|audit` |
 | 🛡️ Moderator | `/kick` `/warn` `/delwarn` `/tempban` `/unban` `/announce` `/history` `/note add\|list` `/givecaps` `/faction transfer` |
 | ⚔️ Faction Leader | `/faction add\|remove\|rank` `/addwage` `/removewage` |
-| 🔒 Admin | `/permban` `/hardban` `/addnote` `/hardbanlist` `/clearwarnings` `/note clear` `/cleartempbans` `/setroles` `/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps` `/rotatemap` `/manual` `/blacklist` `/donator` `/faction setcap` |
+| 🔒 Admin | `/permban` `/hardban` `/addnote` `/hardbanlist` `/clearwarnings` `/note clear` `/cleartempbans` `/setroles` `/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps` `/rotatemap` `/manual` `/donator` `/faction setcap` |
 
 Roles are mapped to tiers with `/setroles`. If a tier's role is unset, that
 tier is unrestricted.
