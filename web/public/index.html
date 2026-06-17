@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mojave Authority — Servers</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <nav class="nav" id="nav"></nav>
+  <main class="container" id="view"></main>
+  <div class="footer">MOJAVE AUTHORITY · New Vegas RP · companion terminal</div>
+  <script src="/app.js"></script>
+  <script>
+    mountNav("servers"); renderServers();
+    setInterval(() => { if (document.visibilityState === "visible") renderServers(); }, 20000);
+  </script>
+</body>
+</html>

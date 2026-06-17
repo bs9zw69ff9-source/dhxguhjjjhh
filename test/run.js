@@ -113,6 +113,19 @@ const ok = (cond, msg) => {
   ok(bot.dmStatusField(true, { id: "42" }).value.includes("delivered"), "delivered field mentions success");
   ok(bot.dmStatusField(false, { id: "42" }).value.includes("Couldn't DM"), "failed field mentions failure");
 
+  console.log("Web app (public):");
+  const web = require(path.join(__dirname, "..", "web", "server.js"));
+  ok(typeof web.factionRosters === "function" && typeof web.courierProfile === "function", "web exports public aggregators");
+  const fr = web.factionRosters();
+  ok(Array.isArray(fr) && fr.some(f => f.name === "NCR"), "factionRosters returns all factions");
+  ok(web.leaderboard() === null, "leaderboard null when MODSAVE_PATH unset");
+  ok(web.balanceOf("nobody") === null, "balanceOf null when no ledger");
+  ok(web.isDonator("nobody") === false, "isDonator false for unknown");
+  ok(Array.isArray(web.playerFactions("nobody")), "playerFactions returns an array");
+  const prof = await web.courierProfile("Test_Courier");
+  ok(prof && prof.id === "Test_Courier" && Array.isArray(prof.factions), "courierProfile shape ok");
+  ok((await web.courierProfile("")) === null, "courierProfile rejects empty id");
+
   console.log(`\n${pass} passed, ${fail} failed`);
   try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch {}
   process.exit(fail ? 1 : 0);

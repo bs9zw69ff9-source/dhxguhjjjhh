@@ -84,6 +84,27 @@ exercise the exported helpers without a token or `discord.js` installed.
 CI (GitHub Actions) runs the syntax check and the test suite on every push —
 see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
+## Companion web app
+
+A zero-dependency, **fully public** dashboard lives in `web/` and reads the
+same data the bot uses (plus live RCON status). Start it alongside the bot:
+
+```bash
+npm run web        # http://localhost:8080  (set WEB_PORT to change)
+```
+
+Pages (no login required):
+
+- **Servers** — live status, map/mode, and the online courier list per server
+- **Leaderboard** — richest couriers by caps (needs `MODSAVE_PATH`)
+- **Factions** — every faction's roster, ranks, member counts, and caps
+- **Courier Lookup** — search any courier: online/last-seen, playtime,
+  faction ranks, caps balance, and donator status
+
+It serves a Pip-Boy / New-Vegas CRT themed UI. The web app reads files from
+`DATA_DIR` (default: current dir) and the faction/donator/ModSave paths, so
+run it where it can see them (or mount the same volumes in Docker).
+
 ## Deployment
 
 ### Docker

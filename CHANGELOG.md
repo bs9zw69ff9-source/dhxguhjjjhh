@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added (companion web app)
+- A zero-dependency, **public** web dashboard (`web/`, `npm run web`) that
+  reads the bot's data + live RCON: **Servers**, **Leaderboard**,
+  **Factions**, and **Courier Lookup** pages, with a Pip-Boy/New-Vegas CRT UI.
+
 ### Removed
 - **`/blacklist` command** — the command-blacklist is now configured via the
   `BLACKLIST_IDS` env var (comma/space/newline-separated user IDs; restart to
