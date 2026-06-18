@@ -1,0 +1,28 @@
+# Mojave Authority Bot — Docker Compose
+# Copyright (c) 2026 bs9zw69ff9-source. Proprietary — see LICENSE.
+#
+# This bot reads/writes the Pavlov server's local files (FactionRoles, ModSave)
+# AND its own JSON state, so the simplest deployment is on the SAME host as the
+# Pavlov server. This compose file bind-mounts the repo (so the bot's JSON state
+# persists on the host and survives restarts / `git pull`) plus the Pavlov data
+# directory at the same path the bot expects.
+#
+# Prefer bare-metal/systemd? See deploy/mojave-authority-bot.service.
+
+services:
+  bot:
+    build: .
+    image: mojave-authority-bot
+    container_name: mojave-authority-bot
+    restart: unless-stopped
+    env_file: .env
+    working_dir: /app
+    volumes:
+      # Run the repo's code and keep the bot's JSON data on the host.
+      - .:/app
+      # Keep the image's installed dependencies (don't let the bind mount hide them).
+      - /app/node_modules
+      # Give the bot access to the Pavlov server files at the SAME path it uses
+      # internally (FACTION_ROLES_PATH / MODSAVE_PATH in index.js + .env).
+      # Adjust the host side (left of the colon) to your install.
+      - /home/steam/pavlovserver/Pavlov/Saved/Config/ModSave:/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave

@@ -1,0 +1,29 @@
+# Mojave Authority Bot — systemd unit (recommended for same-host deployment)
+#
+# Install:
+#   sudo cp deploy/mojave-authority-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mojave-authority-bot
+# Logs:
+#   journalctl -u mojave-authority-bot -f
+#
+# Adjust User and WorkingDirectory to match your install. The bot reads its
+# .env (via dotenv) and writes its JSON data files inside WorkingDirectory.
+
+[Unit]
+Description=Mojave Authority Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=steam
+WorkingDirectory=/opt/mojave-authority-bot
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=5
+# Keep logs out of journald noise at high volume if desired:
+# StandardOutput=append:/var/log/mojave-authority-bot.log
+
+[Install]
+WantedBy=multi-user.target
