@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **All command lists now use interactive ◀ ▶ pagination.** Added buttons to
+  `/warnings`, `/note list`, `/donator list`, and converted `/faction list`
+  and `/faction audit` from a `page` option to buttons (option removed).
+  (`/history`, `/banlist`, `/wagelist`, `/hardbanlist` already had them.)
+
 ### Fixed (debug pass)
 - **Temp-ban writes are now serialized.** `tempban`, `unban`, `permban`,
   `hardban`, `cleartempbans`, the 60s expiry sweep, and warn auto-escalation

@@ -1780,14 +1780,12 @@ const commands = [
       .addStringOption(o => o.setName("rank").setDescription("Rank in new faction (default: lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a faction with their ranks")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addIntegerOption(o => o.setName("page").setDescription("Page number (25 members per page, default: 1)").setMinValue(1)))
+      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
     .addSubcommand(s => s.setName("overview")
       .setDescription("Show all factions with member counts and officers at a glance"))
     .addSubcommand(s => s.setName("audit")
       .setDescription("View recent add/remove/rank changes for a faction")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addIntegerOption(o => o.setName("page").setDescription("Page number (15 entries per page, default: 1)").setMinValue(1)))
+      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
     .addSubcommand(s => s.setName("setcap")
       .setDescription("🔒 Admin — Set the maximum member cap for a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
@@ -2007,9 +2005,9 @@ client.on("interactionCreate", async (interaction) => {
                 "`/faction add <id> <faction> [rank]` — Whitelist player (optional starting rank)",
                 "`/faction remove <id> <faction>` — Remove from whitelist",
                 "`/faction rank <id> <faction> <rank>` — Set member rank *(FL only)*",
-                "`/faction list <faction> [page]` — Paginated roster with ranks",
+                "`/faction list <faction>` — Roster with ranks (◀ ▶ pages)",
                 "`/faction overview` — All factions at a glance",
-                "`/faction audit <faction> [page]` — Add/remove/rank change log",
+                "`/faction audit <faction>` — Add/remove/rank change log (◀ ▶ pages)",
                 "`/addwage <id> <tier>` — Enrol in payroll or issue mercenary pay",
                 "`/removewage <id>` — Remove from payroll",
               ].join("\n") },
@@ -2277,15 +2275,13 @@ client.on("interactionCreate", async (interaction) => {
           const ts = Math.floor(w.at / 1000);
           return `\`${String(i + 1).padStart(2, "0")}\`  **${w.reason}**  ·  by *${w.by}*  ·  <t:${ts}:R>`;
         });
-        return interaction.reply({ embeds: [
+        const header = `**${count}** warning${count !== 1 ? "s" : ""} on record\n` +
+          (next ? `Next escalation at **${next.count}** warnings: *${next.label}*` : "**⛔  Maximum threshold exceeded — perm ban eligible**");
+        return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(count >= 5 ? NV.RUST_RED : NV.NCR_TAN)
             .setTitle(`⚠️  Warning Record — ${playerId}`)
-            .setDescription(
-              `**${count}** warning${count !== 1 ? "s" : ""} on record\n` +
-              (next ? `Next escalation at **${next.count}** warnings: *${next.label}*` : "**⛔  Maximum threshold exceeded — perm ban eligible**") +
-              `\n\n${DIVIDER}\n` + lines.join("\n")
-            ).setTimestamp()
-        ], ephemeral: true });
+            .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`),
+          { perPage: 12, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -2408,11 +2404,11 @@ client.on("interactionCreate", async (interaction) => {
           const ts = Math.floor(n.at / 1000);
           return `\`${String(i + 1).padStart(2, "0")}\`  ${n.text}  ·  *${n.by}*  ·  <t:${ts}:R>`;
         });
-        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`📝  Staff Notes — ${playerId}`)
-          .setDescription(`**${notes.length}** note${notes.length !== 1 ? "s" : ""} on record\n\n${DIVIDER}`);
-        for (const f of chunkFields(lines, "Notes")) embed.addFields(f);
-        embed.setFooter({ text: "Staff notes · internal only" }).setTimestamp();
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`📝  Staff Notes — ${playerId}`)
+            .setDescription(`**${notes.length}** note${notes.length !== 1 ? "s" : ""} on record\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Staff notes · internal only" }),
+          { perPage: 10, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -2970,12 +2966,12 @@ client.on("interactionCreate", async (interaction) => {
             ], ephemeral: true });
           }
           const out = lines.map((id, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${id}**`);
-          const embed = new EmbedBuilder().setColor(NV.GOLD)
-            .setTitle(`💎  Donators — ${lines.length}`)
-            .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}`);
-          for (const f of chunkFields(out, "Donators")) embed.addFields(f);
-          embed.setFooter({ text: DONATOR_FILE }).setTimestamp();
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return paginate(interaction, out, (pageLines) =>
+            new EmbedBuilder().setColor(NV.GOLD)
+              .setTitle(`💎  Donators — ${lines.length}`)
+              .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+              .setFooter({ text: DONATOR_FILE }),
+            { perPage: 20, ephemeral: true });
         }
 
         const playerId = sanitizeId(interaction.options.getString("playerid"));
@@ -3204,7 +3200,6 @@ client.on("interactionCreate", async (interaction) => {
         /* ── list (public, paginated) ── */
         if (sub === "list") {
           const faction  = interaction.options.getString("faction");
-          const page     = Math.max(1, interaction.options.getInteger("page") ?? 1);
           const members  = getFactionMembers(faction);
           if (members === null) {
             return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], ephemeral: true });
@@ -3216,38 +3211,28 @@ client.on("interactionCreate", async (interaction) => {
                 .setTimestamp()
             ], ephemeral: true });
           }
-          const PAGE_SIZE  = 25;
-          const totalPages = Math.ceil(members.length / PAGE_SIZE);
-          const safePage   = Math.min(page, totalPages);
-          const slice      = members.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-          const cap        = getFactionCap(faction);
-          const lines = slice.map((m, i) => {
-            const globalIdx = (safePage - 1) * PAGE_SIZE + i + 1;
-            return `\`${String(globalIdx).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  *${m.rank}*`;
-          });
-          const rankOrder = getFactionRankOrder(faction).slice().reverse();
-          const summary   = rankOrder.map(r => {
+          const cap = getFactionCap(faction);
+          const summary = getFactionRankOrder(faction).slice().reverse().map(r => {
             const n = members.filter(m => m.rank === r).length;
             const rcap = getFactionRankCap(faction, r);
             if (!n && !rcap) return null;
             const count = rcap ? `${n}/${rcap}${n > rcap ? "⚠️" : ""}` : `${n}`;
             return `${getFactionRankBadge(faction, r)} ${r}: **${count}**`;
           }).filter(Boolean).join("  ·  ");
-          const embed = new EmbedBuilder().setColor(NV.GOLD)
-            .setTitle(`⚔️  ${faction} — Roster (Page ${safePage}/${totalPages})`)
-            .setDescription(
-              `**${members.length}/${cap}** members${members.length > cap ? " ⚠️ over cap" : ""}  ·  ${summary}\n\n${DIVIDER}\n` +
-              lines.join("\n")
-            )
-            .setFooter({ text: `${SPAWN_FILE_MAP[faction]}  ·  Page ${safePage} of ${totalPages}  ·  ${PAGE_SIZE} per page` })
-            .setTimestamp();
-          return interaction.reply({ embeds: [embed] });
+          const lines = members.map((m, i) =>
+            `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  *${m.rank}*`);
+          const header = `**${members.length}/${cap}** members${members.length > cap ? " ⚠️ over cap" : ""}  ·  ${summary}`;
+          return paginate(interaction, lines, (pageLines) =>
+            new EmbedBuilder().setColor(NV.GOLD)
+              .setTitle(`⚔️  ${faction} — Roster`)
+              .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+              .setFooter({ text: SPAWN_FILE_MAP[faction] }),
+            { perPage: 20 });
         }
 
         /* ── audit (public, paginated) ── */
         if (sub === "audit") {
           const faction   = interaction.options.getString("faction");
-          const page      = Math.max(1, interaction.options.getInteger("page") ?? 1);
           const allAudit  = loadFactionAudit().filter(e => e.faction === faction).reverse();
           if (!allAudit.length) {
             return interaction.reply({ embeds: [
@@ -3256,29 +3241,18 @@ client.on("interactionCreate", async (interaction) => {
                 .setTimestamp()
             ], ephemeral: true });
           }
-          const PAGE_SIZE  = 15;
-          const totalPages = Math.ceil(allAudit.length / PAGE_SIZE);
-          const safePage   = Math.min(page, totalPages);
-          const slice      = allAudit.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-          const ACTION_ICONS = {
-            "add":          "➕",
-            "remove":       "➖",
-            "rank":         "🎖️",
-            "transfer-in":  "📥",
-            "transfer-out": "📤",
-          };
-          const lines = slice.map(e => {
+          const ACTION_ICONS = { "add": "➕", "remove": "➖", "rank": "🎖️", "transfer-in": "📥", "transfer-out": "📤" };
+          const lines = allAudit.map(e => {
             const ts     = Math.floor(e.at / 1000);
             const icon   = ACTION_ICONS[e.action] ?? "📌";
             const detail = e.rank ? ` → **${e.rank}**` : e.oldRank ? ` *(was ${e.oldRank})*` : "";
             return `${icon}  \`${e.action}\`  **${e.playerId}**${detail}  ·  by *${e.by}*  ·  <t:${ts}:R>`;
           });
-          const embed = new EmbedBuilder().setColor(NV.AMBER)
-            .setTitle(`📋  ${faction} — Audit Log (Page ${safePage}/${totalPages})`)
-            .setDescription(`**${allAudit.length}** total changes *(newest first)*\n\n${DIVIDER}\n` + lines.join("\n"))
-            .setFooter({ text: `Page ${safePage} of ${totalPages}  ·  15 entries per page` })
-            .setTimestamp();
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return paginate(interaction, lines, (pageLines) =>
+            new EmbedBuilder().setColor(NV.AMBER)
+              .setTitle(`📋  ${faction} — Audit Log`)
+              .setDescription(`**${allAudit.length}** total changes *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`),
+            { perPage: 15, ephemeral: true });
         }
 
         /* ── rank (Faction Leader ONLY) ── */
