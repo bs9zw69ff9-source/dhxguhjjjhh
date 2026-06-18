@@ -1880,9 +1880,10 @@ const commands = [
     .addUserOption(o => o.setName("user").setDescription("The denied applicant").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Optional reason shown in the DM")),
   new SlashCommandBuilder().setName("announce")
-    .setDescription("📢 Mod — Broadcast a message to a server via RCON")
+    .setDescription("📢 Mod — Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
-    .addStringOption(serverOption),
+    .addStringOption(serverOption)
+    .addStringOption(o => o.setName("target").setDescription("Who to notify: a specific courier, or All").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("givemenu")
     .setDescription("🔒 Admin — Grant RCON menu access to a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
@@ -2076,6 +2077,10 @@ client.on("interactionCreate", async (interaction) => {
     if (query && !choices.find(c => c.value.toLowerCase() === query)) {
       choices.unshift({ name: `${focused.value} (manual entry)`, value: focused.value });
     }
+    // /announce target field also offers "All"
+    if (cmdName === "announce" && focused.name === "target" && (!query || "all".includes(query))) {
+      choices.unshift({ name: "📢  All players", value: "all" });
+    }
     return interaction.respond(choices.slice(0, 25)).catch(() => {});
   }
 
@@ -2152,7 +2157,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/delwarn <id> <number>` — Remove a single warning",
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
                 "`/unban <id> <server>` — Lift exile",
-                "`/announce <msg> <server>` — Broadcast via RCON Notify",
+                "`/announce <msg> <server> <target>` — RCON Notify a player or All",
                 "`/history <id>` — View mod action history",
                 "`/note add|list <id>` — Staff notes on a courier",
                 "`/givecaps <id> <amount> [reason]` — Give caps to a courier",
@@ -3175,9 +3180,13 @@ client.on("interactionCreate", async (interaction) => {
       case "announce": {
         const message = sanitizeMessage(interaction.options.getString("message"));
         const server  = interaction.options.getString("server");
+        const rawTarget = interaction.options.getString("target");
         if (!message.trim()) return interaction.reply({ embeds: [errorEmbed("Empty Message", "Cannot broadcast an empty message.")], ephemeral: true });
+        const isAll  = !rawTarget || rawTarget.trim().toLowerCase() === "all";
+        const target = isAll ? "All" : sanitizeId(rawTarget);
+        if (!target) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();
-        const { s1, s2 } = await sendRconBoth(`Notify ${message}`, server);
+        const { s1, s2 } = await sendRconBoth(`Notify ${target} ${message}`, server);
         // Pavlov RCON has no broadcast verb on stock builds; Notify is build/mod-dependent.
         // Heuristically detect whether the server acknowledged the command.
         const ackOne = (raw) => {
@@ -3194,7 +3203,7 @@ client.on("interactionCreate", async (interaction) => {
         const acks = [a1, a2].filter(v => v !== null);
         const allOk  = acks.length > 0 && acks.every(Boolean);
         const anyOk  = acks.some(Boolean);
-        writeModLog({ action: "announce", message, by: interaction.user.tag, server, delivered: allOk });
+        writeModLog({ action: "announce", message, target, by: interaction.user.tag, server, delivered: allOk });
         const deliveryNote = allOk
           ? "✅  Sent via RCON `Notify` — visible in-game if your build supports it."
           : anyOk
@@ -3204,6 +3213,7 @@ client.on("interactionCreate", async (interaction) => {
           .setDescription(`> *${randomQuote("announce")}*\n\n${DIVIDER}`)
           .addFields(
             { name: "📣  Message",  value: `> ${message}`,                                     inline: false },
+            { name: "🎯  Target",   value: isAll ? "**All players**" : `\`${target}\``,         inline: true },
             { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`,   inline: true },
             { name: "🛡️  By",       value: `${interaction.user}`,                              inline: true },
             { name: "📡  Delivery", value: deliveryNote,                                       inline: false },
