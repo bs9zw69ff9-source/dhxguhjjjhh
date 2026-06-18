@@ -32,6 +32,13 @@ All notable changes to this project are documented here.
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
 
 ### Added
+- **Context-aware autocomplete** — player suggestions now match the command:
+  `/unban` lists only banned players, `/stripmenu` only menu-grant holders,
+  `/removewage` only payroll, `/donator remove` only donators, `/faction
+  remove|rank|transfer` only that faction's members, `/delwarn`/`/clearwarnings`/
+  `/warnings` only the warned, `/addnote` only hard-banned, `/history` only
+  players with history. (Faction subcommands reordered so you pick the faction
+  first.) Add/grant/lookup commands keep the full online + known-player list.
 - **Known-player registry** (`known_players.json`) — records everyone who's
   ever been seen online (display name + first/last seen). Autocomplete now
   falls back to it, so offline players can still be picked: e.g. typing

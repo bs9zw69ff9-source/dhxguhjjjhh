@@ -82,6 +82,21 @@ const ok = (cond, msg) => {
   bot.seedKnownPlayers();
   ok(bot.getKnownPlayerChoices("seeded").some(c => c.value === "Seeded_Courier"), "seedKnownPlayers backfills from playtime");
 
+  console.log("Context-aware autocomplete:");
+  const mk = (cmd, opts = {}, sub = null) => ({ commandName: cmd, options: { getSubcommand: () => sub, getString: (n) => opts[n] ?? null } });
+  ok(bot.commandPlayerCandidates(mk("kick")) === null, "kick → null (default online+known list)");
+  ok(bot.commandPlayerCandidates(mk("stats")) === null, "stats → null (default)");
+  fs.writeFileSync(bot.FILES.MENU_GRANTS, JSON.stringify({ "rcon_guy": [{ server: "both", menuValue: "staff" }] }));
+  ok(bot.commandPlayerCandidates(mk("stripmenu")).length === 1, "stripmenu → only menu-grant holders");
+  await bot.upsertTempBan({ playerId: "Exiled_One", reason: "x", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
+  ok(bot.commandPlayerCandidates(mk("unban")).some(n => n === "Exiled_One"), "unban → only currently-banned players");
+  fs.writeFileSync(process.env.DONATOR_PATH, "Big_Spender\n");
+  ok(bot.commandPlayerCandidates(mk("donator", {}, "remove")).includes("Big_Spender"), "donator remove → donator file entries");
+  ok(bot.commandPlayerCandidates(mk("donator", {}, "add")) === null, "donator add → null (any player)");
+  fs.rmSync(process.env.DONATOR_PATH);   // restore missing-file state for the later donator tests
+  ok(bot.commandPlayerCandidates(mk("faction", {}, "remove")) === null, "faction remove w/o faction selected → null (fallback)");
+  ok(Array.isArray(bot.commandPlayerCandidates(mk("faction", { faction: "NCR" }, "remove"))), "faction remove w/ faction → member list (array)");
+
   console.log("Warning removal:");
   fs.writeFileSync(bot.FILES.WARNS, JSON.stringify({ p1: [
     { reason: "a", by: "m", at: 1 }, { reason: "b", by: "m", at: 2 }, { reason: "c", by: "m", at: 3 } ] }));

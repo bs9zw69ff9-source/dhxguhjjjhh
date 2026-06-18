@@ -392,6 +392,37 @@ function seedKnownPlayers() {
 }
 
 /* ================================================================
+   CONTEXT-AWARE AUTOCOMPLETE
+   ================================================================
+   For a player field, return the population that actually makes sense for
+   the command (e.g. /stripmenu → only people who hold a menu grant), or null
+   to fall back to the default online + known-player list. */
+function commandPlayerCandidates(interaction) {
+  const cmd = interaction.commandName;
+  const sub = (cmd === "faction" || cmd === "donator") ? interaction.options.getSubcommand(false) : null;
+  const known = loadKnownPlayers();
+  const disp  = (k) => known[String(k).toLowerCase()]?.name ?? k;   // recover display casing for lowercased keys
+
+  if (cmd === "unban")        return loadBans().map(b => b.playerId);                                  // currently temp-banned
+  if (cmd === "warnings" || cmd === "clearwarnings" || cmd === "delwarn")
+                              return Object.keys(loadWarns()).map(disp);                               // has warnings
+  if (cmd === "history")      return [...new Set(loadModLog().map(e => e.playerId).filter(Boolean))];  // has mod history
+  if (cmd === "addnote")      return loadHardBans().flatMap(h => [h.primaryId, ...(h.linkedIds || [])]); // hard-ban record
+  if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
+  if (cmd === "removewage")   return loadWages().map(w => w.playerId);                                 // on payroll
+  if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
+  if (cmd === "faction" && (sub === "remove" || sub === "rank")) {
+    const f = interaction.options.getString("faction");
+    return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of that faction
+  }
+  if (cmd === "faction" && sub === "transfer") {
+    const f = interaction.options.getString("from_faction");
+    return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of source faction
+  }
+  return null;   // default: online + known players
+}
+
+/* ================================================================
    WARNING REMOVAL  (delete a single warning by 1-based index)
    ================================================================ */
 async function removeWarningAt(playerId, index1Based) {
@@ -1832,18 +1863,18 @@ const commands = [
       .addStringOption(o => o.setName("rank").setDescription("Starting rank (faction-specific, default is lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("remove")
       .setDescription("Remove a player from a faction whitelist")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
+      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("rank")
       .setDescription("⚔️ Faction Leader — Set or change a member's rank within a faction")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("rank").setDescription("New rank to assign (faction-specific)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("transfer")
       .setDescription("🛡️ Mod — Transfer a player from one faction to another")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("from_faction").setDescription("Current faction").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("to_faction").setDescription("Destination faction").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the current faction first)").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("rank").setDescription("Rank in new faction (default: lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a faction with their ranks")
@@ -1966,7 +1997,7 @@ client.on("interactionCreate", async (interaction) => {
     const cmdName  = interaction.commandName;
 
     if (focused.name === "rank" && cmdName === "faction") {
-      const faction = interaction.options.getString("faction");
+      const faction = interaction.options.getString("faction") ?? interaction.options.getString("to_faction");
       if (faction) {
         const order = getFactionRankOrder(faction);
         const query = focused.value.toLowerCase();
@@ -1980,8 +2011,23 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.respond(matches.slice(0, 25)).catch(() => {});
     }
 
+    const query = focused.value.toLowerCase();
+
+    // Context-aware player field: only suggest the population relevant to the command.
+    const ctx = commandPlayerCandidates(interaction);
+    if (ctx !== null) {
+      const out = [...new Set(ctx.filter(Boolean))]
+        .filter(n => !query || n.toLowerCase().includes(query))
+        .slice(0, 25)
+        .map(n => ({ name: n, value: n }));
+      if (focused.value && !out.find(c => c.value.toLowerCase() === query)) {
+        out.unshift({ name: `${focused.value} (manual entry)`, value: focused.value });
+      }
+      return interaction.respond(out.slice(0, 25)).catch(() => {});
+    }
+
+    // Default: currently-online players, then previously-seen (offline) ones.
     const server  = interaction.options.getString("server") ?? null;
-    const query   = focused.value.toLowerCase();
     const choices = getPlayerChoices(server, query);
     if (query && !choices.find(c => c.value.toLowerCase() === query)) {
       choices.unshift({ name: `${focused.value} (manual entry)`, value: focused.value });
@@ -3922,6 +3968,8 @@ module.exports = {
   recordLastSeen, getLastSeen,
   // known-player registry
   recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers, seedKnownPlayers,
+  // context-aware autocomplete
+  commandPlayerCandidates,
   // warnings
   removeWarningAt,
   // bans (serialized)
