@@ -608,10 +608,10 @@ function rankHasRoom(faction, rank) {
 const FACTION_ROLES_PATH  = "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/FactionRoles";
 const FACTION_DEFAULT_CAP = 50;
 
-/* Donator whitelist file. Override the location with the DONATOR_PATH env
-   var; defaults to the ModSave config dir alongside the faction role files. */
+/* Donator whitelist file. Lives in the FactionRoles dir alongside the other
+   whitelist files. Override the exact path/filename with the DONATOR_PATH env. */
 const DONATOR_FILE = process.env.DONATOR_PATH
-  || "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/donator.txt";
+  || path.join(FACTION_ROLES_PATH, "donator.txt");
 
 const SPAWN_FILE_MAP = {
   "NCR":                 "ncrspawn.txt",
@@ -1220,6 +1220,7 @@ function writeDonatorFile(lines) {
   try {
     fs.mkdirSync(path.dirname(DONATOR_FILE), { recursive: true });
     fs.writeFileSync(DONATOR_FILE, lines.join("\n") + "\n", "utf8");
+    logger.info("Donator", `Wrote ${lines.length} entr${lines.length === 1 ? "y" : "ies"} to ${DONATOR_FILE}`);
     return true;
   } catch (err) {
     logger.error("Donator", `Write failed: ${err.message}`);
@@ -2987,6 +2988,7 @@ client.on("interactionCreate", async (interaction) => {
             .addFields(
               { name: "🎯  Courier", value: `\`${playerId}\``,        inline: true },
               { name: "🔒  Added By", value: `${interaction.user}`,   inline: true },
+              { name: "📄  File",     value: `\`${DONATOR_FILE}\``,   inline: false },
             ).setFooter({ text: "Written to the donator file." }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
