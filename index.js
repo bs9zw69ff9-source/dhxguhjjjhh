@@ -52,7 +52,7 @@ const OWNER_IDS = new Set([
 function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 
 /* Roles granted when a staff application is accepted (see /acceptstaffapp). */
-const STAFF_ROLE_IDS = ["1500874387857997824", "1498172888224628776"];
+const STAFF_ROLE_IDS = ["1517243775175622808", "1498172888224628776"];
 /* Channel where accepted-staff welcome announcements are posted. */
 const STAFF_ANNOUNCE_CHANNEL = "1516187330145161278";
 
