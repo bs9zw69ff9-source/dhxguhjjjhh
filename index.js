@@ -369,6 +369,28 @@ function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
     .map(p => ({ name: `${p.name} (offline)`, value: p.name }));
 }
 
+/** One-time backfill of the registry from data the bot already has on disk,
+    so offline autocomplete works immediately (not just for players seen since
+    deployment). Idempotent — recordKnownPlayers only writes new names. */
+function seedKnownPlayers() {
+  const names = new Set();
+  for (const k of Object.keys(loadPlaytime())) names.add(k);                 // playtime keys (display-cased)
+  for (const w of loadWages())     if (w.playerId)   names.add(w.playerId);  // payroll
+  for (const b of loadBans())      if (b.playerId)   names.add(b.playerId);  // temp bans
+  for (const h of loadHardBans()) { if (h.primaryId) names.add(h.primaryId); (h.linkedIds || []).forEach(l => names.add(l)); }
+  for (const d of (readDonatorFile() ?? [])) names.add(d);                   // donators
+  try {                                                                      // every faction spawn + rank file
+    for (const f of fs.readdirSync(FACTION_ROLES_PATH).filter(n => n.endsWith(".txt"))) {
+      for (const id of (readFactionFile(f) ?? [])) names.add(id);
+    }
+  } catch { /* faction dir not reachable from here — skip */ }
+
+  const before = Object.keys(loadKnownPlayers()).length;
+  recordKnownPlayers([...names]);
+  const total = Object.keys(loadKnownPlayers()).length;
+  if (total > before) logger.info("Known", `Seeded ${total - before} player(s) from existing data (registry now ${total})`);
+}
+
 /* ================================================================
    WARNING REMOVAL  (delete a single warning by 1-based index)
    ================================================================ */
@@ -1905,6 +1927,7 @@ client.once("ready", async () => {
   } catch (err) {
     logger.error("Bot", `Command registration failed: ${err.message}`);
   }
+  seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
   setTimeout(rconHealthCheck, 5_000);
@@ -3898,7 +3921,7 @@ module.exports = {
   // last seen
   recordLastSeen, getLastSeen,
   // known-player registry
-  recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers,
+  recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers, seedKnownPlayers,
   // warnings
   removeWarningAt,
   // bans (serialized)

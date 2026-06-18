@@ -77,6 +77,10 @@ const ok = (cond, msg) => {
   ok(bot.getKnownPlayerChoices("private").length === 1, "mid-string match works");
   const excl = bot.getKnownPlayerChoices("ncr_", new Set(["ncr_private"]));
   ok(excl.length === 1 && excl[0].value === "NCR_Sergeant", "exclude set drops already-listed names");
+  // seed from existing data (playtime keys) — FactionRoles path won't exist here, that branch is skipped
+  fs.writeFileSync(bot.FILES.PLAYTIME, JSON.stringify({ "Seeded_Courier": 42 }));
+  bot.seedKnownPlayers();
+  ok(bot.getKnownPlayerChoices("seeded").some(c => c.value === "Seeded_Courier"), "seedKnownPlayers backfills from playtime");
 
   console.log("Warning removal:");
   fs.writeFileSync(bot.FILES.WARNS, JSON.stringify({ p1: [
