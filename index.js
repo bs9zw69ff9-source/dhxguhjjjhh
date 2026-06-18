@@ -125,6 +125,7 @@ const FILES = {
   MENU_GRANTS:    "./menu_grants.json",
   PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
+  KNOWN:          "./known_players.json",
 };
 
 const DEFAULTS = {
@@ -141,6 +142,7 @@ const DEFAULTS = {
   [FILES.MENU_GRANTS]:    "{}",
   [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
+  [FILES.KNOWN]:          "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -274,6 +276,8 @@ const loadPlayerNotes   = () => safeRead(FILES.PLAYER_NOTES,   {});
 const savePlayerNotes   = (d) => safeWrite(FILES.PLAYER_NOTES,  d);
 const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
 const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
+const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
+const saveKnownPlayers  = (d) => safeWrite(FILES.KNOWN,         d);
 
 /* ================================================================
    MOD LOG WRITER  (serialized)
@@ -333,6 +337,36 @@ function recordLastSeen(names, now = Date.now()) {
 }
 function getLastSeen(playerId) {
   return loadLastSeen()[playerId.toLowerCase()] ?? null;
+}
+
+/* ================================================================
+   KNOWN-PLAYER REGISTRY  (everyone who's ever been seen online)
+   ================================================================
+   Persists each player's display name (original casing), first/last seen.
+   Powers autocomplete fallback so offline players can still be picked.
+   Only writes when a brand-new name appears, to avoid churning the file. */
+function recordKnownPlayers(names, now = Date.now()) {
+  if (!names || !names.length) return;
+  const known = loadKnownPlayers();
+  let added = false;
+  for (const name of names) {
+    if (!name) continue;
+    const key = String(name).toLowerCase();
+    if (known[key]) { known[key].lastSeen = now; }
+    else { known[key] = { name: String(name), firstSeen: now, lastSeen: now }; added = true; }
+  }
+  if (added) saveKnownPlayers(known);   // new player discovered → persist
+}
+
+/** Autocomplete choices from the known-player registry (substring match,
+    most-recently-seen first). Excludes any names already in `exclude`. */
+function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
+  const q = query.toLowerCase();
+  return Object.values(loadKnownPlayers())
+    .filter(p => !exclude.has(p.name.toLowerCase()) && (!q || p.name.toLowerCase().includes(q)))
+    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
+    .slice(0, limit)
+    .map(p => ({ name: `${p.name} (offline)`, value: p.name }));
 }
 
 /* ================================================================
@@ -1136,6 +1170,7 @@ function setPlayerCacheFromData(server, data) {
   if (!data?.Successful) return false;
   playerCache[server] = extractPlayerNames(data);
   playerCache.lastUpdated[server] = Date.now();
+  recordKnownPlayers(playerCache[server]);   // remember everyone who's ever been seen
   return true;
 }
 
@@ -1155,6 +1190,7 @@ function getPlayerChoices(server, focused = "") {
   const servers = (!server || server === "both") ? ["server1", "server2"] : [server];
   const seen    = new Set();
   const choices = [];
+  // 1) currently-online players first
   for (const srv of servers) {
     if (now - playerCache.lastUpdated[srv] > CACHE_TTL_MS) refreshPlayerCache(srv);
     const label = srv === "server1" ? "[S1]" : "[S2]";
@@ -1165,6 +1201,14 @@ function getPlayerChoices(server, focused = "") {
       const onBoth = playerCache.server1.some(n => n.toLowerCase() === key)
                   && playerCache.server2.some(n => n.toLowerCase() === key);
       choices.push({ name: onBoth ? `${name} [S1+S2]` : `${name} ${label}`, value: name });
+    }
+  }
+  // 2) fall back to previously-seen (offline) players so anyone who's ever
+  //    joined can still be picked — e.g. typing "ncr_" surfaces "ncr_private"
+  if (choices.length < 25) {
+    for (const c of getKnownPlayerChoices(focused, seen, 25 - choices.length)) {
+      seen.add(c.value.toLowerCase());
+      choices.push(c);
     }
   }
   return choices.slice(0, 25);
@@ -3853,6 +3897,8 @@ module.exports = {
   getPlayerNotes, addPlayerNote, clearPlayerNotes,
   // last seen
   recordLastSeen, getLastSeen,
+  // known-player registry
+  recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers,
   // warnings
   removeWarningAt,
   // bans (serialized)

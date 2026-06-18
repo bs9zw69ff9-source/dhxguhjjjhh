@@ -23,6 +23,7 @@ faction_audit.json
 menu_grants.json
 player_notes.json
 lastseen.json
+known_players.json
 
 # OS / editor noise
 .DS_Store

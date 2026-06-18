@@ -66,6 +66,18 @@ const ok = (cond, msg) => {
   bot.recordLastSeen(["Alice"], 2000);
   ok(bot.getLastSeen("alice") === 2000, "later sighting overwrites");
 
+  console.log("Known-player registry:");
+  bot.recordKnownPlayers(["NCR_Private", "NCR_Sergeant", "Legion_Recruit"], 1000);
+  bot.recordKnownPlayers(["NCR_Private"], 5000); // already known -> updates lastSeen, no dupe
+  ok(Object.keys(bot.loadKnownPlayers()).length === 3, "registry stores each player once (case-insensitive key)");
+  ok(bot.loadKnownPlayers()["ncr_private"].name === "NCR_Private", "stores original display casing");
+  const ncr = bot.getKnownPlayerChoices("ncr_");
+  ok(ncr.length === 2 && ncr.every(c => c.value.toLowerCase().startsWith("ncr_")), "substring query 'ncr_' matches both NCR players");
+  ok(ncr[0].name.includes("(offline)"), "offline players are labelled");
+  ok(bot.getKnownPlayerChoices("private").length === 1, "mid-string match works");
+  const excl = bot.getKnownPlayerChoices("ncr_", new Set(["ncr_private"]));
+  ok(excl.length === 1 && excl[0].value === "NCR_Sergeant", "exclude set drops already-listed names");
+
   console.log("Warning removal:");
   fs.writeFileSync(bot.FILES.WARNS, JSON.stringify({ p1: [
     { reason: "a", by: "m", at: 1 }, { reason: "b", by: "m", at: 2 }, { reason: "c", by: "m", at: 3 } ] }));

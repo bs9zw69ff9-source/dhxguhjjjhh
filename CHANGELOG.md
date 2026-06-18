@@ -32,6 +32,10 @@ All notable changes to this project are documented here.
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
 
 ### Added
+- **Known-player registry** (`known_players.json`) — records everyone who's
+  ever been seen online (display name + first/last seen). Autocomplete now
+  falls back to it, so offline players can still be picked: e.g. typing
+  `ncr_` surfaces `ncr_private (offline)` even when they're not in-game.
 - **Staff applications** — `/acceptstaffapp <user>` DMs the applicant a
   welcome and grants the two staff roles; `/denystaffapp <user> [reason]`
   DMs a denial and does nothing else. (admin)
