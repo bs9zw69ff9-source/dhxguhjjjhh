@@ -503,6 +503,8 @@ const WAGE_TIERS = {
 const WAGE_INTERVAL_MS        = 7 * 24 * 60 * 60 * 1000;
 const LEADERBOARD_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LEADERBOARD_TOP_N       = 30;
+/* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
+const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1517198961918611566";
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 
 /* ================================================================
@@ -1628,6 +1630,46 @@ async function postLeaderboard() {
 }
 
 /* ================================================================
+   PLAYTIME LEADERBOARD
+   ================================================================ */
+function buildPlaytimeLeaderboardData() {
+  return Object.entries(loadPlaytime())
+    .map(([playerId, minutes]) => ({ playerId, minutes: Number(minutes) || 0 }))
+    .filter(e => e.minutes > 0)
+    .sort((a, b) => b.minutes - a.minutes)
+    .slice(0, LEADERBOARD_TOP_N);
+}
+
+function buildPlaytimeLeaderboardEmbed() {
+  const entries = buildPlaytimeLeaderboardData();
+  const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
+    .setTitle(`⏱️  Most Active Couriers — Top ${LEADERBOARD_TOP_N}`);
+  if (!entries.length) return brand(embed
+    .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while couriers are online (sampled every 60s).`),
+    { footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+  const top = entries[0]?.minutes || 1;
+  const body = entries.map((e, i) => {
+    const meter = i < 5 ? `  \`${bar(e.minutes, top, 8)}\`` : "";
+    return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
+  }).join("\n");
+  return brand(embed.setDescription(`${hero("Time served in the Mojave.")}\n${body}`),
+    { thumb: true, footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+}
+
+let lastPlaytimeLbMsgId = null;
+async function postPlaytimeLeaderboard() {
+  if (!PLAYTIME_LB_CHANNEL) return;
+  let channel;
+  try { channel = await client.channels.fetch(PLAYTIME_LB_CHANNEL); } catch { return; }
+  const embed = buildPlaytimeLeaderboardEmbed();
+  if (lastPlaytimeLbMsgId) {
+    try { const m = await channel.messages.fetch(lastPlaytimeLbMsgId); await m.edit({ embeds: [embed] }); return; }
+    catch { lastPlaytimeLbMsgId = null; }
+  }
+  try { const m = await channel.send({ embeds: [embed] }); lastPlaytimeLbMsgId = m.id; } catch {}
+}
+
+/* ================================================================
    MENU GRANT PERSISTENCE
    ================================================================ */
 function addMenuGrant(playerId, server, menuValue, menuId, grantedBy) {
@@ -1692,9 +1734,10 @@ async function rconHealthCheck() {
 /* ================================================================
    INTERVALS
    ================================================================ */
-setInterval(processExpiredBans,  60_000);
-setInterval(postLeaderboard,     LEADERBOARD_INTERVAL_MS);
-setInterval(rconHealthCheck,     RCON_HEALTH_INTERVAL_MS);
+setInterval(processExpiredBans,      60_000);
+setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
+setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
+setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(() => {
   refreshPlayerCacheWithMenuReapply("server1");
   refreshPlayerCacheWithMenuReapply("server2");
@@ -1703,6 +1746,7 @@ setInterval(() => {
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
 setTimeout(postLeaderboard, 20_000);
+setTimeout(postPlaytimeLeaderboard, 25_000);
 setTimeout(() => {
   const due = loadWages().filter(w => WAGE_TIERS[w.tier]?.weekly && (!w.lastPaidAt || Date.now() - w.lastPaidAt >= WAGE_INTERVAL_MS * 0.9));
   if (due.length) { logger.info("Wages", `${due.length} overdue payout(s), processing in 15s...`); setTimeout(processWagePayout, 15_000); }
@@ -3970,6 +4014,8 @@ module.exports = {
   recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers, seedKnownPlayers,
   // context-aware autocomplete
   commandPlayerCandidates,
+  // leaderboards
+  buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
   removeWarningAt,
   // bans (serialized)

@@ -32,6 +32,10 @@ All notable changes to this project are documented here.
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
 
 ### Added
+- **Playtime leaderboard** — auto-posts the top 30 most-active couriers (by
+  tracked playtime) every 6h to a dedicated channel (default
+  `1517198961918611566`, override with `PLAYTIME_LB_CHANNEL`); edits its own
+  message in place like the caps leaderboard.
 - **Context-aware autocomplete** — player suggestions now match the command:
   `/unban` lists only banned players, `/stripmenu` only menu-grant holders,
   `/removewage` only payroll, `/donator remove` only donators, `/faction

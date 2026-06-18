@@ -97,6 +97,13 @@ const ok = (cond, msg) => {
   ok(bot.commandPlayerCandidates(mk("faction", {}, "remove")) === null, "faction remove w/o faction selected → null (fallback)");
   ok(Array.isArray(bot.commandPlayerCandidates(mk("faction", { faction: "NCR" }, "remove"))), "faction remove w/ faction → member list (array)");
 
+  console.log("Playtime leaderboard:");
+  bot.savePlaytime({ Alpha: 500, Bravo: 1200, Charlie: 0, Delta: 30 });
+  const lb = bot.buildPlaytimeLeaderboardData();
+  ok(lb[0].playerId === "Bravo" && lb[1].playerId === "Alpha", "sorted by minutes desc");
+  ok(!lb.some(e => e.playerId === "Charlie"), "zero-playtime players excluded");
+  ok(lb.length === 3, "top-N excludes the zero entry (3 of 4)");
+
   console.log("Warning removal:");
   fs.writeFileSync(bot.FILES.WARNS, JSON.stringify({ p1: [
     { reason: "a", by: "m", at: 1 }, { reason: "b", by: "m", at: 2 }, { reason: "c", by: "m", at: 3 } ] }));
