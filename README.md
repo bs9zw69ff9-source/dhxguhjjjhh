@@ -51,6 +51,11 @@ auto-paginated slash commands with context-aware autocomplete.
   registry, per-player staff notes, and a full mod-action history log.
 - **Punishment DMs** — `kick`/`warn`/`tempban`/`permban`/`hardban` can DM the
   punished player a breakdown via an optional `discord_user` field.
+- **Alt detection / IP-linked bans** — parses the server logs into an
+  IP↔username cache; banning a player also bans other accounts on the same IP,
+  and future logins from a banned IP are auto-banned (`/iplookup`, `/scanlogs`).
+- **Name auto-ban** — `/autoban` bans anyone whose name contains a forbidden
+  substring, on add and on join.
 - **Factions** — per-faction whitelists, faction-specific rank ladders, member
   caps and per-rank caps, transfers, rosters, and an audit log. Rank changes
   update both the rank registry and the on-disk spawn/rank files.
@@ -292,6 +297,8 @@ Slash commands grouped by the role tier that can use them. Player fields support
 | `/manual <command> <server>` | Send a raw RCON command. |
 | `/donator add\|remove\|list <id>` | Manage the donator whitelist file. |
 | `/autoban add\|remove\|list <pattern>` | Auto-ban players whose name contains a pattern (now + on join). |
+| `/iplookup <id>` | Show a player's known IPs and alt accounts (from logs). |
+| `/scanlogs` | Re-index the Pavlov logs for IP↔username links. |
 | `/acceptstaffapp <user>` | DM acceptance, grant staff roles, post a public welcome. |
 | `/denystaffapp <user> [reason]` | DM a denial (no other action). |
 | `/faction setcap <faction> <cap>` | Set a faction's member cap. |
@@ -352,6 +359,8 @@ source). Atomic + serialized writes.
   per-rank files, and `donator.txt`. The bot reads and rewrites these.
 - **`ModSave/`** (`MODSAVE_PATH`) — per-player caps ledgers (`<id>.txt`). Used by
   balances, wages, and the caps leaderboard.
+- **`Logs/`** (`PAVLOV_LOG_DIR`) — server `.log` files, parsed for IP↔username
+  links (alt detection / IP-linked bans). Indexed on startup and every 10 min.
 
 Run the bot where these paths are reachable (same host, or bind-mounted in
 Docker at the **same absolute path**).

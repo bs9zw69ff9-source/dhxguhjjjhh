@@ -127,6 +127,8 @@ const FILES = {
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
   AUTOBAN:        "./autoban_patterns.json",
+  IP_LINKS:       "./ip_links.json",
+  BANNED_IPS:     "./banned_ips.json",
 };
 
 const DEFAULTS = {
@@ -145,6 +147,8 @@ const DEFAULTS = {
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
   [FILES.AUTOBAN]:        "[]",
+  [FILES.IP_LINKS]:       JSON.stringify({ ipToNames: {}, nameToIps: {} }, null, 2),
+  [FILES.BANNED_IPS]:     "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -281,6 +285,9 @@ const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
 const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
 const saveKnownPlayers  = (d) => safeWrite(FILES.KNOWN,         d);
 const loadAutoban       = () => safeRead(FILES.AUTOBAN,        []);
+const loadIpLinks       = () => safeRead(FILES.IP_LINKS,       { ipToNames: {}, nameToIps: {} });
+const saveIpLinks       = (d) => safeWrite(FILES.IP_LINKS,      d);
+const loadBannedIps     = () => safeRead(FILES.BANNED_IPS,     {});
 
 /* ================================================================
    MOD LOG WRITER  (serialized)
@@ -459,6 +466,134 @@ function removeAutobanPattern(pattern) {
     return next;
   });
   return done.then(() => ({ removed, pattern: p }));
+}
+
+/* ================================================================
+   IP ↔ USERNAME LINKING  (alt detection from Pavlov logs)
+   ================================================================
+   Parses the Pavlov server logs into an IP↔username cache, tracks which IPs
+   are banned, and lets ban commands sweep up other accounts on the same IP.
+   The log-parsing regexes are best-effort for common Pavlov/Unreal join
+   lines; override extraction via env or tune in parsePavlovLogText().
+   ================================================================ */
+const PAVLOV_LOG_DIR = process.env.PAVLOV_LOG_DIR
+  || "/home/steam/pavlovserver/Pavlov/Saved/Logs";
+
+/** Extract { ip, name } pairs from raw log text. Pairs a line's IP with a
+    username on the same line, and also correlates IP↔name across lines that
+    share the same 17-digit (Steam64) unique id. */
+function parsePavlovLogText(text) {
+  const IPV4 = /(\b(?:\d{1,3}\.){3}\d{1,3}\b)/;
+  const ID   = /\b(\d{17})\b/;
+  const NAME = /(?:\?Name=|PlayerName["':=\s]+|Username["':=\s]+|Player\s+|registered player\s+)["']?([A-Za-z0-9_\-.\[\]]{1,32})/i;
+  const isUsable = (ip) => ip && ip !== "0.0.0.0" && !ip.startsWith("127.") && !ip.startsWith("255.");
+  const idIp = {}, idName = {}, pairs = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const ip = (line.match(IPV4) || [])[1];
+    const id = (line.match(ID)   || [])[1];
+    const nm = (line.match(NAME) || [])[1];
+    if (isUsable(ip) && nm) pairs.push({ ip, name: nm });
+    if (id && isUsable(ip)) idIp[id] = ip;
+    if (id && nm) idName[id] = nm;
+  }
+  for (const id of Object.keys(idName)) if (idIp[id]) pairs.push({ ip: idIp[id], name: idName[id] });
+  const seen = new Set(), out = [];
+  for (const p of pairs) { const k = `${p.ip}|${p.name.toLowerCase()}`; if (!seen.has(k)) { seen.add(k); out.push(p); } }
+  return out;
+}
+
+/** Merge { ip, name } pairs into the link cache. Returns number of new links. */
+function recordIpLinks(pairs) {
+  if (!pairs || !pairs.length) return 0;
+  const links = loadIpLinks();
+  links.ipToNames ||= {}; links.nameToIps ||= {};
+  let added = 0;
+  for (const { ip, name } of pairs) {
+    if (!ip || !name) continue;
+    const key = name.toLowerCase();
+    (links.ipToNames[ip] ||= []);
+    (links.nameToIps[key] ||= []);
+    if (!links.ipToNames[ip].some(n => n.toLowerCase() === key)) { links.ipToNames[ip].push(name); added++; }
+    if (!links.nameToIps[key].includes(ip)) links.nameToIps[key].push(ip);
+  }
+  if (added) saveIpLinks(links);
+  return added;
+}
+
+/** Read every *.log in PAVLOV_LOG_DIR and refresh the link cache. */
+function refreshIpLinksFromLogs() {
+  let files;
+  try { files = fs.readdirSync(PAVLOV_LOG_DIR).filter(f => f.toLowerCase().endsWith(".log")); }
+  catch (err) { logger.warn("IPLink", `Log dir unreadable (${PAVLOV_LOG_DIR}): ${err.message}`); return 0; }
+  let total = 0;
+  for (const f of files) {
+    try { total += recordIpLinks(parsePavlovLogText(fs.readFileSync(path.join(PAVLOV_LOG_DIR, f), "utf8"))); }
+    catch (err) { logger.warn("IPLink", `Failed to read ${f}: ${err.message}`); }
+  }
+  if (total) logger.info("IPLink", `Indexed ${total} new IP↔name link(s) from ${files.length} log file(s)`);
+  return total;
+}
+
+const ipsForName  = (name) => loadIpLinks().nameToIps[String(name).toLowerCase()] ?? [];
+const namesForIp  = (ip)   => loadIpLinks().ipToNames[ip] ?? [];
+const isIpBanned  = (ip)   => !!loadBannedIps()[ip];
+
+function markIpsBanned(ips, by, reason) {
+  if (!ips || !ips.length) return Promise.resolve();
+  return update(FILES.BANNED_IPS, {}, (banned) => {
+    for (const ip of ips) banned[ip] = { by, reason, at: Date.now() };
+    return banned;
+  });
+}
+/** Clear the banned-IP flag for all IPs linked to a name (used on /unban). */
+function clearIpBansForName(name) {
+  const ips = ipsForName(name);
+  if (!ips.length) return Promise.resolve(0);
+  let cleared = 0;
+  return update(FILES.BANNED_IPS, {}, (banned) => {
+    for (const ip of ips) if (banned[ip]) { delete banned[ip]; cleared++; }
+    return banned;
+  }).then(() => cleared);
+}
+
+/** Ban every *other* account seen on the same IP(s) as `name`, and flag those
+    IPs as banned. Returns { ips, alts }. */
+async function banLinkedAccounts(name, server, by, reason) {
+  const ips = ipsForName(name);
+  if (!ips.length) return { ips: [], alts: [] };
+  await markIpsBanned(ips, by, reason);
+  const key = String(name).toLowerCase();
+  const alts = new Set();
+  for (const ip of ips) for (const n of namesForIp(ip)) if (n.toLowerCase() !== key) alts.add(n);
+  for (const alt of alts) {
+    try {
+      await sendRconBoth(`Ban ${sanitizeId(alt)}`, server);
+      writeModLog({ action: "ip-ban", playerId: alt, reason: `Shared IP with ${name}`, by });
+    } catch (err) { logger.warn("IPLink", `Failed to ban alt ${alt}: ${err.message}`); }
+  }
+  if (alts.size) logger.info("IPLink", `Banned ${alts.size} alt(s) of ${name} via shared IP`);
+  return { ips, alts: [...alts] };
+}
+
+/** 60s sweep: ban any online player whose name is linked to a banned IP. */
+const _ipBanRecent = new Map();
+async function enforceIpBans() {
+  if (!Object.keys(loadBannedIps()).length) return 0;
+  const online = [...new Set([...playerCache.server1, ...playerCache.server2])];
+  let banned = 0;
+  for (const name of online) {
+    if (!ipsForName(name).some(isIpBanned)) continue;
+    const lc = name.toLowerCase();
+    if (Date.now() - (_ipBanRecent.get(lc) ?? 0) < 5 * 60 * 1000) continue;
+    _ipBanRecent.set(lc, Date.now());
+    try {
+      await sendRconBoth(`Ban ${sanitizeId(name)}`, "both");
+      banned++;
+      writeModLog({ action: "ip-ban", playerId: name, reason: "Name linked to a banned IP", by: "Auto-IP-Ban" });
+      logger.info("IPLink", `Banned ${name} — linked to a banned IP`);
+    } catch (err) { logger.warn("IPLink", `Failed IP-ban for ${name}: ${err.message}`); _ipBanRecent.delete(lc); }
+  }
+  return banned;
 }
 
 /* ================================================================
@@ -1829,8 +1964,10 @@ setInterval(async () => {
   await refreshPlayerCacheWithMenuReapply("server2");
   tickPlaytime();
   enforceAutoban().catch(() => {});   // ban any online player matching an auto-ban pattern
+  enforceIpBans().catch(() => {});    // ban any online player linked to a banned IP
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
+setInterval(refreshIpLinksFromLogs, 10 * 60 * 1000);   // re-index Pavlov logs every 10 min
 
 setTimeout(postLeaderboard, 20_000);
 setTimeout(postPlaytimeLeaderboard, 25_000);
@@ -1964,6 +2101,11 @@ const commands = [
       .addStringOption(o => o.setName("pattern").setDescription("Pattern to remove").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all active auto-ban patterns")),
+  new SlashCommandBuilder().setName("iplookup")
+    .setDescription("🔒 Admin — Show known IPs/alt accounts for a courier")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("scanlogs")
+    .setDescription("🔒 Admin — Re-index the Pavlov logs for IP↔username links"),
   new SlashCommandBuilder().setName("setroles")
     .setDescription("🔒 Admin — Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
@@ -2100,7 +2242,8 @@ client.once("ready", async () => {
   } catch (err) {
     logger.error("Bot", `Command registration failed: ${err.message}`);
   }
-  seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
+  seedKnownPlayers();          // backfill the offline-autocomplete registry from existing data
+  refreshIpLinksFromLogs();    // index IP↔username links from the Pavlov logs
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
   setTimeout(rconHealthCheck, 5_000);
@@ -2197,7 +2340,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban", "iplookup", "scanlogs"];
 
   const name = interaction.commandName;
 
@@ -2291,6 +2434,8 @@ client.on("interactionCreate", async (interaction) => {
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
+                "`/iplookup <id>` — Known IPs & alt accounts · `/scanlogs` — re-index logs",
+                "*Banning a player also bans alt accounts sharing their IP (from logs).*",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -2695,7 +2840,7 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
           ], ephemeral: true });
         }
-        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", autoban: "🤖", "autoban-add": "🤖", "autoban-remove": "🤖", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
+        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", autoban: "🤖", "autoban-add": "🤖", "autoban-remove": "🤖", "ip-ban": "🌐", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
         const lines = history.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
           const icon   = ICONS[e.action] ?? "📌";
@@ -2727,6 +2872,7 @@ client.on("interactionCreate", async (interaction) => {
         await sendRconBoth(`Ban ${playerId}`, server);
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
         writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
+        const tbIp = await banLinkedAccounts(playerId, server, interaction.user.tag, `Shared IP with temp-banned ${playerId}`);
         const ts = Math.floor(expires / 1000);
         const embed = new EmbedBuilder().setColor(NV.RUST_RED).setTitle("⏳  Courier Exiled from the Mojave")
           .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
@@ -2740,6 +2886,7 @@ client.on("interactionCreate", async (interaction) => {
           )
           .setFooter({ text: replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires" })
           .setTimestamp();
+        if (tbIp.alts.length) embed.addFields({ name: "🔗  IP-Linked Bans", value: `Also banned **${tbIp.alts.length}** alt(s) on the same IP: ${tbIp.alts.map(a => `\`${a}\``).join(", ").slice(0, 900)}`, inline: false });
         const tbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
           action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
           fields: [
@@ -2765,6 +2912,7 @@ client.on("interactionCreate", async (interaction) => {
         await sendRconBoth(`Unban ${playerId}`, server);
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await removeBans(playerId);
+        await clearIpBansForName(playerId);   // so the IP sweep won't instantly re-ban them
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🔓  Exile Lifted — Welcome Back to the Strip")
           .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
@@ -2903,6 +3051,7 @@ client.on("interactionCreate", async (interaction) => {
         await sendRconBoth(`Ban ${playerId}`, server);
         await removeBans(playerId);   // a permanent ban supersedes any temp ban
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
+        const pbIp = await banLinkedAccounts(playerId, server, interaction.user.tag, `Shared IP with perm-banned ${playerId}`);
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("💀  Permanent Exile Issued")
           .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
           .addFields(
@@ -2913,6 +3062,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  Admin",    value: `${interaction.user}`,                              inline: false },
           ).setFooter({ text: randomQuote("ban") }).setTimestamp();
         if (notes) embed.addFields({ name: "📝  Notes", value: notes });
+        if (pbIp.alts.length) embed.addFields({ name: "🔗  IP-Linked Bans", value: `Also banned **${pbIp.alts.length}** alt(s) on the same IP: ${pbIp.alts.map(a => `\`${a}\``).join(", ").slice(0, 900)}`, inline: false });
         const pbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
           fields: [
@@ -2982,6 +3132,7 @@ client.on("interactionCreate", async (interaction) => {
         if (linkedId) await sendRconBoth(`Ban ${linkedId}`, server);
         await removeBans(playerId, linkedId);
         writeModLog({ action: "hardban", playerId, linkedId, reason, by: interaction.user.tag });
+        const hbIp = await banLinkedAccounts(playerId, server, interaction.user.tag, `Shared IP with hard-banned ${playerId}`);
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Issued — Persona Non Grata")
           .setDescription(`> *${randomQuote("hardban")}*\n\n${DIVIDER}`)
           .addFields(
@@ -2992,6 +3143,7 @@ client.on("interactionCreate", async (interaction) => {
           );
         if (linkedId) embed.addFields({ name: "🔗  Linked Account", value: `\`${linkedId}\`  — also banned and linked`, inline: false });
         if (notes)    embed.addFields({ name: "📝  Notes", value: notes, inline: false });
+        if (hbIp.alts.length) embed.addFields({ name: "🔗  IP-Linked Bans", value: `Also banned **${hbIp.alts.length}** alt(s) on the same IP: ${hbIp.alts.map(a => `\`${a}\``).join(", ").slice(0, 900)}`, inline: false });
         embed.addFields({ name: "🔒  Admin", value: `${interaction.user}`, inline: false }).setFooter({ text: randomQuote("hardban") }).setTimestamp();
         const hbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
           action: "Hard Ban", color: NV.LEGION_RED, playerId, reason,
@@ -3271,6 +3423,47 @@ client.on("interactionCreate", async (interaction) => {
         }
 
         break;
+      }
+
+      /* ─────────────────────────────────────────────────────
+         SCANLOGS  (admin — re-index Pavlov logs for IP↔name links)
+         ───────────────────────────────────────────────────── */
+      case "scanlogs": {
+        await interaction.deferReply({ ephemeral: true });
+        const added = refreshIpLinksFromLogs();
+        const links = loadIpLinks();
+        const embed = new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("🛰️  Pavlov Logs Indexed")
+          .setDescription(`${hero("Cross-referencing couriers and their origins.")}`)
+          .addFields(
+            { name: "🆕  New links",    value: `**${added}**`,                                          inline: true },
+            { name: "🌐  Known IPs",    value: `**${Object.keys(links.ipToNames || {}).length}**`,      inline: true },
+            { name: "👥  Known names",  value: `**${Object.keys(links.nameToIps || {}).length}**`,      inline: true },
+            { name: "📂  Log dir",      value: `\`${PAVLOV_LOG_DIR}\``,                                 inline: false },
+          ).setFooter({ text: "Auto-refreshes every 10 min" });
+        brand(embed);
+        return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         IPLOOKUP  (admin — show a courier's known IPs + alts)
+         ───────────────────────────────────────────────────── */
+      case "iplookup": {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        const ips = ipsForName(playerId);
+        if (!ips.length) {
+          return interaction.reply({ embeds: [warningEmbed("No IP Records", `No logged IPs for \`${playerId}\`.\n\nRun \`/scanlogs\` after they've connected, or check the name spelling.`)], ephemeral: true });
+        }
+        const alts = new Set();
+        for (const ip of ips) for (const n of namesForIp(ip)) if (n.toLowerCase() !== playerId.toLowerCase()) alts.add(n);
+        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle(`🌐  IP Record — ${playerId}`)
+          .setDescription(`${hero("Every road leads back somewhere.")}`)
+          .addFields(
+            { name: "📡  Known IPs", value: ips.map(ip => `\`${ip}\`${isIpBanned(ip) ? " 🔨 banned" : ""}`).join("\n").slice(0, 1000), inline: false },
+            { name: `🔗  Alt accounts (${alts.size})`, value: (alts.size ? [...alts].map(a => `\`${a}\``).join(", ") : "*none seen*").slice(0, 1000), inline: false },
+          ).setFooter({ text: "Linked from Pavlov server logs" });
+        brand(embed);
+        return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4188,6 +4381,8 @@ module.exports = {
   commandPlayerCandidates,
   // auto-ban
   loadAutoban, matchesAutoban, addAutobanPattern, removeAutobanPattern,
+  // ip linking / alt detection
+  parsePavlovLogText, recordIpLinks, ipsForName, namesForIp, isIpBanned, markIpsBanned, clearIpBansForName, loadIpLinks,
   // leaderboards
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
