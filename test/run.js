@@ -106,26 +106,6 @@ const ok = (cond, msg) => {
   ok((await bot.removeAutobanPattern("NCR")).removed === true, "remove pattern (case-insensitive)");
   ok(bot.matchesAutoban("xX_NCR_trooper") === null, "no patterns left -> no match");
 
-  console.log("IP linking / alt detection:");
-  const sampleLog = [
-    "[2026.06.16-19.00.39:123][45]LogNet: Join request: ?Name=NCR_Ranger from 203.0.113.7:54321",
-    "[2026.06.16-19.01.02:000][46]LogPavlov: registered player AltGuy 76561190000000001 at 203.0.113.7",
-    "[2026.06.16-19.02.00:000][47]LogNet: NotifyAcceptingConnection from 127.0.0.1:9100 (ignored localhost)",
-    "[2026.06.16-19.03.00:000][48]LogServer: clean line with no useful data",
-  ].join("\n");
-  const parsed = bot.parsePavlovLogText(sampleLog);
-  ok(parsed.some(p => p.ip === "203.0.113.7" && p.name === "NCR_Ranger"), "parses Name= + IP on one line");
-  ok(parsed.some(p => p.ip === "203.0.113.7" && p.name === "AltGuy"), "parses second account on same IP");
-  ok(!parsed.some(p => p.ip === "127.0.0.1"), "ignores localhost IP");
-  bot.recordIpLinks(parsed);
-  ok(bot.ipsForName("ncr_ranger").includes("203.0.113.7"), "ipsForName (case-insensitive)");
-  const names = bot.namesForIp("203.0.113.7").map(n => n.toLowerCase());
-  ok(names.includes("ncr_ranger") && names.includes("altguy"), "namesForIp returns all accounts on the IP");
-  await bot.markIpsBanned(["203.0.113.7"], "tester", "test");
-  ok(bot.isIpBanned("203.0.113.7") === true, "markIpsBanned + isIpBanned");
-  await bot.clearIpBansForName("AltGuy");
-  ok(bot.isIpBanned("203.0.113.7") === false, "clearIpBansForName lifts the IP flag");
-
   console.log("Playtime leaderboard:");
   bot.savePlaytime({ Alpha: 500, Bravo: 1200, Charlie: 0, Delta: 30 });
   const lb = bot.buildPlaytimeLeaderboardData();

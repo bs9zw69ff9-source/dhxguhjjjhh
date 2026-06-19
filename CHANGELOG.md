@@ -32,13 +32,6 @@ All notable changes to this project are documented here.
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
 
 ### Added
-- **IP-linked bans / alt detection** — the bot parses the Pavlov server logs
-  (`PAVLOV_LOG_DIR`) into an IP↔username cache. When you `/tempban`, `/permban`,
-  or `/hardban` someone, every other account seen on the same IP is banned too,
-  and that IP is flagged so any *future* login on it is auto-banned on the 60s
-  sweep. `/iplookup <id>` shows a player's known IPs + alts; `/scanlogs`
-  re-indexes on demand (also auto-refreshed every 10 min). `/unban` clears the
-  player's IP flags so they aren't instantly re-banned.
 - **Auto-ban system** — `/autoban add|remove|list <pattern>` (admin). Any
   player whose name *contains* a pattern (substring, case-insensitive) is
   banned automatically: immediately on `add` for anyone online, and on the
