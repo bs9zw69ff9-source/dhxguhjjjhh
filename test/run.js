@@ -97,6 +97,15 @@ const ok = (cond, msg) => {
   ok(bot.commandPlayerCandidates(mk("faction", {}, "remove")) === null, "faction remove w/o faction selected → null (fallback)");
   ok(Array.isArray(bot.commandPlayerCandidates(mk("faction", { faction: "NCR" }, "remove"))), "faction remove w/ faction → member list (array)");
 
+  console.log("Auto-ban patterns:");
+  let ab = await bot.addAutobanPattern("NCR", "tester");
+  ok(ab.added && ab.pattern === "ncr", "pattern normalized to lowercase + added");
+  ok((await bot.addAutobanPattern("ncr", "tester")).added === false, "duplicate pattern not re-added");
+  ok(bot.matchesAutoban("xX_NCR_trooper") === "ncr", "matchesAutoban: substring (any position), case-insensitive");
+  ok(bot.matchesAutoban("legion_guy") === null, "matchesAutoban: non-match -> null");
+  ok((await bot.removeAutobanPattern("NCR")).removed === true, "remove pattern (case-insensitive)");
+  ok(bot.matchesAutoban("xX_NCR_trooper") === null, "no patterns left -> no match");
+
   console.log("Playtime leaderboard:");
   bot.savePlaytime({ Alpha: 500, Bravo: 1200, Charlie: 0, Delta: 30 });
   const lb = bot.buildPlaytimeLeaderboardData();

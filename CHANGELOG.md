@@ -32,6 +32,11 @@ All notable changes to this project are documented here.
   apply) instead of a slash command and `blacklist.json`. Owners stay exempt.
 
 ### Added
+- **Auto-ban system** — `/autoban add|remove|list <pattern>` (admin). Any
+  player whose name *contains* a pattern (substring, case-insensitive) is
+  banned automatically: immediately on `add` for anyone online, and on the
+  60s presence sweep going forward. Patterns persist in
+  `autoban_patterns.json`.
 - **Playtime leaderboard** — auto-posts the top 30 most-active couriers (by
   tracked playtime) every 6h to a dedicated channel (default
   `1517198961918611566`, override with `PLAYTIME_LB_CHANNEL`); edits its own

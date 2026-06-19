@@ -291,6 +291,7 @@ Slash commands grouped by the role tier that can use them. Player fields support
 | `/rotatemap <server>` | Rotate the map (with confirm). |
 | `/manual <command> <server>` | Send a raw RCON command. |
 | `/donator add\|remove\|list <id>` | Manage the donator whitelist file. |
+| `/autoban add\|remove\|list <pattern>` | Auto-ban players whose name contains a pattern (now + on join). |
 | `/acceptstaffapp <user>` | DM acceptance, grant staff roles, post a public welcome. |
 | `/denystaffapp <user> [reason]` | DM a denial (no other action). |
 | `/faction setcap <faction> <cap>` | Set a faction's member cap. |

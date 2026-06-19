@@ -24,6 +24,7 @@ menu_grants.json
 player_notes.json
 lastseen.json
 known_players.json
+autoban_patterns.json
 
 # OS / editor noise
 .DS_Store

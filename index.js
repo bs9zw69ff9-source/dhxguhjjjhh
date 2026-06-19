@@ -126,6 +126,7 @@ const FILES = {
   PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
+  AUTOBAN:        "./autoban_patterns.json",
 };
 
 const DEFAULTS = {
@@ -143,6 +144,7 @@ const DEFAULTS = {
   [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
+  [FILES.AUTOBAN]:        "[]",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -278,6 +280,7 @@ const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
 const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
 const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
 const saveKnownPlayers  = (d) => safeWrite(FILES.KNOWN,         d);
+const loadAutoban       = () => safeRead(FILES.AUTOBAN,        []);
 
 /* ================================================================
    MOD LOG WRITER  (serialized)
@@ -420,6 +423,42 @@ function commandPlayerCandidates(interaction) {
     return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of source faction
   }
   return null;   // default: online + known players
+}
+
+/* ================================================================
+   AUTO-BAN  (ban players whose name contains a forbidden substring)
+   ================================================================ */
+function normalizeAutobanPattern(raw) {
+  return String(raw ?? "").trim().toLowerCase().slice(0, 32);
+}
+/** Returns the matching pattern string for a name, or null. */
+function matchesAutoban(name, patterns = loadAutoban()) {
+  const lc = String(name ?? "").toLowerCase();
+  if (!lc) return null;
+  const hit = patterns.find(p => p.pattern && lc.includes(p.pattern));
+  return hit ? hit.pattern : null;
+}
+function addAutobanPattern(pattern, by) {
+  const p = normalizeAutobanPattern(pattern);
+  let added = false;
+  const done = update(FILES.AUTOBAN, [], (list) => {
+    if (!p) return list;
+    if (list.some(e => e.pattern === p)) return list;   // already present
+    list.push({ pattern: p, by, at: Date.now() });
+    added = true;
+    return list;
+  });
+  return done.then(() => ({ ok: !!p, added, pattern: p }));
+}
+function removeAutobanPattern(pattern) {
+  const p = normalizeAutobanPattern(pattern);
+  let removed = false;
+  const done = update(FILES.AUTOBAN, [], (list) => {
+    const next = list.filter(e => e.pattern !== p);
+    removed = next.length !== list.length;
+    return next;
+  });
+  return done.then(() => ({ removed, pattern: p }));
 }
 
 /* ================================================================
@@ -1286,6 +1325,49 @@ function tickPlaytime() {
 }
 
 /* ================================================================
+   AUTO-BAN ENFORCEMENT
+   ================================================================
+   Scans currently-online players and bans anyone whose name matches an
+   auto-ban pattern. Runs on the 60s loop and immediately after a pattern is
+   added. A short cooldown per name avoids duplicate logs within a window. */
+const _autobanRecent = new Map();   // nameLower -> ts
+async function enforceAutoban() {
+  const patterns = loadAutoban();
+  if (!patterns.length) return 0;
+  const online = [...new Set([...playerCache.server1, ...playerCache.server2])];
+  let banned = 0;
+  for (const name of online) {
+    const pattern = matchesAutoban(name, patterns);
+    if (!pattern) continue;
+    const lc = name.toLowerCase();
+    if (Date.now() - (_autobanRecent.get(lc) ?? 0) < 5 * 60 * 1000) continue;   // recently handled
+    _autobanRecent.set(lc, Date.now());
+    try {
+      await sendRconBoth(`Ban ${sanitizeId(name)}`, "both");
+      banned++;
+      writeModLog({ action: "autoban", playerId: name, reason: `Name matches auto-ban pattern "${pattern}"`, by: "Auto-Ban" });
+      logger.info("AutoBan", `Banned "${name}" — matched pattern "${pattern}"`);
+      await logAction(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🤖  Auto-Ban Triggered")
+        .setDescription(`${hero("A forbidden name walked into the Mojave.")}`)
+        .addFields(
+          { name: "🎯  Courier", value: `\`${name}\``,        inline: true },
+          { name: "🔤  Pattern", value: `\`${pattern}\``,     inline: true },
+          { name: "🛡️  Action",  value: "Banned on both servers", inline: true },
+        ).setFooter({ text: "Automatic name-pattern ban" })));
+    } catch (err) {
+      logger.warn("AutoBan", `Failed to ban "${name}": ${err.message}`);
+      _autobanRecent.delete(lc);   // allow retry next pass
+    }
+  }
+  return banned;
+}
+// keep the cooldown map from growing unbounded
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [k, v] of _autobanRecent) if (v < cutoff) _autobanRecent.delete(k);
+}, 30 * 60 * 1000);
+
+/* ================================================================
    FACTION FILE HELPERS
    ================================================================ */
 function readFactionFile(spawnFile) {
@@ -1742,10 +1824,11 @@ setInterval(processExpiredBans,      60_000);
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
-setInterval(() => {
-  refreshPlayerCacheWithMenuReapply("server1");
-  refreshPlayerCacheWithMenuReapply("server2");
+setInterval(async () => {
+  await refreshPlayerCacheWithMenuReapply("server1");
+  await refreshPlayerCacheWithMenuReapply("server2");
   tickPlaytime();
+  enforceAutoban().catch(() => {});   // ban any online player matching an auto-ban pattern
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
@@ -1871,6 +1954,16 @@ const commands = [
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all players in the donator file")),
+  new SlashCommandBuilder().setName("autoban")
+    .setDescription("🔒 Admin — Auto-ban players whose name contains a pattern")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("Add a name pattern — bans matching players now and on join")
+      .addStringOption(o => o.setName("pattern").setDescription("Substring to match in names, e.g. ncr").setRequired(true)))
+    .addSubcommand(s => s.setName("remove")
+      .setDescription("Remove a name pattern")
+      .addStringOption(o => o.setName("pattern").setDescription("Pattern to remove").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("List all active auto-ban patterns")),
   new SlashCommandBuilder().setName("setroles")
     .setDescription("🔒 Admin — Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
@@ -2062,6 +2155,16 @@ client.on("interactionCreate", async (interaction) => {
 
     const query = focused.value.toLowerCase();
 
+    // /autoban remove → suggest existing patterns
+    if (cmdName === "autoban" && focused.name === "pattern") {
+      const matches = loadAutoban()
+        .map(e => e.pattern)
+        .filter(p => !query || p.includes(query))
+        .slice(0, 25)
+        .map(p => ({ name: p, value: p }));
+      return interaction.respond(matches).catch(() => {});
+    }
+
     // Context-aware player field: only suggest the population relevant to the command.
     const ctx = commandPlayerCandidates(interaction);
     if (ctx !== null) {
@@ -2094,7 +2197,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban"];
 
   const name = interaction.commandName;
 
@@ -2187,6 +2290,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
+                "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -2591,7 +2695,7 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
           ], ephemeral: true });
         }
-        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
+        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", autoban: "🤖", "autoban-add": "🤖", "autoban-remove": "🤖", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
         const lines = history.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
           const icon   = ICONS[e.action] ?? "📌";
@@ -3113,6 +3217,60 @@ client.on("interactionCreate", async (interaction) => {
           );
         brand(embed);
         return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         AUTOBAN  (admin — ban players whose name matches a pattern)
+         ───────────────────────────────────────────────────── */
+      case "autoban": {
+        const sub = interaction.options.getSubcommand();
+
+        if (sub === "list") {
+          const list = loadAutoban();
+          if (!list.length) {
+            return interaction.reply({ embeds: [
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🤖  Auto-Ban Patterns — None")
+                .setDescription("No auto-ban patterns set.\n\nUse `/autoban add <pattern>` to add one.").setTimestamp()
+            ], ephemeral: true });
+          }
+          const lines = list
+            .slice().sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+            .map((e, i) => `\`${String(i + 1).padStart(2, "0")}\`  \`${e.pattern}\`  ·  by *${e.by ?? "?"}*${e.at ? `  ·  <t:${Math.floor(e.at / 1000)}:R>` : ""}`);
+          return paginate(interaction, lines, (pageLines) =>
+            new EmbedBuilder().setColor(NV.LEGION_RED).setTitle(`🤖  Auto-Ban Patterns — ${list.length}`)
+              .setDescription(`${hero("Names containing any of these are banned on sight.")}\n${pageLines.join("\n")}`),
+            { perPage: 15, ephemeral: true });
+        }
+
+        if (sub === "add") {
+          const { ok, added, pattern } = await addAutobanPattern(interaction.options.getString("pattern"), interaction.user.tag);
+          if (!ok) return interaction.reply({ embeds: [errorEmbed("Invalid Pattern", "Provide a non-empty pattern.")], ephemeral: true });
+          if (!added) return interaction.reply({ embeds: [warningEmbed("Already Set", `Pattern \`${pattern}\` is already on the auto-ban list.`)], ephemeral: true });
+          await interaction.deferReply({ ephemeral: true });
+          const banned = await enforceAutoban();   // immediately ban any matching online players
+          writeModLog({ action: "autoban-add", reason: pattern, by: interaction.user.tag });
+          const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🤖  Auto-Ban Pattern Added")
+            .setDescription(`${hero("The gatekeepers have new orders.")}`)
+            .addFields(
+              { name: "🔤  Pattern",      value: `\`${pattern}\``, inline: true },
+              { name: "🔨  Banned Now",   value: `**${banned}** online player${banned !== 1 ? "s" : ""}`, inline: true },
+              { name: "🔒  By",           value: `${interaction.user}`, inline: true },
+              { name: "ℹ️  Going Forward", value: `Anyone whose name contains \`${pattern}\` is banned automatically when seen online.`, inline: false },
+            ).setFooter({ text: "Substring match · case-insensitive" });
+          brand(embed); await logAction(embed);
+          return interaction.editReply({ embeds: [embed] });
+        }
+
+        if (sub === "remove") {
+          const { removed, pattern } = await removeAutobanPattern(interaction.options.getString("pattern"));
+          if (!removed) return interaction.reply({ embeds: [warningEmbed("Not Found", `Pattern \`${pattern}\` is not on the auto-ban list.`)], ephemeral: true });
+          writeModLog({ action: "autoban-remove", reason: pattern, by: interaction.user.tag });
+          const embed = successEmbed("Auto-Ban Pattern Removed", `Pattern \`${pattern}\` removed.\n\n**By:** ${interaction.user}\n\n*Players already banned stay banned — use \`/unban\` to lift individuals.*`);
+          brand(embed); await logAction(embed);
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        break;
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4028,6 +4186,8 @@ module.exports = {
   recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers, seedKnownPlayers,
   // context-aware autocomplete
   commandPlayerCandidates,
+  // auto-ban
+  loadAutoban, matchesAutoban, addAutobanPattern, removeAutobanPattern,
   // leaderboards
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
