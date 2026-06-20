@@ -25,7 +25,19 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
+  WebhookClient,
 } = require("discord.js");
+
+/* ── Live connection feed ────────────────────────────────────────────
+   Posts a fresh message for every player join (name · ID · IP). Paste a
+   Discord channel webhook URL into CONNECT_WEBHOOK_URL — works out of the
+   box, no bot channel permissions needed. Use a PRIVATE admin channel: it
+   exposes player IP addresses. */
+let feedHook = null;
+if (process.env.CONNECT_WEBHOOK_URL) {
+  try { feedHook = new WebhookClient({ url: process.env.CONNECT_WEBHOOK_URL }); console.log("[Feed] connection feed enabled"); }
+  catch (e) { console.warn(`[Feed] invalid CONNECT_WEBHOOK_URL: ${e.message}`); feedHook = null; }
+}
 
 /* ================================================================
    VERSION & STARTUP
@@ -2115,6 +2127,20 @@ client.once("ready", async () => {
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   ipBans.init({
+    // Fired on every LIVE join — post a fresh message (name · ID · IP) to the
+    // connection-feed webhook if CONNECT_WEBHOOK_URL is configured.
+    onConnect: async ({ uniqueId, name, ip, server }) => {
+      if (!feedHook) return;
+      const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
+      const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🟢  Courier Connected")
+        .addFields(
+          { name: "🎯  Name",   value: `\`${name}\``,            inline: true },
+          { name: "🆔  ID",     value: `\`${uniqueId}\``,        inline: true },
+          { name: "🌐  IP",     value: `\`${ip ?? "unknown"}\``, inline: true },
+          { name: "🖥️  Server", value: srvName,                  inline: true },
+        ).setTimestamp());
+      feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
+    },
     // Fired when someone CONNECTS (live log) from a flagged IP: ban the
     // account on both servers (and flag their IPs too, to catch their alts).
     onAutoBan: async ({ uniqueId, name, ip }) => {

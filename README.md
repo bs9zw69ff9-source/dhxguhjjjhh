@@ -54,6 +54,8 @@ auto-paginated slash commands with context-aware autocomplete.
 - **IP-match auto-ban (alt detection)** — tails the server logs to map IPs to
   players; banning someone flags their IPs, and the live log watcher then
   RCON-bans anyone who reconnects from a flagged IP (`ipBans.js`, `PAVLOV_LOGS`).
+- **Live connection feed** — set `CONNECT_WEBHOOK_URL` to post a fresh message
+  (name · ID · IP) to a Discord channel every time a player joins.
 - **Factions** — per-faction whitelists, faction-specific rank ladders, member
   caps and per-rank caps, transfers, rosters, and an audit log. Rank changes
   update both the rank registry and the on-disk spawn/rank files.
@@ -152,6 +154,7 @@ required.
 | `PLAYTIME_LB_CHANNEL` | – | Channel ID for the auto-posted **playtime** leaderboard (has a hardcoded default — see below). |
 | `BLACKLIST_IDS` | – | Discord user IDs barred from **all** commands (comma/space/newline separated). Owners are exempt. |
 | `PAVLOV_LOGS` | – | Pavlov server log file(s) to tail for IP↔username mapping / IP-match auto-ban (comma or colon separated). Needed if the bot doesn't run as the server's owning user. |
+| `CONNECT_WEBHOOK_URL` | – | Discord channel **webhook URL** for the live connection feed — posts a new message (name · ID · IP) on every join. Use a private admin channel (it exposes IPs). |
 | `LOG_LEVEL` | – | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` (default `INFO`). `DEBUG` logs everything. |
 | `BUILD_ID` | – | Build stamp shown in `/help` and `/ping`. |
 

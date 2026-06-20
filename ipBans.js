@@ -53,7 +53,8 @@ const labelFor = f => { const m = f.match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return 
 let registry  = load(REGISTRY_PATH, {});
 const blacklist = new Set(load(BLACKLIST_PATH, []));   // set of banned IPs
 let onAutoBan = async () => {};
-let _live = false;   // false during startup backfill -> suppress auto-ban for old logins
+let onConnect = async () => {};   // fired on every LIVE join (name/id/ip/server)
+let _live = false;   // false during startup backfill -> suppress feed + auto-ban for old logins
 
 const _recentAuto = new Map();
 const offsets  = {};
@@ -147,8 +148,12 @@ async function handleLogin(name, rawId, ip, ts, server) {
   if (skipId(rawId)) return;                       // server self-connection / pre-auth
   const id = cleanId(rawId);
   record(id, rawId, name, ip, ts);
-  if (!_live) return;                              // startup backfill — don't auto-ban old joins
+  if (!_live) return;                              // startup backfill — don't feed/auto-ban old joins
   const display = (name && name !== "<null>") ? name : id;
+
+  // live connection feed (every join)
+  try { await onConnect({ uniqueId: id, name: display, ip: ip || null, server }); }
+  catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
 
   if (ip && blacklist.has(ip)) {                   // connected from a flagged IP -> auto-ban
     const last = _recentAuto.get(id) ?? 0;
@@ -211,6 +216,7 @@ function poll() {
 /* ---------------- INIT ---------------- */
 function init(opts = {}) {
   if (typeof opts.onAutoBan === "function") onAutoBan = opts.onAutoBan;
+  if (typeof opts.onConnect === "function") onConnect = opts.onConnect;
   if (Array.isArray(opts.logFiles) && opts.logFiles.length) { LOG_FILES.length = 0; LOG_FILES.push(...opts.logFiles); }
   poll();          // backfill the existing tail — _live is false, so no auto-ban for old joins
   _live = true;    // everything parsed from here on is a live event
