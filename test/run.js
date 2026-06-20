@@ -145,7 +145,8 @@ const ok = (cond, msg) => {
       "[2026.06.16-19.00.39:200][1]LogPavlov: Login request: ?Name=NCR_Ranger?Password= userId: NULL:aaa111",
       "[2026.06.16-19.06.00:000][2]LogNet: NotifyAcceptingConnection accepted from: 203.0.113.7:5000",
       "[2026.06.16-19.06.01:000][3]LogPavlov: Login request: ?Name=AltGuy? userId: NULL:bbb222",
-      "[2026.06.16-19.09.00:000][4]LogNet: UChannel::Close: RemoteAddr: 198.51.100.9:40000, UniqueId: NULL:aaa111",
+      // real-world UChannel::Close format (RemoteAddr ... UniqueId on one line, with fields between)
+      "[2026.06.16-19.09.00:000][4]LogNet: UChannel::Close: Sending CloseBunch. ChIndex == 0. Name: [UChannel] ChIndex: 0, Closing: 0 [UNetConnection] RemoteAddr: 198.51.100.9:40000, Name: IpConnection_2147419312, Driver: GameNetDriver IpNetDriver_2147482354, IsServer: YES, PC: BP_PavlovPlayerController_C_2147419242, Owner: BP_PavlovPlayerController_C_2147419242, UniqueId: NULL:aaa111",
     ].join("\n") + "\n");   // real logs end with a newline; the parser buffers an incomplete trailing line
     const ipBans = require(path.join(sandbox, "ipBans.js"));
     clearInterval(ipBans.init({ logFiles: [logPath], onAutoBan: async () => {}, pollMs: 9e8 }));
