@@ -33,6 +33,7 @@ const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 const POLL_MS             = 5000;
 const CORRELATE_WINDOW_MS = 10000;            // join IP must precede the login line by < this
 const JOIN_DEBOUNCE_MS    = 20000;            // one feed message per join (collapse INVALID+auth pair)
+const CONFIRM_DEBOUNCE_MS = 20000;            // one confirm feed message per id (collapse a disconnect's close lines)
 const AUTO_DEBOUNCE_MS    = 5 * 60 * 1000;    // don't re-auto-ban the same id within 5 min
 const MAX_BACKFILL_BYTES  = 50 * 1024 * 1024; // first pass: only scan the tail of huge logs
 const SAVE_THROTTLE_MS    = 3000;             // coalesce registry writes (disconnect lines are frequent)
@@ -68,7 +69,8 @@ const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => Str
 const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
 
 let onAutoBan = async () => {};
-let onConnect = async () => {};
+let onConnect = async () => {};   // best-effort join (tentative IP)
+let onConfirm = async () => {};   // confirmed IP↔id pairing (same-line disconnect) — accurate IP
 let live      = false;            // false during the startup backfill (suppress feed + auto-ban)
 let watchList = [];               // resolved log files (active + rotated backups)
 
@@ -76,7 +78,8 @@ const offsets     = {};           // per-file byte offset
 const leftover    = {};           // per-file buffered partial last line
 const pendingIP   = {};           // per-file: IP from the latest accept line, awaiting its login
 const pendingTs   = {};           // per-file: log-timestamp of that accept line
-const recentJoin  = new Map();    // name  -> ts  (feed dedupe)
+const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
+const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe — collapse a disconnect's multiple close lines)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
 let lastTs = 0, saveTimer = null, dirty = false;
 
@@ -233,7 +236,17 @@ function parseLine(line, server, key) {
 
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
   const c = line.match(CLOSE_RE);
-  if (c && !skipId(c[2])) { record(c[2], null, c[1], ts, true); return; }   // confirmed same-line pairing
+  if (c && !skipId(c[2])) {
+    const id = cleanId(c[2]), ip = c[1];
+    record(c[2], null, ip, ts, true);          // confirmed same-line pairing
+    // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect
+    if (live && !untrackedIds.has(id) && Date.now() - (recentConfirm.get(id) ?? 0) >= CONFIRM_DEBOUNCE_MS) {
+      recentConfirm.set(id, Date.now());
+      Promise.resolve(onConfirm({ uniqueId: id, name: registry[id]?.name || id, ip, server }))
+        .catch(e => console.error("[ipBans] onConfirm failed:", e.message));
+    }
+    return;
+  }
 
   // 2) accept line — remember the IP for the upcoming login (per file, survives across polls)
   const a = line.match(ACCEPT_RE);
@@ -325,6 +338,7 @@ function resolveLogFiles(opts = {}) {
 function init(opts = {}) {
   if (typeof opts.onAutoBan === "function") onAutoBan = opts.onAutoBan;
   if (typeof opts.onConnect === "function") onConnect = opts.onConnect;
+  if (typeof opts.onConfirm === "function") onConfirm = opts.onConfirm;
 
   const { files, how } = resolveLogFiles(opts);
   console.log(`[ipBans] log source: ${how}`);

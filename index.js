@@ -2148,20 +2148,19 @@ client.once("ready", async () => {
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   ipBans.init({
-    // Fired on every LIVE join — post a fresh message (name · ID · IP) to the
-    // connection-feed webhook if CONNECT_WEBHOOK_URL is configured.
-    onConnect: async ({ uniqueId, name, ip, server }) => {
+    // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
+    // posts an accurate name · ID · IP entry to the connection-feed webhook.
+    onConfirm: async ({ uniqueId, name, ip, server }) => {
       if (!feedHook) return;
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
-      // resolve this player's alt accounts (other ids sharing an IP) to USERNAMES,
-      // falling back to the raw id when we've never learned a name for it.
+      // resolve this player's alt accounts (other ids sharing a CONFIRMED IP) to USERNAMES.
       const alts = (() => {
         try {
           if (!uniqueId) return [];
           return ipBans.getAltsOf(uniqueId).map(id => ipBans.registry[id]?.name || id);
         } catch { return []; }
       })();
-      const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🟢  Courier Connected")
+      const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🟢  Courier Logged — IP Confirmed")
         .addFields(
           { name: "🎯  Name",   value: `\`${name}\``,            inline: true },
           { name: "🆔  ID",     value: `\`${uniqueId}\``,        inline: true },

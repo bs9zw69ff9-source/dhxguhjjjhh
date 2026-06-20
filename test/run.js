@@ -256,6 +256,22 @@ const ok = (cond, msg) => {
     clearInterval(ipBans.init({ logFiles: [log7], pollMs: 9e8 }));
     ok(ipBans.getIPsForPlayer("Person0").includes(shared), "shared-IP players still have the IP recorded");
     ok(ipBans.getAltsOf("Person0").length === 0, "shared IP (6 accounts) yields NO false alts");
+
+    // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
+    const log8 = path.join(sandbox, "Pavlov8.log");
+    fs.writeFileSync(log8, "");
+    let confirmed = null;
+    const t8 = ipBans.init({ logFiles: [log8], onConfirm: async (info) => { confirmed = info; }, pollMs: 20 });
+    fs.appendFileSync(log8,
+      "[2026.06.24-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 9.1.2.3:5000\n" +
+      "[2026.06.24-10.00.00:200][2]LogNet: Login request: ?Name=Confirmee?pid=Confirmee userId: NULL:conf01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    ok(confirmed === null, "no feed on the tentative join");
+    fs.appendFileSync(log8,
+      "[2026.06.24-10.05.00:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 9.1.2.3:5000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:conf01\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(t8);
+    ok(confirmed && confirmed.uniqueId === "conf01" && confirmed.ip === "9.1.2.3" && confirmed.name === "Confirmee", "onConfirm fires with confirmed IP + resolved name");
   }
 
   console.log("Faction rank caps:");
