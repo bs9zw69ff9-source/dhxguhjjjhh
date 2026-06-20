@@ -3576,8 +3576,7 @@ client.on("interactionCreate", async (interaction) => {
             { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP",             emoji: "🌐" },
             { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset",          emoji: "💥" },
           );
-        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Configure — Hidden Commands")
-          .setDescription(hero("Owner control panel. Choose an action below.")));
+        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Configure — Hidden Commands"));
         await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         const msg = await interaction.fetchReply();
 

@@ -267,6 +267,27 @@ const ok = (cond, msg) => {
     ok(fr.ids.includes("solo01") && fr.ids.includes("solo02"), "flagIp reports known accounts on that IP");
     ipBans.clearIp("50.50.50.50");
 
+    // same account, NEW username, from a flagged IP -> still auto-banned (id/IP based, not name based)
+    const logD = path.join(sandbox, "PavlovD.log");
+    fs.writeFileSync(logD, "");
+    let autoD = null;
+    const tD = ipBans.init({ logFiles: [logD], onAutoBan: async (i) => { autoD = i; }, pollMs: 20 });
+    fs.appendFileSync(logD,
+      "[2026.06.28-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 6.6.6.6:1\n" +
+      "[2026.06.28-10.00.00:200][2]LogNet: Login request: ?Name=OldName?pid=OldName userId: NULL:ev01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    fs.appendFileSync(logD, "[2026.06.28-10.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 6.6.6.6:1, UniqueId: NULL:ev01\n");
+    await new Promise(r => setTimeout(r, 60));
+    fs.appendFileSync(logD, "[2026.06.28-10.01.00:000][4]LogTemp: Rcon: BanPlayer OldName\n");
+    await new Promise(r => setTimeout(r, 60));
+    // same id ev01 returns under a DIFFERENT name from the same IP
+    fs.appendFileSync(logD,
+      "[2026.06.28-10.02.00:000][5]LogNet: NotifyAcceptingConnection accepted from: 6.6.6.6:2\n" +
+      "[2026.06.28-10.02.00:200][6]LogNet: Login request: ?Name=BrandNewName?pid=BrandNewName userId: NULL:ev01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tD);
+    ok(autoD && autoD.uniqueId === "ev01", "same account under a new username is still auto-banned");
+
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");
     fs.writeFileSync(log8, "");
