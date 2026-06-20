@@ -2177,13 +2177,16 @@ client.once("ready", async () => {
       await banWithIp(uniqueId, "both");
       writeModLog({ action: "auto-ipban", playerId: uniqueId, reason: `Connected from blacklisted IP (${ip})`, by: "IP-Guard" });
       logger.warn("IPGuard", `Auto-banned ${name} [${uniqueId}] — blacklisted IP ${ip}`);
-      await logAction(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🛑  Blacklisted IP Blocked")
+      const banEmbed = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🛑  Blacklisted IP Blocked")
         .setDescription(`${hero("A barred IP tried to slip back into the Mojave.")}`)
         .addFields(
           { name: "🎯  Courier", value: `\`${name}\``,     inline: true },
           { name: "🆔  ID",      value: `\`${uniqueId}\``, inline: true },
           { name: "🌐  IP",      value: `\`${ip}\``,       inline: true },
-        ).setFooter({ text: "Auto-ban · IP blacklist" })));
+        ).setFooter({ text: "Auto-ban · IP blacklist · both servers" }).setTimestamp());
+      await logAction(banEmbed);   // mod-log channel
+      // also surface it in the connection feed (the channel you watch for joins)
+      if (feedHook) feedHook.send({ embeds: [banEmbed] }).catch(err => logger.warn("Feed", `auto-ban post failed: ${err.message}`));
     },
   });
   refreshPlayerCache("server1");
