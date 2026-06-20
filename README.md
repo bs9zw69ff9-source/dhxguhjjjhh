@@ -51,6 +51,9 @@ auto-paginated slash commands with context-aware autocomplete.
   registry, per-player staff notes, and a full mod-action history log.
 - **Punishment DMs** — `kick`/`warn`/`tempban`/`permban`/`hardban` can DM the
   punished player a breakdown via an optional `discord_user` field.
+- **IP-match auto-ban (alt detection)** — tails the server logs to map IPs to
+  players; banning someone flags their IPs, and the live log watcher then
+  RCON-bans anyone who reconnects from a flagged IP (`ipBans.js`, `PAVLOV_LOGS`).
 - **Factions** — per-faction whitelists, faction-specific rank ladders, member
   caps and per-rank caps, transfers, rosters, and an audit log. Rank changes
   update both the rank registry and the on-disk spawn/rank files.
@@ -148,6 +151,7 @@ required.
 | `LEADERBOARD_CHANNEL` | – | Channel ID for the auto-posted **caps** leaderboard. |
 | `PLAYTIME_LB_CHANNEL` | – | Channel ID for the auto-posted **playtime** leaderboard (has a hardcoded default — see below). |
 | `BLACKLIST_IDS` | – | Discord user IDs barred from **all** commands (comma/space/newline separated). Owners are exempt. |
+| `PAVLOV_LOGS` | – | Pavlov server log file(s) to tail for IP↔username mapping / IP-match auto-ban (comma or colon separated). Needed if the bot doesn't run as the server's owning user. |
 | `LOG_LEVEL` | – | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` (default `INFO`). `DEBUG` logs everything. |
 | `BUILD_ID` | – | Build stamp shown in `/help` and `/ping`. |
 
@@ -337,6 +341,7 @@ source). Atomic + serialized writes.
 | `playtime.json` | Minutes per player. |
 | `lastseen.json` | Last-online timestamps. |
 | `known_players.json` | Every player ever seen (powers offline autocomplete). |
+| `ip_registry.json` / `ip_blacklist.json` | IP↔username map from logs / flagged (banned) IPs. |
 | `faction_ranks.json` / `faction_config.json` / `faction_audit.json` | Per-player ranks / caps & rank-caps / change log. |
 | `menu_grants.json` | Persistent RCON menu grants (re-applied on rejoin). |
 | `player_notes.json` | Freeform staff notes on any player. |
@@ -386,6 +391,7 @@ every push (`.github/workflows/ci.yml`).
 
 ```
 index.js                     the entire bot
+ipBans.js                    IP↔username log parser + IP-match auto-ban
 test/run.js                  self-contained unit tests (npm test)
 .env.example                 annotated env template
 package.json .nvmrc          deps + Node version

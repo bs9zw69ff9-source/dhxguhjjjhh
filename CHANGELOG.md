@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- **IP-match auto-ban / alt detection** (`ipBans.js`). The bot tails the Pavlov
+  server logs (`PAVLOV_LOGS`) and builds an IP↔username cache. When a player is
+  banned (`/tempban`, `/permban`, `/hardban`, warn-escalation, name auto-ban),
+  every IP that account has used is flagged; the live log watcher then
+  RCON-bans any account that connects from a flagged IP — catching alts and
+  ban-evaders. `/unban` clears that player's IP flags. Pure log-watch + RCON:
+  no firewall and no connection webhook (both removed as unreliable).
+
 ### Changed
 - **All command lists now use interactive ◀ ▶ pagination.** Added buttons to
   `/warnings`, `/note list`, `/donator list`, and converted `/faction list`

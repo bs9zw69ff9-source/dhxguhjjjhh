@@ -12,6 +12,7 @@ const fs     = require("fs");
 const net    = require("net");
 const crypto = require("crypto");
 const path   = require("path");
+const ipBans = require("./ipBans");
 const {
   Client,
   GatewayIntentBits,
@@ -1176,6 +1177,17 @@ async function sendRconBoth(command, server) {
   return { s1: await sendRcon(command, server), s2: null };
 }
 
+/* RCON-ban an id on the chosen server(s) AND flag every IP we've ever seen
+   that id connect from. Any account that later connects from a flagged IP is
+   auto-banned by the live log watcher. Never throws — failures are logged.
+   Returns ipBans' enforcement summary ({ ids, ips, alts, field }). */
+async function banWithIp(playerId, server = "both") {
+  try { await sendRconBoth(`Ban ${sanitizeId(playerId)}`, server); }
+  catch (err) { logger.warn("Bans", `RCON ban failed for ${playerId}: ${err.message}`); }
+  try { return ipBans.blacklistPlayer(playerId); }
+  catch (err) { logger.warn("IPBan", `IP enforcement failed for ${playerId}: ${err.message}`); return { ids: [], ips: [], alts: [], field: null }; }
+}
+
 function parseRcon(raw) {
   if (!raw) return null;
   try {
@@ -1343,7 +1355,7 @@ async function enforceAutoban() {
     if (Date.now() - (_autobanRecent.get(lc) ?? 0) < 5 * 60 * 1000) continue;   // recently handled
     _autobanRecent.set(lc, Date.now());
     try {
-      await sendRconBoth(`Ban ${sanitizeId(name)}`, "both");
+      await banWithIp(name, "both");
       banned++;
       writeModLog({ action: "autoban", playerId: name, reason: `Name matches auto-ban pattern "${pattern}"`, by: "Auto-Ban" });
       logger.info("AutoBan", `Banned "${name}" — matched pattern "${pattern}"`);
@@ -1575,12 +1587,12 @@ async function issueWarn(playerId, reason, moderator, server, interaction) {
   if (escalation && escalation.action === "tempban") {
     const { ms, label } = BAN_DURATIONS[escalation.duration];
     const expires        = Date.now() + ms;
-    await sendRconBoth(`Ban ${sanitizeId(playerId)}`, server);
+    await banWithIp(playerId, server);
     await upsertTempBan({ playerId, reason: `Auto-ban: ${escalation.label}`, expires, durationLabel: label, moderator: "Auto-Escalation", server });
     escalated = { type: "tempban", label };
     writeModLog({ action: "auto-tempban", playerId, reason: escalation.label, duration: label });
   } else if (escalation && escalation.action === "permban") {
-    await sendRconBoth(`Ban ${sanitizeId(playerId)}`, server);
+    await banWithIp(playerId, server);
     escalated = { type: "permban" };
     writeModLog({ action: "auto-permban", playerId, reason: escalation.label });
   }
@@ -1599,6 +1611,7 @@ async function processExpiredBans() {
     try {
       await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server1");
       await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server2");
+      try { ipBans.unblacklistPlayer(ban.playerId); } catch {}   // clear that player's flagged IPs
       lifted.push(ban.playerId);
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
@@ -2101,6 +2114,22 @@ client.once("ready", async () => {
     logger.error("Bot", `Command registration failed: ${err.message}`);
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
+  ipBans.init({
+    // Fired when someone CONNECTS (live log) from a flagged IP: ban the
+    // account on both servers (and flag their IPs too, to catch their alts).
+    onAutoBan: async ({ uniqueId, name, ip }) => {
+      await banWithIp(uniqueId, "both");
+      writeModLog({ action: "auto-ipban", playerId: uniqueId, reason: `Connected from blacklisted IP (${ip})`, by: "IP-Guard" });
+      logger.warn("IPGuard", `Auto-banned ${name} [${uniqueId}] — blacklisted IP ${ip}`);
+      await logAction(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🛑  Blacklisted IP Blocked")
+        .setDescription(`${hero("A barred IP tried to slip back into the Mojave.")}`)
+        .addFields(
+          { name: "🎯  Courier", value: `\`${name}\``,     inline: true },
+          { name: "🆔  ID",      value: `\`${uniqueId}\``, inline: true },
+          { name: "🌐  IP",      value: `\`${ip}\``,       inline: true },
+        ).setFooter({ text: "Auto-ban · IP blacklist" })));
+    },
+  });
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
   setTimeout(rconHealthCheck, 5_000);
@@ -2724,7 +2753,7 @@ client.on("interactionCreate", async (interaction) => {
         const { ms, label } = BAN_DURATIONS[durationKey];
         const expires        = Date.now() + ms;
         const replaced       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
-        await sendRconBoth(`Ban ${playerId}`, server);
+        const ipEnf = await banWithIp(playerId, server);
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
         writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         const ts = Math.floor(expires / 1000);
@@ -2750,6 +2779,7 @@ client.on("interactionCreate", async (interaction) => {
         });
         const tbDmField = dmStatusField(tbDm, interaction.options.getUser("discord_user"));
         if (tbDmField) embed.addFields(tbDmField);
+        if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
@@ -2765,6 +2795,7 @@ client.on("interactionCreate", async (interaction) => {
         await sendRconBoth(`Unban ${playerId}`, server);
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await removeBans(playerId);
+        try { ipBans.unblacklistPlayer(playerId); } catch {}   // clear that player's flagged IPs
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🔓  Exile Lifted — Welcome Back to the Strip")
           .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
@@ -2900,7 +2931,7 @@ client.on("interactionCreate", async (interaction) => {
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
-        await sendRconBoth(`Ban ${playerId}`, server);
+        const ipEnf = await banWithIp(playerId, server);
         await removeBans(playerId);   // a permanent ban supersedes any temp ban
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("💀  Permanent Exile Issued")
@@ -2922,6 +2953,7 @@ client.on("interactionCreate", async (interaction) => {
         });
         const pbDmField = dmStatusField(pbDm, interaction.options.getUser("discord_user"));
         if (pbDmField) embed.addFields(pbDmField);
+        if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
@@ -2960,8 +2992,8 @@ client.on("interactionCreate", async (interaction) => {
           }
           existing.updatedAt = Date.now(); existing.updatedBy = interaction.user.tag;
           saveHardBans(registry);
-          await sendRconBoth(`Ban ${playerId}`, server);
-          if (linkedId) await sendRconBoth(`Ban ${linkedId}`, server);
+          const ipEnf = await banWithIp(playerId, server);
+          if (linkedId) { await banWithIp(linkedId, server); }
           await removeBans(playerId, linkedId);
           writeModLog({ action: "hardban-update", playerId, linkedId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Record Updated").setDescription(`${DIVIDER}`)
@@ -2972,14 +3004,15 @@ client.on("interactionCreate", async (interaction) => {
               { name: "🔒  Updated By",    value: `${interaction.user}`,                                                 inline: false },
             ).setFooter({ text: "Hard ban registry updated" }).setTimestamp();
           if (notes) embed.addFields({ name: "📝  Note Added", value: notes });
+          if (ipEnf?.field) embed.addFields(ipEnf.field);
           brand(embed); await logAction(embed);
           return interaction.editReply({ embeds: [embed] });   // ← CHANGED
         }
         registry.push({ primaryId: playerId, linkedIds: linkedId ? [linkedId] : [], reason, server: serverLabel(server), bannedBy: interaction.user.tag, bannedAt: Date.now(), updatedAt: null, updatedBy: null });
         saveHardBans(registry);
         if (notes) { const ns = loadNotes(); ns[playerId] = [{ text: notes, by: interaction.user.tag, at: Date.now() }]; saveNotes(ns); }
-        await sendRconBoth(`Ban ${playerId}`, server);
-        if (linkedId) await sendRconBoth(`Ban ${linkedId}`, server);
+        const ipEnf = await banWithIp(playerId, server);
+        if (linkedId) { await banWithIp(linkedId, server); }
         await removeBans(playerId, linkedId);
         writeModLog({ action: "hardban", playerId, linkedId, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Issued — Persona Non Grata")
@@ -3002,6 +3035,7 @@ client.on("interactionCreate", async (interaction) => {
         });
         const hbDmField = dmStatusField(hbDm, interaction.options.getUser("discord_user"));
         if (hbDmField) embed.addFields(hbDmField);
+        if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
       }

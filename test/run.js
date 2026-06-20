@@ -33,6 +33,7 @@ module.exports={Client:Chain,GatewayIntentBits:e,ActivityType:e,REST:Chain,Route
 `);
 
 fs.copyFileSync(path.join(__dirname, "..", "index.js"), path.join(sandbox, "index.js"));
+fs.copyFileSync(path.join(__dirname, "..", "ipBans.js"), path.join(sandbox, "ipBans.js"));
 
 process.chdir(sandbox);
 process.env.DISCORD_TOKEN   = "x";
@@ -135,6 +136,30 @@ const ok = (cond, msg) => {
   ok(bot.isOwner("1014251293159731310") && !bot.isOwner("9"), "hardcoded owner");
   ok(bot.isBlacklisted("55") && bot.isBlacklisted("66"), "BLACKLIST_IDS env parsed (comma/space separated)");
   ok(!bot.isBlacklisted("56"), "non-listed id not blacklisted");
+
+  console.log("IP bans (ipBans.js):");
+  {
+    const logPath = path.join(sandbox, "Pavlov.log");
+    fs.writeFileSync(logPath, [
+      "[2026.06.16-19.00.39:100][0]LogNet: NotifyAcceptingConnection accepted from: 203.0.113.7:54321",
+      "[2026.06.16-19.00.39:200][1]LogPavlov: Login request: ?Name=NCR_Ranger?Password= userId: NULL:aaa111",
+      "[2026.06.16-19.06.00:000][2]LogNet: NotifyAcceptingConnection accepted from: 203.0.113.7:5000",
+      "[2026.06.16-19.06.01:000][3]LogPavlov: Login request: ?Name=AltGuy? userId: NULL:bbb222",
+      "[2026.06.16-19.09.00:000][4]LogNet: UChannel::Close: RemoteAddr: 198.51.100.9:40000, UniqueId: NULL:aaa111",
+    ].join("\n") + "\n");   // real logs end with a newline; the parser buffers an incomplete trailing line
+    const ipBans = require(path.join(sandbox, "ipBans.js"));
+    clearInterval(ipBans.init({ logFiles: [logPath], onAutoBan: async () => {}, pollMs: 9e8 }));
+    ok(ipBans.registry["aaa111"] && ipBans.registry["aaa111"].name === "NCR_Ranger", "login line -> id + name learned");
+    ok(ipBans.getIPsForPlayer("NCR_Ranger").includes("203.0.113.7"), "resolve by NAME -> IPs");
+    ok(ipBans.getIPsForPlayer("aaa111").includes("198.51.100.9"), "disconnect line -> same-line IP+id learned");
+    ok(ipBans.getAltsOf("NCR_Ranger").includes("bbb222"), "alt sharing an IP is detected");
+    ok(ipBans.getAltsOf("NCR_Ranger").length === 1, "non-sharing ids are not flagged as alts");
+    const enf = ipBans.blacklistPlayer("NCR_Ranger");
+    ok(enf.ips.includes("203.0.113.7") && ipBans.blacklist.includes("203.0.113.7"), "blacklistPlayer flags the player's IPs");
+    ok(enf.alts.includes("bbb222"), "blacklist summary reports shared-IP alts");
+    ipBans.unblacklistPlayer("NCR_Ranger");
+    ok(!ipBans.blacklist.includes("203.0.113.7"), "unblacklistPlayer clears the flags");
+  }
 
   console.log("Faction rank caps:");
   ok(bot.getFactionRankCap("NCR", "Officer") === null, "unset rank cap -> null (unlimited)");
