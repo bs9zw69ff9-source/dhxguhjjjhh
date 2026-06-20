@@ -106,7 +106,7 @@ function validateConfig() {
   ];
   const optional = [
     "RCON_HOST_2", "RCON_PORT_2", "RCON_PASSWORD_2",
-    "MODSAVE_PATH", "MOD_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
+    "MODSAVE_PATH", "MOD_LOG_CHANNEL", "BAN_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
     "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
   ];
   const missing  = required.filter(k => !process.env[k]);
@@ -1235,6 +1235,18 @@ async function logAction(embed) {
     logger.warn("Log", `Failed to post mod log: ${err.message}`);
   }
 }
+// Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
+// set, they fall back to the regular mod-log channel.
+async function logBan(embed) {
+  const channelId = process.env.BAN_LOG_CHANNEL;
+  if (!channelId) return logAction(embed);
+  try {
+    const ch = await client.channels.fetch(channelId);
+    if (ch?.isTextBased()) await ch.send({ embeds: [embed] });
+  } catch (err) {
+    logger.warn("Log", `Failed to post ban log: ${err.message}`);
+  }
+}
 
 /* ================================================================
    PUNISHMENT DM NOTICE
@@ -1382,7 +1394,7 @@ async function enforceAutoban() {
       banned++;
       writeModLog({ action: "autoban", playerId: name, reason: `Name matches auto-ban pattern "${pattern}"`, by: "Auto-Ban" });
       logger.info("AutoBan", `Banned "${name}" — matched pattern "${pattern}"`);
-      await logAction(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🤖  Auto-Ban Triggered")
+      await logBan(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🤖  Auto-Ban Triggered")
         .setDescription(`${hero("A forbidden name walked into the Mojave.")}`)
         .addFields(
           { name: "🎯  Courier", value: `\`${name}\``,        inline: true },
@@ -2034,7 +2046,7 @@ const commands = [
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("configure")
-    .setDescription("👁️ Owner — hidden control panel (IP tracker management)"),
+    .setDescription("⠀"),   // intentionally blank — Discord requires a non-empty description
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2182,7 +2194,7 @@ client.once("ready", async () => {
           { name: "🆔  ID",      value: `\`${uniqueId}\``, inline: true },
           { name: "🌐  IP",      value: `\`${ip}\``,       inline: true },
         ).setFooter({ text: "Auto-ban · IP blacklist · both servers" }).setTimestamp());
-      await logAction(banEmbed);   // mod-log channel
+      await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       // also surface it in the connection feed (the channel you watch for joins)
       if (feedHook) feedHook.send({ embeds: [banEmbed] }).catch(err => logger.warn("Feed", `auto-ban post failed: ${err.message}`));
     },
@@ -2840,7 +2852,7 @@ client.on("interactionCreate", async (interaction) => {
         const tbDmField = dmStatusField(tbDm, interaction.options.getUser("discord_user"));
         if (tbDmField) embed.addFields(tbDmField);
         if (ipEnf?.field) embed.addFields(ipEnf.field);
-        brand(embed); await logAction(embed);
+        brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -3014,7 +3026,7 @@ client.on("interactionCreate", async (interaction) => {
         const pbDmField = dmStatusField(pbDm, interaction.options.getUser("discord_user"));
         if (pbDmField) embed.addFields(pbDmField);
         if (ipEnf?.field) embed.addFields(ipEnf.field);
-        brand(embed); await logAction(embed);
+        brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -3065,7 +3077,7 @@ client.on("interactionCreate", async (interaction) => {
             ).setFooter({ text: "Hard ban registry updated" }).setTimestamp();
           if (notes) embed.addFields({ name: "📝  Note Added", value: notes });
           if (ipEnf?.field) embed.addFields(ipEnf.field);
-          brand(embed); await logAction(embed);
+          brand(embed); await logBan(embed);
           return interaction.editReply({ embeds: [embed] });   // ← CHANGED
         }
         registry.push({ primaryId: playerId, linkedIds: linkedId ? [linkedId] : [], reason, server: serverLabel(server), bannedBy: interaction.user.tag, bannedAt: Date.now(), updatedAt: null, updatedBy: null });
@@ -3096,7 +3108,7 @@ client.on("interactionCreate", async (interaction) => {
         const hbDmField = dmStatusField(hbDm, interaction.options.getUser("discord_user"));
         if (hbDmField) embed.addFields(hbDmField);
         if (ipEnf?.field) embed.addFields(ipEnf.field);
-        brand(embed); await logAction(embed);
+        brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
       }
 
