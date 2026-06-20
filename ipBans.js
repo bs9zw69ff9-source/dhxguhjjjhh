@@ -167,12 +167,16 @@ function blacklistPlayer(input) {
     if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; }
     pendingFlag.set(id, Date.now());   // flag the IP the kick confirms, if none yet
   }
-  // if banned by a raw name/id that isn't in the registry, still flag that token
+  // banned by a raw token not in the registry: flag it as an IP, or (since Quest
+  // ids aren't hex and can't be told apart from a name) as BOTH an id and a name.
   if (!ids.length) {
     const raw = String(input ?? "").trim();
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw)) { if (!flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); } }
-    else if (/^[0-9a-f]{16,}$/i.test(raw))   { if (!flaggedIds.has(raw))   { flaggedIds.add(raw);   fId = true; } }
-    else if (raw)                            { if (!flaggedNames.has(norm(raw))) { flaggedNames.add(norm(raw)); fName = true; } }
+    else if (raw) {
+      const idF = cleanId(raw), nmF = norm(raw);
+      if (idF && !flaggedIds.has(idF))   { flaggedIds.add(idF);   fId = true; }
+      if (nmF && !flaggedNames.has(nmF)) { flaggedNames.add(nmF); fName = true; }
+    }
   }
   if (fId) saveFIds();
   if (fName) saveFNames();
@@ -227,23 +231,32 @@ function flagIp(ip) {
   if (added) { flagged.add(ip); saveFlagged(); }
   return { added, ip, ids: idsWithIp(ip) };
 }
-// Manually blacklist an IP, username, or hex id (auto-detects which). Returns
-// what kind it was + the accounts already on record matching it (to ban now).
+// Manually blacklist an IP, username, or unique id. Only an IPv4 is detected by
+// shape; everything else (Steam numeric ids, Quest/Shack ids, usernames — which
+// can't be told apart by format) is matched against the registry, and if unknown
+// is flagged as BOTH an id and a username so it's caught either way.
 function flagTarget(input) {
   const val = String(input || "").trim();
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) {            // IPv4
     const added = !flagged.has(val); if (added) { flagged.add(val); saveFlagged(); }
-    return { kind: "ip", value: val, added, ids: idsWithIp(val) };
+    return { kind: "IP", value: val, added, ids: idsWithIp(val) };
   }
-  if (/^[0-9a-f]{16,}$/i.test(val)) {                   // hex id
-    const id = cleanId(val);
-    const added = !flaggedIds.has(id); if (added) { flaggedIds.add(id); saveFIds(); }
-    return { kind: "id", value: id, added, ids: registry[id] ? [id] : [] };
+  const ids = resolveIds(val);                          // known player by id or username?
+  let fId = false, fName = false;
+  if (ids.length) {
+    for (const id of ids) {
+      if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; }
+      const nm = norm(registry[id]?.name);
+      if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; }
+    }
+    if (fId) saveFIds(); if (fName) saveFNames();
+    return { kind: "player", value: val, added: fId || fName, ids };
   }
-  const nm = norm(val);                                 // username
-  const added = !flaggedNames.has(nm); if (added) { flaggedNames.add(nm); saveFNames(); }
-  const ids = Object.keys(registry).filter(id => norm(registry[id].name) === nm);
-  return { kind: "username", value: val, added, ids };
+  const idF = cleanId(val), nmF = norm(val);            // unknown -> flag as id AND name
+  if (idF && !flaggedIds.has(idF))   { flaggedIds.add(idF);   fId = true; }
+  if (nmF && !flaggedNames.has(nmF)) { flaggedNames.add(nmF); fName = true; }
+  if (fId) saveFIds(); if (fName) saveFNames();
+  return { kind: "username/ID", value: val, added: fId || fName, ids: [] };
 }
 // Clear ALL flags (IPs, usernames, ids). Stops every auto-ban. Registry kept.
 function clearFlags() {

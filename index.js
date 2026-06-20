@@ -3568,7 +3568,7 @@ client.on("interactionCreate", async (interaction) => {
 
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
-            { label: "Blacklist IP / username / ID", value: "blacklist_ip", description: "Auto-ban anyone matching an IP, username, or hex ID", emoji: "🚫" },
+            { label: "Blacklist IP / username / ID", value: "blacklist_ip", description: "Auto-ban anyone matching an IP, username, or unique ID", emoji: "🚫" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
@@ -3588,7 +3588,7 @@ client.on("interactionCreate", async (interaction) => {
         // actions that need text input -> open a modal
         if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip") {
           const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username / ID" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP, username, or hex ID" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP, username, or unique ID" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -3599,11 +3599,10 @@ client.on("interactionCreate", async (interaction) => {
           let desc, color = NV.IRRAD_GREEN;
           if (choice === "blacklist_ip") {
             await sub.deferReply({ ephemeral: true });
-            const r = ipBans.flagTarget(val);            // auto-detects IP / username / hex ID
+            const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else matched as id/username
             for (const id of r.ids) { try { await banWithIp(id, "both"); } catch {} }   // ban matching accounts now
             color = NV.LEGION_RED;
-            const kindLabel = { ip: "IP", username: "username", id: "hex ID" }[r.kind];
-            desc = `🚫 ${kindLabel} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
+            desc = `🚫 ${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record.` : `\nNo accounts on record yet — future connections will be caught.`);
             const e1 = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Blacklisted").setDescription(hero(desc)).setTimestamp());
             await logAction(e1);

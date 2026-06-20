@@ -301,7 +301,7 @@ const ok = (cond, msg) => {
     fs.appendFileSync(logE, "[2026.06.29-10.01.00:000][3]LogTemp: Rcon: BanPlayer Cheater\n");
     await new Promise(r => setTimeout(r, 60));
     ok(ipBans.flagTarget("Cheater").added === false, "banning flags the username");
-    ok(ipBans.flagTarget(cheatId).added === false, "banning flags the hex id");
+    ok(ipBans.flagTarget(cheatId).added === false, "banning flags the unique id");
     // a brand new account (new id, new IP) but the SAME username
     fs.appendFileSync(logE,
       "[2026.06.29-10.02.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 99.99.99.99:1\n" +
