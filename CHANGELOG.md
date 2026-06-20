@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **IP system rewritten from scratch (`ipBans.js`)** for reliability. Same public
+  API (drop-in — `index.js` unchanged), but now: **auto-detects the active
+  `Pavlov.log`** when `PAVLOV_LOGS` is blank (probes `/home/*`, `/root`, `/opt`,
+  `/srv`), so IP logging works out of the box; prioritises the rock-solid
+  same-line `RemoteAddr + UniqueId` disconnect source; keeps per-file join
+  correlation (IP survives across poll cycles) and rotated-log backfill; logs
+  `[ipBans] learned <name> [<id>] @ <ip>` on every new live capture so you can
+  see it working in `pm2 logs`. The standalone `diagnose.js` was folded into the
+  module — run **`node ipBans.js`** for a full self-test (path, permissions,
+  regex matches, captured registry).
+
 ### Added
 - **`/inspect <id>` (owner only)** — a complete dossier on a courier in one
   embed: status, playtime, balance/payroll, donator, warnings/notes/mod-action

@@ -187,6 +187,35 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 60));   // next poll consumes the login line
     clearInterval(t3);
     ok(ipBans.getIPsForPlayer("Arcusmay_vr").includes("1.159.95.133"), "live join split across polls -> IP still captured");
+
+    // LIVE auto-ban: an account that connects from a flagged IP fires onAutoBan
+    const log4 = path.join(sandbox, "Pavlov4.log");
+    fs.writeFileSync(log4, "");
+    let autoBanned = null;
+    const t4 = ipBans.init({ logFiles: [log4], onAutoBan: async (info) => { autoBanned = info; }, pollMs: 20 });
+    // first the bad guy joins (learn IP), then gets banned, then an alt joins from the same IP
+    fs.appendFileSync(log4,
+      "[2026.06.21-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 4.4.4.4:5000\n" +
+      "[2026.06.21-10.00.00:200][2]LogNet: Login request: ?Name=BadGuy?pid=BadGuy userId: NULL:dead01 platform: NULL\n" +
+      "[2026.06.21-10.01.00:000][3]LogTemp: Rcon: BanPlayer BadGuy\n");
+    await new Promise(r => setTimeout(r, 80));
+    fs.appendFileSync(log4,
+      "[2026.06.21-10.02.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 4.4.4.4:6000\n" +
+      "[2026.06.21-10.02.00:200][5]LogNet: Login request: ?Name=AltOfBad?pid=AltOfBad userId: NULL:beef02 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 80));
+    clearInterval(t4);
+    ok(ipBans.blacklist.includes("4.4.4.4"), "ban flags the player's IP (live)");
+    ok(autoBanned && autoBanned.uniqueId === "beef02" && autoBanned.ip === "4.4.4.4", "alt connecting from a flagged IP triggers onAutoBan");
+
+    // log auto-discovery: probe a temp tree shaped like a real Pavlov install
+    const root = path.join(sandbox, "discovery");
+    const realLog = path.join(root, "steamuser", "pavlovserver", "Pavlov", "Saved", "Logs", "Pavlov.log");
+    fs.mkdirSync(path.dirname(realLog), { recursive: true });
+    fs.writeFileSync(realLog,
+      "[2026.06.21-12.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 7.7.7.7:5000\n" +
+      "[2026.06.21-12.00.00:200][2]LogNet: Login request: ?Name=Found?pid=Found userId: NULL:f00d03 platform: NULL\n");
+    const discovered = ipBans.discoverLogs([root, path.join(root, "steamuser")]);
+    ok(discovered.includes(realLog), "discoverLogs finds Pavlov/Saved/Logs/Pavlov.log under a root");
   }
 
   console.log("Faction rank caps:");
