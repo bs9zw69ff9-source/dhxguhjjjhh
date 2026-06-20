@@ -310,6 +310,11 @@ const ok = (cond, msg) => {
     clearInterval(tE);
     ok(autoE && autoE.uniqueId === "9999888877776666555544443333eeee" && autoE.reason === "blacklisted username", "new account reusing a banned username is auto-banned");
 
+    // getBlacklist exposes all three categories
+    const bl = ipBans.getBlacklist();
+    ok(Array.isArray(bl.ips) && Array.isArray(bl.names) && Array.isArray(bl.ids), "getBlacklist returns ips/names/ids arrays");
+    ok(bl.names.includes("cheater") && bl.ids.includes("aaaa1111bbbb2222cccc3333dddd4444"), "getBlacklist includes flagged username + id");
+
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");
     fs.writeFileSync(log8, "");

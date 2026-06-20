@@ -258,6 +258,8 @@ function flagTarget(input) {
   if (fId) saveFIds(); if (fName) saveFNames();
   return { kind: "username/ID", value: val, added: fId || fName, ids: [] };
 }
+// Everything currently blacklisted, by category.
+function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames], ids: [...flaggedIds] }; }
 // Clear ALL flags (IPs, usernames, ids). Stops every auto-ban. Registry kept.
 function clearFlags() {
   const n = flagged.size + flaggedNames.size + flaggedIds.size;
@@ -516,6 +518,7 @@ module.exports = {
   getUntracked,
   flagIp,
   flagTarget,
+  getBlacklist,
   clearFlags,
   clearIp,
   clearAll,

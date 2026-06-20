@@ -3569,6 +3569,7 @@ client.on("interactionCreate", async (interaction) => {
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
             { label: "Blacklist IP / username / ID", value: "blacklist_ip", description: "Auto-ban anyone matching an IP, username, or unique ID", emoji: "🚫" },
+            { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs, usernames, and IDs", emoji: "📜" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
@@ -3614,6 +3615,19 @@ client.on("interactionCreate", async (interaction) => {
           const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Done").setDescription(hero(desc)).setTimestamp());
           await logAction(e);
           return sub.reply({ embeds: [e], ephemeral: true });
+        }
+
+        // view the blacklist (IPs / usernames / IDs)
+        if (choice === "view_blacklist") {
+          const b = ipBans.getBlacklist();
+          const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  ·  ").slice(0, 1024) : "*none*";
+          const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("📜  Blacklist")
+            .addFields(
+              { name: `🌐  IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
+              { name: `🎯  Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
+              { name: `🆔  IDs (${b.ids.length})`,        value: fmt(b.ids),   inline: false },
+            ).setTimestamp());
+          return sel.update({ embeds: [e], components: [] });
         }
 
         // direct actions (no input)
