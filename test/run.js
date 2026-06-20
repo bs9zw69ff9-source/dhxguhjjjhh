@@ -261,6 +261,12 @@ const ok = (cond, msg) => {
     ok(eSolo.ips.includes("50.50.50.50"), "alt-maker's home IP IS flagged (not treated as shared)");
     ipBans.unblacklistPlayer("Solo1");
 
+    // manual IP blacklist: flag an IP + report known accounts on it
+    const fr = ipBans.flagIp("50.50.50.50");
+    ok(fr.added && ipBans.blacklist.includes("50.50.50.50"), "flagIp adds the IP to the flag list");
+    ok(fr.ids.includes("solo01") && fr.ids.includes("solo02"), "flagIp reports known accounts on that IP");
+    ipBans.clearIp("50.50.50.50");
+
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");
     fs.writeFileSync(log8, "");

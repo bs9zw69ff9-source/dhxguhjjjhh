@@ -3568,6 +3568,7 @@ client.on("interactionCreate", async (interaction) => {
 
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
+            { label: "Blacklist an IP (auto-ban)", value: "blacklist_ip", description: "Auto-ban anyone who connects from an IP", emoji: "🚫" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
@@ -3586,21 +3587,35 @@ client.on("interactionCreate", async (interaction) => {
         const choice = sel.values[0];
 
         // actions that need text input -> open a modal
-        if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip") {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP" };
-          const isIp = choice === "clear_ip";
-          const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(isIp ? "IP address" : "Username").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
+        if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip") {
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist an IP" };
+          const wantsIp = choice === "clear_ip" || choice === "blacklist_ip";
+          const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(wantsIp ? "IP address" : "Username").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
           let sub;
           try { sub = await sel.awaitModalSubmit({ time: 120_000, filter: i => i.user.id === interaction.user.id && i.customId === "cfg_modal" }); }
           catch { return; }
           const val = sub.fields.getTextInputValue("cfg_val").trim();
-          let desc;
+          let desc, color = NV.IRRAD_GREEN;
+          if (choice === "blacklist_ip") {
+            if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) {
+              return sub.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("❌  Invalid IP").setDescription(hero(`\`${val}\` isn't a valid IPv4 address.`)))], ephemeral: true });
+            }
+            await sub.deferReply({ ephemeral: true });
+            const r = ipBans.flagIp(val);
+            for (const id of r.ids) { try { await banWithIp(id, "both"); } catch {} }   // ban accounts already known on this IP
+            color = NV.LEGION_RED;
+            desc = `🚫 \`${val}\` blacklisted — any account that connects from it is auto-banned.` +
+              (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record for this IP.` : `\nNo accounts on record for it yet — future connections will be caught.`);
+            const e1 = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  IP Blacklisted").setDescription(hero(desc)).setTimestamp());
+            await logAction(e1);
+            return sub.editReply({ embeds: [e1] });
+          }
           if (choice === "ignore_add")       { const r = ipBans.addUntracked(val); desc = `🙈 **${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
           else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `👁️ **${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
           else                               { const r = ipBans.clearIp(val); desc = `🧹 \`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
-          const e = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("⚙️  Done").setDescription(hero(desc)).setTimestamp());
+          const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Done").setDescription(hero(desc)).setTimestamp());
           await logAction(e);
           return sub.reply({ embeds: [e], ephemeral: true });
         }

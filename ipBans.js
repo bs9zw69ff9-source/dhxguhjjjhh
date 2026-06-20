@@ -176,6 +176,20 @@ function unblacklistPlayer(input) {
 }
 
 /* ---------------- public: clearing logged data (stop false bans) ---------------- */
+// Manually blacklist an IP so any account that connects from it is auto-banned.
+// Returns the ids already known to use that IP so the caller can ban them now too.
+function idsWithIp(ip) {
+  const set = new Set();
+  for (const [id, e] of Object.entries(registry))
+    if ((e.ips || []).includes(ip) || (e.cips || []).includes(ip)) set.add(id);
+  return [...set];
+}
+function flagIp(ip) {
+  ip = String(ip || "").trim();
+  const added = !!ip && !flagged.has(ip);
+  if (added) { flagged.add(ip); saveFlagged(); }
+  return { added, ip, ids: idsWithIp(ip) };
+}
 // Clear ALL flagged IPs (stops every IP auto-ban). Registry/history untouched.
 function clearFlags() { const n = flagged.size; flagged.clear(); saveFlagged(); return n; }
 // Remove one IP from the flag list AND from every player's recorded IPs.
@@ -420,6 +434,7 @@ module.exports = {
   addUntracked,
   removeUntracked,
   getUntracked,
+  flagIp,
   clearFlags,
   clearIp,
   clearAll,
