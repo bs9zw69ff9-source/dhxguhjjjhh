@@ -107,7 +107,7 @@ function validateConfig() {
   const optional = [
     "RCON_HOST_2", "RCON_PORT_2", "RCON_PASSWORD_2",
     "MODSAVE_PATH", "MOD_LOG_CHANNEL", "BAN_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
-    "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
+    "PLAYTIME_LB_CHANNEL", "PLAYERLIST_CHANNEL", "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
   ];
   const missing  = required.filter(k => !process.env[k]);
   const absent   = optional.filter(k => !process.env[k]);
@@ -562,6 +562,9 @@ const LEADERBOARD_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
 const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1517198961918611566";
+/* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
+const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1518016127077318897";
+const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 
 /* ================================================================
@@ -1803,6 +1806,38 @@ async function postPlaytimeLeaderboard() {
   try { const m = await channel.send({ embeds: [embed] }); lastPlaytimeLbMsgId = m.id; } catch {}
 }
 
+/* Live player list — edits its own message in a channel every 30s. */
+const hasServer2 = !!process.env.RCON_HOST_2;
+function buildPlayerListEmbed() {
+  const fmt = (arr) => {
+    if (!arr.length) return "*Empty*";
+    let out = arr.map(n => `• ${n}`).join("\n");
+    if (out.length > 1024) out = out.slice(0, 1000).replace(/\n[^\n]*$/, "") + "\n…";
+    return out;
+  };
+  const s1 = [...playerCache.server1].sort((a, b) => a.localeCompare(b));
+  const s2 = [...playerCache.server2].sort((a, b) => a.localeCompare(b));
+  const total = new Set([...s1, ...s2].map(n => n.toLowerCase())).size;
+  const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🧭  Live Player List")
+    .setDescription(hero(`**${total}** courier${total !== 1 ? "s" : ""} roaming the Mojave right now.`))
+    .addFields({ name: `🖥️  Server 1 (${s1.length})`, value: fmt(s1), inline: true });
+  if (hasServer2) embed.addFields({ name: `🖥️  Server 2 (${s2.length})`, value: fmt(s2), inline: true });
+  return brand(embed.setFooter({ text: "Updates every 30s" }).setTimestamp());
+}
+let lastPlayerListMsgId = null;
+async function postPlayerList() {
+  if (!PLAYERLIST_CHANNEL) return;
+  let channel;
+  try { channel = await client.channels.fetch(PLAYERLIST_CHANNEL); } catch { return; }
+  try { await refreshPlayerCache("server1"); if (hasServer2) await refreshPlayerCache("server2"); } catch {}
+  const embed = buildPlayerListEmbed();
+  if (lastPlayerListMsgId) {
+    try { const m = await channel.messages.fetch(lastPlayerListMsgId); await m.edit({ embeds: [embed] }); return; }
+    catch { lastPlayerListMsgId = null; }
+  }
+  try { const m = await channel.send({ embeds: [embed] }); lastPlayerListMsgId = m.id; } catch {}
+}
+
 /* ================================================================
    MENU GRANT PERSISTENCE
    ================================================================ */
@@ -1871,6 +1906,7 @@ async function rconHealthCheck() {
 setInterval(processExpiredBans,      60_000);
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
+setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(async () => {
   await refreshPlayerCacheWithMenuReapply("server1");
@@ -2047,6 +2083,9 @@ const commands = [
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("configure")
     .setDescription("⠀"),   // intentionally blank — Discord requires a non-empty description
+  new SlashCommandBuilder().setName("alts")
+    .setDescription("🔒 Admin — View a courier's known alt accounts")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or name").setRequired(true).setAutocomplete(true)),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2295,7 +2334,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban", "alts"];
 
   const name = interaction.commandName;
 
@@ -2392,6 +2431,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
                 "`/configure` — 👁️ *Owner only* — hidden control panel (IP tracker management)",
+                "`/alts <id>` — 🔒 *Admin* — a courier's known alt accounts",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -2867,8 +2907,13 @@ client.on("interactionCreate", async (interaction) => {
         await sendRconBoth(`Unban ${playerId}`, server);
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await removeBans(playerId);
-        try { ipBans.unblacklistPlayer(playerId); } catch {}   // clear that player's flagged IPs
+        let cleared = null;
+        try { cleared = ipBans.unblacklistPlayer(playerId); } catch {}   // also lift IP/username/ID blacklist
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
+        const c = cleared?.cleared;
+        const ipLifted = c && (c.ips + c.ids + c.names) > 0
+          ? `✅  Lifted — cleared ${c.ips} IP(s), ${c.names} username(s), ${c.ids} ID(s).`
+          : "ℹ️  Nothing was flagged for this player.";
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🔓  Exile Lifted — Welcome Back to the Strip")
           .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
           .addFields(
@@ -2876,8 +2921,9 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🖥️  Server",      value: serverLabel(server), inline: true },
             { name: "🛡️  Pardoned By", value: `${interaction.user}`, inline: true },
             { name: "📋  Record",       value: removed ? "✅  Temp ban record cleared." : "ℹ️  No temp ban record — RCON Unban sent.", inline: false },
+            { name: "🌐  IP Enforcement", value: ipLifted, inline: false },
           ).setFooter({ text: randomQuote("unban") }).setTimestamp();
-        brand(embed); await logAction(embed);
+        brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
       }
 
@@ -3650,6 +3696,25 @@ client.on("interactionCreate", async (interaction) => {
         const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Configure").setDescription(hero(desc)).setTimestamp());
         if (audit) await logAction(e);
         return sel.update({ embeds: [e], components: [] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         ALTS — view a courier's known alt accounts (admin)
+         ───────────────────────────────────────────────────── */
+      case "alts": {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        let alts = [];
+        try { alts = ipBans.getAltsOf(playerId).map(id => ({ id, name: ipBans.registry[id]?.name })); } catch {}
+        const list = alts.length
+          ? alts.map(a => a.name ? `• **${a.name}**  \`${a.id}\`` : `• \`${a.id}\``).join("\n").slice(0, 4000)
+          : "*No known alt accounts.*";
+        const embed = brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN)
+          .setTitle(`🔗  Alt Accounts — ${playerId}`)
+          .setDescription(hero(alts.length ? "Accounts sharing a confirmed IP with this courier:" : "No alts on record (they share no confirmed IP with another account)."))
+          .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
+          .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
+        return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────

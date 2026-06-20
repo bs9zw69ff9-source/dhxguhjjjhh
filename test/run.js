@@ -259,7 +259,9 @@ const ok = (cond, msg) => {
     ok(ipBans.getAltsOf("Solo1").includes("solo02"), "sequential same-IP accounts ARE linked as alts");
     const eSolo = ipBans.blacklistPlayer("Solo1");
     ok(eSolo.ips.includes("50.50.50.50"), "alt-maker's home IP IS flagged (not treated as shared)");
-    ipBans.unblacklistPlayer("Solo1");
+    const undo = ipBans.unblacklistPlayer("Solo1");
+    ok(undo.cleared && undo.cleared.ips >= 1 && undo.cleared.ids >= 1 && undo.cleared.names >= 1, "unblacklist clears IP + id + username flags");
+    ok(!ipBans.blacklist.includes("50.50.50.50"), "unblacklist removes the IP flag");
 
     // manual IP blacklist: flag an IP + report known accounts on it
     const fr = ipBans.flagIp("50.50.50.50");

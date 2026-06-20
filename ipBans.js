@@ -196,24 +196,23 @@ function blacklistPlayer(input) {
 function unblacklistPlayer(input) {
   const ids = resolveIds(input);
   const ips = ipsForIds(ids);
-  let changed = false;
-  for (const ip of ips) if (flagged.delete(ip)) changed = true;
-  if (changed) saveFlagged();
-  let cId = false, cName = false;
+  let nIp = 0, nId = 0, nName = 0;
+  for (const ip of ips) if (flagged.delete(ip)) nIp++;
   for (const id of ids) {
-    if (flaggedIds.delete(id)) cId = true;
+    if (flaggedIds.delete(id)) nId++;
     const nm = norm(registry[id]?.name);
-    if (nm && flaggedNames.delete(nm)) cName = true;
+    if (nm && flaggedNames.delete(nm)) nName++;
     pendingFlag.delete(id);
   }
-  // also clear a raw name/id/ip token
+  // also clear a raw name/id/ip token (e.g. unbanning by a value not in the registry)
   const raw = String(input ?? "").trim();
-  if (flaggedIds.delete(raw)) cId = true;
-  if (flaggedNames.delete(norm(raw))) cName = true;
-  if (flagged.delete(raw)) { changed = true; saveFlagged(); }
-  if (cId) saveFIds();
-  if (cName) saveFNames();
-  return { ids, ips };
+  if (flaggedIds.delete(raw)) nId++;
+  if (flaggedNames.delete(norm(raw))) nName++;
+  if (flagged.delete(raw)) nIp++;
+  if (nIp) saveFlagged();
+  if (nId) saveFIds();
+  if (nName) saveFNames();
+  return { ids, ips, cleared: { ips: nIp, ids: nId, names: nName } };
 }
 
 /* ---------------- public: clearing logged data (stop false bans) ---------------- */
