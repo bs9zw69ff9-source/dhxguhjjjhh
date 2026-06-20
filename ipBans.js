@@ -94,44 +94,54 @@ function resolveIds(input) {
   if (idHit) return [idHit];
   return Object.keys(registry).filter(id => norm(registry[id].name) === key);
 }
-function ipsForIds(ids) {
+function ipsForIds(ids) {           // all IPs ever seen (incl. best-effort join correlation) — for display
   const set = new Set();
   for (const id of ids) for (const ip of (registry[id]?.ips || [])) set.add(ip);
   return [...set];
 }
+function confirmedIpsForIds(ids) { // only same-line (disconnect) IP↔id pairings — trustworthy, for alts/enforcement
+  const set = new Set();
+  for (const id of ids) for (const ip of (registry[id]?.cips || [])) set.add(ip);
+  return [...set];
+}
 function idsOnIp(ip) { let n = 0; for (const e of Object.values(registry)) if ((e.ips || []).includes(ip)) n++; return n; }
 function isSharedIp(ip) { return idsOnIp(ip) > IP_SHARED_THRESHOLD; }   // VPN/NAT/relay — don't link or auto-ban
+// Alt = another id that shares a CONFIRMED IP (same-line pairing), excluding shared IPs.
 function altIdsForIps(ips, excludeIds = []) {
   const ex = new Set(excludeIds.map(norm));
-  const usable = ips.filter(ip => !isSharedIp(ip));   // ignore shared IPs so unrelated players aren't linked
+  const usable = ips.filter(ip => !isSharedIp(ip));
   const set = new Set();
   for (const [id, e] of Object.entries(registry))
-    if (!ex.has(norm(id)) && (e.ips || []).some(ip => usable.includes(ip))) set.add(id);
+    if (!ex.has(norm(id)) && (e.cips || []).some(ip => usable.includes(ip))) set.add(id);
   return [...set];
 }
 
 /* ---------------- record an observation ---------------- */
-function record(id, name, ip, ts) {
+// sure = true when the IP and id came from the SAME log line (disconnect) — a
+// trustworthy pairing. false = best-effort join-time correlation (display only).
+function record(id, name, ip, ts, sure) {
   if (skipId(id)) return;
   id = cleanId(id);
   if (untrackedIds.has(id)) return;                // ignore-listed player — never track
   const fresh = !registry[id];
-  const e = registry[id] || { name: null, ips: [], firstSeen: ts || Date.now(), lastSeen: 0 };
+  const e = registry[id] || { name: null, ips: [], cips: [], firstSeen: ts || Date.now(), lastSeen: 0 };
+  if (!e.cips) e.cips = [];                         // migrate older registry entries
   let changed = fresh, newIp = false;
   if (name && name !== "<null>" && e.name !== name) { e.name = name; changed = true; }
   if (ip && !e.ips.includes(ip)) { e.ips.push(ip); changed = true; newIp = true; }
+  if (ip && sure && !e.cips.includes(ip)) { e.cips.push(ip); changed = true; }   // confirmed pairing
   e.lastSeen = Math.max(e.lastSeen || 0, ts || Date.now());
   registry[id] = e;
   if (changed) scheduleSave();
-  if (newIp && live) console.log(`[ipBans] learned ${e.name || id} [${id}] @ ${ip}`);
+  if (newIp && live) console.log(`[ipBans] learned ${e.name || id} [${id}] @ ${ip}${sure ? "" : " (tentative)"}`);
 }
 
 /* ---------------- public: flag / unflag a player's IPs ---------------- */
 function blacklistPlayer(input) {
   const ids  = resolveIds(input);
-  const all  = ipsForIds(ids);
-  const ips  = all.filter(ip => !isSharedIp(ip));   // never flag shared (VPN/NAT) IPs — would ban innocents
-  const alts = altIdsForIps(all, ids);
+  const confirmed = confirmedIpsForIds(ids);        // only trustworthy same-line IPs
+  const ips  = confirmed.filter(ip => !isSharedIp(ip));   // never flag shared (VPN/NAT) IPs — would ban innocents
+  const alts = altIdsForIps(confirmed, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
@@ -195,7 +205,7 @@ async function handleJoin(name, rawId, ip, ts, server) {
   }
   const valid = !skipId(rawId);
   const id    = valid ? cleanId(rawId) : null;
-  if (valid) record(rawId, name, ip, ts);          // registry + auto-ban need a real id
+  if (valid) record(rawId, name, ip, ts, false);   // join correlation = best-effort (tentative)
   if (!live) return;                               // startup backfill: don't feed/auto-ban old joins
 
   const display = (name && name !== "<null>") ? name : (id || "unknown");
@@ -223,7 +233,7 @@ function parseLine(line, server, key) {
 
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
   const c = line.match(CLOSE_RE);
-  if (c && !skipId(c[2])) { record(c[2], null, c[1], ts); return; }
+  if (c && !skipId(c[2])) { record(c[2], null, c[1], ts, true); return; }   // confirmed same-line pairing
 
   // 2) accept line — remember the IP for the upcoming login (per file, survives across polls)
   const a = line.match(ACCEPT_RE);
@@ -344,7 +354,7 @@ module.exports = {
   resolveIds,
   ipsForIds,
   getIPsForPlayer: (input) => ipsForIds(resolveIds(input)),
-  getAltsOf:       (input) => altIdsForIps(ipsForIds(resolveIds(input)), resolveIds(input)),
+  getAltsOf:       (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   addUntracked,
   removeUntracked,
   getUntracked,

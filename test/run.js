@@ -148,26 +148,30 @@ const ok = (cond, msg) => {
       "[2026.06.16-19.00.39:200][1]LogNet: Login request: ?Name=NCR_Ranger?playerHeight=160.000000?platform=oculus?pid=NCR_Ranger?name=NCR_Ranger userId: NULL:aaa111 platform: NULL",
       "[2026.06.16-19.06.00:000][2]LogNet: NotifyAcceptedConnection: Name: NewWorldBlues, TimeStamp: x, [UNetConnection] RemoteAddr: 203.0.113.7:5000, Name: IpConnection_2, Driver: GameNetDriver IpNetDriver_1, IsServer: YES, PC: NULL, Owner: NULL, UniqueId: INVALID",
       "[2026.06.16-19.06.01:000][3]LogNet: Login request: ?Name=AltGuy?platform=oculus?pid=AltGuy?name=AltGuy userId: NULL:bbb222 platform: NULL",
-      "[2026.06.16-19.09.00:000][4]LogNet: UChannel::Close: Sending CloseBunch. ChIndex == 0. Name: [UChannel] ChIndex: 0, Closing: 0 [UNetConnection] RemoteAddr: 198.51.100.9:40000, Name: IpConnection_2147419312, Driver: GameNetDriver IpNetDriver_2147482354, IsServer: YES, PC: BP_PavlovPlayerController_C_2147419242, Owner: BP_PavlovPlayerController_C_2147419242, UniqueId: NULL:aaa111",
+      // both aaa111 and bbb222 disconnect from the SAME ip -> confirmed shared IP -> alts
+      "[2026.06.16-19.09.00:000][4]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 198.51.100.9:40000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:aaa111",
+      "[2026.06.16-19.09.05:000][5]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 198.51.100.9:40001, Name: IpConnection_2, IsServer: YES, UniqueId: NULL:bbb222",
     ].join("\n") + "\n");   // real logs end with a newline; the parser buffers an incomplete trailing line
     const ipBans = require(path.join(sandbox, "ipBans.js"));
     clearInterval(ipBans.init({ logFiles: [logPath], onAutoBan: async () => {}, pollMs: 9e8 }));
     ok(ipBans.registry["aaa111"] && ipBans.registry["aaa111"].name === "NCR_Ranger", "login line -> id + name learned");
-    ok(ipBans.getIPsForPlayer("NCR_Ranger").includes("203.0.113.7"), "resolve by NAME -> IPs");
+    ok(ipBans.getIPsForPlayer("NCR_Ranger").includes("203.0.113.7"), "resolve by NAME -> IPs (incl. tentative)");
     ok(ipBans.getIPsForPlayer("aaa111").includes("198.51.100.9"), "disconnect line -> same-line IP+id learned");
-    ok(ipBans.getAltsOf("NCR_Ranger").includes("bbb222"), "alt sharing an IP is detected");
+    ok(ipBans.getAltsOf("NCR_Ranger").includes("bbb222"), "alt sharing a CONFIRMED IP is detected");
     ok(ipBans.getAltsOf("NCR_Ranger").length === 1, "non-sharing ids are not flagged as alts");
     const enf = ipBans.blacklistPlayer("NCR_Ranger");
-    ok(enf.ips.includes("203.0.113.7") && ipBans.blacklist.includes("203.0.113.7"), "blacklistPlayer flags the player's IPs");
+    ok(enf.ips.includes("198.51.100.9") && ipBans.blacklist.includes("198.51.100.9"), "blacklistPlayer flags the player's CONFIRMED IPs");
+    ok(!enf.ips.includes("203.0.113.7") && !ipBans.blacklist.includes("203.0.113.7"), "tentative (join-correlated) IPs are NOT flagged");
     ok(enf.alts.includes("bbb222"), "blacklist summary reports shared-IP alts");
     ipBans.unblacklistPlayer("NCR_Ranger");
-    ok(!ipBans.blacklist.includes("203.0.113.7"), "unblacklistPlayer clears the flags");
+    ok(!ipBans.blacklist.includes("198.51.100.9"), "unblacklistPlayer clears the flags");
 
     // live "Rcon: BanPlayer <name>" line (any admin tool) auto-flags the IPs
     const log2 = path.join(sandbox, "Pavlov2.log");
     fs.writeFileSync(log2, [
       "[2026.06.16-20.00.00:000][1]LogNet: NotifyAcceptedConnection: Name: NWB, TimeStamp: x, [UNetConnection] RemoteAddr: 9.9.9.9:1000, Name: IpConnection_9, Driver: GameNetDriver D, IsServer: YES, PC: NULL, Owner: NULL, UniqueId: INVALID",
       "[2026.06.16-20.00.00:200][2]LogNet: Login request: ?Name=Evader?platform=oculus?pid=Evader?name=Evader userId: NULL:ccc333 platform: NULL",
+      "[2026.06.16-20.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 9.9.9.9:1000, Name: IpConnection_9, IsServer: YES, UniqueId: NULL:ccc333",   // confirms 9.9.9.9
     ].join("\n") + "\n");
     const timer = ipBans.init({ logFiles: [log2], onAutoBan: async () => {}, pollMs: 20 });
     fs.appendFileSync(log2, "[2026.06.16-20.01.00:000][3]LogTemp: Rcon: BanPlayer Evader\n");
@@ -193,11 +197,12 @@ const ok = (cond, msg) => {
     fs.writeFileSync(log4, "");
     let autoBanned = null;
     const t4 = ipBans.init({ logFiles: [log4], onAutoBan: async (info) => { autoBanned = info; }, pollMs: 20 });
-    // first the bad guy joins (learn IP), then gets banned, then an alt joins from the same IP
+    // bad guy joins, then DISCONNECTS (confirms his IP), then gets banned, then an alt joins from the same IP
     fs.appendFileSync(log4,
       "[2026.06.21-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 4.4.4.4:5000\n" +
       "[2026.06.21-10.00.00:200][2]LogNet: Login request: ?Name=BadGuy?pid=BadGuy userId: NULL:dead01 platform: NULL\n" +
-      "[2026.06.21-10.01.00:000][3]LogTemp: Rcon: BanPlayer BadGuy\n");
+      "[2026.06.21-10.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 4.4.4.4:5000, Name: IpConnection_4, IsServer: YES, UniqueId: NULL:dead01\n" +
+      "[2026.06.21-10.01.00:000][4]LogTemp: Rcon: BanPlayer BadGuy\n");
     await new Promise(r => setTimeout(r, 80));
     fs.appendFileSync(log4,
       "[2026.06.21-10.02.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 4.4.4.4:6000\n" +
@@ -244,8 +249,9 @@ const ok = (cond, msg) => {
     const shared = "64.39.181.82";
     let lines7 = "";
     for (let i = 0; i < 6; i++) lines7 +=
-      `[2026.06.23-11.0${i}.00:000][${i}]LogNet: NotifyAcceptingConnection accepted from: ${shared}:5000\n` +
-      `[2026.06.23-11.0${i}.00:200][${i}]LogNet: Login request: ?Name=Person${i}?pid=Person${i} userId: NULL:shared0${i} platform: NULL\n`;
+      `[2026.06.23-11.0${i}.00:000][${i}]LogNet: NotifyAcceptingConnection accepted from: ${shared}:500${i}\n` +
+      `[2026.06.23-11.0${i}.00:200][${i}]LogNet: Login request: ?Name=Person${i}?pid=Person${i} userId: NULL:shared0${i} platform: NULL\n` +
+      `[2026.06.23-11.0${i}.30:000][${i}]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: ${shared}:500${i}, Name: IpConnection_${i}, IsServer: YES, UniqueId: NULL:shared0${i}\n`;
     fs.writeFileSync(log7, lines7);
     clearInterval(ipBans.init({ logFiles: [log7], pollMs: 9e8 }));
     ok(ipBans.getIPsForPlayer("Person0").includes(shared), "shared-IP players still have the IP recorded");
