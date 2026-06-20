@@ -27,7 +27,6 @@ const path = require("path");
 const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
 const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");      // flagged IPs
 const FNAMES_PATH    = path.join(__dirname, "ip_flagged_names.json");  // flagged usernames
-const FIDS_PATH      = path.join(__dirname, "ip_flagged_ids.json");    // flagged hex ids
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
@@ -65,7 +64,6 @@ function loadJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, "utf
 const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
-const flaggedIds   = new Set(loadJSON(FIDS_PATH, []) || []);  // flagged hex ids
 const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
 const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
 
@@ -91,7 +89,6 @@ function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, 
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
 function saveFlagged()    { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
 function saveFNames()     { try { fs.writeFileSync(FNAMES_PATH, JSON.stringify([...flaggedNames], null, 2)); } catch (e) { console.error("[ipBans] save flagged names:", e.message); } }
-function saveFIds()       { try { fs.writeFileSync(FIDS_PATH, JSON.stringify([...flaggedIds], null, 2)); } catch (e) { console.error("[ipBans] save flagged ids:", e.message); } }
 function saveUntracked()  { try { fs.writeFileSync(UNTRACKED_PATH, JSON.stringify([...untrackedNames], null, 2)); } catch (e) { console.error("[ipBans] save untracked:", e.message); } }
 
 /* ---------------- lookups ---------------- */
@@ -149,46 +146,44 @@ function record(id, name, ip, ts, sure) {
   if (newIp && live) console.log(`[ipBans] learned ${e.name || id} [${id}] @ ${ip}${sure ? "" : " (tentative)"}`);
 }
 
+// Resolve alt ids -> their usernames (skip any with no known name).
+function altNamesForIps(ips, excludeIds = []) {
+  return altIdsForIps(ips, excludeIds).map(id => registry[id]?.name).filter(Boolean);
+}
+
 /* ---------------- public: flag / unflag a player ---------------- */
-// Flags the player's hex id(s), username(s) AND confirmed IP(s). Any account
-// that later connects matching ANY of those is auto-banned.
+// Flags the player's username(s) AND confirmed IP(s). Any account that later
+// connects matching either is auto-banned. (No hex ids — Shack bans by name.)
 function blacklistPlayer(input) {
   const ids  = resolveIds(input);
   const ips  = confirmedIpsForIds(ids);             // only trustworthy same-line IPs
-  const alts = altIdsForIps(ips, ids);
+  const altNames = altNamesForIps(ips, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
-  // also flag the hex id(s) and username(s) so a rename or new account is caught
-  let fId = false, fName = false;
+  // flag the username(s) so a new account using the same name is caught too
+  let fName = false;
   for (const id of ids) {
-    if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; }
     const nm = norm(registry[id]?.name);
     if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; }
     pendingFlag.set(id, Date.now());   // flag the IP the kick confirms, if none yet
   }
-  // banned by a raw token not in the registry: flag it as an IP, or (since Quest
-  // ids aren't hex and can't be told apart from a name) as BOTH an id and a name.
+  // banned by a raw token not in the registry: an IP, otherwise a username
   if (!ids.length) {
     const raw = String(input ?? "").trim();
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw)) { if (!flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); } }
-    else if (raw) {
-      const idF = cleanId(raw), nmF = norm(raw);
-      if (idF && !flaggedIds.has(idF))   { flaggedIds.add(idF);   fId = true; }
-      if (nmF && !flaggedNames.has(nmF)) { flaggedNames.add(nmF); fName = true; }
-    }
+    else if (raw) { const nmF = norm(raw); if (nmF && !flaggedNames.has(nmF)) { flaggedNames.add(nmF); fName = true; } }
   }
-  if (fId) saveFIds();
   if (fName) saveFNames();
   return {
-    ids, ips, alts,
+    ids, ips, alts: altNames,
     field: {
       name: "🌐  IP Enforcement",
       value: (ips.length
         ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
         : "No connection IPs on record yet.") +
-        `\n🆔 ID + 🎯 username also flagged — a rename or new account is caught too.` +
-        (alts.length ? `\n⚠️  Shares an IP with: ${alts.map(a => `\`${a}\``).join("  ·  ")}` : ""),
+        `\n🎯 Username also flagged — a new account using this name is caught too.` +
+        (altNames.length ? `\n⚠️  Shares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
       inline: false,
     },
   };
@@ -196,23 +191,20 @@ function blacklistPlayer(input) {
 function unblacklistPlayer(input) {
   const ids = resolveIds(input);
   const ips = ipsForIds(ids);
-  let nIp = 0, nId = 0, nName = 0;
+  let nIp = 0, nName = 0;
   for (const ip of ips) if (flagged.delete(ip)) nIp++;
   for (const id of ids) {
-    if (flaggedIds.delete(id)) nId++;
     const nm = norm(registry[id]?.name);
     if (nm && flaggedNames.delete(nm)) nName++;
     pendingFlag.delete(id);
   }
-  // also clear a raw name/id/ip token (e.g. unbanning by a value not in the registry)
+  // also clear a raw name/ip token (e.g. unbanning by a value not in the registry)
   const raw = String(input ?? "").trim();
-  if (flaggedIds.delete(raw)) nId++;
   if (flaggedNames.delete(norm(raw))) nName++;
   if (flagged.delete(raw)) nIp++;
   if (nIp) saveFlagged();
-  if (nId) saveFIds();
   if (nName) saveFNames();
-  return { ids, ips, cleared: { ips: nIp, ids: nId, names: nName } };
+  return { ids, ips, cleared: { ips: nIp, names: nName } };
 }
 
 /* ---------------- public: clearing logged data (stop false bans) ---------------- */
@@ -230,40 +222,33 @@ function flagIp(ip) {
   if (added) { flagged.add(ip); saveFlagged(); }
   return { added, ip, ids: idsWithIp(ip) };
 }
-// Manually blacklist an IP, username, or unique id. Only an IPv4 is detected by
-// shape; everything else (Steam numeric ids, Quest/Shack ids, usernames — which
-// can't be told apart by format) is matched against the registry, and if unknown
-// is flagged as BOTH an id and a username so it's caught either way.
+// Manually blacklist an IP or a username (IPv4 detected by shape; anything else
+// is treated as a username). Returns the accounts already on record matching it.
 function flagTarget(input) {
   const val = String(input || "").trim();
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) {            // IPv4
     const added = !flagged.has(val); if (added) { flagged.add(val); saveFlagged(); }
     return { kind: "IP", value: val, added, ids: idsWithIp(val) };
   }
-  const ids = resolveIds(val);                          // known player by id or username?
-  let fId = false, fName = false;
+  const ids = resolveIds(val);                          // known player by username?
+  let fName = false;
   if (ids.length) {
-    for (const id of ids) {
-      if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; }
-      const nm = norm(registry[id]?.name);
-      if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; }
-    }
-    if (fId) saveFIds(); if (fName) saveFNames();
-    return { kind: "player", value: val, added: fId || fName, ids };
+    for (const id of ids) { const nm = norm(registry[id]?.name); if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; } }
+    if (fName) saveFNames();
+    return { kind: "username", value: val, added: fName, ids };
   }
-  const idF = cleanId(val), nmF = norm(val);            // unknown -> flag as id AND name
-  if (idF && !flaggedIds.has(idF))   { flaggedIds.add(idF);   fId = true; }
+  const nmF = norm(val);
   if (nmF && !flaggedNames.has(nmF)) { flaggedNames.add(nmF); fName = true; }
-  if (fId) saveFIds(); if (fName) saveFNames();
-  return { kind: "username/ID", value: val, added: fId || fName, ids: [] };
+  if (fName) saveFNames();
+  return { kind: "username", value: val, added: fName, ids: [] };
 }
 // Everything currently blacklisted, by category.
-function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames], ids: [...flaggedIds] }; }
-// Clear ALL flags (IPs, usernames, ids). Stops every auto-ban. Registry kept.
+function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames] }; }
+// Clear ALL flags (IPs + usernames). Stops every auto-ban. Registry kept.
 function clearFlags() {
-  const n = flagged.size + flaggedNames.size + flaggedIds.size;
-  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
-  saveFlagged(); saveFNames(); saveFIds();
+  const n = flagged.size + flaggedNames.size;
+  flagged.clear(); flaggedNames.clear();
+  saveFlagged(); saveFNames();
   return n;
 }
 // Remove one IP from the flag list AND from every player's recorded IPs.
@@ -282,10 +267,10 @@ function clearIp(ip) {
 }
 // Wipe the whole IP registry AND all flags (full reset). Untracked list is kept.
 function clearAll() {
-  const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size + flaggedIds.size;
+  const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size;
   for (const k of Object.keys(registry)) delete registry[k];
-  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
-  flushRegistry(); saveFlagged(); saveFNames(); saveFIds();
+  flagged.clear(); flaggedNames.clear();
+  flushRegistry(); saveFlagged(); saveFNames();
   return { ids, flagged: fl };
 }
 
@@ -338,22 +323,21 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   const key  = norm(display);
   if (Date.now() - (recentJoin.get(key) ?? 0) >= JOIN_DEBOUNCE_MS) {
     recentJoin.set(key, Date.now());
-    try { await onConnect({ uniqueId: id, name: display, ip: ip || null, server }); }
+    try { await onConnect({ name: display, ip: ip || null, server }); }
     catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
   }
 
-  // auto-ban if this join matches a flagged hex id, username, or IP.
-  //  • id / username come straight from the login line -> reliable, ban on sight.
+  // auto-ban if this join matches a flagged username or IP.
+  //  • username comes straight from the login line -> reliable, ban on sight.
   //  • IP comes from join correlation -> only when unambiguous (one connection
   //    pending); ambiguous joins are caught later at disconnect via the confirmed IP.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
-    const reason = flaggedIds.has(id)                 ? "blacklisted ID"
-                 : (name && flaggedNames.has(norm(name))) ? "blacklisted username"
+    const reason = (name && flaggedNames.has(norm(name))) ? "blacklisted username"
                  : (confident && ip && flagged.has(ip))   ? "blacklisted IP"
                  : null;
     if (reason) {
       recentAuto.set(id, Date.now());
-      try { await onAutoBan({ uniqueId: id, name: display, ip: ip || null, server, reason }); }
+      try { await onAutoBan({ name: display, ip: ip || null, server, reason }); }
       catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); recentAuto.delete(id); }
     }
   }
@@ -372,15 +356,15 @@ function parseLine(line, server, key) {
     // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect
     if (live && !untrackedIds.has(id) && Date.now() - (recentConfirm.get(id) ?? 0) >= CONFIRM_DEBOUNCE_MS) {
       recentConfirm.set(id, Date.now());
-      Promise.resolve(onConfirm({ uniqueId: id, name: registry[id]?.name || id, ip, server }))
+      Promise.resolve(onConfirm({ name: registry[id]?.name || "unknown", ip, server }))
         .catch(e => console.error("[ipBans] onConfirm failed:", e.message));
     }
     // retroactive auto-ban: an alt that slipped the ambiguous join check is caught
     // here with the 100%-accurate IP. Skip the freshly-banned account itself (pendingFlag).
-    if (live && flagged.has(ip) && !pendingFlag.has(id) && !untrackedIds.has(id)
+    if (live && flagged.has(ip) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
         && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
       recentAuto.set(id, Date.now());
-      Promise.resolve(onAutoBan({ uniqueId: id, name: registry[id]?.name || id, ip, server }))
+      Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: "blacklisted IP" }))
         .catch(e => { console.error("[ipBans] onAutoBan (confirm) failed:", e.message); recentAuto.delete(id); });
     }
     return;
@@ -512,6 +496,7 @@ module.exports = {
   getIPsForPlayer:          (input) => ipsForIds(resolveIds(input)),            // all (incl. tentative) — display
   getConfirmedIPsForPlayer: (input) => confirmedIpsForIds(resolveIds(input)),   // only same-line confirmed pairings
   getAltsOf:                (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
+  getAltNamesOf:            (input) => altNamesForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   addUntracked,
   removeUntracked,
   getUntracked,

@@ -2069,39 +2069,33 @@ client.once("ready", async () => {
   ipBans.init({
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
-    onConfirm: async ({ uniqueId, name, ip, server }) => {
+    onConfirm: async ({ name, ip, server }) => {
       if (!feedHook) return;
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
-      // resolve this player's alt accounts (other ids sharing a CONFIRMED IP) to USERNAMES.
-      const alts = (() => {
-        try {
-          if (!uniqueId) return [];
-          return ipBans.getAltsOf(uniqueId).map(id => ipBans.registry[id]?.name || id);
-        } catch { return []; }
-      })();
+      // this player's alt accounts (sharing a CONFIRMED IP), as usernames
+      const alts = (() => { try { return ipBans.getAltNamesOf(name); } catch { return []; } })();
       const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🟢  Courier Logged — IP Confirmed")
         .addFields(
           { name: "🎯  Name",   value: `\`${name}\``,            inline: true },
-          { name: "🆔  ID",     value: `\`${uniqueId}\``,        inline: true },
           { name: "🌐  IP",     value: `\`${ip ?? "unknown"}\``, inline: true },
           { name: "🖥️  Server", value: srvName,                  inline: true },
         ).setTimestamp());
       if (alts.length) embed.addFields({ name: `🔗  Known Alts (${alts.length})`, value: alts.map(a => `\`${a}\``).join("  ·  ").slice(0, 1024), inline: false });
       feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
     },
-    // Fired when someone CONNECTS (live log) from a flagged IP: ban the
-    // account on both servers (and flag their IPs too, to catch their alts).
-    onAutoBan: async ({ uniqueId, name, ip }) => {
-      await banWithIp(uniqueId, "both");
-      writeModLog({ action: "auto-ipban", playerId: uniqueId, reason: `Connected from blacklisted IP (${ip})`, by: "IP-Guard" });
-      logger.warn("IPGuard", `Auto-banned ${name} [${uniqueId}] — blacklisted IP ${ip}`);
-      const banEmbed = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🛑  Blacklisted IP Blocked")
-        .setDescription(`${hero("A barred IP tried to slip back into the Mojave.")}`)
+    // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
+    // ban that username on both servers (Shack bans by name, not hex id).
+    onAutoBan: async ({ name, ip, reason }) => {
+      await banWithIp(name, "both");
+      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`, by: "IP-Guard" });
+      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`);
+      const banEmbed = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🛑  Blacklisted Player Blocked")
+        .setDescription(`${hero("A barred courier tried to slip back into the Mojave.")}`)
         .addFields(
-          { name: "🎯  Courier", value: `\`${name}\``,     inline: true },
-          { name: "🆔  ID",      value: `\`${uniqueId}\``, inline: true },
-          { name: "🌐  IP",      value: `\`${ip}\``,       inline: true },
-        ).setFooter({ text: "Auto-ban · IP blacklist · both servers" }).setTimestamp());
+          { name: "🎯  Courier", value: `\`${name}\``,            inline: true },
+          { name: "🌐  IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
+          { name: "🚫  Reason",  value: reason || "blacklist match", inline: true },
+        ).setFooter({ text: "Auto-ban · both servers" }).setTimestamp());
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       // also surface it in the connection feed (the channel you watch for joins)
       if (feedHook) feedHook.send({ embeds: [banEmbed] }).catch(err => logger.warn("Feed", `auto-ban post failed: ${err.message}`));
@@ -3286,7 +3280,7 @@ client.on("interactionCreate", async (interaction) => {
 
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
-            { label: "Blacklist IP / username / ID", value: "blacklist_ip", description: "Auto-ban anyone matching an IP, username, or unique ID", emoji: "🚫" },
+            { label: "Blacklist IP / username", value: "blacklist_ip", description: "Auto-ban anyone matching an IP or username", emoji: "🚫" },
             { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs, usernames, and IDs", emoji: "📜" },
             { label: "View alt accounts",       value: "view_alts",      description: "A courier's known alt accounts (shared IP)", emoji: "🔗" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
@@ -3307,8 +3301,8 @@ client.on("interactionCreate", async (interaction) => {
 
         // actions that need text input -> open a modal
         if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip" || choice === "view_alts") {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username / ID", view_alts: "View alt accounts" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP, username, or unique ID", view_alts: "Courier ID or name" };
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -3318,22 +3312,21 @@ client.on("interactionCreate", async (interaction) => {
           const val = sub.fields.getTextInputValue("cfg_val").trim();
           let desc, color = NV.IRRAD_GREEN;
           if (choice === "view_alts") {
-            const pid = sanitizeId(val);
             let alts = [];
-            try { alts = ipBans.getAltsOf(pid).map(id => ({ id, name: ipBans.registry[id]?.name })); } catch {}
+            try { alts = ipBans.getAltNamesOf(val); } catch {}
             const list = alts.length
-              ? alts.map(a => a.name ? `• **${a.name}**  \`${a.id}\`` : `• \`${a.id}\``).join("\n").slice(0, 4000)
+              ? alts.map(n => `• **${n}**`).join("\n").slice(0, 4000)
               : "*No known alt accounts (no other account shares a confirmed IP).*";
             const eAlt = brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN)
-              .setTitle(`🔗  Alt Accounts — ${pid}`)
+              .setTitle(`🔗  Alt Accounts — ${val}`)
               .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
               .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
             return sub.reply({ embeds: [eAlt], ephemeral: true });
           }
           if (choice === "blacklist_ip") {
             await sub.deferReply({ ephemeral: true });
-            const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else matched as id/username
-            for (const id of r.ids) { try { await banWithIp(id, "both"); } catch {} }   // ban matching accounts now
+            const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else a username
+            for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) { try { await banWithIp(nm, "both"); } catch {} } }   // ban matching accounts now (by name)
             color = NV.LEGION_RED;
             desc = `🚫 ${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record.` : `\nNo accounts on record yet — future connections will be caught.`);
@@ -3349,7 +3342,7 @@ client.on("interactionCreate", async (interaction) => {
           return sub.reply({ embeds: [e], ephemeral: true });
         }
 
-        // view the blacklist (IPs / usernames / IDs)
+        // view the blacklist (IPs / usernames)
         if (choice === "view_blacklist") {
           const b = ipBans.getBlacklist();
           const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  ·  ").slice(0, 1024) : "*none*";
@@ -3357,7 +3350,6 @@ client.on("interactionCreate", async (interaction) => {
             .addFields(
               { name: `🌐  IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
               { name: `🎯  Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
-              { name: `🆔  IDs (${b.ids.length})`,        value: fmt(b.ids),   inline: false },
             ).setTimestamp());
           return sel.update({ embeds: [e], components: [] });
         }
@@ -4125,7 +4117,7 @@ client.on("interactionCreate", async (interaction) => {
         const known    = loadKnownPlayers()[key];
         // IP intel (owner-only) — CONFIRMED IPs only (same-line log pairings, not live correlation)
         let ips = [], alts = [], flagged = [];
-        try { ips = ipBans.getConfirmedIPsForPlayer(playerId); alts = ipBans.getAltsOf(playerId); flagged = ips.filter(ip => ipBans.blacklist.includes(ip)); } catch {}
+        try { ips = ipBans.getConfirmedIPsForPlayer(playerId); alts = ipBans.getAltNamesOf(playerId); flagged = ips.filter(ip => ipBans.blacklist.includes(ip)); } catch {}
 
         const fStr = factions === null ? "⚠️  Folder unreadable"
           : !factions.length ? "*None*"
@@ -4157,7 +4149,7 @@ client.on("interactionCreate", async (interaction) => {
         // IP intel
         embed.addFields(
           { name: `🌐  Confirmed IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " 🔨" : ""}`).join("  ·  ") : "*none confirmed yet*").slice(0, 1024), inline: false },
-          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => { const n = ipBans.registry[a]?.name; return n ? `**${n}** \`${a}\`` : `\`${a}\``; }).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
         );
         if (flagged.length) embed.addFields({ name: "🛑  IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
 

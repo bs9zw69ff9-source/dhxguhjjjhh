@@ -155,7 +155,7 @@ const ok = (cond, msg) => {
     const enf = ipBans.blacklistPlayer("NCR_Ranger");
     ok(enf.ips.includes("198.51.100.9") && ipBans.blacklist.includes("198.51.100.9"), "blacklistPlayer flags the player's CONFIRMED IPs");
     ok(!enf.ips.includes("203.0.113.7") && !ipBans.blacklist.includes("203.0.113.7"), "tentative (join-correlated) IPs are NOT flagged");
-    ok(enf.alts.includes("bbb222"), "blacklist summary reports shared-IP alts");
+    ok(enf.alts.includes("AltGuy"), "blacklist summary reports shared-IP alts by username");
     ipBans.unblacklistPlayer("NCR_Ranger");
     ok(!ipBans.blacklist.includes("198.51.100.9"), "unblacklistPlayer clears the flags");
 
@@ -203,7 +203,7 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 80));
     clearInterval(t4);
     ok(ipBans.blacklist.includes("4.4.4.4"), "ban flags the player's IP (live)");
-    ok(autoBanned && autoBanned.uniqueId === "beef02" && autoBanned.ip === "4.4.4.4", "alt connecting from a flagged IP triggers onAutoBan");
+    ok(autoBanned && autoBanned.name === "AltOfBad" && autoBanned.ip === "4.4.4.4", "alt connecting from a flagged IP triggers onAutoBan");
 
     // log auto-discovery: probe a temp tree shaped like a real Pavlov install
     const root = path.join(sandbox, "discovery");
@@ -251,7 +251,7 @@ const ok = (cond, msg) => {
     const eSolo = ipBans.blacklistPlayer("Solo1");
     ok(eSolo.ips.includes("50.50.50.50"), "alt-maker's home IP IS flagged (not treated as shared)");
     const undo = ipBans.unblacklistPlayer("Solo1");
-    ok(undo.cleared && undo.cleared.ips >= 1 && undo.cleared.ids >= 1 && undo.cleared.names >= 1, "unblacklist clears IP + id + username flags");
+    ok(undo.cleared && undo.cleared.ips >= 1 && undo.cleared.names >= 1, "unblacklist clears IP + username flags");
     ok(!ipBans.blacklist.includes("50.50.50.50"), "unblacklist removes the IP flag");
 
     // manual IP blacklist: flag an IP + report known accounts on it
@@ -279,7 +279,7 @@ const ok = (cond, msg) => {
       "[2026.06.28-10.02.00:200][6]LogNet: Login request: ?Name=BrandNewName?pid=BrandNewName userId: NULL:ev01 platform: NULL\n");
     await new Promise(r => setTimeout(r, 60));
     clearInterval(tD);
-    ok(autoD && autoD.uniqueId === "ev01", "same account under a new username is still auto-banned");
+    ok(autoD && autoD.name === "BrandNewName", "renamed account from a flagged IP is still auto-banned (by name)");
 
     // username/ID blacklist: a DIFFERENT account reusing a banned username is caught
     const logE = path.join(sandbox, "PavlovE.log");
@@ -294,19 +294,19 @@ const ok = (cond, msg) => {
     fs.appendFileSync(logE, "[2026.06.29-10.01.00:000][3]LogTemp: Rcon: BanPlayer Cheater\n");
     await new Promise(r => setTimeout(r, 60));
     ok(ipBans.flagTarget("Cheater").added === false, "banning flags the username");
-    ok(ipBans.flagTarget(cheatId).added === false, "banning flags the unique id");
+    ok(ipBans.flagTarget("Cheater").added === false, "banning flags the username (re-flagging is a no-op)");
     // a brand new account (new id, new IP) but the SAME username
     fs.appendFileSync(logE,
       "[2026.06.29-10.02.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 99.99.99.99:1\n" +
       "[2026.06.29-10.02.00:200][5]LogNet: Login request: ?Name=Cheater?pid=Cheater userId: NULL:9999888877776666555544443333eeee platform: NULL\n");
     await new Promise(r => setTimeout(r, 60));
     clearInterval(tE);
-    ok(autoE && autoE.uniqueId === "9999888877776666555544443333eeee" && autoE.reason === "blacklisted username", "new account reusing a banned username is auto-banned");
+    ok(autoE && autoE.name === "Cheater" && autoE.reason === "blacklisted username", "new account reusing a banned username is auto-banned");
 
-    // getBlacklist exposes all three categories
+    // getBlacklist exposes IPs + usernames
     const bl = ipBans.getBlacklist();
-    ok(Array.isArray(bl.ips) && Array.isArray(bl.names) && Array.isArray(bl.ids), "getBlacklist returns ips/names/ids arrays");
-    ok(bl.names.includes("cheater") && bl.ids.includes("aaaa1111bbbb2222cccc3333dddd4444"), "getBlacklist includes flagged username + id");
+    ok(Array.isArray(bl.ips) && Array.isArray(bl.names), "getBlacklist returns ips/names arrays");
+    ok(bl.names.includes("cheater"), "getBlacklist includes the flagged username");
 
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");
@@ -322,7 +322,7 @@ const ok = (cond, msg) => {
       "[2026.06.24-10.05.00:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 9.1.2.3:5000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:conf01\n");
     await new Promise(r => setTimeout(r, 60));
     clearInterval(t8);
-    ok(confirmed && confirmed.uniqueId === "conf01" && confirmed.ip === "9.1.2.3" && confirmed.name === "Confirmee", "onConfirm fires with confirmed IP + resolved name");
+    ok(confirmed && confirmed.ip === "9.1.2.3" && confirmed.name === "Confirmee", "onConfirm fires with confirmed IP + resolved name");
 
     // clearing logged data (stop false bans)
     const log9 = path.join(sandbox, "Pavlov9.log");
@@ -384,7 +384,7 @@ const ok = (cond, msg) => {
     fs.appendFileSync(logC, "[2026.06.27-10.05.00:000][8]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 7.7.7.7:3, UniqueId: NULL:aa02\n");
     await new Promise(r => setTimeout(r, 60));
     clearInterval(tC);
-    ok(autoC && autoC.uniqueId === "aa02" && autoC.ip === "7.7.7.7", "slipped alt is caught at disconnect via confirmed IP");
+    ok(autoC && autoC.name === "AltSeven" && autoC.ip === "7.7.7.7", "slipped alt is caught at disconnect via confirmed IP");
   }
 
   console.log("Faction rank caps:");
