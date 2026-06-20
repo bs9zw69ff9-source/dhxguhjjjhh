@@ -51,6 +51,20 @@ const skipId  = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);   //
 const cleanId = raw => (raw.includes(":") ? raw.split(":").pop() : raw);      // "NULL:<hex>" -> "<hex>"
 const labelFor = f => { const m = f.match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
 
+// Pavlov rotates the active log to "Pavlov-backup-<ts>.log" on every restart and
+// starts a fresh, near-empty Pavlov.log. For each configured log we also pull in
+// its sibling Pavlov*.log files so the FIRST backfill recovers history from before
+// the last restart — otherwise /inspect shows nothing until someone reconnects.
+function siblingLogs(f) {
+  try {
+    const dir = path.dirname(f);
+    return fs.readdirSync(dir)
+      .filter(n => /^Pavlov.*\.log$/i.test(n))
+      .map(n => path.join(dir, n));
+  } catch { return [f]; }
+}
+function mtimeOf(f) { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }
+
 /* ---------------- STATE ---------------- */
 // registry: { [uniqueId]: { name, rawUserId, ips: [], lastSeen } }
 let registry  = load(REGISTRY_PATH, {});
@@ -60,6 +74,7 @@ let onConnect = async () => {};   // fired on every LIVE join (name/id/ip/server
 let _live = false;   // false during startup backfill -> suppress feed + auto-ban for old logins
 
 const _recentAuto = new Map();
+let watchList = [...LOG_FILES];   // configured logs + discovered backups (set in init)
 const offsets  = {};
 const leftover = {};
 let pendingIP = null, pendingTs = 0, lastTs = 0;
@@ -204,7 +219,7 @@ function parseLine(line, server) {
 }
 
 function poll() {
-  for (const f of LOG_FILES) {
+  for (const f of watchList) {
     let st; try { st = fs.statSync(f); } catch { continue; }
     let from = offsets[f];
     if (from === undefined) from = Math.max(0, st.size - MAX_BACKFILL_BYTES);
@@ -233,11 +248,22 @@ function init(opts = {}) {
   if (typeof opts.onAutoBan === "function") onAutoBan = opts.onAutoBan;
   if (typeof opts.onConnect === "function") onConnect = opts.onConnect;
   if (Array.isArray(opts.logFiles) && opts.logFiles.length) { LOG_FILES.length = 0; LOG_FILES.push(...opts.logFiles); }
-  // report each path's status up front so misconfig is obvious
+  // report each configured path's status up front so misconfig is obvious
   for (const f of LOG_FILES) {
     try { const st = fs.statSync(f); console.log(`[ipBans] log OK  (${(st.size / 1048576).toFixed(1)} MB): ${f}`); }
     catch (e) { console.warn(`[ipBans] log MISSING/unreadable: ${f} — ${e.code || e.message}. Set PAVLOV_LOGS in .env.`); }
   }
+
+  // Expand each configured log into itself + its sibling Pavlov*.log backups so
+  // the initial backfill recovers history from before the last server restart.
+  // Process oldest -> newest (by mtime) so the latest name/lastSeen wins.
+  const expanded = new Set();
+  for (const f of LOG_FILES) for (const s of siblingLogs(f)) expanded.add(s);
+  for (const f of LOG_FILES) expanded.add(f);   // ensure configured paths are present even if dir read failed
+  watchList = [...expanded].sort((a, b) => mtimeOf(a) - mtimeOf(b));
+  const backups = watchList.filter(f => !LOG_FILES.includes(f));
+  if (backups.length) console.log(`[ipBans] also backfilling ${backups.length} rotated log(s): ${backups.map(b => path.basename(b)).join(", ")}`);
+
   poll();          // backfill the existing tail — _live is false, so no auto-ban for old joins
   _live = true;    // everything parsed from here on is a live event
   console.log(`[ipBans] ready — ${Object.keys(registry).length} known IDs, ${blacklist.size} flagged IPs. Live watching for joins (every ${(opts.pollMs || POLL_MS) / 1000}s).`);
