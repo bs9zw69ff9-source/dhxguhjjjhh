@@ -506,8 +506,8 @@ function writeFactionAudit(entry) {
    CONSTANTS
    ================================================================ */
 const MENUS = [
-  { name: "Staff",   value: "staff",   menuId: "0011110000000000101000000000010 01101101000001" },
-  { name: "Faction", value: "faction", menuId: "0000010000000000000000000000010 00100001000000" },
+  { name: "Staff",      value: "staff",     menuId: "0011110000000000000000101000000000000 01001100000000" },
+  { name: "High Staff", value: "highstaff", menuId: "111110011110001000001101000000000010 1011110000001" },
 ];
 
 const BAN_REASONS = [
@@ -2024,6 +2024,10 @@ const commands = [
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
+  new SlashCommandBuilder().setName("stripmenuall")
+    .setDescription("👁️ Owner — Revoke a menu from EVERY player who holds it (both servers)")
+    .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
+      .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2365,6 +2369,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
+                "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -3496,8 +3501,45 @@ client.on("interactionCreate", async (interaction) => {
             { name: isGive ? "🔒  Granted By" : "🔒  Revoked By", value: `${interaction.user}`, inline: false },
             { name: isGive ? "♻️  Persistence" : "🗑️  Persistence", value: isGive ? "✅  Will be re-applied automatically on rejoin." : "✅  Removed from persistent store — will not reapply.", inline: false },
           ).setTimestamp();
+        // High Staff needs two RCON commands the bot can't grant via menus — remind the operator to run them manually.
+        if (isGive && menuValue === "highstaff") {
+          embed.addFields({ name: "⚙️  Manual steps — run these in RCON to finish", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\n\`\`\`` , inline: false });
+        }
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
+      }
+
+      /* ─────────────────────────────────────────────────────
+         STRIPMENUALL — owner only: revoke one menu from everyone
+         ───────────────────────────────────────────────────── */
+      case "stripmenuall": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const menuValue = interaction.options.getString("menu");
+        const menuMeta  = MENUS.find(m => m.value === menuValue);
+        const menuId    = menuMeta?.menuId ?? menuValue;
+        await interaction.deferReply();
+
+        const grants  = loadMenuGrants();
+        const holders = Object.keys(grants).filter(pid => (grants[pid] || []).some(g => g.menuValue === menuValue));
+        let ok = 0, failed = 0;
+        for (const pid of holders) {
+          try { await sendRconBoth(`RemoveMenu ${pid} ${menuId}`, "both"); ok++; }
+          catch (err) { failed++; logger.warn("StripAll", `RemoveMenu failed for ${pid}: ${err.message}`); }
+          removeMenuGrant(pid, "server1", menuValue);
+          removeMenuGrant(pid, "server2", menuValue);
+        }
+
+        const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
+          .setTitle("🧹  Mass Menu Revocation")
+          .setDescription(hero(`Pulled **${menuMeta?.name ?? menuValue}** access from every courier who held it.`))
+          .addFields(
+            { name: "📋  Menu",     value: menuMeta?.name ?? menuValue,                         inline: true },
+            { name: "👥  Holders",  value: `**${holders.length}**`,                              inline: true },
+            { name: "🖥️  Server",   value: "Both servers",                                       inline: true },
+            { name: "✅  Revoked",  value: `**${ok}** RCON ${ok === 1 ? "call" : "calls"} sent${failed ? ` · ⚠️ ${failed} failed` : ""}`, inline: false },
+          ).setTimestamp());
+        await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
