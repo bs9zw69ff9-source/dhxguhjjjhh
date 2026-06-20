@@ -290,6 +290,22 @@ const ok = (cond, msg) => {
     ok(ipBans.blacklist.length === 0, "clearFlags empties the flag list");
     ipBans.clearAll();
     ok(!ipBans.registry["clr01"] && !ipBans.registry["clr02"], "clearAll wipes the registry");
+
+    // ban a never-disconnected account: the kick's confirmed IP gets flagged so alts are still caught
+    const logB = path.join(sandbox, "PavlovB.log");
+    fs.writeFileSync(logB, "");
+    const tB = ipBans.init({ logFiles: [logB], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logB,
+      "[2026.06.26-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 5.6.7.8:5000\n" +
+      "[2026.06.26-10.00.00:200][2]LogNet: Login request: ?Name=FreshBan?pid=FreshBan userId: NULL:fresh01 platform: NULL\n" +
+      "[2026.06.26-10.01.00:000][3]LogTemp: Rcon: BanPlayer FreshBan\n");   // no confirmed IP yet -> nothing flagged
+    await new Promise(r => setTimeout(r, 80));
+    ok(!ipBans.blacklist.includes("5.6.7.8"), "no confirmed IP at ban time -> not flagged yet");
+    fs.appendFileSync(logB,
+      "[2026.06.26-10.01.05:000][4]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 5.6.7.8:5000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:fresh01\n");
+    await new Promise(r => setTimeout(r, 80));
+    clearInterval(tB);
+    ok(ipBans.blacklist.includes("5.6.7.8"), "kick-confirmed IP of a recently-banned account is flagged");
   }
 
   console.log("Faction rank caps:");

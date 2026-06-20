@@ -34,6 +34,7 @@ const POLL_MS             = 5000;
 const CORRELATE_WINDOW_MS = 10000;            // join IP must precede the login line by < this
 const JOIN_DEBOUNCE_MS    = 20000;            // one feed message per join (collapse INVALID+auth pair)
 const CONFIRM_DEBOUNCE_MS = 20000;            // one confirm feed message per id (collapse a disconnect's close lines)
+const PENDING_FLAG_MS     = 5 * 60 * 1000;    // after a ban, flag the IP confirmed by the kick within this window
 const AUTO_DEBOUNCE_MS    = 5 * 60 * 1000;    // don't re-auto-ban the same id within 5 min
 const MAX_BACKFILL_BYTES  = 50 * 1024 * 1024; // first pass: only scan the tail of huge logs
 const SAVE_THROTTLE_MS    = 3000;             // coalesce registry writes (disconnect lines are frequent)
@@ -81,6 +82,7 @@ const pendingTs   = {};           // per-file: log-timestamp of that accept line
 const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
 const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe — collapse a disconnect's multiple close lines)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
+const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet — flag it when the kick confirms one)
 let lastTs = 0, saveTimer = null, dirty = false;
 
 /* ---------------- persistence ---------------- */
@@ -132,7 +134,15 @@ function record(id, name, ip, ts, sure) {
   let changed = fresh, newIp = false;
   if (name && name !== "<null>" && e.name !== name) { e.name = name; changed = true; }
   if (ip && !e.ips.includes(ip)) { e.ips.push(ip); changed = true; newIp = true; }
-  if (ip && sure && !e.cips.includes(ip)) { e.cips.push(ip); changed = true; }   // confirmed pairing
+  if (ip && sure && !e.cips.includes(ip)) {
+    e.cips.push(ip); changed = true;                                             // confirmed pairing
+    // recently banned with no IP flagged yet? flag this confirmed IP now (catches alts of a never-disconnected ban)
+    const pf = pendingFlag.get(id);
+    if (pf && Date.now() - pf <= PENDING_FLAG_MS && !isSharedIp(ip) && !flagged.has(ip)) {
+      flagged.add(ip); saveFlagged();
+      if (live) console.log(`[ipBans] flagged confirmed IP ${ip} for recently-banned ${e.name || id}`);
+    }
+  }
   e.lastSeen = Math.max(e.lastSeen || 0, ts || Date.now());
   registry[id] = e;
   if (changed) scheduleSave();
@@ -148,6 +158,9 @@ function blacklistPlayer(input) {
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
+  // Arm each banned id: if the kick (or a later session) confirms an IP we don't
+  // have yet, flag it then — so banning a never-disconnected account still catches alts.
+  for (const id of ids) pendingFlag.set(id, Date.now());
   return {
     ids, ips, alts,
     field: {
