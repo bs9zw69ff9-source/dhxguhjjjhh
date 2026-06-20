@@ -140,12 +140,14 @@ const ok = (cond, msg) => {
   console.log("IP bans (ipBans.js):");
   {
     const logPath = path.join(sandbox, "Pavlov.log");
+    // Real Pavlov line formats: pre-auth accept (UniqueId INVALID -> ignored),
+    // login (?Name=...userId: NULL:<hex>...platform: NULL), and the on-disconnect
+    // UChannel::Close line (RemoteAddr + UniqueId, with fields between).
     fs.writeFileSync(logPath, [
-      "[2026.06.16-19.00.39:100][0]LogNet: NotifyAcceptingConnection accepted from: 203.0.113.7:54321",
-      "[2026.06.16-19.00.39:200][1]LogPavlov: Login request: ?Name=NCR_Ranger?Password= userId: NULL:aaa111",
-      "[2026.06.16-19.06.00:000][2]LogNet: NotifyAcceptingConnection accepted from: 203.0.113.7:5000",
-      "[2026.06.16-19.06.01:000][3]LogPavlov: Login request: ?Name=AltGuy? userId: NULL:bbb222",
-      // real-world UChannel::Close format (RemoteAddr ... UniqueId on one line, with fields between)
+      "[2026.06.16-19.00.39:100][0]LogNet: NotifyAcceptedConnection: Name: NewWorldBlues, TimeStamp: x, [UNetConnection] RemoteAddr: 203.0.113.7:54321, Name: IpConnection_1, Driver: GameNetDriver IpNetDriver_1, IsServer: YES, PC: NULL, Owner: NULL, UniqueId: INVALID",
+      "[2026.06.16-19.00.39:200][1]LogNet: Login request: ?Name=NCR_Ranger?playerHeight=160.000000?platform=oculus?pid=NCR_Ranger?name=NCR_Ranger userId: NULL:aaa111 platform: NULL",
+      "[2026.06.16-19.06.00:000][2]LogNet: NotifyAcceptedConnection: Name: NewWorldBlues, TimeStamp: x, [UNetConnection] RemoteAddr: 203.0.113.7:5000, Name: IpConnection_2, Driver: GameNetDriver IpNetDriver_1, IsServer: YES, PC: NULL, Owner: NULL, UniqueId: INVALID",
+      "[2026.06.16-19.06.01:000][3]LogNet: Login request: ?Name=AltGuy?platform=oculus?pid=AltGuy?name=AltGuy userId: NULL:bbb222 platform: NULL",
       "[2026.06.16-19.09.00:000][4]LogNet: UChannel::Close: Sending CloseBunch. ChIndex == 0. Name: [UChannel] ChIndex: 0, Closing: 0 [UNetConnection] RemoteAddr: 198.51.100.9:40000, Name: IpConnection_2147419312, Driver: GameNetDriver IpNetDriver_2147482354, IsServer: YES, PC: BP_PavlovPlayerController_C_2147419242, Owner: BP_PavlovPlayerController_C_2147419242, UniqueId: NULL:aaa111",
     ].join("\n") + "\n");   // real logs end with a newline; the parser buffers an incomplete trailing line
     const ipBans = require(path.join(sandbox, "ipBans.js"));
