@@ -9,6 +9,10 @@ All notable changes to this project are documented here.
   webhook URL) and the bot posts a fresh message with the player's name, ID,
   and IP every time someone joins. Works out of the box — no bot channel
   permissions needed.
+- **Auto-flag IPs on any ban** — `ipBans.js` also watches the live log for
+  `Rcon: BanPlayer <name>` (and `UnbanPlayer`), so a player's IPs are flagged
+  for alt-enforcement no matter which tool/admin issued the ban — not just
+  bans made through this bot. Verified against real Pavlov logs.
 - **IP-match auto-ban / alt detection** (`ipBans.js`). The bot tails the Pavlov
   server logs (`PAVLOV_LOGS`) and builds an IP↔username cache. When a player is
   banned (`/tempban`, `/permban`, `/hardban`, warn-escalation, name auto-ban),

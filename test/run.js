@@ -162,6 +162,18 @@ const ok = (cond, msg) => {
     ok(enf.alts.includes("bbb222"), "blacklist summary reports shared-IP alts");
     ipBans.unblacklistPlayer("NCR_Ranger");
     ok(!ipBans.blacklist.includes("203.0.113.7"), "unblacklistPlayer clears the flags");
+
+    // live "Rcon: BanPlayer <name>" line (any admin tool) auto-flags the IPs
+    const log2 = path.join(sandbox, "Pavlov2.log");
+    fs.writeFileSync(log2, [
+      "[2026.06.16-20.00.00:000][1]LogNet: NotifyAcceptedConnection: Name: NWB, TimeStamp: x, [UNetConnection] RemoteAddr: 9.9.9.9:1000, Name: IpConnection_9, Driver: GameNetDriver D, IsServer: YES, PC: NULL, Owner: NULL, UniqueId: INVALID",
+      "[2026.06.16-20.00.00:200][2]LogNet: Login request: ?Name=Evader?platform=oculus?pid=Evader?name=Evader userId: NULL:ccc333 platform: NULL",
+    ].join("\n") + "\n");
+    const timer = ipBans.init({ logFiles: [log2], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(log2, "[2026.06.16-20.01.00:000][3]LogTemp: Rcon: BanPlayer Evader\n");
+    await new Promise(r => setTimeout(r, 150));
+    clearInterval(timer);
+    ok(ipBans.blacklist.includes("9.9.9.9"), "live 'Rcon: BanPlayer <name>' flags that player's IP");
   }
 
   console.log("Faction rank caps:");

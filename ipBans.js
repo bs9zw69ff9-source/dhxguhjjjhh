@@ -43,6 +43,8 @@ const TS_RE     = /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3}
 const ACCEPT_RE = /(?:NotifyAcceptingConnection accepted from:|NotifyAcceptedConnection:.*?RemoteAddr:|AddClientConnection:.*?RemoteAddr:)\s*((?:\d{1,3}\.){3}\d{1,3})/;
 const CLOSE_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3}):\d+.*?UniqueId:\s*([^\s,]+)/;   // same-line IP + id
 const LOGIN_RE  = /Login request:\s*\?Name=([^?]+).*?userId:\s*(\S+)/i;
+const BAN_RE    = /Rcon:\s*BanPlayer\s+(\S+)/i;     // any ban (this bot or any admin tool)
+const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;   // best-effort unban (mirror of BanPlayer)
 
 const skipId  = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);   // ignore pre-auth + server self-conn
 const cleanId = raw => (raw.includes(":") ? raw.split(":").pop() : raw);      // "NULL:<hex>" -> "<hex>"
@@ -185,7 +187,19 @@ function parseLine(line, server) {
 
   // 3) disconnect/cleanup line -> same-line IP + id (strongest pairing)
   const c = line.match(CLOSE_RE);
-  if (c) { const raw = c[2]; if (!skipId(raw)) record(cleanId(raw), raw, null, c[1], ts); }
+  if (c) { const raw = c[2]; if (!skipId(raw)) record(cleanId(raw), raw, null, c[1], ts); return; }
+
+  // 4) admin ban/unban line (any tool) -> flag/clear that player's IPs so the
+  //    live watcher catches alts. Only act on LIVE lines, not the backfill.
+  if (!_live) return;
+  const b = line.match(BAN_RE);
+  if (b) {
+    const r = blacklistPlayer(b[1]);
+    if (r.ips.length) console.log(`[ipBans] ban detected for "${b[1]}" — flagged ${r.ips.length} IP(s)${r.alts.length ? `, alts: ${r.alts.join(", ")}` : ""}`);
+    return;
+  }
+  const u = line.match(UNBAN_RE);
+  if (u) { unblacklistPlayer(u[1]); return; }
 }
 
 function poll() {

@@ -52,7 +52,8 @@ auto-paginated slash commands with context-aware autocomplete.
 - **Punishment DMs** — `kick`/`warn`/`tempban`/`permban`/`hardban` can DM the
   punished player a breakdown via an optional `discord_user` field.
 - **IP-match auto-ban (alt detection)** — tails the server logs to map IPs to
-  players; banning someone flags their IPs, and the live log watcher then
+  players; banning someone (through the bot **or any admin tool** — it watches
+  `Rcon: BanPlayer` log lines) flags their IPs, and the live log watcher then
   RCON-bans anyone who reconnects from a flagged IP (`ipBans.js`, `PAVLOV_LOGS`).
 - **Live connection feed** — set `CONNECT_WEBHOOK_URL` to post a fresh message
   (name · ID · IP) to a Discord channel every time a player joins.
