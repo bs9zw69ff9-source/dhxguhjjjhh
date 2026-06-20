@@ -393,8 +393,9 @@ module.exports = {
   unblacklistPlayer,
   resolveIds,
   ipsForIds,
-  getIPsForPlayer: (input) => ipsForIds(resolveIds(input)),
-  getAltsOf:       (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
+  getIPsForPlayer:          (input) => ipsForIds(resolveIds(input)),            // all (incl. tentative) — display
+  getConfirmedIPsForPlayer: (input) => confirmedIpsForIds(resolveIds(input)),   // only same-line confirmed pairings
+  getAltsOf:                (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   addUntracked,
   removeUntracked,
   getUntracked,
