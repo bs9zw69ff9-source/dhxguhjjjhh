@@ -5,6 +5,11 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **`/inspect <id>` (owner only)** — a complete dossier on a courier in one
+  embed: status, playtime, balance/payroll, donator, warnings/notes/mod-action
+  counts, factions & ranks, full ban status (temp/hard/auto-ban pattern), and
+  **IP intel** (known IPs, alt accounts, flagged status). Restricted to
+  `OWNER_IDS` since it exposes IPs/alts.
 - **Live connection feed** — set `CONNECT_WEBHOOK_URL` (a Discord channel
   webhook URL) and the bot posts a fresh message with the player's name, ID,
   and IP every time someone joins. Works out of the box — no bot channel

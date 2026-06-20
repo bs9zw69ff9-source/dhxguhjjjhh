@@ -1065,6 +1065,12 @@ function adminOnlyEmbed() {
     .setDescription('> *"I didn\'t survive two centuries to be overruled by the uninvited."*\n\nThis command is restricted to **Administrators** only.'),
     { footer: { text: "Unauthorized access attempt logged" } });
 }
+function ownerOnlyEmbed() {
+  return brand(new EmbedBuilder().setColor(NV.DEEP_BLACK)
+    .setTitle("👁️  Owner Eyes Only")
+    .setDescription('> *"Some files even Mr. House keeps to himself."*\n\nThis command is restricted to the **bot owner**.'),
+    { footer: { text: "Unauthorized access attempt logged" } });
+}
 function modOnlyEmbed() {
   return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
     .setTitle("🛡️  Clearance Required")
@@ -2103,6 +2109,9 @@ const commands = [
   new SlashCommandBuilder().setName("stats")
     .setDescription("Courier dossier: playtime, factions, balance, and mod history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("inspect")
+    .setDescription("👁️ Owner — Full dossier on a courier (everything, incl. IPs & alts)")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
 ].map(c => c.toJSON());
 
 /* ================================================================
@@ -2346,6 +2355,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
+                "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -4210,6 +4220,86 @@ client.on("interactionCreate", async (interaction) => {
 
         brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });
         return interaction.reply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         INSPECT  (owner only — full dossier incl. IPs & alts)
+         ───────────────────────────────────────────────────── */
+      case "inspect": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        const key = playerId.toLowerCase();
+
+        // gather everything
+        const minutes  = loadPlaytime()[playerId] ?? null;
+        const factions = getPlayerFactions(playerId);
+        const onS1     = playerCache.server1.some(n => n.toLowerCase() === key);
+        const onS2     = playerCache.server2.some(n => n.toLowerCase() === key);
+        const online   = onS1 || onS2;
+        const balance  = readPlayerBalance(playerId);
+        const wage     = loadWages().find(w => w.playerId.toLowerCase() === key);
+        const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
+        const hb       = findHardBanByAnyId(playerId);
+        const warns    = loadWarns()[key] ?? [];
+        const tb       = loadBans().find(b => b.playerId.toLowerCase() === key);
+        const history  = getPlayerHistory(playerId);
+        const notes    = getPlayerNotes(playerId);
+        const lastSeen = getLastSeen(playerId);
+        const donator  = isDonator(playerId);
+        const known    = loadKnownPlayers()[key];
+        const autopat  = matchesAutoban(playerId);
+        // IP intel (owner-only)
+        let ips = [], alts = [], flagged = [];
+        try { ips = ipBans.getIPsForPlayer(playerId); alts = ipBans.getAltsOf(playerId); flagged = ips.filter(ip => ipBans.blacklist.includes(ip)); } catch {}
+
+        const fStr = factions === null ? "⚠️  Folder unreadable"
+          : !factions.length ? "*None*"
+          : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))}  **${f}** *(${getFactionRank(f, playerId)})*`).join("\n");
+        const statusStr = !online ? "🔴  Offline" : [onS1 && "🟢  S1", onS2 && "🟢  S2"].filter(Boolean).join(" + ");
+        const color = (hb || flagged.length) ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
+
+        const embed = new EmbedBuilder().setColor(color)
+          .setTitle(`👁️  Full Dossier — ${playerId}`)
+          .setDescription(hero("Everything on record. Owner eyes only."))
+          .addFields(
+            { name: "📡  Status",     value: statusStr,                                                              inline: true },
+            { name: "⏱️  Playtime",   value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*None*",          inline: true },
+            { name: "👁️  Last Seen",  value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*Never*", inline: true },
+            { name: "💰  Balance",    value: balance !== null ? `**${balance.toLocaleString()}** caps` : "*No ledger*", inline: true },
+            { name: "📋  Payroll",    value: wTier ? `${wTier.label} (+${wTier.amount}/wk)` : "❌",                    inline: true },
+            { name: "💎  Donator",    value: donator ? "✅" : "❌",                                                    inline: true },
+            { name: "⚠️  Warnings",   value: `**${warns.length}**`,                                                   inline: true },
+            { name: "🗒️  Mod Actions", value: `**${history.length}**`,                                                inline: true },
+            { name: "📝  Staff Notes", value: `**${notes.length}**`,                                                  inline: true },
+            { name: "⚔️  Factions & Ranks", value: fStr, inline: false },
+          );
+
+        // ban status
+        const banLines = [];
+        if (tb) banLines.push(`⏳  **Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
+        if (hb) banLines.push(`🔨  **Hard ban** — *${hb.reason}* · by ${hb.bannedBy}${hb.linkedIds?.length ? ` · alts: ${hb.linkedIds.map(a => `\`${a}\``).join(", ")}` : ""}`);
+        if (autopat) banLines.push(`🤖  Name matches auto-ban pattern \`${autopat}\``);
+        embed.addFields({ name: "🚫  Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "✅  No active bans", inline: false });
+
+        // IP intel
+        embed.addFields(
+          { name: `🌐  Known IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " 🔨" : ""}`).join("  ·  ") : "*none logged*").slice(0, 1024), inline: false },
+          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+        );
+        if (flagged.length) embed.addFields({ name: "🛑  IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
+
+        // recent staff notes (inline, since owner)
+        if (notes.length) {
+          const recent = notes.slice(-5).map((n, i) => `\`${i + 1}.\` ${n.text} — *${n.by}*`).join("\n");
+          embed.addFields({ name: "📝  Latest Notes", value: recent.slice(0, 1024), inline: false });
+        }
+
+        const footerBits = [];
+        if (known?.firstSeen) footerBits.push(`first seen ${new Date(known.firstSeen).toISOString().slice(0, 10)}`);
+        if (known?.name && known.name !== playerId) footerBits.push(`display: ${known.name}`);
+        brand(embed, { thumb: true, footer: { text: footerBits.join("  ·  ") || "Owner inspection" } });
+        return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
     }
