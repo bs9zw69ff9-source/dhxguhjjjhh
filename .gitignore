@@ -32,4 +32,3 @@ ip_untracked.json
 # OS / editor noise
 .DS_Store
 *.swp
-ip_shared.json

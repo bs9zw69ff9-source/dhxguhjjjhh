@@ -27,7 +27,6 @@ const path = require("path");
 const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
 const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
-const SHARED_PATH    = path.join(__dirname, "ip_shared.json");      // IPs proven shared (overlapping sessions)
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 
@@ -39,12 +38,6 @@ const PENDING_FLAG_MS     = 5 * 60 * 1000;    // after a ban, flag the IP confir
 const AUTO_DEBOUNCE_MS    = 5 * 60 * 1000;    // don't re-auto-ban the same id within 5 min
 const MAX_BACKFILL_BYTES  = 50 * 1024 * 1024; // first pass: only scan the tail of huge logs
 const SAVE_THROTTLE_MS    = 3000;             // coalesce registry writes (disconnect lines are frequent)
-// "Shared" IPs (VPN/CGNAT/household) are detected primarily by CO-OCCUPANCY:
-// two different accounts online from the same IP at once = different people.
-// The raw account-COUNT threshold is OFF by default (0) because it wrongly
-// catches one person's many alts on their home IP. Set IP_SHARED_THRESHOLD>0
-// to add a count backstop for busy public IPs.
-const IP_SHARED_THRESHOLD = Math.max(0, parseInt(process.env.IP_SHARED_THRESHOLD, 10) || 0);
 
 /* ---------------- REGEXES (validated against real Pavlov logs) ---------------- */
 const TS_RE     = /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3})\]/;
@@ -71,8 +64,6 @@ const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged   = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
 const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
 const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
-const learnedShared  = new Set(loadJSON(SHARED_PATH, []) || []);   // IPs proven shared by overlapping sessions
-const onlineByIp     = new Map();   // runtime: ip -> Set of ids currently online (to detect co-occupancy)
 
 let onAutoBan = async () => {};
 let onConnect = async () => {};   // best-effort join (tentative IP)
@@ -96,14 +87,6 @@ function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, 
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
 function saveFlagged()   { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
 function saveUntracked()  { try { fs.writeFileSync(UNTRACKED_PATH, JSON.stringify([...untrackedNames], null, 2)); } catch (e) { console.error("[ipBans] save untracked:", e.message); } }
-function saveShared()     { try { fs.writeFileSync(SHARED_PATH, JSON.stringify([...learnedShared], null, 2)); } catch (e) { console.error("[ipBans] save shared:", e.message); } }
-// Mark an IP as shared (household/VPN): never flag or auto-ban on it, and unflag it if already flagged.
-function markShared(ip) {
-  if (learnedShared.has(ip)) return;
-  learnedShared.add(ip); saveShared();
-  if (flagged.delete(ip)) saveFlagged();
-  if (live) console.log(`[ipBans] ${ip} marked shared (two accounts online together) — won't flag/auto-ban on it`);
-}
 
 /* ---------------- lookups ---------------- */
 function resolveIds(input) {
@@ -123,15 +106,12 @@ function confirmedIpsForIds(ids) { // only same-line (disconnect) IP↔id pairin
   for (const id of ids) for (const ip of (registry[id]?.cips || [])) set.add(ip);
   return [...set];
 }
-function idsOnIp(ip) { let n = 0; for (const e of Object.values(registry)) if ((e.ips || []).includes(ip)) n++; return n; }
-function isSharedIp(ip) { return learnedShared.has(ip) || (IP_SHARED_THRESHOLD > 0 && idsOnIp(ip) > IP_SHARED_THRESHOLD); }   // co-occupancy first; count is an optional backstop
-// Alt = another id that shares a CONFIRMED IP (same-line pairing), excluding shared IPs.
+// Alt = another id that shares a CONFIRMED IP (same-line disconnect pairing).
 function altIdsForIps(ips, excludeIds = []) {
   const ex = new Set(excludeIds.map(norm));
-  const usable = ips.filter(ip => !isSharedIp(ip));
   const set = new Set();
   for (const [id, e] of Object.entries(registry))
-    if (!ex.has(norm(id)) && (e.cips || []).some(ip => usable.includes(ip))) set.add(id);
+    if (!ex.has(norm(id)) && (e.cips || []).some(ip => ips.includes(ip))) set.add(id);
   return [...set];
 }
 
@@ -152,7 +132,7 @@ function record(id, name, ip, ts, sure) {
     e.cips.push(ip); changed = true;                                             // confirmed pairing
     // recently banned with no IP flagged yet? flag this confirmed IP now (catches alts of a never-disconnected ban)
     const pf = pendingFlag.get(id);
-    if (pf && Date.now() - pf <= PENDING_FLAG_MS && !isSharedIp(ip) && !flagged.has(ip)) {
+    if (pf && Date.now() - pf <= PENDING_FLAG_MS && !flagged.has(ip)) {
       flagged.add(ip); saveFlagged();
       if (live) console.log(`[ipBans] flagged confirmed IP ${ip} for recently-banned ${e.name || id}`);
     }
@@ -166,9 +146,8 @@ function record(id, name, ip, ts, sure) {
 /* ---------------- public: flag / unflag a player's IPs ---------------- */
 function blacklistPlayer(input) {
   const ids  = resolveIds(input);
-  const confirmed = confirmedIpsForIds(ids);        // only trustworthy same-line IPs
-  const ips  = confirmed.filter(ip => !isSharedIp(ip));   // never flag shared (VPN/NAT) IPs — would ban innocents
-  const alts = altIdsForIps(confirmed, ids);
+  const ips  = confirmedIpsForIds(ids);             // only trustworthy same-line IPs
+  const alts = altIdsForIps(ips, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
@@ -217,7 +196,7 @@ function clearIp(ip) {
 function clearAll() {
   const ids = Object.keys(registry).length, fl = flagged.size;
   for (const k of Object.keys(registry)) delete registry[k];
-  flagged.clear(); onlineByIp.clear();
+  flagged.clear();
   flushRegistry(); saveFlagged();
   return { ids, flagged: fl };   // learned-shared IPs are intentionally kept (protective)
 }
@@ -263,14 +242,6 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   const id    = valid ? cleanId(rawId) : null;
   if (valid) record(rawId, name, ip, ts, false);   // join correlation = best-effort (tentative)
 
-  // co-occupancy: if a DIFFERENT account is already online from this IP, it's a
-  // shared IP (household/VPN), not one person's alts — mark it so it never bans.
-  if (valid && ip) {
-    let set = onlineByIp.get(ip); if (!set) { set = new Set(); onlineByIp.set(ip, set); }
-    if (set.size && !set.has(id)) markShared(ip);
-    set.add(id);
-  }
-
   if (!live) return;                               // startup backfill: don't feed/auto-ban old joins
 
   const display = (name && name !== "<null>") ? name : (id || "unknown");
@@ -286,7 +257,7 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   // auto-ban if this join came from a flagged IP — but ONLY when the IP↔account
   // attribution is unambiguous (one connection pending). Ambiguous joins are
   // caught later at disconnect with the 100%-accurate same-line IP.
-  if (valid && confident && ip && flagged.has(ip) && !isSharedIp(ip) && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
+  if (valid && confident && ip && flagged.has(ip) && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
     recentAuto.set(id, Date.now());
     try { await onAutoBan({ uniqueId: id, name: display, ip, server }); }
     catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); recentAuto.delete(id); }
@@ -303,7 +274,6 @@ function parseLine(line, server, key) {
   if (c && !skipId(c[2])) {
     const id = cleanId(c[2]), ip = c[1];
     record(c[2], null, ip, ts, true);          // confirmed same-line pairing
-    onlineByIp.get(ip)?.delete(id);            // session ended — no longer co-occupying this IP
     // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect
     if (live && !untrackedIds.has(id) && Date.now() - (recentConfirm.get(id) ?? 0) >= CONFIRM_DEBOUNCE_MS) {
       recentConfirm.set(id, Date.now());
@@ -312,7 +282,7 @@ function parseLine(line, server, key) {
     }
     // retroactive auto-ban: an alt that slipped the ambiguous join check is caught
     // here with the 100%-accurate IP. Skip the freshly-banned account itself (pendingFlag).
-    if (live && flagged.has(ip) && !isSharedIp(ip) && !pendingFlag.has(id) && !untrackedIds.has(id)
+    if (live && flagged.has(ip) && !pendingFlag.has(id) && !untrackedIds.has(id)
         && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
       recentAuto.set(id, Date.now());
       Promise.resolve(onAutoBan({ uniqueId: id, name: registry[id]?.name || id, ip, server }))

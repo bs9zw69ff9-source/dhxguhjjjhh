@@ -25,6 +25,10 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ComponentType,
+  StringSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   WebhookClient,
 } = require("discord.js");
 
@@ -2029,21 +2033,8 @@ const commands = [
     .setDescription("👁️ Owner — Revoke a menu from EVERY player who holds it (both servers)")
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
-  new SlashCommandBuilder().setName("ipignore")
-    .setDescription("👁️ Owner — Manage usernames the IP tracker should ignore")
-    .addSubcommand(s => s.setName("add").setDescription("Stop tracking a username's IPs")
-      .addStringOption(o => o.setName("username").setDescription("Exact in-game username").setRequired(true)))
-    .addSubcommand(s => s.setName("remove").setDescription("Resume tracking a username")
-      .addStringOption(o => o.setName("username").setDescription("Username to un-ignore").setRequired(true)))
-    .addSubcommand(s => s.setName("list").setDescription("List ignored usernames")),
-  new SlashCommandBuilder().setName("ipclear")
-    .setDescription("👁️ Owner — Clear logged IP data (stop false bans)")
-    .addSubcommand(s => s.setName("flags").setDescription("Clear ALL flagged IPs — stops every IP auto-ban (keeps history)"))
-    .addSubcommand(s => s.setName("ip").setDescription("Clear one IP from flags and all records")
-      .addStringOption(o => o.setName("address").setDescription("IP address, e.g. 64.39.181.82").setRequired(true)))
-    .addSubcommand(s => s.setName("player").setDescription("Clear one player's flagged IPs")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or name").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("all").setDescription("WIPE the entire IP registry and all flags (full reset)")),
+  new SlashCommandBuilder().setName("configure")
+    .setDescription("👁️ Owner — hidden control panel (IP tracker management)"),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2388,8 +2379,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
-                "`/ipignore add|remove|list <username>` — 👁️ *Owner only* — exclude usernames from IP tracking",
-                "`/ipclear flags|ip|player|all` — 👁️ *Owner only* — clear logged IPs (stop false bans)",
+                "`/configure` — 👁️ *Owner only* — hidden control panel (IP tracker management)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -3570,70 +3560,59 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       /* ─────────────────────────────────────────────────────
-         IPIGNORE — owner only: usernames the IP tracker skips
+         CONFIGURE — owner only: hidden control panel (dropdown).
+         Non-owners never see the menu — just the missing-perms reply.
          ───────────────────────────────────────────────────── */
-      case "ipignore": {
+      case "configure": {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
-        const sub = interaction.options.getSubcommand();
 
-        if (sub === "list") {
-          const names = (() => { try { return ipBans.getUntracked(); } catch { return []; } })();
-          const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("🙈  IP-Ignored Usernames")
-            .setDescription(names.length ? names.map(n => `• \`${n}\``).join("\n").slice(0, 4000) : hero("No usernames are ignored — everyone is tracked.")).setTimestamp());
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+        const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
+          .addOptions(
+            { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
+            { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
+            { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
+            { label: "Clear all flagged IPs",  value: "clear_flags",   description: "Stop every IP auto-ban (keep history)", emoji: "🧹" },
+            { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP",             emoji: "🌐" },
+            { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset",          emoji: "💥" },
+          );
+        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Configure — Hidden Commands")
+          .setDescription(hero("Owner control panel. Choose an action below.")));
+        await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+        const msg = await interaction.fetchReply();
+
+        let sel;
+        try { sel = await msg.awaitMessageComponent({ componentType: ComponentType.StringSelect, time: 60_000, filter: i => i.user.id === interaction.user.id }); }
+        catch { return interaction.editReply({ components: [] }).catch(() => {}); }
+        const choice = sel.values[0];
+
+        // actions that need text input -> open a modal
+        if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip") {
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP" };
+          const isIp = choice === "clear_ip";
+          const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(isIp ? "IP address" : "Username").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
+          const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
+          await sel.showModal(modal);
+          let sub;
+          try { sub = await sel.awaitModalSubmit({ time: 120_000, filter: i => i.user.id === interaction.user.id && i.customId === "cfg_modal" }); }
+          catch { return; }
+          const val = sub.fields.getTextInputValue("cfg_val").trim();
+          let desc;
+          if (choice === "ignore_add")       { const r = ipBans.addUntracked(val); desc = `🙈 **${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
+          else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `👁️ **${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
+          else                               { const r = ipBans.clearIp(val); desc = `🧹 \`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
+          const e = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("⚙️  Done").setDescription(hero(desc)).setTimestamp());
+          await logAction(e);
+          return sub.reply({ embeds: [e], ephemeral: true });
         }
 
-        const username = interaction.options.getString("username").trim();
-        if (sub === "add") {
-          const r = (() => { try { return ipBans.addUntracked(username); } catch { return null; } })();
-          const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🙈  Username Ignored")
-            .setDescription(hero(`**${username}** will no longer be tracked by the IP system.`))
-            .addFields(
-              { name: "🚫  Effect", value: "No IP logging, no connection-feed posts, no IP auto-ban for this name.", inline: false },
-              { name: "🧹  Purged", value: r ? `**${r.purged}** existing record(s) removed.` : "—", inline: false },
-            ).setTimestamp());
-          return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-
-        // remove
-        const had = (() => { try { return ipBans.removeUntracked(username); } catch { return false; } })();
-        const embed = brand(new EmbedBuilder().setColor(had ? NV.NCR_TAN : NV.RUST_RED)
-          .setTitle(had ? "👁️  Tracking Resumed" : "❔  Not Found")
-          .setDescription(had ? hero(`**${username}** is tracked again from their next connection.`) : hero(`**${username}** wasn't on the ignore list.`)).setTimestamp());
-        return interaction.reply({ embeds: [embed], ephemeral: true });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         IPCLEAR — owner only: clear logged IP data to stop false bans
-         ───────────────────────────────────────────────────── */
-      case "ipclear": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
-        const sub = interaction.options.getSubcommand();
-        let title, desc;
-
-        if (sub === "flags") {
-          const n = ipBans.clearFlags();
-          title = "🧹  Flagged IPs Cleared";
-          desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No more IP auto-bans until new bans flag IPs again. (Player history kept.)`;
-        } else if (sub === "all") {
-          const r = ipBans.clearAll();
-          title = "💥  IP Data Wiped";
-          desc = `Cleared the entire registry (**${r.ids}** players) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. It rebuilds from the logs as players connect.`;
-        } else if (sub === "ip") {
-          const ip = interaction.options.getString("address").trim();
-          const r = ipBans.clearIp(ip);
-          title = "🧹  IP Cleared";
-          desc = `\`${ip}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** player record${r.players !== 1 ? "s" : ""}.`;
-        } else { // player
-          const pid = sanitizeId(interaction.options.getString("playerid"));
-          const r = ipBans.unblacklistPlayer(pid);
-          title = "🧹  Player IPs Cleared";
-          desc = `\`${pid}\` — cleared **${r.ips.length}** flagged IP${r.ips.length !== 1 ? "s" : ""}.`;
-        }
-
-        const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle(title).setDescription(hero(desc)).setTimestamp());
-        await logAction(embed);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        // direct actions (no input)
+        let desc, color = NV.AMBER, audit = true;
+        if (choice === "ignore_list")      { const n = ipBans.getUntracked(); desc = n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked."; audit = false; }
+        else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `🧹 Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
+        else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `💥 Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
+        const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Configure").setDescription(hero(desc)).setTimestamp());
+        if (audit) await logAction(e);
+        return sel.update({ embeds: [e], components: [] });
       }
 
       /* ─────────────────────────────────────────────────────

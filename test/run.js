@@ -246,21 +246,7 @@ const ok = (cond, msg) => {
     clearInterval(ipBans.init({ logFiles: [log6], pollMs: 9e8 }));
     ok(ipBans.registry["abc123"] && !ipBans.registry["abc123'"], "trailing quote stripped from unique id");
 
-    // shared IP detected by CO-OCCUPANCY (different accounts online together) -> no false alt links
-    const log7 = path.join(sandbox, "Pavlov7.log");
-    const shared = "64.39.181.82";
-    let lines7 = "";
-    for (let i = 0; i < 3; i++) lines7 +=   // all log in (overlapping) ...
-      `[2026.06.23-11.0${i}.00:000][${i}]LogNet: NotifyAcceptingConnection accepted from: ${shared}:500${i}\n` +
-      `[2026.06.23-11.0${i}.00:200][${i}]LogNet: Login request: ?Name=Person${i}?pid=Person${i} userId: NULL:shared0${i} platform: NULL\n`;
-    for (let i = 0; i < 3; i++)              // ... then all disconnect (confirms IP)
-      lines7 += `[2026.06.23-11.1${i}.00:000][${i}]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: ${shared}:500${i}, UniqueId: NULL:shared0${i}\n`;
-    fs.writeFileSync(log7, lines7);
-    clearInterval(ipBans.init({ logFiles: [log7], pollMs: 9e8 }));
-    ok(ipBans.getIPsForPlayer("Person0").includes(shared), "shared-IP players still have the IP recorded");
-    ok(ipBans.getAltsOf("Person0").length === 0, "co-occupied (shared) IP yields NO false alts");
-
-    // alt-maker: several accounts on ONE home IP, never online together -> MUST flag/link
+    // alt-maker: several accounts on ONE home IP -> linked as alts and flagged
     const log7b = path.join(sandbox, "Pavlov7b.log");
     fs.writeFileSync(log7b,
       "[2026.06.23-12.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 50.50.50.50:1\n" +
