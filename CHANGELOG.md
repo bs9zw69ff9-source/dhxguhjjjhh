@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Removed
+- **Hard ban** (`/hardban`, `/hardbanlist`, `/addnote`) and the repeat-offender
+  registry, and **name-pattern auto-ban** (`/autoban` + its presence sweep).
+  Their references in `/find`, `/checkban`, `/stats`, and `/inspect` were also
+  removed. (IP-based alt auto-ban via `ipBans` is unaffected.)
+
 ### Changed
 - **IP system rewritten from scratch (`ipBans.js`)** for reliability. Same public
   API (drop-in — `index.js` unchanged), but now: **auto-detects the active

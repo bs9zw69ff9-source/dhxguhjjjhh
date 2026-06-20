@@ -133,7 +133,6 @@ const FILES = {
   ROLES:          "./roles.json",
   WAGES:          "./wages.json",
   PLAYTIME:       "./playtime.json",
-  HARDBAN:        "./hardban_registry.json",
   NOTES:          "./hardban_notes.json",
   WARNS:          "./warnings.json",
   MODLOG:         "./modlog.json",
@@ -144,14 +143,12 @@ const FILES = {
   PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
-  AUTOBAN:        "./autoban_patterns.json",
 };
 
 const DEFAULTS = {
   [FILES.TEMPBAN]:        "[]",
   [FILES.WAGES]:          "[]",
   [FILES.PLAYTIME]:       "{}",
-  [FILES.HARDBAN]:        "[]",
   [FILES.NOTES]:          "{}",
   [FILES.WARNS]:          "{}",
   [FILES.MODLOG]:         "[]",
@@ -162,7 +159,6 @@ const DEFAULTS = {
   [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
-  [FILES.AUTOBAN]:        "[]",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -276,8 +272,6 @@ const loadWages         = () => safeRead(FILES.WAGES,          []);
 const saveWages         = (d) => safeWrite(FILES.WAGES,         d);
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
-const loadHardBans      = () => safeRead(FILES.HARDBAN,        []);
-const saveHardBans      = (d) => safeWrite(FILES.HARDBAN,       d);
 const loadNotes         = () => safeRead(FILES.NOTES,          {});
 const saveNotes         = (d) => safeWrite(FILES.NOTES,         d);
 const loadWarns         = () => safeRead(FILES.WARNS,          {});
@@ -298,7 +292,6 @@ const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
 const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
 const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
 const saveKnownPlayers  = (d) => safeWrite(FILES.KNOWN,         d);
-const loadAutoban       = () => safeRead(FILES.AUTOBAN,        []);
 
 /* ================================================================
    MOD LOG WRITER  (serialized)
@@ -398,7 +391,6 @@ function seedKnownPlayers() {
   for (const k of Object.keys(loadPlaytime())) names.add(k);                 // playtime keys (display-cased)
   for (const w of loadWages())     if (w.playerId)   names.add(w.playerId);  // payroll
   for (const b of loadBans())      if (b.playerId)   names.add(b.playerId);  // temp bans
-  for (const h of loadHardBans()) { if (h.primaryId) names.add(h.primaryId); (h.linkedIds || []).forEach(l => names.add(l)); }
   for (const d of (readDonatorFile() ?? [])) names.add(d);                   // donators
   try {                                                                      // every faction spawn + rank file
     for (const f of fs.readdirSync(FACTION_ROLES_PATH).filter(n => n.endsWith(".txt"))) {
@@ -428,7 +420,6 @@ function commandPlayerCandidates(interaction) {
   if (cmd === "warnings" || cmd === "clearwarnings" || cmd === "delwarn")
                               return Object.keys(loadWarns()).map(disp);                               // has warnings
   if (cmd === "history")      return [...new Set(loadModLog().map(e => e.playerId).filter(Boolean))];  // has mod history
-  if (cmd === "addnote")      return loadHardBans().flatMap(h => [h.primaryId, ...(h.linkedIds || [])]); // hard-ban record
   if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
   if (cmd === "removewage")   return loadWages().map(w => w.playerId);                                 // on payroll
   if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
@@ -441,42 +432,6 @@ function commandPlayerCandidates(interaction) {
     return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of source faction
   }
   return null;   // default: online + known players
-}
-
-/* ================================================================
-   AUTO-BAN  (ban players whose name contains a forbidden substring)
-   ================================================================ */
-function normalizeAutobanPattern(raw) {
-  return String(raw ?? "").trim().toLowerCase().slice(0, 32);
-}
-/** Returns the matching pattern string for a name, or null. */
-function matchesAutoban(name, patterns = loadAutoban()) {
-  const lc = String(name ?? "").toLowerCase();
-  if (!lc) return null;
-  const hit = patterns.find(p => p.pattern && lc.includes(p.pattern));
-  return hit ? hit.pattern : null;
-}
-function addAutobanPattern(pattern, by) {
-  const p = normalizeAutobanPattern(pattern);
-  let added = false;
-  const done = update(FILES.AUTOBAN, [], (list) => {
-    if (!p) return list;
-    if (list.some(e => e.pattern === p)) return list;   // already present
-    list.push({ pattern: p, by, at: Date.now() });
-    added = true;
-    return list;
-  });
-  return done.then(() => ({ ok: !!p, added, pattern: p }));
-}
-function removeAutobanPattern(pattern) {
-  const p = normalizeAutobanPattern(pattern);
-  let removed = false;
-  const done = update(FILES.AUTOBAN, [], (list) => {
-    const next = list.filter(e => e.pattern !== p);
-    removed = next.length !== list.length;
-    return next;
-  });
-  return done.then(() => ({ removed, pattern: p }));
 }
 
 /* ================================================================
@@ -823,11 +778,6 @@ const QUOTES = {
     '"A courier without caps is just a wanderer."',
     '"In the Mojave, caps are the only truth that matters."',
   ],
-  hardban: [
-    '"Some debts can\'t be paid in caps."',
-    '"The Mojave has no room for those who spit on its laws."',
-    '"Persona non grata. Not welcome under any name, on any server."',
-  ],
   system:  [
     '"All systems nominal. Securitron network active."',
     '"Maintenance cycle complete. The Strip never sleeps."',
@@ -1118,17 +1068,6 @@ function rateLimitEmbed() {
 }
 
 /* ================================================================
-   HARD BAN HELPERS
-   ================================================================ */
-function findHardBanByAnyId(playerId) {
-  const id = playerId.toLowerCase();
-  return loadHardBans().find(e =>
-    e.primaryId.toLowerCase() === id ||
-    e.linkedIds.some(l => l.toLowerCase() === id)
-  );
-}
-
-/* ================================================================
    RCON
    ================================================================ */
 function getServerConfig(server) {
@@ -1373,49 +1312,6 @@ function tickPlaytime() {
   savePlaytime(pt);
   recordLastSeen([...online]);
 }
-
-/* ================================================================
-   AUTO-BAN ENFORCEMENT
-   ================================================================
-   Scans currently-online players and bans anyone whose name matches an
-   auto-ban pattern. Runs on the 60s loop and immediately after a pattern is
-   added. A short cooldown per name avoids duplicate logs within a window. */
-const _autobanRecent = new Map();   // nameLower -> ts
-async function enforceAutoban() {
-  const patterns = loadAutoban();
-  if (!patterns.length) return 0;
-  const online = [...new Set([...playerCache.server1, ...playerCache.server2])];
-  let banned = 0;
-  for (const name of online) {
-    const pattern = matchesAutoban(name, patterns);
-    if (!pattern) continue;
-    const lc = name.toLowerCase();
-    if (Date.now() - (_autobanRecent.get(lc) ?? 0) < 5 * 60 * 1000) continue;   // recently handled
-    _autobanRecent.set(lc, Date.now());
-    try {
-      await banWithIp(name, "both");
-      banned++;
-      writeModLog({ action: "autoban", playerId: name, reason: `Name matches auto-ban pattern "${pattern}"`, by: "Auto-Ban" });
-      logger.info("AutoBan", `Banned "${name}" — matched pattern "${pattern}"`);
-      await logBan(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🤖  Auto-Ban Triggered")
-        .setDescription(`${hero("A forbidden name walked into the Mojave.")}`)
-        .addFields(
-          { name: "🎯  Courier", value: `\`${name}\``,        inline: true },
-          { name: "🔤  Pattern", value: `\`${pattern}\``,     inline: true },
-          { name: "🛡️  Action",  value: "Banned on both servers", inline: true },
-        ).setFooter({ text: "Automatic name-pattern ban" })));
-    } catch (err) {
-      logger.warn("AutoBan", `Failed to ban "${name}": ${err.message}`);
-      _autobanRecent.delete(lc);   // allow retry next pass
-    }
-  }
-  return banned;
-}
-// keep the cooldown map from growing unbounded
-setInterval(() => {
-  const cutoff = Date.now() - 30 * 60 * 1000;
-  for (const [k, v] of _autobanRecent) if (v < cutoff) _autobanRecent.delete(k);
-}, 30 * 60 * 1000);
 
 /* ================================================================
    FACTION FILE HELPERS
@@ -1912,7 +1808,6 @@ setInterval(async () => {
   await refreshPlayerCacheWithMenuReapply("server1");
   await refreshPlayerCacheWithMenuReapply("server2");
   tickPlaytime();
-  enforceAutoban().catch(() => {});   // ban any online player matching an auto-ban pattern
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
@@ -2014,19 +1909,6 @@ const commands = [
     .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
     .addStringOption(o => o.setName("notes").setDescription("Additional context"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
-  new SlashCommandBuilder().setName("hardban")
-    .setDescription("🔒 Admin — Hard ban + repeat offender registry")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption)
-    .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
-    .addStringOption(o => o.setName("linked_id").setDescription("Known alt account to link and ban"))
-    .addStringOption(o => o.setName("notes").setDescription("Additional context"))
-    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
-  new SlashCommandBuilder().setName("addnote")
-    .setDescription("🔒 Admin — Append a note to a hard ban record")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("note").setDescription("Note to append").setRequired(true)),
-  new SlashCommandBuilder().setName("hardbanlist").setDescription("🔒 Admin — View the hard ban registry"),
   new SlashCommandBuilder().setName("cleartempbans").setDescription("🔒 Admin — Clear all temporary exiles (confirmation required)"),
   new SlashCommandBuilder().setName("donator")
     .setDescription("🔒 Admin — Manage the donator whitelist file")
@@ -2038,16 +1920,6 @@ const commands = [
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all players in the donator file")),
-  new SlashCommandBuilder().setName("autoban")
-    .setDescription("🔒 Admin — Auto-ban players whose name contains a pattern")
-    .addSubcommand(s => s.setName("add")
-      .setDescription("Add a name pattern — bans matching players now and on join")
-      .addStringOption(o => o.setName("pattern").setDescription("Substring to match in names, e.g. ncr").setRequired(true)))
-    .addSubcommand(s => s.setName("remove")
-      .setDescription("Remove a name pattern")
-      .addStringOption(o => o.setName("pattern").setDescription("Pattern to remove").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("list")
-      .setDescription("List all active auto-ban patterns")),
   new SlashCommandBuilder().setName("setroles")
     .setDescription("🔒 Admin — Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
@@ -2289,16 +2161,6 @@ client.on("interactionCreate", async (interaction) => {
 
     const query = focused.value.toLowerCase();
 
-    // /autoban remove → suggest existing patterns
-    if (cmdName === "autoban" && focused.name === "pattern") {
-      const matches = loadAutoban()
-        .map(e => e.pattern)
-        .filter(p => !query || p.includes(query))
-        .slice(0, 25)
-        .map(p => ({ name: p, value: p }));
-      return interaction.respond(matches).catch(() => {});
-    }
-
     // Context-aware player field: only suggest the population relevant to the command.
     const ctx = commandPlayerCandidates(interaction);
     if (ctx !== null) {
@@ -2331,7 +2193,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban"];
+  const ADMIN_COMMANDS = ["permban", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp"];
 
   const name = interaction.commandName;
 
@@ -2417,14 +2279,13 @@ client.on("interactionCreate", async (interaction) => {
               ].join("\n") },
             { name: "🔒  Admin",
               value: [
-                "`/permban` `/hardban` `/addnote` `/hardbanlist`",
+                "`/permban <id> <server> <reason>` — Permanent ban",
                 "`/clearwarnings <id>` — Wipe all warnings for a courier",
                 "`/note clear <id>` — Delete all staff notes for a courier",
                 "`/cleartempbans` `/setroles`",
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
-                "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
                 "`/configure` — 👁️ *Owner only* — hidden control panel (IP tracker management)",
@@ -2443,7 +2304,7 @@ client.on("interactionCreate", async (interaction) => {
                 "🏥  RCON health check every **5 min**",
                 `⚠️  Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
                 "🎖️  Rank changes update both the rank registry and the rank-specific spawn files automatically",
-                "📨  `/kick` `/warn` `/tempban` `/permban` `/hardban` accept an optional **discord_user** — the bot DMs them their punishment details",
+                "📨  `/kick` `/warn` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
                 "⛔  Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
               ].join("\n") },
           )
@@ -2580,13 +2441,12 @@ client.on("interactionCreate", async (interaction) => {
         const lines = matches.map((m) => {
           const srvStr = m.servers.map(s => s === "server1" ? "S1" : "S2").join("+");
           const warn   = loadWarns()[m.name.toLowerCase()]?.length ?? 0;
-          const hb     = findHardBanByAnyId(m.name) ? " 🔨" : "";
-          return `\`[${srvStr}]\`  **${m.name}**${hb}${warn ? `  ·  ⚠️ ${warn} warn${warn !== 1 ? "s" : ""}` : ""}`;
+          return `\`[${srvStr}]\`  **${m.name}**${warn ? `  ·  ⚠️ ${warn} warn${warn !== 1 ? "s" : ""}` : ""}`;
         });
         return interaction.editReply({ embeds: [
           brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`🔍  Search Results — "${query}"`)
             .setDescription(`${hero(`**${matches.length}** match${matches.length !== 1 ? "es" : ""} found.`)}\n${lines.join("\n")}`),
-            { footer: { text: `🔨 = hard banned  ·  ⚠️ = warnings on record` } })
+            { footer: { text: `⚠️ = warnings on record` } })
         ]});
       }
 
@@ -2832,7 +2692,7 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
           ], ephemeral: true });
         }
-        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", hardban: "🔨", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", autoban: "🤖", "autoban-add": "🤖", "autoban-remove": "🤖", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
+        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", "auto-ipban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
         const lines = history.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
           const icon   = ICONS[e.action] ?? "📌";
@@ -2930,23 +2790,6 @@ client.on("interactionCreate", async (interaction) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        const hb = findHardBanByAnyId(playerId);
-        if (hb) {
-          const ts     = Math.floor(hb.bannedAt / 1000);
-          const notes  = loadNotes()[hb.primaryId];
-          const noteStr = notes?.length ? notes.map((n, i) => `\`${i + 1}.\`  ${n.text}  *(${n.by})*`).join("\n") : null;
-          const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban — Repeat Offender Registry")
-            .setDescription(`> *"Not welcome under any name, on any server."*\n\n${DIVIDER}`)
-            .addFields(
-              { name: "🎯  Queried ID",  value: `\`${playerId}\``,                                                                       inline: true },
-              { name: "📁  Record",      value: hb.primaryId.toLowerCase() === playerId.toLowerCase() ? "Primary account" : `Alt of \`${hb.primaryId}\``, inline: true },
-              { name: "⚖️  Offense",     value: hb.reason,                                                                                inline: false },
-              { name: "🔗  Known Alts",  value: hb.linkedIds.length ? hb.linkedIds.map(id => `\`${id}\``).join("  ·  ") : "*none*",      inline: false },
-              { name: "📅  Banned",      value: `<t:${ts}:F> by **${hb.bannedBy}**`,                                                      inline: false },
-            ).setFooter({ text: "Hard ban · permanent · all servers" }).setTimestamp();
-          if (noteStr) embed.addFields({ name: "📝  Staff Notes", value: noteStr });
-          return interaction.reply({ embeds: [embed] });
-        }
         const tb = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         if (tb) {
           const ts = Math.floor(tb.expires / 1000);
@@ -3070,131 +2913,6 @@ client.on("interactionCreate", async (interaction) => {
         if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
-      }
-
-      /* ─────────────────────────────────────────────────────
-         HARDBAN  ← deferReply added (after all non-RCON early returns)
-         ───────────────────────────────────────────────────── */
-      case "hardban": {
-        const playerId  = sanitizeId(interaction.options.getString("playerid"));
-        const server    = interaction.options.getString("server");
-        const reasonKey = interaction.options.getString("reason");
-        const linkedId  = sanitizeId(interaction.options.getString("linked_id") ?? "");
-        const notes     = interaction.options.getString("notes") ?? null;
-        const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        const registry = loadHardBans();
-        const existing = registry.find(e =>
-          e.primaryId.toLowerCase() === playerId.toLowerCase() ||
-          e.linkedIds.some(l => l.toLowerCase() === playerId.toLowerCase())
-        );
-        // This branch does no RCON — keep as plain reply
-        if (existing && !linkedId && !notes) {
-          return interaction.reply({ embeds: [warningEmbed("Already Hard Banned",
-            `\`${playerId}\` is already in the registry under \`${existing.primaryId}\`.\n\n**Known alts:** ${existing.linkedIds.map(id => `\`${id}\``).join("  ·  ") || "*none*"}\n\nTo add an alt, re-run with \`linked_id\`. To add a note, use \`/addnote\`.`
-          )], ephemeral: true });
-        }
-        // Past here we always hit RCON — defer now
-        await interaction.deferReply();                         // ← ADDED
-        if (existing) {
-          if (linkedId && !existing.linkedIds.map(l => l.toLowerCase()).includes(linkedId.toLowerCase())) existing.linkedIds.push(linkedId);
-          if (notes) {
-            const ns = loadNotes();
-            if (!ns[existing.primaryId]) ns[existing.primaryId] = [];
-            ns[existing.primaryId].push({ text: notes, by: interaction.user.tag, at: Date.now() });
-            saveNotes(ns);
-          }
-          existing.updatedAt = Date.now(); existing.updatedBy = interaction.user.tag;
-          saveHardBans(registry);
-          const ipEnf = await banWithIp(playerId, server);
-          if (linkedId) { await banWithIp(linkedId, server); }
-          await removeBans(playerId, linkedId);
-          writeModLog({ action: "hardban-update", playerId, linkedId, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Record Updated").setDescription(`${DIVIDER}`)
-            .addFields(
-              { name: "🎯  Primary ID",    value: `\`${existing.primaryId}\``,                                           inline: true },
-              { name: "🔗  New Alt",       value: linkedId ? `\`${linkedId}\`` : "*none added*",                         inline: true },
-              { name: "📋  All Known Alts",value: existing.linkedIds.map(id => `\`${id}\``).join("  ·  ") || "*none*",  inline: false },
-              { name: "🔒  Updated By",    value: `${interaction.user}`,                                                 inline: false },
-            ).setFooter({ text: "Hard ban registry updated" }).setTimestamp();
-          if (notes) embed.addFields({ name: "📝  Note Added", value: notes });
-          if (ipEnf?.field) embed.addFields(ipEnf.field);
-          brand(embed); await logBan(embed);
-          return interaction.editReply({ embeds: [embed] });   // ← CHANGED
-        }
-        registry.push({ primaryId: playerId, linkedIds: linkedId ? [linkedId] : [], reason, server: serverLabel(server), bannedBy: interaction.user.tag, bannedAt: Date.now(), updatedAt: null, updatedBy: null });
-        saveHardBans(registry);
-        if (notes) { const ns = loadNotes(); ns[playerId] = [{ text: notes, by: interaction.user.tag, at: Date.now() }]; saveNotes(ns); }
-        const ipEnf = await banWithIp(playerId, server);
-        if (linkedId) { await banWithIp(linkedId, server); }
-        await removeBans(playerId, linkedId);
-        writeModLog({ action: "hardban", playerId, linkedId, reason, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Issued — Persona Non Grata")
-          .setDescription(`> *${randomQuote("hardban")}*\n\n${DIVIDER}`)
-          .addFields(
-            { name: "🎯  Courier",  value: `\`${playerId}\``,                                  inline: true },
-            { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`,   inline: true },
-            { name: "⏱️  Sentence", value: "**Permanent · Hard Ban**",                         inline: true },
-            { name: "⚖️  Offense",  value: reason,                                             inline: false },
-          );
-        if (linkedId) embed.addFields({ name: "🔗  Linked Account", value: `\`${linkedId}\`  — also banned and linked`, inline: false });
-        if (notes)    embed.addFields({ name: "📝  Notes", value: notes, inline: false });
-        embed.addFields({ name: "🔒  Admin", value: `${interaction.user}`, inline: false }).setFooter({ text: randomQuote("hardban") }).setTimestamp();
-        const hbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
-          action: "Hard Ban", color: NV.LEGION_RED, playerId, reason,
-          fields: [
-            { name: "⏱️  Sentence", value: "**Permanent · all servers**", inline: true },
-            { name: "🖥️  Server",   value: serverLabel(server),           inline: true },
-          ],
-        });
-        const hbDmField = dmStatusField(hbDm, interaction.options.getUser("discord_user"));
-        if (hbDmField) embed.addFields(hbDmField);
-        if (ipEnf?.field) embed.addFields(ipEnf.field);
-        brand(embed); await logBan(embed);
-        return interaction.editReply({ embeds: [embed] });     // ← CHANGED
-      }
-
-      /* ─────────────────────────────────────────────────────
-         ADDNOTE
-         ───────────────────────────────────────────────────── */
-      case "addnote": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        const note     = interaction.options.getString("note").trim();
-        const hb = findHardBanByAnyId(playerId);
-        if (!hb) return interaction.reply({ embeds: [errorEmbed("Not in Registry", `\`${playerId}\` has no hard ban record. Use \`/hardban\` to add them first.`)], ephemeral: true });
-        const ns = loadNotes();
-        if (!ns[hb.primaryId]) ns[hb.primaryId] = [];
-        ns[hb.primaryId].push({ text: note, by: interaction.user.tag, at: Date.now() });
-        saveNotes(ns);
-        const embed = successEmbed("Note Appended", `Note added to \`${hb.primaryId}\`'s hard ban record.\n\n**Note:** ${note}\n**Added by:** ${interaction.user}`);
-        brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         HARDBANLIST
-         ───────────────────────────────────────────────────── */
-      case "hardbanlist": {
-        const registry = loadHardBans(), notes = loadNotes();
-        if (!registry.length) {
-          return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🔨  Hard Ban Registry").setDescription("> *\"No repeat offenders on record.\"*\n\nThe registry is clear.").setTimestamp()], ephemeral: true });
-        }
-        const lines = registry.map((e, i) => {
-          const ts  = Math.floor(e.bannedAt / 1000);
-          const nn  = notes[e.primaryId];
-          return [
-            `\`${String(i + 1).padStart(2, "0")}\`  **${e.primaryId}**  —  *${e.reason}*`,
-            e.linkedIds.length ? `↳  Alts: ${e.linkedIds.map(id => `\`${id}\``).join("  ·  ")}` : "↳  *no alts*",
-            nn?.length ? `↳  📝  ${nn.length} note${nn.length !== 1 ? "s" : ""}` : "",
-            `↳  Banned <t:${ts}:R> by **${e.bannedBy}**`,
-          ].filter(Boolean).join("\n");
-        });
-        const header = `> *${randomQuote("hardban")}*\n\n${DIVIDER}\n**${registry.length}** flagged  ·  *Use \`/addnote <id>\` to append notes.*`;
-        return paginate(interaction, lines, (pageLines) =>
-          new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Registry — Persona Non Grata")
-            .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n\n")}`)
-            .setFooter({ text: "Hard ban registry · admin only" }).setTimestamp(),
-          { perPage: 6, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3365,60 +3083,6 @@ client.on("interactionCreate", async (interaction) => {
           );
         brand(embed);
         return interaction.editReply({ embeds: [embed] });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         AUTOBAN  (admin — ban players whose name matches a pattern)
-         ───────────────────────────────────────────────────── */
-      case "autoban": {
-        const sub = interaction.options.getSubcommand();
-
-        if (sub === "list") {
-          const list = loadAutoban();
-          if (!list.length) {
-            return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🤖  Auto-Ban Patterns — None")
-                .setDescription("No auto-ban patterns set.\n\nUse `/autoban add <pattern>` to add one.").setTimestamp()
-            ], ephemeral: true });
-          }
-          const lines = list
-            .slice().sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-            .map((e, i) => `\`${String(i + 1).padStart(2, "0")}\`  \`${e.pattern}\`  ·  by *${e.by ?? "?"}*${e.at ? `  ·  <t:${Math.floor(e.at / 1000)}:R>` : ""}`);
-          return paginate(interaction, lines, (pageLines) =>
-            new EmbedBuilder().setColor(NV.LEGION_RED).setTitle(`🤖  Auto-Ban Patterns — ${list.length}`)
-              .setDescription(`${hero("Names containing any of these are banned on sight.")}\n${pageLines.join("\n")}`),
-            { perPage: 15, ephemeral: true });
-        }
-
-        if (sub === "add") {
-          const { ok, added, pattern } = await addAutobanPattern(interaction.options.getString("pattern"), interaction.user.tag);
-          if (!ok) return interaction.reply({ embeds: [errorEmbed("Invalid Pattern", "Provide a non-empty pattern.")], ephemeral: true });
-          if (!added) return interaction.reply({ embeds: [warningEmbed("Already Set", `Pattern \`${pattern}\` is already on the auto-ban list.`)], ephemeral: true });
-          await interaction.deferReply({ ephemeral: true });
-          const banned = await enforceAutoban();   // immediately ban any matching online players
-          writeModLog({ action: "autoban-add", reason: pattern, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🤖  Auto-Ban Pattern Added")
-            .setDescription(`${hero("The gatekeepers have new orders.")}`)
-            .addFields(
-              { name: "🔤  Pattern",      value: `\`${pattern}\``, inline: true },
-              { name: "🔨  Banned Now",   value: `**${banned}** online player${banned !== 1 ? "s" : ""}`, inline: true },
-              { name: "🔒  By",           value: `${interaction.user}`, inline: true },
-              { name: "ℹ️  Going Forward", value: `Anyone whose name contains \`${pattern}\` is banned automatically when seen online.`, inline: false },
-            ).setFooter({ text: "Substring match · case-insensitive" });
-          brand(embed); await logAction(embed);
-          return interaction.editReply({ embeds: [embed] });
-        }
-
-        if (sub === "remove") {
-          const { removed, pattern } = await removeAutobanPattern(interaction.options.getString("pattern"));
-          if (!removed) return interaction.reply({ embeds: [warningEmbed("Not Found", `Pattern \`${pattern}\` is not on the auto-ban list.`)], ephemeral: true });
-          writeModLog({ action: "autoban-remove", reason: pattern, by: interaction.user.tag });
-          const embed = successEmbed("Auto-Ban Pattern Removed", `Pattern \`${pattern}\` removed.\n\n**By:** ${interaction.user}\n\n*Players already banned stay banned — use \`/unban\` to lift individuals.*`);
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-
-        break;
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4385,7 +4049,6 @@ client.on("interactionCreate", async (interaction) => {
         const balance  = readPlayerBalance(playerId);
         const wage     = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
-        const hb       = findHardBanByAnyId(playerId);
         const warns    = loadWarns()[playerId.toLowerCase()] ?? [];
         const tb       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const history  = getPlayerHistory(playerId);
@@ -4401,12 +4064,11 @@ client.on("interactionCreate", async (interaction) => {
             }).join("\n");
 
         const statusStr = !online ? "🔴  Offline" : [onS1 && "🟢  Server 1", onS2 && "🟢  Server 2"].filter(Boolean).join("  +  ");
-        const color = hb ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
+        const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
           .setTitle(`🪪  Courier Dossier — ${playerId}`)
           .setDescription(
-            hb ? hero("Not welcome under any name.") :
             tb ? hero(`Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
             online ? hero("Currently active on the Strip.") :
             hero("Offline — last tracked playtime shown.")
@@ -4427,9 +4089,6 @@ client.on("interactionCreate", async (interaction) => {
         if (tb) {
           const ts = Math.floor(tb.expires / 1000);
           embed.addFields({ name: "⏳  Active Exile", value: `Temp ban — *${tb.reason}*  ·  expires <t:${ts}:R>`, inline: false });
-        }
-        if (hb) {
-          embed.addFields({ name: "🔨  Hard Ban Registry", value: `**Repeat offender** — *${hb.reason}*  ·  banned by ${hb.bannedBy}`, inline: false });
         }
         if (history.length) {
           embed.addFields({ name: "📋  Mod Actions", value: `**${history.length}** total — use \`/history ${playerId}\` to view`, inline: false });
@@ -4457,7 +4116,6 @@ client.on("interactionCreate", async (interaction) => {
         const balance  = readPlayerBalance(playerId);
         const wage     = loadWages().find(w => w.playerId.toLowerCase() === key);
         const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
-        const hb       = findHardBanByAnyId(playerId);
         const warns    = loadWarns()[key] ?? [];
         const tb       = loadBans().find(b => b.playerId.toLowerCase() === key);
         const history  = getPlayerHistory(playerId);
@@ -4465,7 +4123,6 @@ client.on("interactionCreate", async (interaction) => {
         const lastSeen = getLastSeen(playerId);
         const donator  = isDonator(playerId);
         const known    = loadKnownPlayers()[key];
-        const autopat  = matchesAutoban(playerId);
         // IP intel (owner-only) — CONFIRMED IPs only (same-line log pairings, not live correlation)
         let ips = [], alts = [], flagged = [];
         try { ips = ipBans.getConfirmedIPsForPlayer(playerId); alts = ipBans.getAltsOf(playerId); flagged = ips.filter(ip => ipBans.blacklist.includes(ip)); } catch {}
@@ -4474,7 +4131,7 @@ client.on("interactionCreate", async (interaction) => {
           : !factions.length ? "*None*"
           : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))}  **${f}** *(${getFactionRank(f, playerId)})*`).join("\n");
         const statusStr = !online ? "🔴  Offline" : [onS1 && "🟢  S1", onS2 && "🟢  S2"].filter(Boolean).join(" + ");
-        const color = (hb || flagged.length) ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
+        const color = flagged.length ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
           .setTitle(`👁️  Full Dossier — ${playerId}`)
@@ -4495,8 +4152,6 @@ client.on("interactionCreate", async (interaction) => {
         // ban status
         const banLines = [];
         if (tb) banLines.push(`⏳  **Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
-        if (hb) banLines.push(`🔨  **Hard ban** — *${hb.reason}* · by ${hb.bannedBy}${hb.linkedIds?.length ? ` · alts: ${hb.linkedIds.map(a => `\`${a}\``).join(", ")}` : ""}`);
-        if (autopat) banLines.push(`🤖  Name matches auto-ban pattern \`${autopat}\``);
         embed.addFields({ name: "🚫  Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "✅  No active bans", inline: false });
 
         // IP intel
@@ -4553,8 +4208,6 @@ module.exports = {
   recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers, seedKnownPlayers,
   // context-aware autocomplete
   commandPlayerCandidates,
-  // auto-ban
-  loadAutoban, matchesAutoban, addAutobanPattern, removeAutobanPattern,
   // leaderboards
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
