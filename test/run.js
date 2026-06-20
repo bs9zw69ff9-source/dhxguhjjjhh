@@ -306,6 +306,36 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 80));
     clearInterval(tB);
     ok(ipBans.blacklist.includes("5.6.7.8"), "kick-confirmed IP of a recently-banned account is flagged");
+
+    // ambiguous concurrent join is NOT instantly banned (could be mis-attributed),
+    // but is caught at disconnect with the confirmed IP
+    const logC = path.join(sandbox, "PavlovC.log");
+    fs.writeFileSync(logC, "");
+    let autoC = null;
+    const tC = ipBans.init({ logFiles: [logC], onAutoBan: async (info) => { autoC = info; }, pollMs: 20 });
+    // main plays and leaves (own session) — confirms 7.7.7.7
+    fs.appendFileSync(logC,
+      "[2026.06.27-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 7.7.7.7:1\n" +
+      "[2026.06.27-10.00.00:200][2]LogNet: Login request: ?Name=Main7?pid=Main7 userId: NULL:aa01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    fs.appendFileSync(logC, "[2026.06.27-10.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 7.7.7.7:1, UniqueId: NULL:aa01\n");
+    await new Promise(r => setTimeout(r, 60));
+    // admin bans the (now offline) main -> flags confirmed 7.7.7.7
+    fs.appendFileSync(logC, "[2026.06.27-10.01.00:000][4]LogTemp: Rcon: BanPlayer Main7\n");
+    await new Promise(r => setTimeout(r, 60));
+    ok(ipBans.blacklist.includes("7.7.7.7") && autoC === null, "setup: 7.7.7.7 flagged, nothing auto-banned yet");
+    // two connections pending at once -> ambiguous -> no instant auto-ban for the alt
+    fs.appendFileSync(logC,
+      "[2026.06.27-10.02.00:000][5]LogNet: NotifyAcceptingConnection accepted from: 8.8.8.9:2\n" +
+      "[2026.06.27-10.02.00:100][6]LogNet: NotifyAcceptingConnection accepted from: 7.7.7.7:3\n" +
+      "[2026.06.27-10.02.00:200][7]LogNet: Login request: ?Name=AltSeven?pid=AltSeven userId: NULL:aa02 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    ok(autoC === null, "ambiguous concurrent join is NOT instantly auto-banned");
+    // alt disconnects -> confirmed IP 7.7.7.7 -> retroactive auto-ban
+    fs.appendFileSync(logC, "[2026.06.27-10.05.00:000][8]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 7.7.7.7:3, UniqueId: NULL:aa02\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tC);
+    ok(autoC && autoC.uniqueId === "aa02" && autoC.ip === "7.7.7.7", "slipped alt is caught at disconnect via confirmed IP");
   }
 
   console.log("Faction rank caps:");
