@@ -2083,9 +2083,6 @@ const commands = [
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("configure")
     .setDescription("⠀"),   // intentionally blank — Discord requires a non-empty description
-  new SlashCommandBuilder().setName("alts")
-    .setDescription("🔒 Admin — View a courier's known alt accounts")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or name").setRequired(true).setAutocomplete(true)),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2334,7 +2331,7 @@ client.on("interactionCreate", async (interaction) => {
   const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban", "alts"];
+  const ADMIN_COMMANDS = ["permban", "hardban", "addnote", "hardbanlist", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "autoban"];
 
   const name = interaction.commandName;
 
@@ -2431,7 +2428,6 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
                 "`/configure` — 👁️ *Owner only* — hidden control panel (IP tracker management)",
-                "`/alts <id>` — 🔒 *Admin* — a courier's known alt accounts",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -3628,6 +3624,7 @@ client.on("interactionCreate", async (interaction) => {
           .addOptions(
             { label: "Blacklist IP / username / ID", value: "blacklist_ip", description: "Auto-ban anyone matching an IP, username, or unique ID", emoji: "🚫" },
             { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs, usernames, and IDs", emoji: "📜" },
+            { label: "View alt accounts",       value: "view_alts",      description: "A courier's known alt accounts (shared IP)", emoji: "🔗" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
@@ -3645,9 +3642,9 @@ client.on("interactionCreate", async (interaction) => {
         const choice = sel.values[0];
 
         // actions that need text input -> open a modal
-        if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip") {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username / ID" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP, username, or unique ID" };
+        if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip" || choice === "view_alts") {
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username / ID", view_alts: "View alt accounts" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP, username, or unique ID", view_alts: "Courier ID or name" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -3656,6 +3653,19 @@ client.on("interactionCreate", async (interaction) => {
           catch { return; }
           const val = sub.fields.getTextInputValue("cfg_val").trim();
           let desc, color = NV.IRRAD_GREEN;
+          if (choice === "view_alts") {
+            const pid = sanitizeId(val);
+            let alts = [];
+            try { alts = ipBans.getAltsOf(pid).map(id => ({ id, name: ipBans.registry[id]?.name })); } catch {}
+            const list = alts.length
+              ? alts.map(a => a.name ? `• **${a.name}**  \`${a.id}\`` : `• \`${a.id}\``).join("\n").slice(0, 4000)
+              : "*No known alt accounts (no other account shares a confirmed IP).*";
+            const eAlt = brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN)
+              .setTitle(`🔗  Alt Accounts — ${pid}`)
+              .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
+              .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
+            return sub.reply({ embeds: [eAlt], ephemeral: true });
+          }
           if (choice === "blacklist_ip") {
             await sub.deferReply({ ephemeral: true });
             const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else matched as id/username
@@ -3696,25 +3706,6 @@ client.on("interactionCreate", async (interaction) => {
         const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Configure").setDescription(hero(desc)).setTimestamp());
         if (audit) await logAction(e);
         return sel.update({ embeds: [e], components: [] });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         ALTS — view a courier's known alt accounts (admin)
-         ───────────────────────────────────────────────────── */
-      case "alts": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        let alts = [];
-        try { alts = ipBans.getAltsOf(playerId).map(id => ({ id, name: ipBans.registry[id]?.name })); } catch {}
-        const list = alts.length
-          ? alts.map(a => a.name ? `• **${a.name}**  \`${a.id}\`` : `• \`${a.id}\``).join("\n").slice(0, 4000)
-          : "*No known alt accounts.*";
-        const embed = brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN)
-          .setTitle(`🔗  Alt Accounts — ${playerId}`)
-          .setDescription(hero(alts.length ? "Accounts sharing a confirmed IP with this courier:" : "No alts on record (they share no confirmed IP with another account)."))
-          .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
-          .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
-        return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
