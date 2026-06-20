@@ -4294,7 +4294,7 @@ client.on("interactionCreate", async (interaction) => {
         // IP intel
         embed.addFields(
           { name: `🌐  Known IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " 🔨" : ""}`).join("  ·  ") : "*none logged*").slice(0, 1024), inline: false },
-          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => { const n = ipBans.registry[a]?.name; return n ? `**${n}** \`${a}\`` : `\`${a}\``; }).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
         );
         if (flagged.length) embed.addFields({ name: "🛑  IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
 
