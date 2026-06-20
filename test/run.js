@@ -272,6 +272,22 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 60));
     clearInterval(t8);
     ok(confirmed && confirmed.uniqueId === "conf01" && confirmed.ip === "9.1.2.3" && confirmed.name === "Confirmee", "onConfirm fires with confirmed IP + resolved name");
+
+    // clearing logged data (stop false bans)
+    const log9 = path.join(sandbox, "Pavlov9.log");
+    fs.writeFileSync(log9,
+      "[2026.06.25-10.00.00:000][1]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 3.3.3.3:1, UniqueId: NULL:clr01\n" +
+      "[2026.06.25-10.00.05:000][2]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 3.3.3.3:2, UniqueId: NULL:clr02\n");
+    clearInterval(ipBans.init({ logFiles: [log9], pollMs: 9e8 }));
+    ipBans.blacklistPlayer("clr01");
+    ok(ipBans.blacklist.includes("3.3.3.3"), "setup: 3.3.3.3 flagged");
+    const ci = ipBans.clearIp("3.3.3.3");
+    ok(!ipBans.blacklist.includes("3.3.3.3") && ci.players >= 1, "clearIp removes flag + record");
+    ipBans.blacklistPlayer("clr02");           // re-flag via the other account's confirmed... (cleared, so none)
+    ipBans.clearFlags();
+    ok(ipBans.blacklist.length === 0, "clearFlags empties the flag list");
+    ipBans.clearAll();
+    ok(!ipBans.registry["clr01"] && !ipBans.registry["clr02"], "clearAll wipes the registry");
   }
 
   console.log("Faction rank caps:");

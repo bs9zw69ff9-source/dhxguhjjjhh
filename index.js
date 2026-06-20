@@ -2036,6 +2036,14 @@ const commands = [
     .addSubcommand(s => s.setName("remove").setDescription("Resume tracking a username")
       .addStringOption(o => o.setName("username").setDescription("Username to un-ignore").setRequired(true)))
     .addSubcommand(s => s.setName("list").setDescription("List ignored usernames")),
+  new SlashCommandBuilder().setName("ipclear")
+    .setDescription("👁️ Owner — Clear logged IP data (stop false bans)")
+    .addSubcommand(s => s.setName("flags").setDescription("Clear ALL flagged IPs — stops every IP auto-ban (keeps history)"))
+    .addSubcommand(s => s.setName("ip").setDescription("Clear one IP from flags and all records")
+      .addStringOption(o => o.setName("address").setDescription("IP address, e.g. 64.39.181.82").setRequired(true)))
+    .addSubcommand(s => s.setName("player").setDescription("Clear one player's flagged IPs")
+      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or name").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("all").setDescription("WIPE the entire IP registry and all flags (full reset)")),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2381,6 +2389,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
                 "`/ipignore add|remove|list <username>` — 👁️ *Owner only* — exclude usernames from IP tracking",
+                "`/ipclear flags|ip|player|all` — 👁️ *Owner only* — clear logged IPs (stop false bans)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -3591,6 +3600,39 @@ client.on("interactionCreate", async (interaction) => {
         const embed = brand(new EmbedBuilder().setColor(had ? NV.NCR_TAN : NV.RUST_RED)
           .setTitle(had ? "👁️  Tracking Resumed" : "❔  Not Found")
           .setDescription(had ? hero(`**${username}** is tracked again from their next connection.`) : hero(`**${username}** wasn't on the ignore list.`)).setTimestamp());
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         IPCLEAR — owner only: clear logged IP data to stop false bans
+         ───────────────────────────────────────────────────── */
+      case "ipclear": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const sub = interaction.options.getSubcommand();
+        let title, desc;
+
+        if (sub === "flags") {
+          const n = ipBans.clearFlags();
+          title = "🧹  Flagged IPs Cleared";
+          desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No more IP auto-bans until new bans flag IPs again. (Player history kept.)`;
+        } else if (sub === "all") {
+          const r = ipBans.clearAll();
+          title = "💥  IP Data Wiped";
+          desc = `Cleared the entire registry (**${r.ids}** players) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. It rebuilds from the logs as players connect.`;
+        } else if (sub === "ip") {
+          const ip = interaction.options.getString("address").trim();
+          const r = ipBans.clearIp(ip);
+          title = "🧹  IP Cleared";
+          desc = `\`${ip}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** player record${r.players !== 1 ? "s" : ""}.`;
+        } else { // player
+          const pid = sanitizeId(interaction.options.getString("playerid"));
+          const r = ipBans.unblacklistPlayer(pid);
+          title = "🧹  Player IPs Cleared";
+          desc = `\`${pid}\` — cleared **${r.ips.length}** flagged IP${r.ips.length !== 1 ? "s" : ""}.`;
+        }
+
+        const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle(title).setDescription(hero(desc)).setTimestamp());
+        await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 

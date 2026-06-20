@@ -169,6 +169,32 @@ function unblacklistPlayer(input) {
   return { ids, ips };
 }
 
+/* ---------------- public: clearing logged data (stop false bans) ---------------- */
+// Clear ALL flagged IPs (stops every IP auto-ban). Registry/history untouched.
+function clearFlags() { const n = flagged.size; flagged.clear(); saveFlagged(); return n; }
+// Remove one IP from the flag list AND from every player's recorded IPs.
+function clearIp(ip) {
+  const flagRemoved = flagged.delete(ip) ? 1 : 0;
+  if (flagRemoved) saveFlagged();
+  let players = 0;
+  for (const e of Object.values(registry)) {
+    let hit = false;
+    if (e.ips)  { const i = e.ips.indexOf(ip);  if (i >= 0) { e.ips.splice(i, 1);  hit = true; } }
+    if (e.cips) { const i = e.cips.indexOf(ip); if (i >= 0) { e.cips.splice(i, 1); hit = true; } }
+    if (hit) players++;
+  }
+  if (players) scheduleSave();
+  return { flagRemoved, players };
+}
+// Wipe the whole IP registry AND all flags (full reset). Untracked list is kept.
+function clearAll() {
+  const ids = Object.keys(registry).length, fl = flagged.size;
+  for (const k of Object.keys(registry)) delete registry[k];
+  flagged.clear();
+  flushRegistry(); saveFlagged();
+  return { ids, flagged: fl };
+}
+
 /* ---------------- public: untracked (ignore) list by username ---------------- */
 // Add a username the IP system should never track. Also purges any existing
 // registry entries for that name and remembers their ids so their disconnect
@@ -372,6 +398,9 @@ module.exports = {
   addUntracked,
   removeUntracked,
   getUntracked,
+  clearFlags,
+  clearIp,
+  clearAll,
   discoverLogs,
   registry,
   get blacklist() { return [...flagged]; },
