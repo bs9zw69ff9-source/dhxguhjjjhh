@@ -2141,6 +2141,14 @@ client.once("ready", async () => {
     onConnect: async ({ uniqueId, name, ip, server }) => {
       if (!feedHook) return;
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
+      // resolve this player's alt accounts (other ids sharing an IP) to USERNAMES,
+      // falling back to the raw id when we've never learned a name for it.
+      const alts = (() => {
+        try {
+          if (!uniqueId) return [];
+          return ipBans.getAltsOf(uniqueId).map(id => ipBans.registry[id]?.name || id);
+        } catch { return []; }
+      })();
       const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🟢  Courier Connected")
         .addFields(
           { name: "🎯  Name",   value: `\`${name}\``,            inline: true },
@@ -2148,6 +2156,7 @@ client.once("ready", async () => {
           { name: "🌐  IP",     value: `\`${ip ?? "unknown"}\``, inline: true },
           { name: "🖥️  Server", value: srvName,                  inline: true },
         ).setTimestamp());
+      if (alts.length) embed.addFields({ name: `🔗  Known Alts (${alts.length})`, value: alts.map(a => `\`${a}\``).join("  ·  ").slice(0, 1024), inline: false });
       feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
     },
     // Fired when someone CONNECTS (live log) from a flagged IP: ban the
