@@ -246,18 +246,34 @@ const ok = (cond, msg) => {
     clearInterval(ipBans.init({ logFiles: [log6], pollMs: 9e8 }));
     ok(ipBans.registry["abc123"] && !ipBans.registry["abc123'"], "trailing quote stripped from unique id");
 
-    // shared IPs (many distinct accounts) don't create false alt links
+    // shared IP detected by CO-OCCUPANCY (different accounts online together) -> no false alt links
     const log7 = path.join(sandbox, "Pavlov7.log");
     const shared = "64.39.181.82";
     let lines7 = "";
-    for (let i = 0; i < 6; i++) lines7 +=
+    for (let i = 0; i < 3; i++) lines7 +=   // all log in (overlapping) ...
       `[2026.06.23-11.0${i}.00:000][${i}]LogNet: NotifyAcceptingConnection accepted from: ${shared}:500${i}\n` +
-      `[2026.06.23-11.0${i}.00:200][${i}]LogNet: Login request: ?Name=Person${i}?pid=Person${i} userId: NULL:shared0${i} platform: NULL\n` +
-      `[2026.06.23-11.0${i}.30:000][${i}]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: ${shared}:500${i}, Name: IpConnection_${i}, IsServer: YES, UniqueId: NULL:shared0${i}\n`;
+      `[2026.06.23-11.0${i}.00:200][${i}]LogNet: Login request: ?Name=Person${i}?pid=Person${i} userId: NULL:shared0${i} platform: NULL\n`;
+    for (let i = 0; i < 3; i++)              // ... then all disconnect (confirms IP)
+      lines7 += `[2026.06.23-11.1${i}.00:000][${i}]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: ${shared}:500${i}, UniqueId: NULL:shared0${i}\n`;
     fs.writeFileSync(log7, lines7);
     clearInterval(ipBans.init({ logFiles: [log7], pollMs: 9e8 }));
     ok(ipBans.getIPsForPlayer("Person0").includes(shared), "shared-IP players still have the IP recorded");
-    ok(ipBans.getAltsOf("Person0").length === 0, "shared IP (6 accounts) yields NO false alts");
+    ok(ipBans.getAltsOf("Person0").length === 0, "co-occupied (shared) IP yields NO false alts");
+
+    // alt-maker: several accounts on ONE home IP, never online together -> MUST flag/link
+    const log7b = path.join(sandbox, "Pavlov7b.log");
+    fs.writeFileSync(log7b,
+      "[2026.06.23-12.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 50.50.50.50:1\n" +
+      "[2026.06.23-12.00.00:200][2]LogNet: Login request: ?Name=Solo1?pid=Solo1 userId: NULL:solo01 platform: NULL\n" +
+      "[2026.06.23-12.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 50.50.50.50:1, UniqueId: NULL:solo01\n" +
+      "[2026.06.23-12.05.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 50.50.50.50:2\n" +
+      "[2026.06.23-12.05.00:200][5]LogNet: Login request: ?Name=Solo2?pid=Solo2 userId: NULL:solo02 platform: NULL\n" +
+      "[2026.06.23-12.05.30:000][6]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 50.50.50.50:2, UniqueId: NULL:solo02\n");
+    clearInterval(ipBans.init({ logFiles: [log7b], pollMs: 9e8 }));
+    ok(ipBans.getAltsOf("Solo1").includes("solo02"), "sequential same-IP accounts ARE linked as alts");
+    const eSolo = ipBans.blacklistPlayer("Solo1");
+    ok(eSolo.ips.includes("50.50.50.50"), "alt-maker's home IP IS flagged (not treated as shared)");
+    ipBans.unblacklistPlayer("Solo1");
 
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");

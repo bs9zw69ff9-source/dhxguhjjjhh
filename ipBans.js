@@ -39,10 +39,12 @@ const PENDING_FLAG_MS     = 5 * 60 * 1000;    // after a ban, flag the IP confir
 const AUTO_DEBOUNCE_MS    = 5 * 60 * 1000;    // don't re-auto-ban the same id within 5 min
 const MAX_BACKFILL_BYTES  = 50 * 1024 * 1024; // first pass: only scan the tail of huge logs
 const SAVE_THROTTLE_MS    = 3000;             // coalesce registry writes (disconnect lines are frequent)
-// An IP used by MORE than this many distinct accounts is treated as shared
-// (VPN / CGNAT / household / relay) and ignored for alt-linking and auto-ban,
-// so unrelated players aren't falsely tied together. Override with env.
-const IP_SHARED_THRESHOLD = Math.max(2, parseInt(process.env.IP_SHARED_THRESHOLD, 10) || 4);
+// "Shared" IPs (VPN/CGNAT/household) are detected primarily by CO-OCCUPANCY:
+// two different accounts online from the same IP at once = different people.
+// The raw account-COUNT threshold is OFF by default (0) because it wrongly
+// catches one person's many alts on their home IP. Set IP_SHARED_THRESHOLD>0
+// to add a count backstop for busy public IPs.
+const IP_SHARED_THRESHOLD = Math.max(0, parseInt(process.env.IP_SHARED_THRESHOLD, 10) || 0);
 
 /* ---------------- REGEXES (validated against real Pavlov logs) ---------------- */
 const TS_RE     = /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3})\]/;
@@ -122,7 +124,7 @@ function confirmedIpsForIds(ids) { // only same-line (disconnect) IP↔id pairin
   return [...set];
 }
 function idsOnIp(ip) { let n = 0; for (const e of Object.values(registry)) if ((e.ips || []).includes(ip)) n++; return n; }
-function isSharedIp(ip) { return learnedShared.has(ip) || idsOnIp(ip) > IP_SHARED_THRESHOLD; }   // VPN/NAT/relay — don't link or auto-ban
+function isSharedIp(ip) { return learnedShared.has(ip) || (IP_SHARED_THRESHOLD > 0 && idsOnIp(ip) > IP_SHARED_THRESHOLD); }   // co-occupancy first; count is an optional backstop
 // Alt = another id that shares a CONFIRMED IP (same-line pairing), excluding shared IPs.
 function altIdsForIps(ips, excludeIds = []) {
   const ex = new Set(excludeIds.map(norm));
