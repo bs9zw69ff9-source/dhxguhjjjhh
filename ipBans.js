@@ -21,10 +21,11 @@ const fs   = require("fs");
 const path = require("path");
 
 /* ---------------- CONFIG ---------------- */
-const HOME = process.env.HOME || "/root";
+// Default to the common /home/steam install. Override with PAVLOV_LOGS in .env
+// (comma/colon separated) — REQUIRED if your server lives elsewhere or the bot
+// runs as a different user.
 const DEFAULT_LOGS = [
-  `${HOME}/pavlovserver/Pavlov/Saved/Logs/Pavlov.log`,
-  `${HOME}/pavlovserver1/Pavlov/Saved/Logs/Pavlov.log`,
+  "/home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log",
 ];
 const LOG_FILES = process.env.PAVLOV_LOGS
   ? process.env.PAVLOV_LOGS.split(/[,:]/).map(s => s.trim()).filter(Boolean)
@@ -232,10 +233,14 @@ function init(opts = {}) {
   if (typeof opts.onAutoBan === "function") onAutoBan = opts.onAutoBan;
   if (typeof opts.onConnect === "function") onConnect = opts.onConnect;
   if (Array.isArray(opts.logFiles) && opts.logFiles.length) { LOG_FILES.length = 0; LOG_FILES.push(...opts.logFiles); }
+  // report each path's status up front so misconfig is obvious
+  for (const f of LOG_FILES) {
+    try { const st = fs.statSync(f); console.log(`[ipBans] log OK  (${(st.size / 1048576).toFixed(1)} MB): ${f}`); }
+    catch (e) { console.warn(`[ipBans] log MISSING/unreadable: ${f} — ${e.code || e.message}. Set PAVLOV_LOGS in .env.`); }
+  }
   poll();          // backfill the existing tail — _live is false, so no auto-ban for old joins
   _live = true;    // everything parsed from here on is a live event
-  const missing = LOG_FILES.filter(f => { try { fs.statSync(f); return false; } catch { return true; } });
-  console.log(`[ipBans] watching ${LOG_FILES.length} log(s)${missing.length ? ` (WARNING ${missing.length} not found: ${missing.join(", ")})` : ""}; ${Object.keys(registry).length} known IDs, ${blacklist.size} flagged IPs`);
+  console.log(`[ipBans] ready — ${Object.keys(registry).length} known IDs, ${blacklist.size} flagged IPs. Live watching for joins (every ${(opts.pollMs || POLL_MS) / 1000}s).`);
   return setInterval(poll, opts.pollMs || POLL_MS);
 }
 
