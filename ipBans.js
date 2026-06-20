@@ -36,6 +36,10 @@ const JOIN_DEBOUNCE_MS    = 20000;            // one feed message per join (coll
 const AUTO_DEBOUNCE_MS    = 5 * 60 * 1000;    // don't re-auto-ban the same id within 5 min
 const MAX_BACKFILL_BYTES  = 50 * 1024 * 1024; // first pass: only scan the tail of huge logs
 const SAVE_THROTTLE_MS    = 3000;             // coalesce registry writes (disconnect lines are frequent)
+// An IP used by MORE than this many distinct accounts is treated as shared
+// (VPN / CGNAT / household / relay) and ignored for alt-linking and auto-ban,
+// so unrelated players aren't falsely tied together. Override with env.
+const IP_SHARED_THRESHOLD = Math.max(2, parseInt(process.env.IP_SHARED_THRESHOLD, 10) || 4);
 
 /* ---------------- REGEXES (validated against real Pavlov logs) ---------------- */
 const TS_RE     = /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3})\]/;
@@ -47,7 +51,9 @@ const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;
 
 /* ---------------- small helpers ---------------- */
 const norm     = s => String(s ?? "").trim().toLowerCase();
-const cleanId  = raw => (raw && raw.includes(":") ? raw.split(":").pop() : raw);   // "NULL:<hex>" -> "<hex>"
+// "NULL:<hex>" -> "<hex>", and strip any stray non-alphanumerics (e.g. a trailing
+// "'" captured from quoted NetworkFailure/error log lines).
+const cleanId  = raw => { const s = raw == null ? "" : String(raw); const p = s.includes(":") ? s.split(":").pop() : s; return p.replace(/[^a-z0-9]/gi, ""); };
 const skipId   = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);       // pre-auth / server self-conn
 const labelFor = f => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
 const mtimeOf  = f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
@@ -93,11 +99,14 @@ function ipsForIds(ids) {
   for (const id of ids) for (const ip of (registry[id]?.ips || [])) set.add(ip);
   return [...set];
 }
+function idsOnIp(ip) { let n = 0; for (const e of Object.values(registry)) if ((e.ips || []).includes(ip)) n++; return n; }
+function isSharedIp(ip) { return idsOnIp(ip) > IP_SHARED_THRESHOLD; }   // VPN/NAT/relay — don't link or auto-ban
 function altIdsForIps(ips, excludeIds = []) {
   const ex = new Set(excludeIds.map(norm));
+  const usable = ips.filter(ip => !isSharedIp(ip));   // ignore shared IPs so unrelated players aren't linked
   const set = new Set();
   for (const [id, e] of Object.entries(registry))
-    if (!ex.has(norm(id)) && (e.ips || []).some(ip => ips.includes(ip))) set.add(id);
+    if (!ex.has(norm(id)) && (e.ips || []).some(ip => usable.includes(ip))) set.add(id);
   return [...set];
 }
 
@@ -120,8 +129,9 @@ function record(id, name, ip, ts) {
 /* ---------------- public: flag / unflag a player's IPs ---------------- */
 function blacklistPlayer(input) {
   const ids  = resolveIds(input);
-  const ips  = ipsForIds(ids);
-  const alts = altIdsForIps(ips, ids);
+  const all  = ipsForIds(ids);
+  const ips  = all.filter(ip => !isSharedIp(ip));   // never flag shared (VPN/NAT) IPs — would ban innocents
+  const alts = altIdsForIps(all, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
@@ -198,8 +208,8 @@ async function handleJoin(name, rawId, ip, ts, server) {
     catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
   }
 
-  // auto-ban if this join came from a flagged IP
-  if (valid && ip && flagged.has(ip) && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
+  // auto-ban if this join came from a flagged IP (but never from a shared VPN/NAT IP)
+  if (valid && ip && flagged.has(ip) && !isSharedIp(ip) && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
     recentAuto.set(id, Date.now());
     try { await onAutoBan({ uniqueId: id, name: display, ip, server }); }
     catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); recentAuto.delete(id); }

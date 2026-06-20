@@ -231,6 +231,25 @@ const ok = (cond, msg) => {
     ok(ipBans.getUntracked().includes("ghostname"), "getUntracked lists the ignored name (lowercased)");
     ipBans.removeUntracked("GhostName");
     ok(!ipBans.getUntracked().includes("ghostname"), "removeUntracked clears it");
+
+    // malformed ids (trailing junk from quoted error lines) are sanitized to bare hex
+    const log6 = path.join(sandbox, "Pavlov6.log");
+    fs.writeFileSync(log6,
+      "[2026.06.23-10.00.00:000][1]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 5.5.5.5:1000, UniqueId: NULL:abc123'\n");
+    clearInterval(ipBans.init({ logFiles: [log6], pollMs: 9e8 }));
+    ok(ipBans.registry["abc123"] && !ipBans.registry["abc123'"], "trailing quote stripped from unique id");
+
+    // shared IPs (many distinct accounts) don't create false alt links
+    const log7 = path.join(sandbox, "Pavlov7.log");
+    const shared = "64.39.181.82";
+    let lines7 = "";
+    for (let i = 0; i < 6; i++) lines7 +=
+      `[2026.06.23-11.0${i}.00:000][${i}]LogNet: NotifyAcceptingConnection accepted from: ${shared}:5000\n` +
+      `[2026.06.23-11.0${i}.00:200][${i}]LogNet: Login request: ?Name=Person${i}?pid=Person${i} userId: NULL:shared0${i} platform: NULL\n`;
+    fs.writeFileSync(log7, lines7);
+    clearInterval(ipBans.init({ logFiles: [log7], pollMs: 9e8 }));
+    ok(ipBans.getIPsForPlayer("Person0").includes(shared), "shared-IP players still have the IP recorded");
+    ok(ipBans.getAltsOf("Person0").length === 0, "shared IP (6 accounts) yields NO false alts");
   }
 
   console.log("Faction rank caps:");
