@@ -74,10 +74,14 @@ let onConnect = async () => {};   // fired on every LIVE join (name/id/ip/server
 let _live = false;   // false during startup backfill -> suppress feed + auto-ban for old logins
 
 const _recentAuto = new Map();
+const _recentJoin = new Map();    // name -> ts, dedupes the feed across Pavlov's INVALID+auth login pair
+const JOIN_DEBOUNCE_MS = 20000;   // one feed message per join within this window
 let watchList = [...LOG_FILES];   // configured logs + discovered backups (set in init)
 const offsets  = {};
 const leftover = {};
-let pendingIP = null, pendingTs = 0, lastTs = 0;
+const pendingIP = {};   // per-file: IP from the most recent accept line, awaiting its login line
+const pendingTs = {};   // per-file: log timestamp of that accept line
+let lastTs = 0;
 let _saveTimer = null, _dirty = false;
 
 /* ---------------- IO ---------------- */
@@ -163,19 +167,30 @@ function record(uniqueId, rawUserId, name, ip, ts) {
 }
 
 async function handleLogin(name, rawId, ip, ts, server) {
-  if (skipId(rawId)) return;                       // server self-connection / pre-auth
-  const id = cleanId(rawId);
-  record(id, rawId, name, ip, ts);
+  // localhost / server self-connection only — never a real player join
+  if (/localhost-/i.test(rawId || "")) return;
+
+  const valid = !skipId(rawId);                    // has an authenticated unique id
+  const id    = valid ? cleanId(rawId) : null;
+  if (valid) record(id, rawId, name, ip, ts);      // registry + auto-ban need a real id
   if (!_live) return;                              // startup backfill — don't feed/auto-ban old joins
-  const display = (name && name !== "<null>") ? name : id;
 
-  // live connection feed (every join)
-  try { await onConnect({ uniqueId: id, name: display, ip: ip || null, server }); }
-  catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
+  const display = (name && name !== "<null>") ? name : (id || "unknown");
 
-  if (ip && blacklist.has(ip)) {                   // connected from a flagged IP -> auto-ban
-    const last = _recentAuto.get(id) ?? 0;
-    if (Date.now() - last >= AUTO_DEBOUNCE_MS) {
+  // live connection feed — fire for EVERY join (authed or not), but only once per
+  // join: Pavlov emits an INVALID pre-auth login line and then the authed one, so
+  // dedupe by name within a short window.
+  const key  = norm(display);
+  const last = _recentJoin.get(key) ?? 0;
+  if (Date.now() - last >= JOIN_DEBOUNCE_MS) {
+    _recentJoin.set(key, Date.now());
+    try { await onConnect({ uniqueId: id, name: display, ip: ip || null, server }); }
+    catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
+  }
+
+  if (valid && ip && blacklist.has(ip)) {          // connected from a flagged IP -> auto-ban
+    const lastAuto = _recentAuto.get(id) ?? 0;
+    if (Date.now() - lastAuto >= AUTO_DEBOUNCE_MS) {
       _recentAuto.set(id, Date.now());
       try { await onAutoBan({ uniqueId: id, name: display, ip, server }); }
       catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); _recentAuto.delete(id); }
@@ -183,20 +198,21 @@ async function handleLogin(name, rawId, ip, ts, server) {
   }
 }
 
-function parseLine(line, server) {
+function parseLine(line, server, key) {
   const t = parseTs(line);
   if (t != null) lastTs = t;
   const ts = t ?? lastTs;
 
-  // 1) join-time accept line -> remember IP for the upcoming login line
+  // 1) join-time accept line -> remember IP for the upcoming login line (per file,
+  //    so it survives across poll cycles — the login line often lands in a later poll)
   const a = line.match(ACCEPT_RE);
-  if (a) { pendingIP = a[1]; pendingTs = ts; return; }
+  if (a) { pendingIP[key] = a[1]; pendingTs[key] = ts; return; }
 
   // 2) login line -> name + id (+ correlated join IP), and auto-ban check
   const m = line.match(LOGIN_RE);
   if (m) {
-    const ip = (ts - pendingTs <= CORRELATE_WINDOW_MS) ? pendingIP : null;
-    pendingIP = null;
+    const ip = (ts - (pendingTs[key] ?? 0) <= CORRELATE_WINDOW_MS) ? (pendingIP[key] ?? null) : null;
+    pendingIP[key] = null;
     handleLogin(m[1].trim(), m[2], ip, ts, server);
     return;
   }
@@ -237,8 +253,7 @@ function poll() {
     const lines = text.split(/\r?\n/);
     leftover[f] = lines.pop();   // last element is an incomplete line — buffer it
     const label = labelFor(f);
-    pendingIP = null;            // don't let one file's dangling accept IP leak into another's login
-    for (const l of lines) if (l) parseLine(l, label);
+    for (const l of lines) if (l) parseLine(l, label, f);
   }
   if (_dirty) flushRegistry();
 }

@@ -174,6 +174,19 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 150));
     clearInterval(timer);
     ok(ipBans.blacklist.includes("9.9.9.9"), "live 'Rcon: BanPlayer <name>' flags that player's IP");
+
+    // LIVE cross-poll correlation: the accept line (IP) and the login line
+    // (name+id) arrive in SEPARATE poll cycles, exactly like a real live join.
+    // The per-file pending IP must survive between polls so the IP is captured.
+    const log3 = path.join(sandbox, "Pavlov3.log");
+    fs.writeFileSync(log3, "");
+    const t3 = ipBans.init({ logFiles: [log3], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(log3, "[2026.06.20-11.04.45:721][488]LogNet: NotifyAcceptingConnection accepted from: 1.159.95.133:49090\n");
+    await new Promise(r => setTimeout(r, 60));   // let a poll consume the accept line
+    fs.appendFileSync(log3, "[2026.06.20-11.04.46:592][540]LogNet: Login request: ?Name=Arcusmay_vr?playerHeight=160.000000?rightHanded=1?vstock=1?platform=oculus?pid=Arcusmay_vr?name=Arcusmay_vr userId: NULL:000287f2eda04be68fb2f7a69b4facd9 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));   // next poll consumes the login line
+    clearInterval(t3);
+    ok(ipBans.getIPsForPlayer("Arcusmay_vr").includes("1.159.95.133"), "live join split across polls -> IP still captured");
   }
 
   console.log("Faction rank caps:");
