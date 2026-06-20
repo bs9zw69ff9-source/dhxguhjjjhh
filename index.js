@@ -3568,7 +3568,7 @@ client.on("interactionCreate", async (interaction) => {
 
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
-            { label: "Blacklist an IP (auto-ban)", value: "blacklist_ip", description: "Auto-ban anyone who connects from an IP", emoji: "🚫" },
+            { label: "Blacklist IP / username / ID", value: "blacklist_ip", description: "Auto-ban anyone matching an IP, username, or hex ID", emoji: "🚫" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
@@ -3587,9 +3587,9 @@ client.on("interactionCreate", async (interaction) => {
 
         // actions that need text input -> open a modal
         if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip") {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist an IP" };
-          const wantsIp = choice === "clear_ip" || choice === "blacklist_ip";
-          const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(wantsIp ? "IP address" : "Username").setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username / ID" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP, username, or hex ID" };
+          const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
           let sub;
@@ -3598,16 +3598,14 @@ client.on("interactionCreate", async (interaction) => {
           const val = sub.fields.getTextInputValue("cfg_val").trim();
           let desc, color = NV.IRRAD_GREEN;
           if (choice === "blacklist_ip") {
-            if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) {
-              return sub.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("❌  Invalid IP").setDescription(hero(`\`${val}\` isn't a valid IPv4 address.`)))], ephemeral: true });
-            }
             await sub.deferReply({ ephemeral: true });
-            const r = ipBans.flagIp(val);
-            for (const id of r.ids) { try { await banWithIp(id, "both"); } catch {} }   // ban accounts already known on this IP
+            const r = ipBans.flagTarget(val);            // auto-detects IP / username / hex ID
+            for (const id of r.ids) { try { await banWithIp(id, "both"); } catch {} }   // ban matching accounts now
             color = NV.LEGION_RED;
-            desc = `🚫 \`${val}\` blacklisted — any account that connects from it is auto-banned.` +
-              (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record for this IP.` : `\nNo accounts on record for it yet — future connections will be caught.`);
-            const e1 = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  IP Blacklisted").setDescription(hero(desc)).setTimestamp());
+            const kindLabel = { ip: "IP", username: "username", id: "hex ID" }[r.kind];
+            desc = `🚫 ${kindLabel} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
+              (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record.` : `\nNo accounts on record yet — future connections will be caught.`);
+            const e1 = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Blacklisted").setDescription(hero(desc)).setTimestamp());
             await logAction(e1);
             return sub.editReply({ embeds: [e1] });
           }

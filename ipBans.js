@@ -25,7 +25,9 @@ const path = require("path");
 
 /* ---------------- CONFIG ---------------- */
 const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
-const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");
+const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");      // flagged IPs
+const FNAMES_PATH    = path.join(__dirname, "ip_flagged_names.json");  // flagged usernames
+const FIDS_PATH      = path.join(__dirname, "ip_flagged_ids.json");    // flagged hex ids
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
@@ -61,7 +63,9 @@ function loadJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, "utf
 /* ---------------- STATE ---------------- */
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }
 const registry  = loadJSON(REGISTRY_PATH, {});
-const flagged   = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
+const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
+const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
+const flaggedIds   = new Set(loadJSON(FIDS_PATH, []) || []);  // flagged hex ids
 const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
 const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
 
@@ -85,7 +89,9 @@ let lastTs = 0, saveTimer = null, dirty = false;
 /* ---------------- persistence ---------------- */
 function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2)); } catch (e) { console.error("[ipBans] save registry:", e.message); } }
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
-function saveFlagged()   { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
+function saveFlagged()    { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
+function saveFNames()     { try { fs.writeFileSync(FNAMES_PATH, JSON.stringify([...flaggedNames], null, 2)); } catch (e) { console.error("[ipBans] save flagged names:", e.message); } }
+function saveFIds()       { try { fs.writeFileSync(FIDS_PATH, JSON.stringify([...flaggedIds], null, 2)); } catch (e) { console.error("[ipBans] save flagged ids:", e.message); } }
 function saveUntracked()  { try { fs.writeFileSync(UNTRACKED_PATH, JSON.stringify([...untrackedNames], null, 2)); } catch (e) { console.error("[ipBans] save untracked:", e.message); } }
 
 /* ---------------- lookups ---------------- */
@@ -143,7 +149,9 @@ function record(id, name, ip, ts, sure) {
   if (newIp && live) console.log(`[ipBans] learned ${e.name || id} [${id}] @ ${ip}${sure ? "" : " (tentative)"}`);
 }
 
-/* ---------------- public: flag / unflag a player's IPs ---------------- */
+/* ---------------- public: flag / unflag a player ---------------- */
+// Flags the player's hex id(s), username(s) AND confirmed IP(s). Any account
+// that later connects matching ANY of those is auto-banned.
 function blacklistPlayer(input) {
   const ids  = resolveIds(input);
   const ips  = confirmedIpsForIds(ids);             // only trustworthy same-line IPs
@@ -151,17 +159,32 @@ function blacklistPlayer(input) {
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
-  // Arm each banned id: if the kick (or a later session) confirms an IP we don't
-  // have yet, flag it then — so banning a never-disconnected account still catches alts.
-  for (const id of ids) pendingFlag.set(id, Date.now());
+  // also flag the hex id(s) and username(s) so a rename or new account is caught
+  let fId = false, fName = false;
+  for (const id of ids) {
+    if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; }
+    const nm = norm(registry[id]?.name);
+    if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; }
+    pendingFlag.set(id, Date.now());   // flag the IP the kick confirms, if none yet
+  }
+  // if banned by a raw name/id that isn't in the registry, still flag that token
+  if (!ids.length) {
+    const raw = String(input ?? "").trim();
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw)) { if (!flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); } }
+    else if (/^[0-9a-f]{16,}$/i.test(raw))   { if (!flaggedIds.has(raw))   { flaggedIds.add(raw);   fId = true; } }
+    else if (raw)                            { if (!flaggedNames.has(norm(raw))) { flaggedNames.add(norm(raw)); fName = true; } }
+  }
+  if (fId) saveFIds();
+  if (fName) saveFNames();
   return {
     ids, ips, alts,
     field: {
       name: "🌐  IP Enforcement",
-      value: ips.length
-        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account that connects from them is auto-banned.` +
-          (alts.length ? `\n⚠️  Shares an IP with: ${alts.map(a => `\`${a}\``).join("  ·  ")}` : "")
-        : "No connection IPs on record yet — nothing to match until this player has connected at least once.",
+      value: (ips.length
+        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
+        : "No connection IPs on record yet.") +
+        `\n🆔 ID + 🎯 username also flagged — a rename or new account is caught too.` +
+        (alts.length ? `\n⚠️  Shares an IP with: ${alts.map(a => `\`${a}\``).join("  ·  ")}` : ""),
       inline: false,
     },
   };
@@ -169,9 +192,23 @@ function blacklistPlayer(input) {
 function unblacklistPlayer(input) {
   const ids = resolveIds(input);
   const ips = ipsForIds(ids);
-  let removed = 0;
-  for (const ip of ips) if (flagged.has(ip)) { flagged.delete(ip); removed++; }
-  if (removed) saveFlagged();
+  let changed = false;
+  for (const ip of ips) if (flagged.delete(ip)) changed = true;
+  if (changed) saveFlagged();
+  let cId = false, cName = false;
+  for (const id of ids) {
+    if (flaggedIds.delete(id)) cId = true;
+    const nm = norm(registry[id]?.name);
+    if (nm && flaggedNames.delete(nm)) cName = true;
+    pendingFlag.delete(id);
+  }
+  // also clear a raw name/id/ip token
+  const raw = String(input ?? "").trim();
+  if (flaggedIds.delete(raw)) cId = true;
+  if (flaggedNames.delete(norm(raw))) cName = true;
+  if (flagged.delete(raw)) { changed = true; saveFlagged(); }
+  if (cId) saveFIds();
+  if (cName) saveFNames();
   return { ids, ips };
 }
 
@@ -190,8 +227,31 @@ function flagIp(ip) {
   if (added) { flagged.add(ip); saveFlagged(); }
   return { added, ip, ids: idsWithIp(ip) };
 }
-// Clear ALL flagged IPs (stops every IP auto-ban). Registry/history untouched.
-function clearFlags() { const n = flagged.size; flagged.clear(); saveFlagged(); return n; }
+// Manually blacklist an IP, username, or hex id (auto-detects which). Returns
+// what kind it was + the accounts already on record matching it (to ban now).
+function flagTarget(input) {
+  const val = String(input || "").trim();
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) {            // IPv4
+    const added = !flagged.has(val); if (added) { flagged.add(val); saveFlagged(); }
+    return { kind: "ip", value: val, added, ids: idsWithIp(val) };
+  }
+  if (/^[0-9a-f]{16,}$/i.test(val)) {                   // hex id
+    const id = cleanId(val);
+    const added = !flaggedIds.has(id); if (added) { flaggedIds.add(id); saveFIds(); }
+    return { kind: "id", value: id, added, ids: registry[id] ? [id] : [] };
+  }
+  const nm = norm(val);                                 // username
+  const added = !flaggedNames.has(nm); if (added) { flaggedNames.add(nm); saveFNames(); }
+  const ids = Object.keys(registry).filter(id => norm(registry[id].name) === nm);
+  return { kind: "username", value: val, added, ids };
+}
+// Clear ALL flags (IPs, usernames, ids). Stops every auto-ban. Registry kept.
+function clearFlags() {
+  const n = flagged.size + flaggedNames.size + flaggedIds.size;
+  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
+  saveFlagged(); saveFNames(); saveFIds();
+  return n;
+}
 // Remove one IP from the flag list AND from every player's recorded IPs.
 function clearIp(ip) {
   const flagRemoved = flagged.delete(ip) ? 1 : 0;
@@ -208,11 +268,11 @@ function clearIp(ip) {
 }
 // Wipe the whole IP registry AND all flags (full reset). Untracked list is kept.
 function clearAll() {
-  const ids = Object.keys(registry).length, fl = flagged.size;
+  const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size + flaggedIds.size;
   for (const k of Object.keys(registry)) delete registry[k];
-  flagged.clear();
-  flushRegistry(); saveFlagged();
-  return { ids, flagged: fl };   // learned-shared IPs are intentionally kept (protective)
+  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
+  flushRegistry(); saveFlagged(); saveFNames(); saveFIds();
+  return { ids, flagged: fl };
 }
 
 /* ---------------- public: untracked (ignore) list by username ---------------- */
@@ -268,13 +328,20 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
     catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
   }
 
-  // auto-ban if this join came from a flagged IP — but ONLY when the IP↔account
-  // attribution is unambiguous (one connection pending). Ambiguous joins are
-  // caught later at disconnect with the 100%-accurate same-line IP.
-  if (valid && confident && ip && flagged.has(ip) && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
-    recentAuto.set(id, Date.now());
-    try { await onAutoBan({ uniqueId: id, name: display, ip, server }); }
-    catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); recentAuto.delete(id); }
+  // auto-ban if this join matches a flagged hex id, username, or IP.
+  //  • id / username come straight from the login line -> reliable, ban on sight.
+  //  • IP comes from join correlation -> only when unambiguous (one connection
+  //    pending); ambiguous joins are caught later at disconnect via the confirmed IP.
+  if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
+    const reason = flaggedIds.has(id)                 ? "blacklisted ID"
+                 : (name && flaggedNames.has(norm(name))) ? "blacklisted username"
+                 : (confident && ip && flagged.has(ip))   ? "blacklisted IP"
+                 : null;
+    if (reason) {
+      recentAuto.set(id, Date.now());
+      try { await onAutoBan({ uniqueId: id, name: display, ip: ip || null, server, reason }); }
+      catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); recentAuto.delete(id); }
+    }
   }
 }
 
@@ -435,6 +502,7 @@ module.exports = {
   removeUntracked,
   getUntracked,
   flagIp,
+  flagTarget,
   clearFlags,
   clearIp,
   clearAll,

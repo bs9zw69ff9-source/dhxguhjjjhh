@@ -288,6 +288,28 @@ const ok = (cond, msg) => {
     clearInterval(tD);
     ok(autoD && autoD.uniqueId === "ev01", "same account under a new username is still auto-banned");
 
+    // username/ID blacklist: a DIFFERENT account reusing a banned username is caught
+    const logE = path.join(sandbox, "PavlovE.log");
+    const cheatId = "aaaa1111bbbb2222cccc3333dddd4444";   // real 32-hex id
+    fs.writeFileSync(logE, "");
+    let autoE = null;
+    const tE = ipBans.init({ logFiles: [logE], onAutoBan: async (i) => { autoE = i; }, pollMs: 20 });
+    fs.appendFileSync(logE,
+      "[2026.06.29-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 11.11.11.11:1\n" +
+      `[2026.06.29-10.00.00:200][2]LogNet: Login request: ?Name=Cheater?pid=Cheater userId: NULL:${cheatId} platform: NULL\n`);
+    await new Promise(r => setTimeout(r, 60));
+    fs.appendFileSync(logE, "[2026.06.29-10.01.00:000][3]LogTemp: Rcon: BanPlayer Cheater\n");
+    await new Promise(r => setTimeout(r, 60));
+    ok(ipBans.flagTarget("Cheater").added === false, "banning flags the username");
+    ok(ipBans.flagTarget(cheatId).added === false, "banning flags the hex id");
+    // a brand new account (new id, new IP) but the SAME username
+    fs.appendFileSync(logE,
+      "[2026.06.29-10.02.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 99.99.99.99:1\n" +
+      "[2026.06.29-10.02.00:200][5]LogNet: Login request: ?Name=Cheater?pid=Cheater userId: NULL:9999888877776666555544443333eeee platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tE);
+    ok(autoE && autoE.uniqueId === "9999888877776666555544443333eeee" && autoE.reason === "blacklisted username", "new account reusing a banned username is auto-banned");
+
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");
     fs.writeFileSync(log8, "");
