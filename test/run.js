@@ -216,6 +216,21 @@ const ok = (cond, msg) => {
       "[2026.06.21-12.00.00:200][2]LogNet: Login request: ?Name=Found?pid=Found userId: NULL:f00d03 platform: NULL\n");
     const discovered = ipBans.discoverLogs([root, path.join(root, "steamuser")]);
     ok(discovered.includes(realLog), "discoverLogs finds Pavlov/Saved/Logs/Pavlov.log under a root");
+
+    // untracked (ignore-list) usernames are never recorded
+    ipBans.addUntracked("GhostName");
+    const log5 = path.join(sandbox, "Pavlov5.log");
+    fs.writeFileSync(log5, "");
+    const t5 = ipBans.init({ logFiles: [log5], onAutoBan: async () => {}, onConnect: async () => {}, pollMs: 20 });
+    fs.appendFileSync(log5,
+      "[2026.06.22-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 8.8.8.8:5000\n" +
+      "[2026.06.22-10.00.00:200][2]LogNet: Login request: ?Name=GhostName?pid=GhostName userId: NULL:ghost99 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 70));
+    clearInterval(t5);
+    ok(!ipBans.registry["ghost99"], "ignore-listed username is not tracked");
+    ok(ipBans.getUntracked().includes("ghostname"), "getUntracked lists the ignored name (lowercased)");
+    ipBans.removeUntracked("GhostName");
+    ok(!ipBans.getUntracked().includes("ghostname"), "removeUntracked clears it");
   }
 
   console.log("Faction rank caps:");

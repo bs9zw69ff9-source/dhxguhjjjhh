@@ -61,6 +61,7 @@ const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${new Date(BOT_ST
    ================================================================ */
 const OWNER_IDS = new Set([
   "1014251293159731310",
+  "678362059905171471",
 ]);
 function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 
@@ -2028,6 +2029,13 @@ const commands = [
     .setDescription("👁️ Owner — Revoke a menu from EVERY player who holds it (both servers)")
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
+  new SlashCommandBuilder().setName("ipignore")
+    .setDescription("👁️ Owner — Manage usernames the IP tracker should ignore")
+    .addSubcommand(s => s.setName("add").setDescription("Stop tracking a username's IPs")
+      .addStringOption(o => o.setName("username").setDescription("Exact in-game username").setRequired(true)))
+    .addSubcommand(s => s.setName("remove").setDescription("Resume tracking a username")
+      .addStringOption(o => o.setName("username").setDescription("Username to un-ignore").setRequired(true)))
+    .addSubcommand(s => s.setName("list").setDescription("List ignored usernames")),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2370,6 +2378,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/autoban add|remove|list <pattern>` — Auto-ban names containing a pattern",
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
+                "`/ipignore add|remove|list <username>` — 👁️ *Owner only* — exclude usernames from IP tracking",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -3481,7 +3490,14 @@ client.on("interactionCreate", async (interaction) => {
         const isGive    = name === "givemenu";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                         // ← ADDED
-        await sendRconBoth(`${isGive ? "GiveMenu" : "RemoveMenu"} ${playerId} ${menuId}`, server);
+        if (isGive && menuValue === "highstaff") {
+          // High Staff needs three distinct RCON commands — run each separately.
+          await sendRconBoth(`AddMod ${playerId}`, server);
+          await sendRconBoth(`AddAccessManager ${playerId}`, server);
+          await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
+        } else {
+          await sendRconBoth(`${isGive ? "GiveMenu" : "RemoveMenu"} ${playerId} ${menuId}`, server);
+        }
         if (isGive) {
           addMenuGrant(playerId, server, menuValue, menuId, interaction.user.tag);
         } else {
@@ -3501,9 +3517,9 @@ client.on("interactionCreate", async (interaction) => {
             { name: isGive ? "🔒  Granted By" : "🔒  Revoked By", value: `${interaction.user}`, inline: false },
             { name: isGive ? "♻️  Persistence" : "🗑️  Persistence", value: isGive ? "✅  Will be re-applied automatically on rejoin." : "✅  Removed from persistent store — will not reapply.", inline: false },
           ).setTimestamp();
-        // High Staff needs two RCON commands the bot can't grant via menus — remind the operator to run them manually.
+        // High Staff: the bot ran all three commands automatically (each separately).
         if (isGive && menuValue === "highstaff") {
-          embed.addFields({ name: "⚙️  Manual steps — run these in RCON to finish", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\n\`\`\`` , inline: false });
+          embed.addFields({ name: "⚙️  Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
         }
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
@@ -3540,6 +3556,40 @@ client.on("interactionCreate", async (interaction) => {
           ).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         IPIGNORE — owner only: usernames the IP tracker skips
+         ───────────────────────────────────────────────────── */
+      case "ipignore": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const sub = interaction.options.getSubcommand();
+
+        if (sub === "list") {
+          const names = (() => { try { return ipBans.getUntracked(); } catch { return []; } })();
+          const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("🙈  IP-Ignored Usernames")
+            .setDescription(names.length ? names.map(n => `• \`${n}\``).join("\n").slice(0, 4000) : hero("No usernames are ignored — everyone is tracked.")).setTimestamp());
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        const username = interaction.options.getString("username").trim();
+        if (sub === "add") {
+          const r = (() => { try { return ipBans.addUntracked(username); } catch { return null; } })();
+          const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🙈  Username Ignored")
+            .setDescription(hero(`**${username}** will no longer be tracked by the IP system.`))
+            .addFields(
+              { name: "🚫  Effect", value: "No IP logging, no connection-feed posts, no IP auto-ban for this name.", inline: false },
+              { name: "🧹  Purged", value: r ? `**${r.purged}** existing record(s) removed.` : "—", inline: false },
+            ).setTimestamp());
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        // remove
+        const had = (() => { try { return ipBans.removeUntracked(username); } catch { return false; } })();
+        const embed = brand(new EmbedBuilder().setColor(had ? NV.NCR_TAN : NV.RUST_RED)
+          .setTitle(had ? "👁️  Tracking Resumed" : "❔  Not Found")
+          .setDescription(had ? hero(`**${username}** is tracked again from their next connection.`) : hero(`**${username}** wasn't on the ignore list.`)).setTimestamp());
+        return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────

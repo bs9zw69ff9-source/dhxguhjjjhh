@@ -26,6 +26,7 @@ const path = require("path");
 /* ---------------- CONFIG ---------------- */
 const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
 const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");
+const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 
@@ -57,6 +58,8 @@ function loadJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, "utf
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }
 const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged   = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
+const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
+const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
 
 let onAutoBan = async () => {};
 let onConnect = async () => {};
@@ -75,6 +78,7 @@ let lastTs = 0, saveTimer = null, dirty = false;
 function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2)); } catch (e) { console.error("[ipBans] save registry:", e.message); } }
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
 function saveFlagged()   { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
+function saveUntracked()  { try { fs.writeFileSync(UNTRACKED_PATH, JSON.stringify([...untrackedNames], null, 2)); } catch (e) { console.error("[ipBans] save untracked:", e.message); } }
 
 /* ---------------- lookups ---------------- */
 function resolveIds(input) {
@@ -101,6 +105,7 @@ function altIdsForIps(ips, excludeIds = []) {
 function record(id, name, ip, ts) {
   if (skipId(id)) return;
   id = cleanId(id);
+  if (untrackedIds.has(id)) return;                // ignore-listed player — never track
   const fresh = !registry[id];
   const e = registry[id] || { name: null, ips: [], firstSeen: ts || Date.now(), lastSeen: 0 };
   let changed = fresh, newIp = false;
@@ -141,6 +146,29 @@ function unblacklistPlayer(input) {
   return { ids, ips };
 }
 
+/* ---------------- public: untracked (ignore) list by username ---------------- */
+// Add a username the IP system should never track. Also purges any existing
+// registry entries for that name and remembers their ids so their disconnect
+// lines are ignored too. Returns { name, purged }.
+function addUntracked(name) {
+  const key = norm(name);
+  if (!key) return { name: key, purged: 0 };
+  untrackedNames.add(key);
+  saveUntracked();
+  let purged = 0;
+  for (const [id, e] of Object.entries(registry))
+    if (norm(e.name) === key) { untrackedIds.add(id); delete registry[id]; purged++; }
+  if (purged) scheduleSave();
+  return { name: key, purged };
+}
+function removeUntracked(name) {
+  const key = norm(name);
+  const had = untrackedNames.delete(key);
+  if (had) saveUntracked();
+  return had;
+}
+function getUntracked() { return [...untrackedNames]; }
+
 /* ---------------- log parsing ---------------- */
 function parseTs(line) {
   const m = line.match(TS_RE);
@@ -151,6 +179,10 @@ function parseTs(line) {
 
 async function handleJoin(name, rawId, ip, ts, server) {
   if (/localhost-/i.test(rawId || "")) return;     // server self-connection
+  if (name && untrackedNames.has(norm(name))) {    // ignore-listed username — don't track at all
+    if (!skipId(rawId)) untrackedIds.add(cleanId(rawId));   // also skip their disconnect lines
+    return;
+  }
   const valid = !skipId(rawId);
   const id    = valid ? cleanId(rawId) : null;
   if (valid) record(rawId, name, ip, ts);          // registry + auto-ban need a real id
@@ -303,6 +335,9 @@ module.exports = {
   ipsForIds,
   getIPsForPlayer: (input) => ipsForIds(resolveIds(input)),
   getAltsOf:       (input) => altIdsForIps(ipsForIds(resolveIds(input)), resolveIds(input)),
+  addUntracked,
+  removeUntracked,
+  getUntracked,
   discoverLogs,
   registry,
   get blacklist() { return [...flagged]; },
