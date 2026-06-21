@@ -835,7 +835,12 @@ setInterval(() => {
    INPUT SANITIZATION
    ================================================================ */
 function sanitizeId(raw) {
-  return String(raw ?? "").trim().replace(/[^a-zA-Z0-9_\-.]/g, "").slice(0, 64);
+  return String(raw ?? "")
+    .replace(/\s*\((?:manual entry|offline)\)/gi, "")   // strip autocomplete display labels
+    .replace(/\s*\[(?:s1|s2|s1\+s2)\]/gi, "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_\-.]/g, "")
+    .slice(0, 64);
 }
 function sanitizeMessage(raw) {
   return String(raw ?? "").replace(/[\r\n\t]/g, " ").replace(/[^\x20-\x7E]/g, "").slice(0, 200);
@@ -4276,6 +4281,7 @@ module.exports = {
   recordKnownPlayers, getKnownPlayerChoices, loadKnownPlayers, seedKnownPlayers,
   // context-aware autocomplete
   commandPlayerCandidates,
+  sanitizeId,
   // leaderboards
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings

@@ -398,6 +398,13 @@ const ok = (cond, msg) => {
   ok(bot.getFactionRankCap("NCR", "Officer") === null, "cap 0 clears -> unlimited");
   ok(JSON.stringify(bot.getFactionRankCaps("NCR")) === "{}", "cleared cap removed from config");
 
+  console.log("sanitizeId — strips autocomplete labels:");
+  ok(bot.sanitizeId("CoolKid2013 (manual entry)") === "CoolKid2013", "strips (manual entry)");
+  ok(bot.sanitizeId("gfhyg [S1]") === "gfhyg", "strips [S1]");
+  ok(bot.sanitizeId("Player [S1+S2]") === "Player", "strips [S1+S2]");
+  ok(bot.sanitizeId("ncr_private (offline)") === "ncr_private", "strips (offline)");
+  ok(bot.sanitizeId("00027f60483f4422b9f00d5c75dcd481") === "00027f60483f4422b9f00d5c75dcd481", "normal id unchanged");
+
   console.log("UI / parsing helpers:");
   ok(JSON.stringify(bot.splitPages([1,2,3,4,5], 2)) === "[[1,2],[3,4],[5]]", "splitPages chunks");
   ok(JSON.stringify(bot.splitPages([], 5)) === "[[]]", "splitPages empty -> one page");
