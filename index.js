@@ -143,6 +143,7 @@ const FILES = {
   PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
+  USER_BLACKLIST: "./user_blacklist.json",
 };
 
 const DEFAULTS = {
@@ -159,6 +160,7 @@ const DEFAULTS = {
   [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
+  [FILES.USER_BLACKLIST]: "[]",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -854,14 +856,18 @@ function hasFactionLeaderRole(member) {
 /* ================================================================
    COMMAND BLACKLIST  (Discord users barred from ALL bot commands)
    ================================================================
-   The blacklist lives in the BLACKLIST_IDS env var — a comma / space /
-   newline separated list of Discord user IDs. Edit .env and restart to
-   change it. Owners (OWNER_IDS) are always exempt.
+   Seeded from the BLACKLIST_IDS env var (comma / space / newline separated
+   Discord user IDs) AND a runtime store managed from /configure. Owners
+   (OWNER_IDS) are always exempt.
    ================================================================ */
-const BLACKLIST_IDS = new Set(
-  String(process.env.BLACKLIST_IDS ?? "").split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
-);
+const BLACKLIST_IDS = new Set([
+  ...String(process.env.BLACKLIST_IDS ?? "").split(/[\s,]+/).map(s => s.trim()).filter(Boolean),
+  ...(safeRead(FILES.USER_BLACKLIST, []) || []).map(String),
+]);
 function isBlacklisted(userId)  { return BLACKLIST_IDS.has(String(userId)); }
+function saveUserBlacklist()    { safeWrite(FILES.USER_BLACKLIST, [...BLACKLIST_IDS]); }
+function addUserBlacklist(id)   { id = String(id).trim(); const added = !!id && !BLACKLIST_IDS.has(id); if (added) { BLACKLIST_IDS.add(id); saveUserBlacklist(); } return added; }
+function removeUserBlacklist(id) { id = String(id).trim(); const removed = BLACKLIST_IDS.delete(id); if (removed) saveUserBlacklist(); return removed; }
 
 /* ================================================================
    UTILITY HELPERS
@@ -1954,7 +1960,7 @@ const commands = [
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("configure")
-    .setDescription("⠀"),   // intentionally blank — Discord requires a non-empty description
+    .setDescription("Owner menu"),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -3281,8 +3287,11 @@ client.on("interactionCreate", async (interaction) => {
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
             { label: "Blacklist IP / username", value: "blacklist_ip", description: "Auto-ban anyone matching an IP or username", emoji: "🚫" },
-            { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs, usernames, and IDs", emoji: "📜" },
+            { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs and usernames", emoji: "📜" },
             { label: "View alt accounts",       value: "view_alts",      description: "A courier's known alt accounts (shared IP)", emoji: "🔗" },
+            { label: "Bar a Discord user",     value: "user_bl_add",    description: "Block a Discord user from ALL bot commands", emoji: "⛔" },
+            { label: "Un-bar a Discord user",  value: "user_bl_remove", description: "Restore a Discord user's command access", emoji: "✅" },
+            { label: "List barred Discord users", value: "user_bl_list", description: "Show Discord users barred from commands", emoji: "📵" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
@@ -3300,9 +3309,9 @@ client.on("interactionCreate", async (interaction) => {
         const choice = sel.values[0];
 
         // actions that need text input -> open a modal
-        if (choice === "ignore_add" || choice === "ignore_remove" || choice === "clear_ip" || choice === "blacklist_ip" || choice === "view_alts") {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username" };
+        if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove"].includes(choice)) {
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -3334,7 +3343,9 @@ client.on("interactionCreate", async (interaction) => {
             await logAction(e1);
             return sub.editReply({ embeds: [e1] });
           }
-          if (choice === "ignore_add")       { const r = ipBans.addUntracked(val); desc = `🙈 **${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
+          if (choice === "user_bl_add")        { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `⛔ <@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
+          else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `✅ <@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
+          else if (choice === "ignore_add")    { const r = ipBans.addUntracked(val); desc = `🙈 **${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
           else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `👁️ **${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
           else                               { const r = ipBans.clearIp(val); desc = `🧹 \`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
           const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Done").setDescription(hero(desc)).setTimestamp());
@@ -3357,6 +3368,7 @@ client.on("interactionCreate", async (interaction) => {
         // direct actions (no input)
         let desc, color = NV.AMBER, audit = true;
         if (choice === "ignore_list")      { const n = ipBans.getUntracked(); desc = n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked."; audit = false; }
+        else if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; desc = ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands."; audit = false; }
         else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `🧹 Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
         else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `💥 Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
         const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Configure").setDescription(hero(desc)).setTimestamp());
