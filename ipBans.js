@@ -202,12 +202,12 @@ function blacklistPlayer(input) {
   return {
     ids, ips, alts: altNames,
     field: {
-      name: "IP enforcement",
+      name: "🌐  IP Enforcement",
       value: (ips.length
-        ? `Flagged ${ips.length} IP${ips.length !== 1 ? "s" : ""}; any account from them is auto-banned.`
+        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
         : "No connection IPs on record yet.") +
-        ` Username also flagged.` +
-        (altNames.length ? ` Shares an IP with: ${altNames.join(", ")}.` : ""),
+        `\n🎯 Username also flagged — a new account using this name is caught too.` +
+        (altNames.length ? `\n⚠️  Shares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
       inline: false,
     },
   };

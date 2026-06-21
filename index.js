@@ -765,11 +765,11 @@ const NV = {
   DEEP_BLACK:  0x0D0D0D,
 };
 
-/* Muted, cold palette for the clinical ban / IP embeds (system-report look). */
+/* Ban / IP embed accents — Fallout: New Vegas palette. */
 const CLIN = {
-  red:   0xB23A3A,   // ban / block / active
-  green: 0x5B8C5A,   // cleared / lifted / no bans
-  grey:  0x9AA0A6,   // neutral info (lists, checks, connection log)
+  red:   0x8B0000,   // LEGION_RED  — ban / block / active
+  green: 0x39FF14,   // IRRAD_GREEN — cleared / lifted / no bans
+  grey:  0xFFB000,   // AMBER       — neutral info (lists, checks, connection log)
 };
 
 const QUOTES = {
@@ -1023,12 +1023,10 @@ const pip = (ok) => (ok ? "🟢" : "🔴");
 /* A blockquote-styled hero line used at the top of feature embeds. */
 function hero(quoteText) { return `> *${quoteText}*\n${RULE}`; }
 
-/* Clinical counterpart to brand(): for ban / IP embeds. Adds a timestamp and an
-   optional plain footer only — no themed author header, avatar, quotes or hero. */
+/* Ban / IP embeds: stamp them with the full Mojave Authority branding (author
+   header, avatar, timestamp) + an optional footer — same look as everything else. */
 function clinical(embed, footer) {
-  if (footer) embed.setFooter({ text: footer });
-  embed.setTimestamp();
-  return embed;
+  return brand(embed, footer ? { footer } : {});
 }
 
 /* ================================================================
@@ -1555,13 +1553,14 @@ async function processExpiredBans() {
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
       await logBan(
-        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Temporary Ban Expired")
+        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("⏰  Sentence Served — Courier Released")
+          .setDescription('> *"Every soul deserves a second chance in the Mojave."*')
           .addFields(
-            { name: "Player",     value: `\`${ban.playerId}\``,          inline: true },
-            { name: "Reason",     value: ban.reason,                     inline: true },
-            { name: "Duration",   value: ban.durationLabel ?? "Unknown", inline: true },
-            { name: "Banned by",  value: ban.moderator,                  inline: false },
-          ), "Auto-lifted on expiry")
+            { name: "🎯  Courier",          value: `\`${ban.playerId}\``,          inline: true },
+            { name: "⚖️  Original Offense", value: ban.reason,                     inline: true },
+            { name: "⏱️  Duration Served",  value: ban.durationLabel ?? "Unknown", inline: true },
+            { name: "🛡️  Originally Banned",value: `by ${ban.moderator}`,          inline: false },
+          ), "Exile expired — access restored automatically")
       );
     } catch (err) {
       logger.error("Bans", `Unban failed for ${ban.playerId}: ${err.message}`);
@@ -1770,8 +1769,8 @@ async function ensureVerifyPanel() {
   if (!ch?.isTextBased()) return;
   const saved = safeRead(FILES.VERIFY_PANEL, {});
   if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
-  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Verification")
-    .setDescription("Press **Verify** and enter your exact Pavlov username to link your account and unlock the rest of the server."));
+  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🎫  Mojave Checkpoint — Verification")
+    .setDescription(`${hero("Papers, please. Confirm your name and the Strip opens to you.")}\nPress **Verify** and enter your **exact** Pavlov username to link your account and gain access to the rest of the server.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("verify_start").setLabel("Verify").setStyle(ButtonStyle.Success));
   try { const m = await ch.send({ embeds: [embed], components: [row] }); safeWrite(FILES.VERIFY_PANEL, { id: m.id }); }
@@ -1782,8 +1781,8 @@ async function ensureVerifyPanel() {
 async function handleVerifySubmit(interaction) {
   const name = sanitizeMessage(interaction.fields.getTextInputValue("verify_name")).trim();
   if (!isKnownPavlovPlayer(name)) {
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Verification Failed")
-      .setDescription(`Couldn't find a Pavlov player named \`${name}\`. Enter your **exact** in-game username — you must have played on the server first.`))], ephemeral: true });
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("📛  Verification Denied")
+      .setDescription(`${hero("That name's not in our records, wanderer.")}\nCouldn't find a Pavlov courier named \`${name}\`. Enter your **exact** in-game username — you must have set foot in the Mojave first.`))], ephemeral: true });
   }
   const member = interaction.member;
   const notes = [];
@@ -1797,8 +1796,8 @@ async function handleVerifySubmit(interaction) {
   links[name.toLowerCase()] = member.id;
   safeWrite(FILES.VERIFY_LINKS, links);
   logger.info("Verify", `${member.user.tag} verified as Pavlov "${name}"`);
-  return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Verified")
-    .setDescription(`Linked to Pavlov player \`${name}\`. ${notes.join(" · ")}`))], ephemeral: true });
+  return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  Welcome to the Strip — Verified")
+    .setDescription(`${hero("Identity confirmed. The Mojave welcomes you.")}\nLinked to Pavlov courier \`${name}\`. ${notes.join(" · ")}`))], ephemeral: true });
 }
 
 /* ================================================================
@@ -2147,16 +2146,17 @@ client.once("ready", async () => {
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null };
       const ts = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:f>` : "unknown";
       const tsR = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:R>` : "unknown";
-      const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`Connection — ${name}`)
+      const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("🟢  Courier Logged — IP Confirmed")
+        .setDescription(`${hero("A courier strides into the Mojave.")}`)
         .addFields(
-          { name: "Name",          value: `\`${name}\``,                                            inline: true },
-          { name: "Current IP",    value: `\`${ip ?? "unknown"}\``,                                 inline: true },
-          { name: "Server",        value: srvName,                                                  inline: true },
-          { name: `Confirmed IPs (${rec.cips.length})`, value: (rec.cips.length ? rec.cips.map(x => `\`${x}\``).join(", ") : "none").slice(0, 1024), inline: false },
-          { name: "First seen",    value: ts(rec.firstSeen),                                        inline: true },
-          { name: "Last seen",     value: tsR(rec.lastSeen),                                        inline: true },
-          { name: `Known alts (${rec.alts.length})`, value: (rec.alts.length ? rec.alts.map(a => `\`${a}\``).join(", ") : "none").slice(0, 1024), inline: false },
-        ), "Connection log");
+          { name: "🎯  Name",       value: `\`${name}\``,                                            inline: true },
+          { name: "🌐  Current IP", value: `\`${ip ?? "unknown"}\``,                                 inline: true },
+          { name: "🖥️  Server",     value: srvName,                                                  inline: true },
+          { name: `📍  Confirmed IPs (${rec.cips.length})`, value: (rec.cips.length ? rec.cips.map(x => `\`${x}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: "📅  First Seen",  value: ts(rec.firstSeen),                                        inline: true },
+          { name: "👁️  Last Seen",  value: tsR(rec.lastSeen),                                        inline: true },
+          { name: `🔗  Known Alts (${rec.alts.length})`, value: (rec.alts.length ? rec.alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+        ), "Connection log · Mojave Authority");
       feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
     },
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
@@ -2165,11 +2165,12 @@ client.once("ready", async () => {
       await banWithIp(name, "both");
       writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`, by: "IP-Guard" });
       logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`);
-      const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Auto-Ban — Blacklist Match")
+      const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🛑  Blacklisted Courier Blocked")
+        .setDescription(`${hero("A barred courier tried to slip back into the Mojave.")}`)
         .addFields(
-          { name: "Player", value: `\`${name}\``,            inline: true },
-          { name: "IP",     value: `\`${ip ?? "unknown"}\``, inline: true },
-          { name: "Reason", value: reason || "blacklist match", inline: true },
+          { name: "🎯  Courier", value: `\`${name}\``,            inline: true },
+          { name: "🌐  IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
+          { name: "🚫  Reason",  value: reason || "blacklist match", inline: true },
         ), "Auto-ban · both servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       // also surface it in the connection feed (the channel you watch for joins)
@@ -2829,15 +2830,16 @@ client.on("interactionCreate", async (interaction) => {
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
         writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         const ts = Math.floor(expires / 1000);
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Temporary Ban Issued")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("⏳  Courier Exiled from the Mojave")
+          .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "Player",   value: `\`${playerId}\``,                inline: true },
-            { name: "Server",   value: serverLabel(server),             inline: true },
-            { name: "Duration", value: label,                           inline: true },
-            { name: "Reason",   value: reason,                          inline: false },
-            { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`,   inline: true },
-            { name: "By",       value: `${interaction.user}`,           inline: true },
-          ), replaced ? `Replaced earlier ban: ${replaced.reason}` : "Auto-lifted on expiry");
+            { name: "🎯  Courier",  value: `\`${playerId}\``,                                inline: true },
+            { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`, inline: true },
+            { name: "⏱️  Duration", value: `**${label}**`,                                   inline: true },
+            { name: "⚖️  Offense",  value: reason,                                           inline: false },
+            { name: "🔓  Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`,                     inline: true },
+            { name: "🛡️  By",       value: `${interaction.user}`,                            inline: true },
+          ), replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires");
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
@@ -2872,13 +2874,14 @@ client.on("interactionCreate", async (interaction) => {
         const ipLifted = c && (c.ips + c.names) > 0
           ? `Cleared ${c.ips} IP(s) and ${c.names} username flag(s).`
           : "Nothing was flagged for this player.";
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Ban Lifted")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("🔓  Exile Lifted — Welcome Back to the Strip")
+          .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "Player",         value: `\`${playerId}\``,   inline: true },
-            { name: "Server",         value: serverLabel(server), inline: true },
-            { name: "By",             value: `${interaction.user}`, inline: true },
-            { name: "Record",         value: removed ? "Temp ban record cleared." : "No temp ban record — RCON Unban sent.", inline: false },
-            { name: "IP enforcement", value: ipLifted, inline: false },
+            { name: "🎯  Courier",     value: `\`${playerId}\``,     inline: true },
+            { name: "🖥️  Server",      value: serverLabel(server),   inline: true },
+            { name: "🛡️  Pardoned By", value: `${interaction.user}`, inline: true },
+            { name: "📋  Record",       value: removed ? "Temp ban record cleared." : "No temp ban record — RCON Unban sent.", inline: false },
+            { name: "🌐  IP Enforcement", value: ipLifted, inline: false },
           ));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
@@ -2895,16 +2898,17 @@ client.on("interactionCreate", async (interaction) => {
         if (tb) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Temporary Ban — Active")
+            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("⏳  Temporary Exile Active")
+              .setDescription(`${DIVIDER}`)
               .addFields(
-                { name: "Player",    value: `\`${playerId}\``,               inline: true },
-                { name: "Server",    value: serverLabel(server),             inline: true },
-                { name: "Duration",  value: tb.durationLabel ?? "?",         inline: true },
-                { name: "Reason",    value: tb.reason,                       inline: false },
-                { name: "By",        value: tb.moderator,                    inline: true },
-                { name: "Remaining", value: formatTimeLeft(tb.expires),      inline: true },
-                { name: "Expires",   value: `<t:${ts}:F>  ·  <t:${ts}:R>`,   inline: false },
-              ), "Auto-lifted on expiry")
+                { name: "🎯  Courier",   value: `\`${playerId}\``,                  inline: true },
+                { name: "🖥️  Server",    value: serverLabel(server),                inline: true },
+                { name: "⏱️  Duration",  value: tb.durationLabel ?? "?",            inline: true },
+                { name: "⚖️  Offense",   value: tb.reason,                          inline: false },
+                { name: "🛡️  By",        value: tb.moderator,                       inline: true },
+                { name: "⏰  Remaining", value: `**${formatTimeLeft(tb.expires)}**`, inline: true },
+                { name: "🔓  Expires",   value: `<t:${ts}:F>  ·  <t:${ts}:R>`,       inline: false },
+              ), "Auto-lifted when timer expires")
           ]});
         }
         await interaction.deferReply();
@@ -2917,16 +2921,17 @@ client.on("interactionCreate", async (interaction) => {
           : [server === "server1" ? await checkOne("server1") : false, server === "server2" ? await checkOne("server2") : false];
         if (!b1 && !b2) {
           return interaction.editReply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Active Ban")
-              .setDescription(`\`${playerId}\` has no active ban on any server.`))
+            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  No Exile Found")
+              .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` has no active exile on any server.`))
           ]});
         }
         return interaction.editReply({ embeds: [
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban — Active")
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("💀  Permanent Exile Active")
+            .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "Player",    value: `\`${playerId}\``,                                                    inline: true },
-              { name: "Banned on", value: [b1 && "Server 1", b2 && "Server 2"].filter(Boolean).join(" + "),     inline: true },
-            ), "Use /unban to lift")
+              { name: "🎯  Courier",   value: `\`${playerId}\``,                                                 inline: true },
+              { name: "🖥️  Banned On", value: [b1 && "**Server 1**", b2 && "**Server 2**"].filter(Boolean).join("  +  "), inline: true },
+            ), "Permanent exile — use /unban to lift")
         ]});
       }
 
@@ -2955,21 +2960,21 @@ client.on("interactionCreate", async (interaction) => {
         const extractId = e => typeof e === "string" ? e : (e.name ?? e.username ?? e.uniqueId ?? e.id ?? "");
         if (!tempBans.length && !pb1.length && !pb2.length) {
           return interaction.editReply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Ban List — Empty")
-              .setDescription("No active bans on any server."))
+            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  Exile Registry Clear")
+              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles on any server.'))
           ]});
         }
-        // Flatten every ban into a single line so long lists paginate cleanly.
+        // Flatten every exile into a single tagged line so long lists paginate cleanly.
         const lines = [
-          ...tempBans.map(b => `\`${b.playerId}\` — temp, expires <t:${Math.floor(b.expires / 1000)}:R> · ${b.reason}`),
-          ...pb1.map(b => `\`${extractId(b)}\` — permanent · S1`),
-          ...pb2.map(b => `\`${extractId(b)}\` — permanent · S2`),
+          ...tempBans.map(b => `⏳  \`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
+          ...pb1.map(b => `💀  \`${extractId(b)}\`  ·  *Permanent · S1*`),
+          ...pb2.map(b => `💀  \`${extractId(b)}\`  ·  *Permanent · S2*`),
         ];
         const total = lines.length;
-        const header = `${total} active ban${total !== 1 ? "s" : ""} · ${tempBans.length} temp · ${pb1.length + pb2.length} permanent`;
+        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ⏳ ${tempBans.length} temp  ·  💀 ${pb1.length + pb2.length} permanent`;
         return paginate(interaction, lines, (pageLines) =>
-          clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`Ban List — ${serverLabel(server)}`)
-            .setDescription(`${header}\n${pageLines.join("\n")}`), `${total} active`),
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle(`📜  Exile Registry — ${serverLabel(server)}`)
+            .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`), `${total} exile${total !== 1 ? "s" : ""} active`),
           { perPage: 15 });
       }
 
@@ -2987,15 +2992,16 @@ client.on("interactionCreate", async (interaction) => {
         const ipEnf = await banWithIp(playerId, server);
         await removeBans(playerId);   // a permanent ban supersedes any temp ban
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Issued")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("💀  Permanent Exile Issued")
+          .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "Player",   value: `\`${playerId}\``,    inline: true },
-            { name: "Server",   value: serverLabel(server),  inline: true },
-            { name: "Duration", value: "Permanent",          inline: true },
-            { name: "Reason",   value: reason,               inline: false },
-            { name: "By",       value: `${interaction.user}`, inline: false },
+            { name: "🎯  Courier",  value: `\`${playerId}\``,                                inline: true },
+            { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`, inline: true },
+            { name: "⏱️  Sentence", value: "**Permanent**",                                  inline: true },
+            { name: "⚖️  Offense",  value: reason,                                           inline: false },
+            { name: "🔒  Admin",    value: `${interaction.user}`,                            inline: false },
           ));
-        if (notes) embed.addFields({ name: "Notes", value: notes });
+        if (notes) embed.addFields({ name: "📝  Notes", value: notes });
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
@@ -3022,15 +3028,16 @@ client.on("interactionCreate", async (interaction) => {
           new ButtonBuilder().setCustomId("ctb_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
         );
         const msg = await interaction.reply({
-          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm: Clear Temporary Bans")
-            .setDescription(`This lifts ${bans.length} temporary ban${bans.length !== 1 ? "s" : ""} on both servers.\n\n` +
-              bans.map(b => `\`${b.playerId}\` — ${b.reason}`).join("\n").slice(0, 3800)), "Expires in 30 seconds")],
+          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🧹  Confirm Mass Clearance")
+            .setDescription(`> *"Are you sure? Every exile gets pardoned."*\n\n${DIVIDER}\n` +
+              `This will lift **${bans.length}** exile${bans.length !== 1 ? "s" : ""} and unban all on both servers.\n\n` +
+              bans.map(b => `·  \`${b.playerId}\`  —  *${b.reason}*`).join("\n").slice(0, 3500)), "Expires in 30 seconds")],
           components: [row], ephemeral: true, fetchReply: true,
         });
         try {
           const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
           if (btn.customId === "ctb_cancel") {
-            return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Cancelled").setDescription("No bans were lifted."))], components: [] });
+            return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("🪖  Stand Down").setDescription("Clearance cancelled — all exiles remain active."))], components: [] });
           }
           await btn.deferUpdate();
           const ok = [], fail = [];
@@ -3040,14 +3047,14 @@ client.on("interactionCreate", async (interaction) => {
           }
           await removeBans(...ok);   // drop only those actually lifted; keep failures & any concurrent additions
           writeModLog({ action: "cleartempbans", count: ok.length, by: interaction.user.tag });
-          const lines = [...ok.map(id => `\`${id}\` — lifted`), ...fail.map(id => `\`${id}\` — failed, kept`)];
-          const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Temporary Bans Cleared")
-            .setDescription(`${ok.length} lifted${fail.length ? ` · ${fail.length} failed` : ""}\n\n${lines.join("\n")}`.slice(0, 4000))
-            .addFields({ name: "By", value: `${interaction.user}`, inline: false }));
+          const lines = [...ok.map(id => `✅  \`${id}\``), ...fail.map(id => `☢️  \`${id}\`  — failed, kept on record`)];
+          const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🧹  Temp Bans Cleared")
+            .setDescription(`> *"Clean slate."*\n\n${DIVIDER}\n**${ok.length}** released${fail.length ? `  ·  **${fail.length}** failed` : ""}\n\n${lines.join("\n")}`.slice(0, 4000))
+            .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }));
           await logBan(embed);
           return btn.editReply({ embeds: [embed], components: [] });
         } catch {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Timed Out").setDescription("Confirmation expired. No changes made."))], components: [] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("⌛  Timed Out").setDescription("Confirmation expired. No changes made."))], components: [] });
         }
       }
 
@@ -3067,25 +3074,26 @@ client.on("interactionCreate", async (interaction) => {
         const [b1, b2] = await Promise.all([fetchBans("server1"), process.env.RCON_HOST_2 ? fetchBans("server2") : Promise.resolve([])]);
         const names = [...new Set([...loadBans().map(b => b.playerId), ...b1, ...b2].map(s => String(s).trim()).filter(Boolean))];
         if (!names.length) {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Bans").setDescription("Nothing to clear — no bans on record."))] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  No Exiles on Record").setDescription(`${hero("The wasteland is at peace.")}\nNothing to clear — no bans on record.`))] });
         }
 
         // confirmation gate (irreversible)
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("cab_confirm").setLabel(`Unban all ${names.length}`).setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("cab_confirm").setLabel(`Unban all ${names.length}`).setStyle(ButtonStyle.Danger).setEmoji("🧹"),
           new ButtonBuilder().setCustomId("cab_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
         );
-        const preview = names.slice(0, 30).map(n => `\`${n}\``).join(", ") + (names.length > 30 ? ` …and ${names.length - 30} more` : "");
+        const preview = names.slice(0, 30).map(n => `·  \`${n}\``).join("\n") + (names.length > 30 ? `\n…and ${names.length - 30} more` : "");
         const msg = await interaction.editReply({
-          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm: Unban All")
-            .setDescription(`Runs \`Unban\` for ${names.length} player(s) on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`.slice(0, 4000)), "Expires in 30 seconds")],
+          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🧹  Confirm — Pardon the Whole Mojave")
+            .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\n` +
+              `Runs \`Unban\` for **${names.length}** courier(s) on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`.slice(0, 4000)), "Expires in 30 seconds")],
           components: [row],
         });
         let btn;
         try { btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id }); }
-        catch { return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Timed Out").setDescription("Confirmation expired. No bans were lifted."))], components: [] }); }
+        catch { return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("⌛  Timed Out").setDescription("Confirmation expired. No bans were lifted."))], components: [] }); }
         if (btn.customId === "cab_cancel") {
-          return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Cancelled").setDescription("All bans remain in place."))], components: [] });
+          return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("🪖  Stand Down").setDescription("Cancelled — all bans remain in place."))], components: [] });
         }
         await btn.deferUpdate();
 
@@ -3097,11 +3105,11 @@ client.on("interactionCreate", async (interaction) => {
         }
         await removeBans(...names);   // clear the bot's temp-ban records
         writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("All Bans Cleared")
-          .setDescription(`Ran \`Unban\` for ${names.length} player(s) on both servers and lifted their IP/username flags.`)
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🧹  All Exiles Pardoned")
+          .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\nRan \`Unban\` for **${names.length}** courier(s) on both servers and lifted their IP/username flags.`)
           .addFields(
-            { name: "Unbanned", value: `${ok}${failed ? ` · ${failed} failed` : ""}`, inline: true },
-            { name: "By",       value: `${interaction.user}`, inline: true },
+            { name: "✅  Unbanned", value: `**${ok}**${failed ? `  ·  ⚠️ ${failed} failed` : ""}`, inline: true },
+            { name: "🔒  By",       value: `${interaction.user}`, inline: true },
           ));
         await logBan(embed);
         return btn.editReply({ embeds: [embed], components: [] });
@@ -4288,7 +4296,8 @@ client.on("interactionCreate", async (interaction) => {
         const color = flagged.length ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`Player Dossier — ${playerId}`)
+          .setTitle(`👁️  Full Dossier — ${playerId}`)
+          .setDescription(hero("Everything on record. Owner eyes only."))
           .addFields(
             { name: "📡  Status",     value: statusStr,                                                              inline: true },
             { name: "⏱️  Playtime",   value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*None*",          inline: true },
@@ -4304,15 +4313,15 @@ client.on("interactionCreate", async (interaction) => {
 
         // ban status
         const banLines = [];
-        if (tb) banLines.push(`Temp ban — ${tb.reason} · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
-        embed.addFields({ name: "Ban status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "No active bans", inline: false });
+        if (tb) banLines.push(`⏳  **Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
+        embed.addFields({ name: "🚫  Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "✅  No active bans", inline: false });
 
         // IP intel
         embed.addFields(
-          { name: `Confirmed IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " (flagged)" : ""}`).join(", ") : "none confirmed yet").slice(0, 1024), inline: false },
-          { name: `Alt accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join(", ") : "none").slice(0, 1024), inline: false },
+          { name: `🌐  Confirmed IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " 🔨" : ""}`).join("  ·  ") : "*none confirmed yet*").slice(0, 1024), inline: false },
+          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
         );
-        if (flagged.length) embed.addFields({ name: "IP flag", value: `${flagged.length} of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
+        if (flagged.length) embed.addFields({ name: "🛑  IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
 
         // recent staff notes (inline, since owner)
         if (notes.length) {
