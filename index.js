@@ -1961,6 +1961,8 @@ const commands = [
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
+  new SlashCommandBuilder().setName("clearallbans")
+    .setDescription("👁️ Owner — Unban everyone (runs Unban per player on both servers)"),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2289,6 +2291,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
                 "`/configure` — 👁️ *Owner only* — hidden control panel (IP tracker management)",
+                "`/clearallbans` — 👁️ *Owner only* — unban everyone (runs Unban per player)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -2955,6 +2958,42 @@ client.on("interactionCreate", async (interaction) => {
         } catch {
           return interaction.editReply({ embeds: [warningEmbed("Timed Out", "Confirmation expired. No changes made.")], components: [] });
         }
+      }
+
+      /* ─────────────────────────────────────────────────────
+         CLEARALLBANS — owner only: Unban every banned player
+         ───────────────────────────────────────────────────── */
+      case "clearallbans": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        // gather every banned name: bot temp bans + the server BanList(s)
+        const fetchBans = async (srv) => {
+          try {
+            const d = parseRcon(await sendRcon("BanList", srv, 3000, 1));
+            return (d?.BanList ?? []).map(e => typeof e === "string" ? e : (e.name ?? e.username ?? e.uniqueId ?? e.id ?? "")).filter(Boolean);
+          } catch { return []; }
+        };
+        const [b1, b2] = await Promise.all([fetchBans("server1"), process.env.RCON_HOST_2 ? fetchBans("server2") : Promise.resolve([])]);
+        const names = [...new Set([...loadBans().map(b => b.playerId), ...b1, ...b2].map(s => String(s).trim()).filter(Boolean))];
+        if (!names.length) {
+          return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("✅  No Bans").setDescription(hero("Nothing to clear — no bans on record.")).setTimestamp())] });
+        }
+        let ok = 0, failed = 0;
+        for (const n of names) {
+          try { await sendRconBoth(`Unban ${sanitizeId(n)}`, "both"); ok++; }
+          catch (e) { failed++; logger.warn("ClearAllBans", `Unban ${n} failed: ${e.message}`); }
+          try { ipBans.unblacklistPlayer(n); } catch {}   // also lift IP/username flags
+        }
+        await removeBans(...names);   // clear the bot's temp-ban records
+        writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
+        const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🧹  All Bans Cleared")
+          .setDescription(hero(`Ran \`Unban\` for **${names.length}** player(s) on both servers, and lifted their IP/username flags.`))
+          .addFields(
+            { name: "✅  Unbanned", value: `**${ok}**${failed ? `  ·  ⚠️ ${failed} failed` : ""}`, inline: true },
+            { name: "🔒  By",       value: `${interaction.user}`, inline: true },
+          ).setTimestamp());
+        await logBan(embed);
+        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
