@@ -117,6 +117,30 @@ function altIdsForIps(ips, excludeIds = []) {
     if (!ex.has(norm(id)) && (e.cips || []).some(ip => ips.includes(ip))) set.add(id);
   return [...set];
 }
+// Everything Pavlov.log has taught us about a player: name, all/confirmed IPs,
+// first/last seen, and shared-IP alt usernames. Returns null if unknown.
+function getRecord(input) {
+  const ids = resolveIds(input);
+  if (!ids.length) return null;
+  const ips = new Set(), cips = new Set();
+  let name = null, firstSeen = Infinity, lastSeen = 0;
+  for (const id of ids) {
+    const e = registry[id]; if (!e) continue;
+    if (e.name && !name) name = e.name;
+    for (const ip of (e.ips || []))  ips.add(ip);
+    for (const ip of (e.cips || [])) cips.add(ip);
+    if (e.firstSeen) firstSeen = Math.min(firstSeen, e.firstSeen);
+    if (e.lastSeen)  lastSeen  = Math.max(lastSeen, e.lastSeen);
+  }
+  return {
+    name: name || String(input),
+    ips: [...ips],
+    cips: [...cips],
+    firstSeen: firstSeen === Infinity ? null : firstSeen,
+    lastSeen: lastSeen || null,
+    alts: altNamesForIps([...cips], ids),
+  };
+}
 
 /* ---------------- record an observation ---------------- */
 // sure = true when the IP and id came from the SAME log line (disconnect) — a
@@ -178,12 +202,12 @@ function blacklistPlayer(input) {
   return {
     ids, ips, alts: altNames,
     field: {
-      name: "🌐  IP Enforcement",
+      name: "IP enforcement",
       value: (ips.length
-        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
+        ? `Flagged ${ips.length} IP${ips.length !== 1 ? "s" : ""}; any account from them is auto-banned.`
         : "No connection IPs on record yet.") +
-        `\n🎯 Username also flagged — a new account using this name is caught too.` +
-        (altNames.length ? `\n⚠️  Shares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
+        ` Username also flagged.` +
+        (altNames.length ? ` Shares an IP with: ${altNames.join(", ")}.` : ""),
       inline: false,
     },
   };
@@ -497,6 +521,7 @@ module.exports = {
   getConfirmedIPsForPlayer: (input) => confirmedIpsForIds(resolveIds(input)),   // only same-line confirmed pairings
   getAltsOf:                (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   getAltNamesOf:            (input) => altNamesForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
+  getRecord,
   addUntracked,
   removeUntracked,
   getUntracked,

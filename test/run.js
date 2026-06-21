@@ -149,6 +149,8 @@ const ok = (cond, msg) => {
     ok(ipBans.getIPsForPlayer("NCR_Ranger").includes("203.0.113.7"), "resolve by NAME -> IPs (incl. tentative)");
     ok(ipBans.getConfirmedIPsForPlayer("NCR_Ranger").includes("198.51.100.9"), "getConfirmedIPsForPlayer returns the confirmed IP");
     ok(!ipBans.getConfirmedIPsForPlayer("NCR_Ranger").includes("203.0.113.7"), "confirmed lookup excludes tentative IPs");
+    const rec = ipBans.getRecord("NCR_Ranger");
+    ok(rec && rec.name === "NCR_Ranger" && rec.cips.includes("198.51.100.9") && rec.lastSeen, "getRecord returns name + confirmed IPs + lastSeen");
     ok(ipBans.getIPsForPlayer("aaa111").includes("198.51.100.9"), "disconnect line -> same-line IP+id learned");
     ok(ipBans.getAltsOf("NCR_Ranger").includes("bbb222"), "alt sharing a CONFIRMED IP is detected");
     ok(ipBans.getAltsOf("NCR_Ranger").length === 1, "non-sharing ids are not flagged as alts");
