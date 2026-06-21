@@ -778,43 +778,86 @@ const QUOTES = {
     '"You\'ve made an enemy of the Mojave. Enjoy the wasteland."',
     '"Even in the wasteland, there are rules. You broke them."',
     '"The Securitrons don\'t forgive. Neither do we."',
+    '"The game was rigged from the start — and you just lost."',
+    '"Should\'ve learned to use your head instead of swinging it. Now you\'re exiled."',
+    '"Out into the Divide with you. Don\'t look back."',
+    '"The Courier always rings twice. You won\'t ring again."',
+    '"Patrolling the Mojave almost makes you wish for a ban this clean."',
+    '"The King is dead, and so is your access. Thank you. Thank you very much."',
   ],
   unban:   [
     '"Every soul deserves a second chance in the Mojave. Don\'t waste yours."',
     '"The gates of the Strip open once more. Don\'t make us regret it."',
     '"Exile lifted. Welcome back to New Vegas — try not to shoot anyone."',
+    '"Begin again. The Mojave forgives, this once."',
+    '"Your slate\'s wiped cleaner than a Vault-Tec ad. Walk the line."',
+    '"Mr. House has reconsidered. Don\'t squander his mercy."',
   ],
   warn:    [
     '"Consider this a warning, friend. We\'re watching."',
     '"The Strip has eyes everywhere. Don\'t test us again."',
     '"One more strike and the Securitrons handle it personally."',
+    '"Toe the line, courier — the NCR keeps ledgers, and so do we."',
+    '"That\'s one mark on your Pip-Boy. Collect enough and you\'re Legion bait."',
+    '"We\'ve got your number, and it\'s climbing. Slow down."',
   ],
   caps:    [
     '"War never changes. But caps? Caps are forever."',
     '"The House always collects. Today, it pays."',
     '"A courier without caps is just a wanderer."',
     '"In the Mojave, caps are the only truth that matters."',
+    '"Bottle caps: the only currency the Brotherhood can\'t confiscate."',
   ],
   system:  [
     '"All systems nominal. Securitron network active."',
     '"Maintenance cycle complete. The Strip never sleeps."',
     '"Mr. House is watching. Always watching."',
+    '"RobCo terminals online. Vault door sealed."',
+    '"Reticulating splines across the Mojave wasteland..."',
   ],
   wages:   [
     '"The House always pays its debts — eventually."',
     '"Caps distributed. The economy of the Mojave endures."',
     '"A fair day\'s work for a fair day\'s pay. Even in the apocalypse."',
+    '"Payday on the Strip. Don\'t spend it all at the Atomic Wrangler."',
   ],
   announce: [
     '"Attention all couriers on the Strip..."',
     '"Message from the Mojave Authority..."',
     '"Broadcast from the Lucky 38..."',
+    '"This is Mr. New Vegas, and boy, do I have news for you..."',
+    '"Radio New Vegas, cutting through the static..."',
   ],
   faction: [
     '"Allegiances in the Mojave are written in blood and caps."',
     '"Every faction needs soldiers. Every soldier needs orders."',
     '"The wasteland belongs to those who organise."',
     '"Rank is earned. Loyalty is proven."',
+    '"NCR, Legion, or House — pick your banner and bleed for it."',
+  ],
+  kick:    [
+    '"Get out. Don\'t make us ask twice."',
+    '"Shown the door, courier. Mind the radroaches on your way out."',
+    '"You\'re not welcome at the Tops tonight. Beat it."',
+    '"Ejected. Take a walk down the Long 15 and cool off."',
+  ],
+  verify:  [
+    '"Papers, please. The Strip opens to those it knows."',
+    '"State your name, courier. The Securitrons are checking the registry."',
+    '"Mr. House keeps a list. Let\'s get you on the right one."',
+    '"No name, no entry. Those are the rules of New Vegas."',
+  ],
+  connect: [
+    '"A courier strides into the Mojave."',
+    '"Boots on the Strip. The Securitrons log every arrival."',
+    '"Another wanderer steps off the Long 15."',
+    '"Vault door opens. Someone\'s come to play."',
+  ],
+  autoban: [
+    '"A barred courier tried to slip back into the Mojave. Denied."',
+    '"The Securitrons remember every face. Yours wasn\'t welcome."',
+    '"Ban evasion detected. The House does not tolerate cheats."',
+    '"Nice try. The Mojave has a long memory and a longer reach."',
   ],
 };
 const randomQuote = (cat) => {
@@ -1770,7 +1813,7 @@ async function ensureVerifyPanel() {
   const saved = safeRead(FILES.VERIFY_PANEL, {});
   if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🎫  Mojave Checkpoint — Verification")
-    .setDescription(`${hero("Papers, please. Confirm your name and the Strip opens to you.")}\nPress **Verify** and enter your **exact** Pavlov username to link your account and gain access to the rest of the server.`));
+    .setDescription(`${hero(randomQuote("verify"))}\n**Halt, courier.** Before the Strip opens to you, the Securitrons need a name on file.\n\nPress **Verify** below and enter your **exact** Pavlov username. Match the registry and the gates swing wide — vault door, NCR checkpoint, the whole Mojave.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("verify_start").setLabel("Verify").setStyle(ButtonStyle.Success));
   try { const m = await ch.send({ embeds: [embed], components: [row] }); safeWrite(FILES.VERIFY_PANEL, { id: m.id }); }
@@ -1784,6 +1827,13 @@ async function handleVerifySubmit(interaction) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("📛  Verification Denied")
       .setDescription(`${hero("That name's not in our records, wanderer.")}\nCouldn't find a Pavlov courier named \`${name}\`. Enter your **exact** in-game username — you must have set foot in the Mojave first.`))], ephemeral: true });
   }
+  // one identity per courier — reject if this Pavlov name is already claimed by someone else
+  const links = loadVerifyLinks();
+  const claimedBy = links[name.toLowerCase()];
+  if (claimedBy && claimedBy !== interaction.user.id) {
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("⛔  Identity Already Claimed")
+      .setDescription(`${hero("Two couriers, one name? Not on Mr. House's Strip.")}\nThe Pavlov courier \`${name}\` is already verified to <@${claimedBy}>. If this is really you, contact an admin.`))], ephemeral: true });
+  }
   const member = interaction.member;
   const notes = [];
   try { await member.setNickname(name.slice(0, 32)); notes.push("nickname set"); }
@@ -1791,8 +1841,9 @@ async function handleVerifySubmit(interaction) {
   try { await member.roles.remove(VERIFY_UNVERIFIED_ROLE); } catch {}
   try { await member.roles.add(VERIFY_VERIFIED_ROLE); notes.push("verified role granted"); }
   catch { notes.push("⚠️ couldn't change roles (check bot Manage Roles + role order)"); }
-  // persist the Pavlov-name -> Discord-id link so bans can DM this user later
-  const links = loadVerifyLinks();
+  // persist the Pavlov-name -> Discord-id link so bans can DM this user later.
+  // Drop any previous name this user held so each Discord account maps to one name.
+  for (const k of Object.keys(links)) if (links[k] === member.id) delete links[k];
   links[name.toLowerCase()] = member.id;
   safeWrite(FILES.VERIFY_LINKS, links);
   logger.info("Verify", `${member.user.tag} verified as Pavlov "${name}"`);
@@ -2122,7 +2173,7 @@ client.once("ready", async () => {
   logger.info("Bot", `${client.user.tag} online — v${BOT_VERSION}`);
   try {
     client.user.setPresence({
-      activities: [{ name: "over the Mojave  ·  /help", type: ActivityType.Watching }],
+      activities: [{ name: "over the Mojave from the Lucky 38  ·  /help", type: ActivityType.Watching }],
       status: "online",
     });
   } catch (err) {
@@ -2147,7 +2198,7 @@ client.once("ready", async () => {
       const ts = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:f>` : "unknown";
       const tsR = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:R>` : "unknown";
       const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("🟢  Courier Logged — IP Confirmed")
-        .setDescription(`${hero("A courier strides into the Mojave.")}`)
+        .setDescription(`${hero(randomQuote("connect"))}`)
         .addFields(
           { name: "🎯  Name",       value: `\`${name}\``,                                            inline: true },
           { name: "🌐  Current IP", value: `\`${ip ?? "unknown"}\``,                                 inline: true },
@@ -2166,7 +2217,7 @@ client.once("ready", async () => {
       writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`, by: "IP-Guard" });
       logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`);
       const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🛑  Blacklisted Courier Blocked")
-        .setDescription(`${hero("A barred courier tried to slip back into the Mojave.")}`)
+        .setDescription(`${hero(randomQuote("autoban"))}`)
         .addFields(
           { name: "🎯  Courier", value: `\`${name}\``,            inline: true },
           { name: "🌐  IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
@@ -2530,7 +2581,7 @@ client.on("interactionCreate", async (interaction) => {
         await sendRconBoth(`Kick ${playerId}`, server);
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("👢  Courier Ejected from the Strip")
-          .setDescription(`> *"Get out. Don't make us ask twice."*\n\n${DIVIDER}`)
+          .setDescription(`> *${randomQuote("kick")}*\n\n${DIVIDER}`)
           .addFields(
             { name: "🎯  Courier", value: `\`${playerId}\``,                                  inline: true },
             { name: "🖥️  Server",  value: `${serverEmoji(server)}  ${serverLabel(server)}`,   inline: true },
