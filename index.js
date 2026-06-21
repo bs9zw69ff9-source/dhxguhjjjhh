@@ -145,6 +145,7 @@ const FILES = {
   KNOWN:          "./known_players.json",
   USER_BLACKLIST: "./user_blacklist.json",
   VERIFY_PANEL:   "./verify_panel.json",
+  VERIFY_LINKS:   "./verify_links.json",
 };
 
 const DEFAULTS = {
@@ -163,6 +164,7 @@ const DEFAULTS = {
   [FILES.KNOWN]:          "{}",
   [FILES.USER_BLACKLIST]: "[]",
   [FILES.VERIFY_PANEL]:   "{}",
+  [FILES.VERIFY_LINKS]:   "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -1739,6 +1741,14 @@ async function postPlayerList() {
 /* ================================================================
    VERIFICATION  (link a Discord user to their Pavlov username)
    ================================================================ */
+const loadVerifyLinks = () => safeRead(FILES.VERIFY_LINKS, {});
+// Resolve the verified Discord user for a Pavlov username (set at /verify), or
+// null. Lets bans auto-DM the linked account without a discord_user option.
+async function dmUserForPavlov(name) {
+  const id = loadVerifyLinks()[String(name ?? "").trim().toLowerCase()];
+  if (!id) return null;
+  try { return await client.users.fetch(id); } catch { return null; }
+}
 // True if the name matches any Pavlov player the bot has on record: online now,
 // known-players registry (seeded from playtime/factions/wages/donators/bans),
 // the playtime leaderboard, or the IP log registry.
@@ -1782,6 +1792,10 @@ async function handleVerifySubmit(interaction) {
   try { await member.roles.remove(VERIFY_UNVERIFIED_ROLE); } catch {}
   try { await member.roles.add(VERIFY_VERIFIED_ROLE); notes.push("verified role granted"); }
   catch { notes.push("⚠️ couldn't change roles (check bot Manage Roles + role order)"); }
+  // persist the Pavlov-name -> Discord-id link so bans can DM this user later
+  const links = loadVerifyLinks();
+  links[name.toLowerCase()] = member.id;
+  safeWrite(FILES.VERIFY_LINKS, links);
   logger.info("Verify", `${member.user.tag} verified as Pavlov "${name}"`);
   return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Verified")
     .setDescription(`Linked to Pavlov player \`${name}\`. ${notes.join(" · ")}`))], ephemeral: true });
@@ -2522,11 +2536,12 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🛡️  By",      value: `${interaction.user}`,                              inline: true },
             { name: "📋  Reason",  value: reason,                                             inline: false },
           ).setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
-        const kDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+        const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const kDm = await dmPunishmentNotice(kTarget, {
           action: "Kick", color: NV.NCR_TAN, playerId, reason,
           fields: [{ name: "🖥️  Server", value: serverLabel(server), inline: true }],
         });
-        const kDmField = dmStatusField(kDm, interaction.options.getUser("discord_user"));
+        const kDmField = dmStatusField(kDm, kTarget);
         if (kDmField) embed.addFields(kDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
@@ -2568,10 +2583,11 @@ client.on("interactionCreate", async (interaction) => {
         const wExtra = [{ name: "⚠️  Warning #", value: `**${count}**`, inline: true }];
         if (escalated?.type === "tempban") wExtra.push({ name: "🔴  Escalation", value: `Auto temp-ban: **${escalated.label}**`, inline: false });
         else if (escalated?.type === "permban") wExtra.push({ name: "🔴  Escalation", value: "Auto **permanent ban**", inline: false });
-        const wDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+        const wTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const wDm = await dmPunishmentNotice(wTarget, {
           action: "Warning", color: escalated ? NV.RUST_RED : NV.NCR_TAN, playerId, reason, fields: wExtra,
         });
-        const wDmField = dmStatusField(wDm, interaction.options.getUser("discord_user"));
+        const wDmField = dmStatusField(wDm, wTarget);
         if (wDmField) embed.addFields(wDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
@@ -2822,7 +2838,8 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`,   inline: true },
             { name: "By",       value: `${interaction.user}`,           inline: true },
           ), replaced ? `Replaced earlier ban: ${replaced.reason}` : "Auto-lifted on expiry");
-        const tbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+        const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const tbDm = await dmPunishmentNotice(tbTarget, {
           action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
           fields: [
             { name: "⏱️  Duration", value: `**${label}**`,            inline: true },
@@ -2830,7 +2847,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔓  Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false },
           ],
         });
-        const tbDmField = dmStatusField(tbDm, interaction.options.getUser("discord_user"));
+        const tbDmField = dmStatusField(tbDm, tbTarget);
         if (tbDmField) embed.addFields(tbDmField);
         if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logBan(embed);
@@ -2979,14 +2996,15 @@ client.on("interactionCreate", async (interaction) => {
             { name: "By",       value: `${interaction.user}`, inline: false },
           ));
         if (notes) embed.addFields({ name: "Notes", value: notes });
-        const pbDm = await dmPunishmentNotice(interaction.options.getUser("discord_user"), {
+        const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
           fields: [
             { name: "⏱️  Sentence", value: "**Permanent**",      inline: true },
             { name: "🖥️  Server",   value: serverLabel(server),  inline: true },
           ],
         });
-        const pbDmField = dmStatusField(pbDm, interaction.options.getUser("discord_user"));
+        const pbDmField = dmStatusField(pbDm, pbTarget);
         if (pbDmField) embed.addFields(pbDmField);
         if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logBan(embed);
