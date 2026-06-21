@@ -377,10 +377,13 @@ function parseLine(line, server, key) {
   if (c && !skipId(c[2])) {
     const id = cleanId(c[2]), ip = c[1];
     record(c[2], null, ip, ts, true);          // confirmed same-line pairing
-    // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect
-    if (live && !untrackedIds.has(id) && Date.now() - (recentConfirm.get(id) ?? 0) >= CONFIRM_DEBOUNCE_MS) {
+    // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect.
+    // Only when we actually know who this is (a login captured a name) — skip
+    // anonymous/partial connections so the feed isn't full of "unknown".
+    if (live && registry[id]?.name && !untrackedIds.has(id) && Date.now() - (recentConfirm.get(id) ?? 0) >= CONFIRM_DEBOUNCE_MS) {
       recentConfirm.set(id, Date.now());
-      Promise.resolve(onConfirm({ name: registry[id]?.name || "unknown", ip, server }))
+      const rec = getRecord(id) || {};   // look up by id, not the (maybe missing) name
+      Promise.resolve(onConfirm({ name: registry[id].name, ip, server, record: rec }))
         .catch(e => console.error("[ipBans] onConfirm failed:", e.message));
     }
     // retroactive auto-ban: an alt that slipped the ambiguous join check is caught

@@ -144,6 +144,7 @@ const FILES = {
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
   USER_BLACKLIST: "./user_blacklist.json",
+  VERIFY_PANEL:   "./verify_panel.json",
 };
 
 const DEFAULTS = {
@@ -161,6 +162,7 @@ const DEFAULTS = {
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
   [FILES.USER_BLACKLIST]: "[]",
+  [FILES.VERIFY_PANEL]:   "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -523,6 +525,10 @@ const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "151719896191
 const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1518016127077318897";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
+/* Verification: panel channel + the role swapped on success. */
+const VERIFY_CHANNEL          = process.env.VERIFY_CHANNEL          || "1518205248907513966";
+const VERIFY_UNVERIFIED_ROLE  = process.env.VERIFY_UNVERIFIED_ROLE  || "1518204521916928030";
+const VERIFY_VERIFIED_ROLE    = process.env.VERIFY_VERIFIED_ROLE    || "1500607750361583687";
 
 /* ================================================================
    FACTION-SPECIFIC RANK SYSTEM
@@ -1498,35 +1504,6 @@ function writePlayerBalance(playerId, amount) {
 }
 
 /* ================================================================
-   PLAYER LIST EMBED
-   ================================================================ */
-function buildPlayerListEmbed(raw, server) {
-  const data   = parseRcon(raw);
-  const label  = serverLabel(server);
-  const embed  = new EmbedBuilder().setTitle(`${serverEmoji(server)}  Active Couriers — ${label}`);
-
-  if (!data?.Successful) {
-    return brand(embed.setColor(NV.RUST_RED).setDescription(
-      `${hero("Signal lost — cannot reach the server.")}\n**Possible causes:**\n· Server offline\n· RCON credentials wrong in \`.env\`\n· Network blocked`
-    ), { footer: { text: `${label} · connection failed` } });
-  }
-  const players = data.PlayerList ?? [];
-  if (!players.length) {
-    return brand(embed.setColor(NV.IRRAD_GREEN)
-      .setDescription(`${hero("The wasteland is quiet.")}\n*No couriers online — be the first one out there.*`),
-      { footer: { text: `${label} · 0 online` } });
-  }
-  const lines = players.map((p, i) => {
-    const name = p.name ?? p.Name ?? p.username ?? p.Username ?? "Unknown";
-    const id   = p.id   ?? p.Id   ?? p.uniqueId ?? "";
-    return `\`${String(i + 1).padStart(2, "0")}\`  **${name}**${id ? `  ·  \`${id}\`` : ""}`;
-  }).join("\n");
-  return brand(embed.setColor(NV.IRRAD_GREEN)
-    .setDescription(`${hero(`**${players.length}** courier${players.length !== 1 ? "s" : ""} active on ${label}.`)}\n${lines}`),
-    { footer: { text: `${label} · ${players.length} online` } });
-}
-
-/* ================================================================
    WARN SYSTEM
    ================================================================ */
 async function issueWarn(playerId, reason, moderator, server, interaction) {
@@ -1760,6 +1737,57 @@ async function postPlayerList() {
 }
 
 /* ================================================================
+   VERIFICATION  (link a Discord user to their Pavlov username)
+   ================================================================ */
+// True if the name matches any Pavlov player the bot has on record: online now,
+// known-players registry (seeded from playtime/factions/wages/donators/bans),
+// the playtime leaderboard, or the IP log registry.
+function isKnownPavlovPlayer(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  if (!key) return false;
+  if (playerCache.server1.some(n => n.toLowerCase() === key)) return true;
+  if (playerCache.server2.some(n => n.toLowerCase() === key)) return true;
+  if (Object.keys(loadKnownPlayers()).some(k => k.toLowerCase() === key)) return true;
+  if (Object.keys(loadPlaytime()).some(k => k.toLowerCase() === key)) return true;
+  try { if (ipBans.resolveIds(name).length) return true; } catch {}
+  return false;
+}
+
+// Post (or re-use) the persistent verification panel in VERIFY_CHANNEL.
+async function ensureVerifyPanel() {
+  if (!VERIFY_CHANNEL) return;
+  let ch; try { ch = await client.channels.fetch(VERIFY_CHANNEL); } catch { return; }
+  if (!ch?.isTextBased()) return;
+  const saved = safeRead(FILES.VERIFY_PANEL, {});
+  if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
+  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Verification")
+    .setDescription("Press **Verify** and enter your exact Pavlov username to link your account and unlock the rest of the server."));
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("verify_start").setLabel("Verify").setStyle(ButtonStyle.Success));
+  try { const m = await ch.send({ embeds: [embed], components: [row] }); safeWrite(FILES.VERIFY_PANEL, { id: m.id }); }
+  catch (e) { logger.warn("Verify", `panel post failed: ${e.message}`); }
+}
+
+// Handle the verification modal submit: check the name, then nickname + role swap.
+async function handleVerifySubmit(interaction) {
+  const name = sanitizeMessage(interaction.fields.getTextInputValue("verify_name")).trim();
+  if (!isKnownPavlovPlayer(name)) {
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Verification Failed")
+      .setDescription(`Couldn't find a Pavlov player named \`${name}\`. Enter your **exact** in-game username — you must have played on the server first.`))], ephemeral: true });
+  }
+  const member = interaction.member;
+  const notes = [];
+  try { await member.setNickname(name.slice(0, 32)); notes.push("nickname set"); }
+  catch { notes.push("⚠️ couldn't set nickname (bot role must be above yours)"); }
+  try { await member.roles.remove(VERIFY_UNVERIFIED_ROLE); } catch {}
+  try { await member.roles.add(VERIFY_VERIFIED_ROLE); notes.push("verified role granted"); }
+  catch { notes.push("⚠️ couldn't change roles (check bot Manage Roles + role order)"); }
+  logger.info("Verify", `${member.user.tag} verified as Pavlov "${name}"`);
+  return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Verified")
+    .setDescription(`Linked to Pavlov player \`${name}\`. ${notes.join(" · ")}`))], ephemeral: true });
+}
+
+/* ================================================================
    MENU GRANT PERSISTENCE
    ================================================================ */
 function addMenuGrant(playerId, server, menuValue, menuId, grantedBy) {
@@ -1860,7 +1888,6 @@ const ALL_RANK_NAMES = [...new Set(
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
   new SlashCommandBuilder().setName("ping").setDescription("Bot and server health check with uptime"),
-  new SlashCommandBuilder().setName("listplayers").setDescription("List active couriers on a server").addStringOption(serverOption),
   new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count").addStringOption(serverOption),
   new SlashCommandBuilder().setName("find")
     .setDescription("Search for a player by partial name across both servers")
@@ -1905,6 +1932,9 @@ const commands = [
   new SlashCommandBuilder().setName("history")
     .setDescription("View full moderation history for a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("staffactivity")
+    .setDescription("🔒 Admin — All moderation actions taken by a staff member")
+    .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
   new SlashCommandBuilder().setName("tempban")
     .setDescription("Exile a courier for a set period")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
@@ -2096,11 +2126,11 @@ client.once("ready", async () => {
   ipBans.init({
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
-    onConfirm: async ({ name, ip, server }) => {
+    onConfirm: async ({ name, ip, server, record }) => {
       if (!feedHook) return;
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
-      // everything Pavlov.log knows about this player
-      const rec = (() => { try { return ipBans.getRecord(name); } catch { return null; } })() || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null };
+      // everything Pavlov.log knows about this player (resolved by id inside ipBans)
+      const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null };
       const ts = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:f>` : "unknown";
       const tsR = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:R>` : "unknown";
       const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`Connection — ${name}`)
@@ -2135,6 +2165,7 @@ client.once("ready", async () => {
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
   setTimeout(rconHealthCheck, 5_000);
+  ensureVerifyPanel();
 });
 
 /* ================================================================
@@ -2162,6 +2193,18 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ embeds: [blacklistedEmbed()], ephemeral: true }).catch(() => {});
     }
     return;
+  }
+
+  /* ── Verification button + modal ─────────────────────────── */
+  if (interaction.isButton() && interaction.customId === "verify_start") {
+    const modal = new ModalBuilder().setCustomId("verify_modal").setTitle("Verify your Pavlov account")
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId("verify_name").setLabel("Your exact Pavlov username")
+          .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64)));
+    return interaction.showModal(modal).catch(() => {});
+  }
+  if (interaction.isModalSubmit() && interaction.customId === "verify_modal") {
+    return handleVerifySubmit(interaction).catch(e => logger.warn("Verify", e.message));
   }
 
   /* ── Autocomplete ─────────────────────────────────────── */
@@ -2215,10 +2258,10 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "listplayers", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
+  const PUBLIC         = ["help", "ping", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp"];
+  const ADMIN_COMMANDS = ["permban", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
 
   const name = interaction.commandName;
 
@@ -2277,7 +2320,7 @@ client.on("interactionCreate", async (interaction) => {
           )
           .addFields(
             { name: "🌐  Public",
-              value: "`/help` `/ping` `/listplayers` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction overview` `/faction audit`" },
+              value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction overview` `/faction audit`" },
             { name: "🛡️  Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
@@ -2308,6 +2351,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/clearwarnings <id>` — Wipe all warnings for a courier",
                 "`/note clear <id>` — Delete all staff notes for a courier",
                 "`/cleartempbans` `/setroles`",
+                "`/staffactivity <staff>` — All mod actions by a staff member",
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
@@ -2378,23 +2422,6 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       /* ─────────────────────────────────────────────────────
-         LISTPLAYERS
-         ───────────────────────────────────────────────────── */
-      case "listplayers": {
-        const server = interaction.options.getString("server");
-        await interaction.deferReply();
-        if (server === "both") {
-          const [r1, r2] = await Promise.all([sendRcon("RefreshList", "server1"), sendRcon("RefreshList", "server2")]);
-          setPlayerCacheFromData("server1", parseRcon(r1));
-          setPlayerCacheFromData("server2", parseRcon(r2));
-          return interaction.editReply({ embeds: [buildPlayerListEmbed(r1, "server1"), buildPlayerListEmbed(r2, "server2")] });
-        }
-        const result = await sendRcon("RefreshList", server);
-        setPlayerCacheFromData(server, parseRcon(result));
-        return interaction.editReply({ embeds: [buildPlayerListEmbed(result, server)] });
-      }
-
-      /* ─────────────────────────────────────────────────────
          SERVERINFO
          ───────────────────────────────────────────────────── */
       case "serverinfo": {
@@ -2461,7 +2488,7 @@ client.on("interactionCreate", async (interaction) => {
         if (!matches.length) {
           return interaction.editReply({ embeds: [
             brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("🔍  No Matches Found")
-              .setDescription(`${hero(`No couriers matching "${query}" are online.`)}\n*Try a shorter search term, or check \`/listplayers\`.*`))
+              .setDescription(`${hero(`No couriers matching "${query}" are online.`)}\n*Try a shorter search term.*`))
           ]});
         }
         const lines = matches.map((m) => {
@@ -2730,6 +2757,41 @@ client.on("interactionCreate", async (interaction) => {
             .setTitle(`📋  Moderation History — ${playerId}`)
             .setDescription(`**${history.length}** total action${history.length !== 1 ? "s" : ""} on record *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log — full history retained" }).setTimestamp(),
+          { perPage: 12, ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         STAFFACTIVITY — all mod actions taken BY a staff member
+         ───────────────────────────────────────────────────── */
+      case "staffactivity": {
+        const staff = interaction.options.getUser("staff");
+        const tag   = (staff.tag || "").toLowerCase();
+        const uname = (staff.username || "").toLowerCase();
+        const matches = loadModLog().filter(e => {
+          const by = String(e.by ?? "").toLowerCase();
+          return by && (by === tag || by === uname || by.includes(uname));
+        });
+        if (!matches.length) {
+          return interaction.reply({ embeds: [
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Activity — None")
+              .setDescription(`No moderation actions on record for ${staff}.`).setTimestamp()
+          ], ephemeral: true });
+        }
+        // tally by action type
+        const counts = {};
+        for (const e of matches) counts[e.action] = (counts[e.action] ?? 0) + 1;
+        const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a}: ${n}`).join(" · ");
+        const lines = matches.slice().reverse().map(e => {
+          const ts     = Math.floor(e.at / 1000);
+          const detail = e.reason ? ` — ${e.reason}` : e.amount ? ` — ${e.amount > 0 ? "+" : ""}${e.amount} caps` : e.faction ? ` — ${e.faction}` : "";
+          const who    = e.playerId ? ` · ${e.playerId}` : "";
+          return `\`${e.action}\`${who}${detail} · <t:${ts}:R>`;
+        });
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.AMBER)
+            .setTitle(`Staff Activity — ${staff.tag}`)
+            .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Mod log" }).setTimestamp(),
           { perPage: 12, ephemeral: true });
       }
 
