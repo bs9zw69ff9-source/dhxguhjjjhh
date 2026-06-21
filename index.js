@@ -2978,6 +2978,28 @@ client.on("interactionCreate", async (interaction) => {
         if (!names.length) {
           return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("✅  No Bans").setDescription(hero("Nothing to clear — no bans on record.")).setTimestamp())] });
         }
+
+        // confirmation gate (irreversible)
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("cab_confirm").setLabel(`Unban all ${names.length}`).setStyle(ButtonStyle.Danger).setEmoji("🧹"),
+          new ButtonBuilder().setCustomId("cab_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
+        );
+        const preview = names.slice(0, 30).map(n => `·  \`${n}\``).join("\n") + (names.length > 30 ? `\n…and ${names.length - 30} more` : "");
+        const msg = await interaction.editReply({
+          embeds: [warningEmbed("Confirm — Unban EVERYONE",
+            `> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\n` +
+            `This runs \`Unban\` for **${names.length}** player(s) on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`
+          ).setFooter({ text: "Expires in 30 seconds" })],
+          components: [row],
+        });
+        let btn;
+        try { btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id }); }
+        catch { return interaction.editReply({ embeds: [warningEmbed("Timed Out", "Confirmation expired. No bans were lifted.")], components: [] }); }
+        if (btn.customId === "cab_cancel") {
+          return btn.update({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("🪖  Stand Down").setDescription("Cancelled — all bans remain in place.").setTimestamp()], components: [] });
+        }
+        await btn.deferUpdate();
+
         let ok = 0, failed = 0;
         for (const n of names) {
           try { await sendRconBoth(`Unban ${sanitizeId(n)}`, "both"); ok++; }
@@ -2993,7 +3015,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  By",       value: `${interaction.user}`, inline: true },
           ).setTimestamp());
         await logBan(embed);
-        return interaction.editReply({ embeds: [embed] });
+        return btn.editReply({ embeds: [embed], components: [] });
       }
 
       /* ─────────────────────────────────────────────────────
