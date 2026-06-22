@@ -1,12 +1,5 @@
-/* ================================================================
- * Mojave Authority Bot
- * Copyright (c) 2026 bs9zw69ff9-source. All rights reserved.
- *
- * PROPRIETARY — licensed, not sold. Unauthorized copying, modification,
- * distribution, or hosting (in whole or in part) is prohibited. See the
- * LICENSE file. Do not remove or alter this notice or the in-app
- * attribution; doing so violates the license.
- * ================================================================ */
+// Mojave Authority — our Pavlov VR moderation bot for the New Vegas RP servers.
+// (c) 2026 bs9zw69ff9-source. Private project, please don't redistribute.
 require("dotenv").config();
 const fs     = require("fs");
 const net    = require("net");
@@ -1681,17 +1674,17 @@ function buildLeaderboardEmbed() {
     .setTitle(`💰  New Vegas Caps — Top ${LEADERBOARD_TOP_N}`);
   if (!entries) return brand(embed.setColor(NV.RUST_RED)
     .setDescription(`${hero("Vault records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
-    { footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+    { footer: { text: `Updated every 6h` } });
   if (!entries.length) return brand(embed.setColor(NV.IRRAD_GREEN)
     .setDescription(`${hero("No ledgers found.")}\nNo cap records on file yet.`),
-    { footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+    { footer: { text: `Updated every 6h` } });
   const top = entries[0]?.balance || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} caps${meter}`;
   }).join("\n");
   return brand(embed.setDescription(`${hero("War never changes. But caps? Caps fluctuate.")}\n${body}`),
-    { thumb: true, footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+    { thumb: true, footer: { text: `Updated every 6h` } });
 }
 
 let lastLeaderboardMsgId = null;
@@ -1725,14 +1718,14 @@ function buildPlaytimeLeaderboardEmbed() {
     .setTitle(`⏱️  Most Active Couriers — Top ${LEADERBOARD_TOP_N}`);
   if (!entries.length) return brand(embed
     .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while couriers are online (sampled every 60s).`),
-    { footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+    { footer: { text: `Updated every 6h` } });
   const top = entries[0]?.minutes || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.minutes, top, 8)}\`` : "";
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(`${hero("Time served in the Mojave.")}\n${body}`),
-    { thumb: true, footer: { text: `Updated every 6h · ${BUILD_ID}` } });
+    { thumb: true, footer: { text: `Updated every 6h` } });
 }
 
 let lastPlaytimeLbMsgId = null;
@@ -2457,7 +2450,7 @@ client.on("interactionCreate", async (interaction) => {
                 "⛔  Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
               ].join("\n") },
           )
-          .setFooter({ text: `${BUILD_ID}  ·  ${BOT_COPYRIGHT}` });
+          .setFooter({ text: BOT_COPYRIGHT });
         brand(embed, { thumb: true });
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
@@ -2494,9 +2487,8 @@ client.on("interactionCreate", async (interaction) => {
             { name: "👥  Cached",     value: `S1 \`${playerCache.server1.length}\` · S2 \`${playerCache.server2.length}\``, inline: true },
             { name: "💾  Mod Log",    value: `\`${loadModLog().length}\` entries`,                                inline: true },
             { name: "⚠️  Open Bans",  value: `\`${loadBans().length}\` active`,                                  inline: true },
-            { name: "🔖  Build",      value: `\`${BUILD_ID}\``,                                                   inline: true },
           );
-        brand(embed, { thumb: true, footer: { text: `${BOT_COPYRIGHT}  ·  authored by ${BOT_AUTHOR}` } });
+        brand(embed, { thumb: true, footer: { text: BOT_COPYRIGHT } });
         return interaction.editReply({ embeds: [embed] });
       }
 
