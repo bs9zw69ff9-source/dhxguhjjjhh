@@ -195,20 +195,17 @@ function blacklistPlayer(input) {
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
-  // flag the username(s) so a new account using the same name is caught too
-  let fName = false;
-  for (const id of ids) {
-    const nm = norm(registry[id]?.name);
-    if (nm && !flaggedNames.has(nm)) { flaggedNames.add(nm); fName = true; }
-    pendingFlag.set(id, Date.now());   // flag the IP the kick confirms, if none yet
-  }
-  // banned by a raw token not in the registry: an IP, otherwise a username
+  // remember the player so the IP the kick confirms is flagged too (if none yet).
+  // NOTE: we deliberately do NOT auto-flag the username here. A flagged username
+  // auto-bans anyone connecting under that name forever, which false-positives on
+  // temp bans, kicks, warn-escalations and re-used names ("banned for no reason").
+  // Username blacklisting is an explicit, owner-only action (flagTarget).
+  for (const id of ids) pendingFlag.set(id, Date.now());
+  // banned by a raw token not in the registry: flag it only if it's an IP.
   if (!ids.length) {
     const raw = String(input ?? "").trim();
-    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw)) { if (!flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); } }
-    else if (raw) { const nmF = norm(raw); if (nmF && !flaggedNames.has(nmF)) { flaggedNames.add(nmF); fName = true; } }
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw) && !flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); }
   }
-  if (fName) saveFNames();
   return {
     ids, ips, alts: altNames,
     field: {
@@ -216,7 +213,6 @@ function blacklistPlayer(input) {
       value: (ips.length
         ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
         : "No connection IPs on record yet.") +
-        `\nUsername also flagged — a new account using this name is caught too.` +
         (altNames.length ? `\nShares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
       inline: false,
     },
@@ -283,6 +279,13 @@ function clearFlags() {
   const n = flagged.size + flaggedNames.size;
   flagged.clear(); flaggedNames.clear();
   saveFlagged(); saveFNames();
+  return n;
+}
+// Clear only the flagged USERNAMES (keep flagged IPs). Stops "blacklisted
+// username" auto-bans without losing IP-based alt enforcement.
+function clearFlaggedNames() {
+  const n = flaggedNames.size;
+  flaggedNames.clear(); saveFNames();
   return n;
 }
 // Remove one IP from the flag list AND from every player's recorded IPs.
@@ -553,6 +556,7 @@ module.exports = {
   flagTarget,
   getBlacklist,
   clearFlags,
+  clearFlaggedNames,
   clearIp,
   clearAll,
   discoverLogs,

@@ -161,8 +161,13 @@ const ok = (cond, msg) => {
     ok(enf.ips.includes("198.51.100.9") && ipBans.blacklist.includes("198.51.100.9"), "blacklistPlayer flags the player's CONFIRMED IPs");
     ok(!enf.ips.includes("203.0.113.7") && !ipBans.blacklist.includes("203.0.113.7"), "tentative (join-correlated) IPs are NOT flagged");
     ok(enf.alts.includes("AltGuy"), "blacklist summary reports shared-IP alts by username");
+    ok(!ipBans.getBlacklist().names.includes("ncr_ranger"), "blacklistPlayer does NOT auto-flag the username (no 'banned for no reason')");
     ipBans.unblacklistPlayer("NCR_Ranger");
     ok(!ipBans.blacklist.includes("198.51.100.9"), "unblacklistPlayer clears the flags");
+    // explicit username blacklist still works, and can be cleared on its own
+    ipBans.flagTarget("NCR_Ranger");
+    ok(ipBans.getBlacklist().names.includes("ncr_ranger"), "flagTarget (explicit owner action) flags the username");
+    ok(ipBans.clearFlaggedNames() >= 1 && ipBans.getBlacklist().names.length === 0, "clearFlaggedNames clears flagged usernames only");
 
     // live "Rcon: BanPlayer <name>" line (any admin tool) auto-flags the IPs
     const log2 = path.join(sandbox, "Pavlov2.log");
@@ -256,7 +261,7 @@ const ok = (cond, msg) => {
     const eSolo = ipBans.blacklistPlayer("Solo1");
     ok(eSolo.ips.includes("50.50.50.50"), "alt-maker's home IP IS flagged (not treated as shared)");
     const undo = ipBans.unblacklistPlayer("Solo1");
-    ok(undo.cleared && undo.cleared.ips >= 1 && undo.cleared.names >= 1, "unblacklist clears IP + username flags");
+    ok(undo.cleared && undo.cleared.ips >= 1, "unblacklist clears the IP flag");
     ok(!ipBans.blacklist.includes("50.50.50.50"), "unblacklist removes the IP flag");
 
     // manual IP blacklist: flag an IP + report known accounts on it
@@ -286,7 +291,10 @@ const ok = (cond, msg) => {
     clearInterval(tD);
     ok(autoD && autoD.name === "BrandNewName", "renamed account from a flagged IP is still auto-banned (by name)");
 
-    // username/ID blacklist: a DIFFERENT account reusing a banned username is caught
+    // username blacklist is now EXPLICIT-ONLY. A plain ban flags IPs, never the
+    // username (auto-flagging names caused "blacklisted username" false-positives
+    // on temp bans / kicks / reused names). Reusing a banned name is NOT auto-banned
+    // unless an owner explicitly blacklists that username.
     const logE = path.join(sandbox, "PavlovE.log");
     const cheatId = "aaaa1111bbbb2222cccc3333dddd4444";   // real 32-hex id
     fs.writeFileSync(logE, "");
@@ -298,20 +306,26 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 60));
     fs.appendFileSync(logE, "[2026.06.29-10.01.00:000][3]LogTemp: Rcon: BanPlayer Cheater\n");
     await new Promise(r => setTimeout(r, 60));
-    ok(ipBans.flagTarget("Cheater").added === false, "banning flags the username");
-    ok(ipBans.flagTarget("Cheater").added === false, "banning flags the username (re-flagging is a no-op)");
-    // a brand new account (new id, new IP) but the SAME username
+    ok(!ipBans.getBlacklist().names.includes("cheater"), "a plain ban does NOT flag the username");
+    // a brand new account (new id, new IP) reusing the SAME username -> NOT auto-banned
     fs.appendFileSync(logE,
       "[2026.06.29-10.02.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 99.99.99.99:1\n" +
       "[2026.06.29-10.02.00:200][5]LogNet: Login request: ?Name=Cheater?pid=Cheater userId: NULL:9999888877776666555544443333eeee platform: NULL\n");
     await new Promise(r => setTimeout(r, 60));
+    ok(autoE === null, "reusing a banned username alone no longer triggers an auto-ban");
+    // but the OWNER can still explicitly blacklist a username -> then it auto-bans
+    ipBans.flagTarget("Cheater");
+    fs.appendFileSync(logE,
+      "[2026.06.29-10.03.00:000][6]LogNet: NotifyAcceptingConnection accepted from: 88.88.88.88:1\n" +
+      "[2026.06.29-10.03.00:200][7]LogNet: Login request: ?Name=Cheater?pid=Cheater userId: NULL:77778888aaaabbbbccccddddeeeeffff platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
     clearInterval(tE);
-    ok(autoE && autoE.name === "Cheater" && autoE.reason === "blacklisted username", "new account reusing a banned username is auto-banned");
+    ok(autoE && autoE.name === "Cheater" && autoE.reason === "blacklisted username", "explicitly blacklisted username still auto-bans");
 
     // getBlacklist exposes IPs + usernames
     const bl = ipBans.getBlacklist();
     ok(Array.isArray(bl.ips) && Array.isArray(bl.names), "getBlacklist returns ips/names arrays");
-    ok(bl.names.includes("cheater"), "getBlacklist includes the flagged username");
+    ok(bl.names.includes("cheater"), "getBlacklist includes the explicitly flagged username");
 
     // onConfirm fires with the CONFIRMED ip (from the disconnect line), not a tentative one
     const log8 = path.join(sandbox, "Pavlov8.log");

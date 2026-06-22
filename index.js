@@ -3525,6 +3525,7 @@ client.on("interactionCreate", async (interaction) => {
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list" },
+            { label: "Clear flagged usernames", value: "clear_names",  description: "Stop all 'blacklisted username' auto-bans" },
             { label: "Clear all flagged IPs",  value: "clear_flags",   description: "Stop every IP auto-ban (keep history)" },
             { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP" },
             { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset" },
@@ -3605,6 +3606,7 @@ client.on("interactionCreate", async (interaction) => {
         if (choice === "ignore_list")      { const n = ipBans.getUntracked(); desc = n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked."; audit = false; }
         else if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; desc = ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands."; audit = false; }
         else if (choice === "verify_list")  { const lk = loadVerifyLinks(); const es = Object.entries(lk); desc = es.length ? es.map(([n, id]) => `• \`${n}\` → <@${id}>`).join("\n").slice(0, 4000) : "No verified couriers yet."; audit = false; }
+        else if (choice === "clear_names") { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
         else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
         else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
         const e = brand(new EmbedBuilder().setColor(color).setTitle("Configure").setDescription(hero(desc)).setTimestamp());
