@@ -1,5 +1,5 @@
 /* ================================================================
- * ipBans.js — IP ↔ player mapping, connection feed, and IP-match auto-ban
+ * ipBans.js — IP player mapping, connection feed, and IP-match auto-ban
  * ================================================================
  * Tails the Pavlov dedicated-server log(s), learns which IP each unique-id has
  * connected from, and uses that to:
@@ -7,7 +7,7 @@
  *   • flag a banned player's IPs and auto-ban any account that
  *     later connects from one of them (alt / ban-evader catching) -> onAutoBan
  *
- * It learns IP↔id from TWO sources, the first of which is rock-solid:
+ * It learns IPid from TWO sources, the first of which is rock-solid:
  *   1. disconnect lines  — RemoteAddr + UniqueId on the SAME line (no guessing)
  *        UChannel::Close / UNetConnection::Close / PendingConnectionLost
  *   2. join correlation  — an "accepted from: <ip>" line, then a later
@@ -69,7 +69,7 @@ const untrackedIds   = new Set();   // runtime: ids resolved to belong to an unt
 
 let onAutoBan = async () => {};
 let onConnect = async () => {};   // best-effort join (tentative IP)
-let onConfirm = async () => {};   // confirmed IP↔id pairing (same-line disconnect) — accurate IP
+let onConfirm = async () => {};   // confirmed IPid pairing (same-line disconnect) — accurate IP
 let live      = false;            // false during the startup backfill (suppress feed + auto-ban)
 let watchList = [];               // resolved log files (active + rotated backups)
 
@@ -104,7 +104,7 @@ function ipsForIds(ids) {           // all IPs ever seen (incl. best-effort join
   for (const id of ids) for (const ip of (registry[id]?.ips || [])) set.add(ip);
   return [...set];
 }
-function confirmedIpsForIds(ids) { // only same-line (disconnect) IP↔id pairings — trustworthy, for alts/enforcement
+function confirmedIpsForIds(ids) { // only same-line (disconnect) IPid pairings — trustworthy, for alts/enforcement
   const set = new Set();
   for (const id of ids) for (const ip of (registry[id]?.cips || [])) set.add(ip);
   return [...set];
@@ -202,12 +202,12 @@ function blacklistPlayer(input) {
   return {
     ids, ips, alts: altNames,
     field: {
-      name: "🌐  IP Enforcement",
+      name: "IP Enforcement",
       value: (ips.length
         ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
         : "No connection IPs on record yet.") +
-        `\n🎯 Username also flagged — a new account using this name is caught too.` +
-        (altNames.length ? `\n⚠️  Shares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
+        `\nUsername also flagged — a new account using this name is caught too.` +
+        (altNames.length ? `\nShares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
       inline: false,
     },
   };
@@ -557,7 +557,7 @@ if (require.main === module) {
     let nA = 0, nL = 0, nC = 0, nB = 0;
     for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (LOGIN_RE.test(l)) nL++; if (CLOSE_RE.test(l)) nC++; if (BAN_RE.test(l)) nB++; }
     console.log(`  matches in last ${tail.length} lines:  accept=${nA}  login=${nL}  close(IP+id)=${nC}  ban=${nB}`);
-    if (!nL && !nC) console.log("  ⚠ no join/disconnect lines matched — wrong/empty log, or unexpected format.");
+    if (!nL && !nC) console.log("  no join/disconnect lines matched — wrong/empty log, or unexpected format.");
   }
   console.log(`\n${bar}\nRunning backfill…\n${bar}`);
   clearInterval(init({ logFiles: files, pollMs: 9e8 }));

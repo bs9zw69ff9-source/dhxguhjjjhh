@@ -45,7 +45,7 @@ const BOT_START_MS = Date.now();
 /* Authorship / build attribution. Surfaced in /help and /ping; protected by
    the LICENSE. Removing or altering it violates the license terms. */
 const BOT_AUTHOR    = "bs9zw69ff9-source";
-const BOT_COPYRIGHT = `© 2026 ${BOT_AUTHOR} · All rights reserved`;
+const BOT_COPYRIGHT = `2026 ${BOT_AUTHOR} · All rights reserved`;
 const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${new Date(BOT_START_MS).toISOString().slice(0, 10)}`;
 
 /* ================================================================
@@ -533,15 +533,15 @@ const FACTION_RANKS = {
     order:   ["Private", "Corporal", "Sergeant", "Medic", "Heavy", "MP", "Ranger", "Lieutenant", "Officer"],
     default: "Private",
     badges:  {
-      "Private":    "🪖",
-      "Corporal":   "⚔️",
-      "Sergeant":   "🎖️",
-      "Medic":      "💉",
-      "Heavy":      "🛡️",
-      "MP":         "🔒",
-      "Ranger":     "🎯",
-      "Lieutenant": "🌟",
-      "Officer":    "👑",
+      "Private":    "",
+      "Corporal":   "",
+      "Sergeant":   "",
+      "Medic":      "",
+      "Heavy":      "",
+      "MP":         "",
+      "Ranger":     "",
+      "Lieutenant": "",
+      "Officer":    "",
     },
     rankFiles: {
       "Private":    "ncrprivate.txt",
@@ -559,15 +559,15 @@ const FACTION_RANKS = {
     order:   ["Recruit", "Legionnaire", "Prime Legionary", "Veteran Legionnaire", "Vexalarius", "Centurion", "Assassin", "Praetorian", "Legate"],
     default: "Recruit",
     badges:  {
-      "Recruit":             "🪖",
-      "Legionnaire":         "⚔️",
-      "Prime Legionary":     "🗡️",
-      "Veteran Legionnaire": "🎖️",
-      "Vexalarius":          "🚩",
-      "Centurion":           "🏅",
-      "Assassin":            "🥷",
-      "Praetorian":          "🛡️",
-      "Legate":              "👑",
+      "Recruit":             "",
+      "Legionnaire":         "",
+      "Prime Legionary":     "",
+      "Veteran Legionnaire": "",
+      "Vexalarius":          "",
+      "Centurion":           "",
+      "Assassin":            "",
+      "Praetorian":          "",
+      "Legate":              "",
     },
     rankFiles: {
       "Recruit":             "legionrecruit.txt",
@@ -585,9 +585,9 @@ const FACTION_RANKS = {
     order:   ["Low Rank", "Mid Rank", "High Rank"],
     default: "Low Rank",
     badges:  {
-      "Low Rank":  "🪖",
-      "Mid Rank":  "⚔️",
-      "High Rank": "👑",
+      "Low Rank":  "",
+      "Mid Rank":  "",
+      "High Rank": "",
     },
     rankFiles: {
       "Low Rank":  "enclavelowrank.txt",
@@ -599,9 +599,9 @@ const FACTION_RANKS = {
     order:   ["Low Rank", "Mid Rank", "High Rank"],
     default: "Low Rank",
     badges:  {
-      "Low Rank":  "🪖",
-      "Mid Rank":  "⚔️",
-      "High Rank": "👑",
+      "Low Rank":  "",
+      "Mid Rank":  "",
+      "High Rank": "",
     },
     rankFiles: {
       "Low Rank":  "khanslowrank.txt",
@@ -613,10 +613,10 @@ const FACTION_RANKS = {
     order:   ["Initiate", "Knight", "Paladin", "Elder"],
     default: "Initiate",
     badges:  {
-      "Initiate": "🪖",
-      "Knight":   "⚔️",
-      "Paladin":  "🎖️",
-      "Elder":    "👑",
+      "Initiate": "",
+      "Knight":   "",
+      "Paladin":  "",
+      "Elder":    "",
     },
     rankFiles: {
       "Initiate": "bosinitiate.txt",
@@ -630,7 +630,7 @@ const FACTION_RANKS = {
 function getFactionRankConfig(faction) { return FACTION_RANKS[faction] ?? null; }
 function getFactionRankOrder(faction)  { return FACTION_RANKS[faction]?.order ?? []; }
 function getFactionDefaultRank(faction){ return FACTION_RANKS[faction]?.default ?? "Recruit"; }
-function getFactionRankBadge(faction, rank) { return FACTION_RANKS[faction]?.badges[rank] ?? "❓"; }
+function getFactionRankBadge(faction, rank) { return FACTION_RANKS[faction]?.badges[rank] ?? ""; }
 
 function rankBadge(faction, rank) {
   const badge = getFactionRankBadge(faction, rank);
@@ -964,9 +964,7 @@ function formatUptime(ms) {
 function serverLabel(server) {
   return server === "server2" ? "Server 2" : server === "both" ? "Both Servers" : "Server 1";
 }
-function serverEmoji(server) {
-  return server === "both" ? "🌐" : server === "server2" ? "2️⃣" : "1️⃣";
-}
+function serverEmoji() { return ""; }   // emoji-free; servers shown via serverLabel()
 
 function chunkFields(lines, firstLabel, contLabel = firstLabel + " (cont.)", maxLen = 1020) {
   const fields = [];
@@ -992,7 +990,7 @@ function splitPages(lines, perPage) {
 /* ================================================================
    INTERACTIVE PAGINATOR
    ================================================================
-   Renders a list across pages with ◀ ▶ buttons. `buildEmbed(pageLines,
+   Renders a list across pages with buttons. `buildEmbed(pageLines,
    pageIndex, totalPages)` returns the EmbedBuilder for a page. Uses the
    same awaitMessageComponent flow as the confirm dialogs elsewhere.
    ================================================================ */
@@ -1001,9 +999,9 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
   const total = pages.length;
   let page = 0;
   const row = (p) => new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("pg_prev").setEmoji("◀️").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+    new ButtonBuilder().setCustomId("pg_prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
     new ButtonBuilder().setCustomId("pg_ind").setLabel(`Page ${p + 1} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-    new ButtonBuilder().setCustomId("pg_next").setEmoji("▶️").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
+    new ButtonBuilder().setCustomId("pg_next").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
   );
   const render = (p) => ({ embeds: [brand(buildEmbed(pages[p], p, total))], components: total > 1 ? [row(p)] : [] });
 
@@ -1028,8 +1026,8 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
 /* ================================================================
    EMBED BUILDERS
    ================================================================ */
-const DIVIDER = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬";
-const RULE    = "─────────────────────────────";
+const DIVIDER = "▓▒░▒▓▒░▒▓▒░▒▓▒░▒▓▒░▒▓▒░▒▓";
+const RULE    = "·--·--·--·--·--·--·--·--·--·--·";
 const BRAND_NAME = "MOJAVE AUTHORITY";
 
 /* ================================================================
@@ -1054,7 +1052,7 @@ function bar(value, max, width = 12) {
   const filled = Math.round(ratio * width);
   return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
 }
-const pip = (ok) => (ok ? "🟢" : "🔴");
+const pip = (ok) => (ok ? "[OK]" : "[!!]");
 
 /* A blockquote-styled hero line used at the top of feature embeds. */
 function hero(quoteText) { return `> *${quoteText}*\n${RULE}`; }
@@ -1070,67 +1068,67 @@ function clinical(embed, footer) {
    ================================================================ */
 function successEmbed(title, description, quoteCategory = "system") {
   return brand(new EmbedBuilder().setColor(NV.AMBER)
-    .setTitle(`✅  ${title}`)
+    .setTitle(`${title}`)
     .setDescription(`${description}`),
     { footer: { text: randomQuote(quoteCategory) } });
 }
 function errorEmbed(title, description) {
   return brand(new EmbedBuilder().setColor(NV.RUST_RED)
-    .setTitle(`☢️  ${title}`)
+    .setTitle(`${title}`)
     .setDescription(`${description}`),
     { footer: { text: "Securitron network active · incident logged" } });
 }
 function warningEmbed(title, description) {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle(`⚠️  ${title}`)
+    .setTitle(`${title}`)
     .setDescription(`${description}`));
 }
 function adminOnlyEmbed() {
   return brand(new EmbedBuilder().setColor(NV.DEEP_BLACK)
-    .setTitle("🎰  Access Denied — Mr. House's Domain")
+    .setTitle("Access Denied — Mr. House's Domain")
     .setDescription('> *"I didn\'t survive two centuries to be overruled by the uninvited."*\n\nThis command is restricted to **Administrators** only.'),
     { footer: { text: "Unauthorized access attempt logged" } });
 }
 function ownerOnlyEmbed() {
   return brand(new EmbedBuilder().setColor(NV.DEEP_BLACK)
-    .setTitle("👁️  Owner Eyes Only")
+    .setTitle("Owner Eyes Only")
     .setDescription('> *"Some files even Mr. House keeps to himself."*\n\nThis command is restricted to the **bot owner**.'),
     { footer: { text: "Unauthorized access attempt logged" } });
 }
 function modOnlyEmbed() {
   return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-    .setTitle("🛡️  Clearance Required")
+    .setTitle("Clearance Required")
     .setDescription('> *"You don\'t have the credentials for this, friend."*\n\nThis command requires the **Moderator** role.'),
     { footer: { text: "Access restricted · civilian status confirmed" } });
 }
 function blacklistedEmbed(entry) {
   const reason = entry?.reason ? `\n\n**Reason:** ${entry.reason}` : "";
   return brand(new EmbedBuilder().setColor(NV.LEGION_RED)
-    .setTitle("⛔  Blacklisted — Access Revoked")
+    .setTitle("Blacklisted — Access Revoked")
     .setDescription(`> *"You're persona non grata around here. The Securitrons won't lift a finger for you."*\n\nYou have been **blacklisted** from using this bot. All commands are unavailable to you.${reason}`),
     { footer: { text: "Contact an administrator if you believe this is a mistake" } });
 }
 function factionLeaderOnlyEmbed() {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle("⚔️  Faction Authority Required")
+    .setTitle("Faction Authority Required")
     .setDescription('> *"Only faction leaders pull strings around here, stranger."*\n\nRequires the **Faction Leader** role (or Moderator).'),
     { footer: { text: "Faction access not verified" } });
 }
 function factionLeaderStrictEmbed() {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle("⚔️  Faction Leader Authority Required")
+    .setTitle("Faction Leader Authority Required")
     .setDescription('> *"Rank assignments are the sole domain of faction leadership."*\n\nThis action requires the **Faction Leader** role specifically.'),
     { footer: { text: "Rank authority not verified" } });
 }
 function emptyIdEmbed() {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle("📭  No Courier ID Provided")
-    .setDescription("A valid **Courier ID** or username is required.\n\n💡 *Start typing in the player field — autocomplete surfaces anyone currently online.*"),
+    .setTitle("No Courier ID Provided")
+    .setDescription("A valid **Courier ID** or username is required.\n\n*Start typing in the player field — autocomplete surfaces anyone currently online.*"),
     { footer: { text: "Tip: manual IDs are accepted if the player is offline" } });
 }
 function rateLimitEmbed() {
   return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-    .setTitle("⏱️  Slow Down, Courier")
+    .setTitle("Slow Down, Courier")
     .setDescription("You're issuing commands too quickly. Wait a moment and try again."),
     { footer: { text: "Rate limit active" } });
 }
@@ -1268,12 +1266,12 @@ async function logBan(embed) {
 async function dmPunishmentNotice(discordUser, { action, color, playerId, reason, fields = [] }) {
   if (!discordUser) return null;
   const embed = brand(new EmbedBuilder().setColor(color)
-    .setTitle(`📨  Moderation Notice — ${action}`)
+    .setTitle(`Moderation Notice — ${action}`)
     .setDescription(hero("A moderation action has been taken on your account."))
     .addFields(
-      { name: "🎯  Courier",  value: `\`${playerId}\``, inline: true },
-      { name: "⚖️  Action",   value: `**${action}**`,   inline: true },
-      ...(reason ? [{ name: "📋  Reason", value: reason, inline: false }] : []),
+      { name: "Courier",  value: `\`${playerId}\``, inline: true },
+      { name: "Action",   value: `**${action}**`,   inline: true },
+      ...(reason ? [{ name: "Reason", value: reason, inline: false }] : []),
       ...fields,
     ),
     { thumb: true, footer: { text: "You received this because a moderator linked your Discord account to this action." } });
@@ -1286,14 +1284,14 @@ async function dmPunishmentNotice(discordUser, { action, color, playerId, reason
   }
 }
 
-/** Builds the "📨 Player Notified" status field for the moderator's reply. */
+/** Builds the "Player Notified" status field for the moderator's reply. */
 function dmStatusField(sent, discordUser) {
   if (sent === null) return null;
   return {
-    name: "📨  Player Notified",
+    name: "Player Notified",
     value: sent
-      ? `✅  DM delivered to <@${discordUser.id}>`
-      : `⚠️  Couldn't DM <@${discordUser.id}> — their DMs are closed or the bot is blocked.`,
+      ? `DM delivered to <@${discordUser.id}>`
+      : `Couldn't DM <@${discordUser.id}> — their DMs are closed or the bot is blocked.`,
     inline: false,
   };
 }
@@ -1589,13 +1587,13 @@ async function processExpiredBans() {
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
       await logBan(
-        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("⏰  Sentence Served — Courier Released")
+        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Sentence Served — Courier Released")
           .setDescription('> *"Every soul deserves a second chance in the Mojave."*')
           .addFields(
-            { name: "🎯  Courier",          value: `\`${ban.playerId}\``,          inline: true },
-            { name: "⚖️  Original Offense", value: ban.reason,                     inline: true },
-            { name: "⏱️  Duration Served",  value: ban.durationLabel ?? "Unknown", inline: true },
-            { name: "🛡️  Originally Banned",value: `by ${ban.moderator}`,          inline: false },
+            { name: "Courier",          value: `\`${ban.playerId}\``,          inline: true },
+            { name: "Original Offense", value: ban.reason,                     inline: true },
+            { name: "Duration Served",  value: ban.durationLabel ?? "Unknown", inline: true },
+            { name: "Originally Banned",value: `by ${ban.moderator}`,          inline: false },
           ), "Exile expired — access restored automatically")
       );
     } catch (err) {
@@ -1635,13 +1633,13 @@ async function processWagePayout() {
   logger.info("Wages", `Payout: ${results.paid.length} paid, ${results.skipped.length} skipped, ${results.failed.length} failed`);
   if (!results.paid.length && !results.failed.length) return;
   const lines = [
-    ...results.paid.map(r   => `✅  \`${r.playerId}\`  ·  **${r.tier}**  →  **${r.newBal.toLocaleString()} caps** *(+${r.amount})*`),
-    ...results.failed.map(r => `☢️  \`${r.playerId}\`  ·  **${r.tier}**  —  *ledger write failed*`),
+    ...results.paid.map(r   => `\`${r.playerId}\`  ·  **${r.tier}**  →  **${r.newBal.toLocaleString()} caps** *(+${r.amount})*`),
+    ...results.failed.map(r => `\`${r.playerId}\`  ·  **${r.tier}**  —  *ledger write failed*`),
   ];
-  const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💰  Weekly Wages Disbursed")
+  const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Wages Disbursed")
     .setDescription(`> *${randomQuote("wages")}*\n\n${DIVIDER}\n**${results.paid.length}** paid  ·  **${results.skipped.length}** skipped  ·  **${results.failed.length}** failed`)
     .setFooter({ text: "The House always pays its debts." }).setTimestamp();
-  for (const f of chunkFields(lines, "📋  Payout Ledger")) embed.addFields(f);
+  for (const f of chunkFields(lines, "Payout Ledger")) embed.addFields(f);
   brand(embed); await logAction(embed);
 }
 
@@ -1665,13 +1663,13 @@ function buildLeaderboardData() {
 }
 
 function rankLabel(i) {
-  return i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `\`#${String(i + 1).padStart(2)}\``;
+  return i === 0 ? "" : i === 1 ? "" : i === 2 ? "" : `\`#${String(i + 1).padStart(2)}\``;
 }
 
 function buildLeaderboardEmbed() {
   const entries = buildLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.GOLD)
-    .setTitle(`💰  New Vegas Caps — Top ${LEADERBOARD_TOP_N}`);
+    .setTitle(`New Vegas Caps — Top ${LEADERBOARD_TOP_N}`);
   if (!entries) return brand(embed.setColor(NV.RUST_RED)
     .setDescription(`${hero("Vault records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
     { footer: { text: `Updated every 6h` } });
@@ -1715,7 +1713,7 @@ function buildPlaytimeLeaderboardData() {
 function buildPlaytimeLeaderboardEmbed() {
   const entries = buildPlaytimeLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
-    .setTitle(`⏱️  Most Active Couriers — Top ${LEADERBOARD_TOP_N}`);
+    .setTitle(`Most Active Couriers — Top ${LEADERBOARD_TOP_N}`);
   if (!entries.length) return brand(embed
     .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while couriers are online (sampled every 60s).`),
     { footer: { text: `Updated every 6h` } });
@@ -1753,10 +1751,10 @@ function buildPlayerListEmbed() {
   const s1 = [...playerCache.server1].sort((a, b) => a.localeCompare(b));
   const s2 = [...playerCache.server2].sort((a, b) => a.localeCompare(b));
   const total = new Set([...s1, ...s2].map(n => n.toLowerCase())).size;
-  const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("🧭  Live Player List")
+  const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Live Player List")
     .setDescription(hero(`**${total}** courier${total !== 1 ? "s" : ""} roaming the Mojave right now.`))
-    .addFields({ name: `🖥️  Server 1 (${s1.length})`, value: fmt(s1), inline: true });
-  if (hasServer2) embed.addFields({ name: `🖥️  Server 2 (${s2.length})`, value: fmt(s2), inline: true });
+    .addFields({ name: `Server 1 (${s1.length})`, value: fmt(s1), inline: true });
+  if (hasServer2) embed.addFields({ name: `Server 2 (${s2.length})`, value: fmt(s2), inline: true });
   return brand(embed.setFooter({ text: "Updates every 30s" }).setTimestamp());
 }
 let lastPlayerListMsgId = null;
@@ -1818,7 +1816,7 @@ async function ensureVerifyPanel() {
   if (!ch?.isTextBased()) return;
   const saved = safeRead(FILES.VERIFY_PANEL, {});
   if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
-  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🎫  Mojave Checkpoint — Verification")
+  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Mojave Checkpoint — Verification")
     .setDescription(`${hero(randomQuote("verify"))}\n**Halt, courier.** Before the Strip opens to you, the Securitrons need a name on file.\n\nPress **Verify** below and enter your **exact** Pavlov username. Match the registry and the gates swing wide — vault door, NCR checkpoint, the whole Mojave.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("verify_start").setLabel("Verify").setStyle(ButtonStyle.Success));
@@ -1830,30 +1828,30 @@ async function ensureVerifyPanel() {
 async function handleVerifySubmit(interaction) {
   const name = sanitizeMessage(interaction.fields.getTextInputValue("verify_name")).trim();
   if (!isKnownPavlovPlayer(name)) {
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("📛  Verification Denied")
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Verification Denied")
       .setDescription(`${hero("That name's not in our records, wanderer.")}\nCouldn't find a Pavlov courier named \`${name}\`. Enter your **exact** in-game username — you must have set foot in the Mojave first.`))], ephemeral: true });
   }
   // one identity per courier — reject if this Pavlov name is already claimed by someone else
   const links = loadVerifyLinks();
   const claimedBy = links[name.toLowerCase()];
   if (claimedBy && claimedBy !== interaction.user.id) {
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("⛔  Identity Already Claimed")
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Identity Already Claimed")
       .setDescription(`${hero("Two couriers, one name? Not on Mr. House's Strip.")}\nThe Pavlov courier \`${name}\` is already verified to <@${claimedBy}>. If this is really you, contact an admin.`))], ephemeral: true });
   }
   const member = interaction.member;
   const notes = [];
   try { await member.setNickname(name.slice(0, 32)); notes.push("nickname set"); }
-  catch { notes.push("⚠️ couldn't set nickname (bot role must be above yours)"); }
+  catch { notes.push("couldn't set nickname (bot role must be above yours)"); }
   try { await member.roles.remove(VERIFY_UNVERIFIED_ROLE); } catch {}
   try { await member.roles.add(VERIFY_VERIFIED_ROLE); notes.push("verified role granted"); }
-  catch { notes.push("⚠️ couldn't change roles (check bot Manage Roles + role order)"); }
+  catch { notes.push("couldn't change roles (check bot Manage Roles + role order)"); }
   // persist the Pavlov-name -> Discord-id link so bans can DM this user later.
   // Drop any previous name this user held so each Discord account maps to one name.
   for (const k of Object.keys(links)) if (links[k] === member.id) delete links[k];
   links[name.toLowerCase()] = member.id;
   safeWrite(FILES.VERIFY_LINKS, links);
   logger.info("Verify", `${member.user.tag} verified as Pavlov "${name}"`);
-  return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  Welcome to the Strip — Verified")
+  return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Welcome to the Strip — Verified")
     .setDescription(`${hero("Identity confirmed. The Mojave welcomes you.")}\nLinked to Pavlov courier \`${name}\`. ${notes.join(" · ")}`))], ephemeral: true });
 }
 
@@ -1978,10 +1976,10 @@ const commands = [
     .setDescription("Check a courier's warning history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("clearwarnings")
-    .setDescription("🔒 Admin — Clear all warnings for a courier")
+    .setDescription("Admin — Clear all warnings for a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("delwarn")
-    .setDescription("🛡️ Mod — Remove a single warning by its number (see /warnings)")
+    .setDescription("Mod — Remove a single warning by its number (see /warnings)")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName("number").setDescription("Warning number to remove (from /warnings)").setRequired(true).setMinValue(1)),
   new SlashCommandBuilder().setName("seen")
@@ -1990,20 +1988,20 @@ const commands = [
   new SlashCommandBuilder().setName("note")
     .setDescription("Staff notes on a courier")
     .addSubcommand(s => s.setName("add")
-      .setDescription("🛡️ Mod — Add a staff note to a courier")
+      .setDescription("Mod — Add a staff note to a courier")
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("note").setDescription("Note text").setRequired(true)))
     .addSubcommand(s => s.setName("list")
-      .setDescription("🛡️ Mod — View staff notes on a courier")
+      .setDescription("Mod — View staff notes on a courier")
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("clear")
-      .setDescription("🔒 Admin — Delete all staff notes on a courier")
+      .setDescription("Admin — Delete all staff notes on a courier")
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))),
   new SlashCommandBuilder().setName("history")
     .setDescription("View full moderation history for a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("staffactivity")
-    .setDescription("🔒 Admin — All moderation actions taken by a staff member")
+    .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
   new SlashCommandBuilder().setName("tempban")
     .setDescription("Exile a courier for a set period")
@@ -2028,15 +2026,15 @@ const commands = [
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("banlist").setDescription("View all active exiles").addStringOption(serverOption),
   new SlashCommandBuilder().setName("permban")
-    .setDescription("🔒 Admin — Permanently exile a courier")
+    .setDescription("Admin — Permanently exile a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
     .addStringOption(o => o.setName("notes").setDescription("Additional context"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
-  new SlashCommandBuilder().setName("cleartempbans").setDescription("🔒 Admin — Clear all temporary exiles (confirmation required)"),
+  new SlashCommandBuilder().setName("cleartempbans").setDescription("Admin — Clear all temporary exiles (confirmation required)"),
   new SlashCommandBuilder().setName("donator")
-    .setDescription("🔒 Admin — Manage the donator whitelist file")
+    .setDescription("Admin — Manage the donator whitelist file")
     .addSubcommand(s => s.setName("add")
       .setDescription("Add a player to the donator file")
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
@@ -2046,42 +2044,42 @@ const commands = [
     .addSubcommand(s => s.setName("list")
       .setDescription("List all players in the donator file")),
   new SlashCommandBuilder().setName("setroles")
-    .setDescription("🔒 Admin — Configure role permissions")
+    .setDescription("Admin — Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
     .addRoleOption(o => o.setName("faction_leader_role").setDescription("Faction Leader role")),
   new SlashCommandBuilder().setName("acceptstaffapp")
-    .setDescription("🔒 Admin — Accept a staff application: DM the applicant and grant staff roles")
+    .setDescription("Admin — Accept a staff application: DM the applicant and grant staff roles")
     .addUserOption(o => o.setName("user").setDescription("The accepted applicant").setRequired(true)),
   new SlashCommandBuilder().setName("denystaffapp")
-    .setDescription("🔒 Admin — Deny a staff application: DM the applicant (no other action)")
+    .setDescription("Admin — Deny a staff application: DM the applicant (no other action)")
     .addUserOption(o => o.setName("user").setDescription("The denied applicant").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Optional reason shown in the DM")),
   new SlashCommandBuilder().setName("announce")
-    .setDescription("📢 Mod — Broadcast a message via RCON Notify")
+    .setDescription("Mod — Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("target").setDescription("Who to notify: a specific courier, or All").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("givemenu")
-    .setDescription("🔒 Admin — Grant RCON menu access to a courier")
+    .setDescription("Admin — Grant RCON menu access to a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("menu").setDescription("Menu to grant").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("stripmenu")
-    .setDescription("🔒 Admin — Revoke RCON menu access from a courier")
+    .setDescription("Admin — Revoke RCON menu access from a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("stripmenuall")
-    .setDescription("👁️ Owner — Revoke a menu from EVERY player who holds it (both servers)")
+    .setDescription("Owner — Revoke a menu from EVERY player who holds it (both servers)")
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
   new SlashCommandBuilder().setName("clearallbans")
-    .setDescription("👁️ Owner — Unban everyone (runs Unban per player on both servers)"),
+    .setDescription("Owner — Unban everyone (runs Unban per player on both servers)"),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2097,12 +2095,12 @@ const commands = [
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("rank")
-      .setDescription("⚔️ Faction Leader — Set or change a member's rank within a faction")
+      .setDescription("Faction Leader — Set or change a member's rank within a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("rank").setDescription("New rank to assign (faction-specific)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("transfer")
-      .setDescription("🛡️ Mod — Transfer a player from one faction to another")
+      .setDescription("Mod — Transfer a player from one faction to another")
       .addStringOption(o => o.setName("from_faction").setDescription("Current faction").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("to_faction").setDescription("Destination faction").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the current faction first)").setRequired(true).setAutocomplete(true))
@@ -2116,21 +2114,21 @@ const commands = [
       .setDescription("View recent add/remove/rank changes for a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
     .addSubcommand(s => s.setName("setcap")
-      .setDescription("🔒 Admin — Set the maximum member cap for a faction")
+      .setDescription("Admin — Set the maximum member cap for a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addIntegerOption(o => o.setName("cap").setDescription("Maximum number of members (1–500)").setRequired(true).setMinValue(1).setMaxValue(500)))
     .addSubcommand(s => s.setName("setrankcap")
-      .setDescription("🔒 Admin — Set the per-rank member cap within a faction")
+      .setDescription("Admin — Set the per-rank member cap within a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("rank").setDescription("Rank to cap (faction-specific)").setRequired(true).setAutocomplete(true))
       .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500))),
 
   new SlashCommandBuilder().setName("manual")
-    .setDescription("🔒 Admin — Send a raw RCON command")
+    .setDescription("Admin — Send a raw RCON command")
     .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("rotatemap")
-    .setDescription("🔒 Admin — Rotate the map (confirmation required)")
+    .setDescription("Admin — Rotate the map (confirmation required)")
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("addwage")
     .setDescription("Enrol a courier in payroll or issue a one-time mercenary payment")
@@ -2155,12 +2153,12 @@ const commands = [
     .addIntegerOption(o => o.setName("amount").setDescription("Caps to give").setRequired(true).setMinValue(1).setMaxValue(10000))
     .addStringOption(o => o.setName("reason").setDescription("Reason (shown in logs)")),
   new SlashCommandBuilder().setName("transfercaps")
-    .setDescription("🔒 Admin — Move caps between two courier ledgers")
+    .setDescription("Admin — Move caps between two courier ledgers")
     .addStringOption(o => o.setName("from_id").setDescription("Courier to deduct from").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("to_id").setDescription("Courier to credit").setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName("amount").setDescription("Number of caps to transfer").setRequired(true).setMinValue(1)),
   new SlashCommandBuilder().setName("adjustcaps")
-    .setDescription("🔒 Admin — Manually add or subtract caps from a courier's ledger")
+    .setDescription("Admin — Manually add or subtract caps from a courier's ledger")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName("amount").setDescription("Caps to add (positive) or subtract (negative)").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for adjustment (logged)")),
@@ -2168,7 +2166,7 @@ const commands = [
     .setDescription("Courier dossier: playtime, factions, balance, and mod history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("inspect")
-    .setDescription("👁️ Owner — Full dossier on a courier (everything, incl. IPs & alts)")
+    .setDescription("Owner — Full dossier on a courier (everything, incl. IPs & alts)")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
 ].map(c => c.toJSON());
 
@@ -2203,16 +2201,16 @@ client.once("ready", async () => {
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null };
       const ts = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:f>` : "unknown";
       const tsR = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:R>` : "unknown";
-      const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("🟢  Courier Logged — IP Confirmed")
+      const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Courier Logged — IP Confirmed")
         .setDescription(`${hero(randomQuote("connect"))}`)
         .addFields(
-          { name: "🎯  Name",       value: `\`${name}\``,                                            inline: true },
-          { name: "🌐  Current IP", value: `\`${ip ?? "unknown"}\``,                                 inline: true },
-          { name: "🖥️  Server",     value: srvName,                                                  inline: true },
-          { name: `📍  Confirmed IPs (${rec.cips.length})`, value: (rec.cips.length ? rec.cips.map(x => `\`${x}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
-          { name: "📅  First Seen",  value: ts(rec.firstSeen),                                        inline: true },
-          { name: "👁️  Last Seen",  value: tsR(rec.lastSeen),                                        inline: true },
-          { name: `🔗  Known Alts (${rec.alts.length})`, value: (rec.alts.length ? rec.alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: "Name",       value: `\`${name}\``,                                            inline: true },
+          { name: "Current IP", value: `\`${ip ?? "unknown"}\``,                                 inline: true },
+          { name: "Server",     value: srvName,                                                  inline: true },
+          { name: `Confirmed IPs (${rec.cips.length})`, value: (rec.cips.length ? rec.cips.map(x => `\`${x}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: "First Seen",  value: ts(rec.firstSeen),                                        inline: true },
+          { name: "Last Seen",  value: tsR(rec.lastSeen),                                        inline: true },
+          { name: `Known Alts (${rec.alts.length})`, value: (rec.alts.length ? rec.alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
         ), "Connection log · Mojave Authority");
       feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
     },
@@ -2222,12 +2220,12 @@ client.once("ready", async () => {
       await banWithIp(name, "both");
       writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`, by: "IP-Guard" });
       logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`);
-      const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🛑  Blacklisted Courier Blocked")
+      const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Blacklisted Courier Blocked")
         .setDescription(`${hero(randomQuote("autoban"))}`)
         .addFields(
-          { name: "🎯  Courier", value: `\`${name}\``,            inline: true },
-          { name: "🌐  IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
-          { name: "🚫  Reason",  value: reason || "blacklist match", inline: true },
+          { name: "Courier", value: `\`${name}\``,            inline: true },
+          { name: "IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
+          { name: "Reason",  value: reason || "blacklist match", inline: true },
         ), "Auto-ban · both servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       // also surface it in the connection feed (the channel you watch for joins)
@@ -2322,7 +2320,7 @@ client.on("interactionCreate", async (interaction) => {
     }
     // /announce target field also offers "All"
     if (cmdName === "announce" && focused.name === "target" && (!query || "all".includes(query))) {
-      choices.unshift({ name: "📢  All players", value: "all" });
+      choices.unshift({ name: "All players", value: "all" });
     }
     return interaction.respond(choices.slice(0, 25)).catch(() => {});
   }
@@ -2368,10 +2366,10 @@ client.on("interactionCreate", async (interaction) => {
         const isFLead = hasFactionLeaderRole(interaction.member);
 
         let badge, color;
-        if (isAdmin)      { badge = "🔒  **ADMIN**";          color = NV.AMBER;     }
-        else if (isMod)   { badge = "🛡️  **MODERATOR**";      color = NV.NCR_TAN;   }
-        else if (isFLead) { badge = "⚔️  **FACTION LEADER**"; color = NV.GOLD;      }
-        else              { badge = "🌐  **PUBLIC ACCESS**";  color = NV.BLUE_VATS; }
+        if (isAdmin)      { badge = "**ADMIN**";          color = NV.AMBER;     }
+        else if (isMod)   { badge = "**MODERATOR**";      color = NV.NCR_TAN;   }
+        else if (isFLead) { badge = "**FACTION LEADER**"; color = NV.GOLD;      }
+        else              { badge = "**PUBLIC ACCESS**";  color = NV.BLUE_VATS; }
 
         const mStr = modRoleId           ? `<@&${modRoleId}>`           : "`not set`";
         const aStr = adminRoleId         ? `<@&${adminRoleId}>`         : "`not set`";
@@ -2384,16 +2382,16 @@ client.on("interactionCreate", async (interaction) => {
         }).join("\n");
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle("🎰  Mojave Authority — Command Roster")
+          .setTitle("Mojave Authority — Command Roster")
           .setDescription(
             `> *"War. War never changes. But the rules of the Strip — those we enforce."*\n\n${DIVIDER}\n` +
-            `**Your Access:** ${badge}\n🛡️ Mod: ${mStr}  ·  🔒 Admin: ${aStr}  ·  ⚔️ Faction: ${fStr}\n${DIVIDER}\n\n` +
-            `💡 *Autocomplete works in all Courier ID and Rank fields — faction ranks are filtered per faction.*`
+            `**Your Access:** ${badge}\nMod: ${mStr}  ·  Admin: ${aStr}  ·  Faction: ${fStr}\n${DIVIDER}\n\n` +
+            `*Autocomplete works in all Courier ID and Rank fields — faction ranks are filtered per faction.*`
           )
           .addFields(
-            { name: "🌐  Public",
+            { name: "Public",
               value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction overview` `/faction audit`" },
-            { name: "🛡️  Moderator",
+            { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
                 "`/warn <id> <reason> <server>` — Issue warning *(auto-bans at 3/5/7)*",
@@ -2406,18 +2404,18 @@ client.on("interactionCreate", async (interaction) => {
                 "`/givecaps <id> <amount> [reason]` — Give caps to a courier",
                 "`/faction transfer <id> <from> <to> [rank]` — Move player between factions",
               ].join("\n") },
-            { name: "⚔️  Faction Leader",
+            { name: "Faction Leader",
               value: [
                 "`/faction add <id> <faction> [rank]` — Whitelist player (optional starting rank)",
                 "`/faction remove <id> <faction>` — Remove from whitelist",
                 "`/faction rank <id> <faction> <rank>` — Set member rank *(FL only)*",
-                "`/faction list <faction>` — Roster with ranks (◀ ▶ pages)",
+                "`/faction list <faction>` — Roster with ranks (pages)",
                 "`/faction overview` — All factions at a glance",
-                "`/faction audit <faction>` — Add/remove/rank change log (◀ ▶ pages)",
+                "`/faction audit <faction>` — Add/remove/rank change log (pages)",
                 "`/addwage <id> <tier>` — Enrol in payroll or issue mercenary pay",
                 "`/removewage <id>` — Remove from payroll",
               ].join("\n") },
-            { name: "🔒  Admin",
+            { name: "Admin",
               value: [
                 "`/permban <id> <server> <reason>` — Permanent ban",
                 "`/clearwarnings <id>` — Wipe all warnings for a courier",
@@ -2427,27 +2425,27 @@ client.on("interactionCreate", async (interaction) => {
                 "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
-                "`/inspect <id>` — 👁️ *Owner only* — full dossier (everything, incl. IPs & alts)",
-                "`/stripmenuall <menu>` — 👁️ *Owner only* — revoke a menu from EVERY holder",
-                "`/configure` — 👁️ *Owner only* — hidden control panel (IP tracker management)",
-                "`/clearallbans` — 👁️ *Owner only* — unban everyone (runs Unban per player)",
+                "`/inspect <id>` — *Owner only* — full dossier (everything, incl. IPs & alts)",
+                "`/stripmenuall <menu>` — *Owner only* — revoke a menu from EVERY holder",
+                "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
+                "`/clearallbans` — *Owner only* — unban everyone (runs Unban per player)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
               ].join("\n") },
-            { name: "⚔️  Faction Ranks (per faction)",
+            { name: "Faction Ranks (per faction)",
               value: rankSummaryLines },
-            { name: "⚙️  Automation",
+            { name: "Automation",
               value: [
-                "🔄  Temp bans auto-lifted every **60s**",
-                "📊  Leaderboard auto-posted every **6h**",
-                "💰  Wages disbursed every **7 days**",
-                "🏥  RCON health check every **5 min**",
-                `⚠️  Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
-                "🎖️  Rank changes update both the rank registry and the rank-specific spawn files automatically",
-                "📨  `/kick` `/warn` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
-                "⛔  Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
+                "Temp bans auto-lifted every **60s**",
+                "Leaderboard auto-posted every **6h**",
+                "Wages disbursed every **7 days**",
+                "RCON health check every **5 min**",
+                `Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
+                "Rank changes update both the rank registry and the rank-specific spawn files automatically",
+                "`/kick` `/warn` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
+                "Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
               ].join("\n") },
           )
           .setFooter({ text: BOT_COPYRIGHT });
@@ -2476,17 +2474,17 @@ client.on("interactionCreate", async (interaction) => {
         const wsPing = Math.max(0, client.ws.ping);
         const health = `${pip(true)}${pip(s1ok)}${pip(s2ok)}`;
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle("📡  System Status")
+          .setTitle("System Status")
           .setDescription(`${hero(headline)}\n${health}  ·  **${okCount + 1}/3** nodes online`)
           .addFields(
-            { name: "🤖  Bot",        value: `${pip(true)}  Online\n\`gateway ${wsPing}ms\``,                    inline: true },
-            { name: "1️⃣  Server 1",   value: s1ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
-            { name: "2️⃣  Server 2",   value: s2ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
-            { name: "⚡  RTT",        value: `\`${bar(Math.min(rtt, 1000), 1000, 10)}\`\n\`${rtt}ms\``,           inline: true },
-            { name: "⏱️  Uptime",     value: `\`${formatUptime(Date.now() - BOT_START_MS)}\``,                    inline: true },
-            { name: "👥  Cached",     value: `S1 \`${playerCache.server1.length}\` · S2 \`${playerCache.server2.length}\``, inline: true },
-            { name: "💾  Mod Log",    value: `\`${loadModLog().length}\` entries`,                                inline: true },
-            { name: "⚠️  Open Bans",  value: `\`${loadBans().length}\` active`,                                  inline: true },
+            { name: "Bot",        value: `${pip(true)}  Online\n\`gateway ${wsPing}ms\``,                    inline: true },
+            { name: "Server 1",   value: s1ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
+            { name: "Server 2",   value: s2ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
+            { name: "RTT",        value: `\`${bar(Math.min(rtt, 1000), 1000, 10)}\`\n\`${rtt}ms\``,           inline: true },
+            { name: "Uptime",     value: `\`${formatUptime(Date.now() - BOT_START_MS)}\``,                    inline: true },
+            { name: "Cached",     value: `S1 \`${playerCache.server1.length}\` · S2 \`${playerCache.server2.length}\``, inline: true },
+            { name: "Mod Log",    value: `\`${loadModLog().length}\` entries`,                                inline: true },
+            { name: "Open Bans",  value: `\`${loadBans().length}\` active`,                                  inline: true },
           );
         brand(embed, { thumb: true, footer: { text: BOT_COPYRIGHT } });
         return interaction.editReply({ embeds: [embed] });
@@ -2522,12 +2520,12 @@ client.on("interactionCreate", async (interaction) => {
           const srv = servers[i];
           const e = new EmbedBuilder()
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
-            .setTitle(`${serverEmoji(srv)}  ${info.serverName}`)
+            .setTitle(`${info.serverName}`)
             .setDescription(`${pip(info.ok)}  ${info.ok ? "Online" : "Offline"}  ·  \`${bar(info.players, Number(info.maxPlayers) || info.players || 1, 10)}\``)
             .addFields(
-              { name: "🗺️  Map",     value: info.mapLabel,                          inline: true },
-              { name: "🎮  Mode",    value: info.gameMode,                          inline: true },
-              { name: "👥  Players", value: `${info.players} / ${info.maxPlayers}`, inline: true },
+              { name: "Map",     value: info.mapLabel,                          inline: true },
+              { name: "Mode",    value: info.gameMode,                          inline: true },
+              { name: "Players", value: `${info.players} / ${info.maxPlayers}`, inline: true },
             );
           return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
@@ -2558,19 +2556,19 @@ client.on("interactionCreate", async (interaction) => {
         }
         if (!matches.length) {
           return interaction.editReply({ embeds: [
-            brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("🔍  No Matches Found")
+            brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("No Matches Found")
               .setDescription(`${hero(`No couriers matching "${query}" are online.`)}\n*Try a shorter search term.*`))
           ]});
         }
         const lines = matches.map((m) => {
           const srvStr = m.servers.map(s => s === "server1" ? "S1" : "S2").join("+");
           const warn   = loadWarns()[m.name.toLowerCase()]?.length ?? 0;
-          return `\`[${srvStr}]\`  **${m.name}**${warn ? `  ·  ⚠️ ${warn} warn${warn !== 1 ? "s" : ""}` : ""}`;
+          return `\`[${srvStr}]\`  **${m.name}**${warn ? `  ·  ${warn} warn${warn !== 1 ? "s" : ""}` : ""}`;
         });
         return interaction.editReply({ embeds: [
-          brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`🔍  Search Results — "${query}"`)
+          brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Search Results — "${query}"`)
             .setDescription(`${hero(`**${matches.length}** match${matches.length !== 1 ? "es" : ""} found.`)}\n${lines.join("\n")}`),
-            { footer: { text: `⚠️ = warnings on record` } })
+            { footer: { text: `= warnings on record` } })
         ]});
       }
 
@@ -2585,18 +2583,18 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply();                          // ← ADDED
         await sendRconBoth(`Kick ${playerId}`, server);
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
-        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("👢  Courier Ejected from the Strip")
+        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
           .setDescription(`> *${randomQuote("kick")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier", value: `\`${playerId}\``,                                  inline: true },
-            { name: "🖥️  Server",  value: `${serverEmoji(server)}  ${serverLabel(server)}`,   inline: true },
-            { name: "🛡️  By",      value: `${interaction.user}`,                              inline: true },
-            { name: "📋  Reason",  value: reason,                                             inline: false },
+            { name: "Courier", value: `\`${playerId}\``,                                  inline: true },
+            { name: "Server",  value: `${serverLabel(server)}`,   inline: true },
+            { name: "By",      value: `${interaction.user}`,                              inline: true },
+            { name: "Reason",  value: reason,                                             inline: false },
           ).setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
           action: "Kick", color: NV.NCR_TAN, playerId, reason,
-          fields: [{ name: "🖥️  Server", value: serverLabel(server), inline: true }],
+          fields: [{ name: "Server", value: serverLabel(server), inline: true }],
         });
         const kDmField = dmStatusField(kDm, kTarget);
         if (kDmField) embed.addFields(kDmField);
@@ -2618,28 +2616,28 @@ client.on("interactionCreate", async (interaction) => {
         const threshold = WARN_THRESHOLDS.find(t => t.count === count);
         const embed = new EmbedBuilder()
           .setColor(escalated ? NV.RUST_RED : NV.NCR_TAN)
-          .setTitle(escalated ? "⚠️  Warning Issued — Auto-Ban Triggered" : "⚠️  Warning Issued")
+          .setTitle(escalated ? "Warning Issued — Auto-Ban Triggered" : "Warning Issued")
           .setDescription(`> *${randomQuote("warn")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",   value: `\`${playerId}\``,     inline: true },
-            { name: "⚠️  Warning #", value: `**${count}**`,        inline: true },
-            { name: "🛡️  By",        value: `${interaction.user}`, inline: true },
-            { name: "⚖️  Offense",   value: reason,                inline: false },
+            { name: "Courier",   value: `\`${playerId}\``,     inline: true },
+            { name: "Warning #", value: `**${count}**`,        inline: true },
+            { name: "By",        value: `${interaction.user}`, inline: true },
+            { name: "Offense",   value: reason,                inline: false },
           );
         if (escalated?.type === "tempban") {
-          embed.addFields({ name: "🔴  Auto-Escalation", value: `Threshold reached — courier automatically **temp-banned** for **${escalated.label}**.`, inline: false });
+          embed.addFields({ name: "Auto-Escalation", value: `Threshold reached — courier automatically **temp-banned** for **${escalated.label}**.`, inline: false });
         } else if (escalated?.type === "permban") {
-          embed.addFields({ name: "🔴  Auto-Escalation", value: "Threshold reached — courier automatically **permanently banned**.", inline: false });
+          embed.addFields({ name: "Auto-Escalation", value: "Threshold reached — courier automatically **permanently banned**.", inline: false });
         } else if (threshold) {
-          embed.addFields({ name: "🟡  Threshold Reached", value: `Next escalation: **${threshold.label}**`, inline: false });
+          embed.addFields({ name: "Threshold Reached", value: `Next escalation: **${threshold.label}**`, inline: false });
         } else {
           const next = WARN_THRESHOLDS.find(t => t.count > count);
-          if (next) embed.addFields({ name: "📊  Progress", value: `${count}/${next.count} warnings — next: **${next.label}**`, inline: false });
+          if (next) embed.addFields({ name: "Progress", value: `${count}/${next.count} warnings — next: **${next.label}**`, inline: false });
         }
         embed.setFooter({ text: `Total warnings: ${count}` }).setTimestamp();
-        const wExtra = [{ name: "⚠️  Warning #", value: `**${count}**`, inline: true }];
-        if (escalated?.type === "tempban") wExtra.push({ name: "🔴  Escalation", value: `Auto temp-ban: **${escalated.label}**`, inline: false });
-        else if (escalated?.type === "permban") wExtra.push({ name: "🔴  Escalation", value: "Auto **permanent ban**", inline: false });
+        const wExtra = [{ name: "Warning #", value: `**${count}**`, inline: true }];
+        if (escalated?.type === "tempban") wExtra.push({ name: "Escalation", value: `Auto temp-ban: **${escalated.label}**`, inline: false });
+        else if (escalated?.type === "permban") wExtra.push({ name: "Escalation", value: "Auto **permanent ban**", inline: false });
         const wTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const wDm = await dmPunishmentNotice(wTarget, {
           action: "Warning", color: escalated ? NV.RUST_RED : NV.NCR_TAN, playerId, reason, fields: wExtra,
@@ -2660,7 +2658,7 @@ client.on("interactionCreate", async (interaction) => {
         const count = all.length;
         if (!count) {
           return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("✅  No Warnings on Record")
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("No Warnings on Record")
               .setDescription(`\`${playerId}\` has a clean record — no warnings issued.`).setTimestamp()
           ], ephemeral: true });
         }
@@ -2670,10 +2668,10 @@ client.on("interactionCreate", async (interaction) => {
           return `\`${String(i + 1).padStart(2, "0")}\`  **${w.reason}**  ·  by *${w.by}*  ·  <t:${ts}:R>`;
         });
         const header = `**${count}** warning${count !== 1 ? "s" : ""} on record\n` +
-          (next ? `Next escalation at **${next.count}** warnings: *${next.label}*` : "**⛔  Maximum threshold exceeded — perm ban eligible**");
+          (next ? `Next escalation at **${next.count}** warnings: *${next.label}*` : "**Maximum threshold exceeded — perm ban eligible**");
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(count >= 5 ? NV.RUST_RED : NV.NCR_TAN)
-            .setTitle(`⚠️  Warning Record — ${playerId}`)
+            .setTitle(`Warning Record — ${playerId}`)
             .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`),
           { perPage: 12, ephemeral: true });
       }
@@ -2714,14 +2712,14 @@ client.on("interactionCreate", async (interaction) => {
         }
         writeModLog({ action: "delwarn", playerId, reason: removed.reason, by: interaction.user.tag });
         const ts = Math.floor(removed.at / 1000);
-        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🧹  Warning Removed")
+        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Warning Removed")
           .setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",        value: `\`${playerId}\``,                       inline: true },
-            { name: "🗑️  Removed #",       value: `**${number}**`,                          inline: true },
-            { name: "📊  Remaining",       value: `**${remaining}** warning${remaining !== 1 ? "s" : ""}`, inline: true },
-            { name: "⚖️  Was",             value: `*${removed.reason}*  ·  by *${removed.by}*  ·  <t:${ts}:R>`, inline: false },
-            { name: "🛡️  Removed By",      value: `${interaction.user}`,                    inline: false },
+            { name: "Courier",        value: `\`${playerId}\``,                       inline: true },
+            { name: "Removed #",       value: `**${number}**`,                          inline: true },
+            { name: "Remaining",       value: `**${remaining}** warning${remaining !== 1 ? "s" : ""}`, inline: true },
+            { name: "Was",             value: `*${removed.reason}*  ·  by *${removed.by}*  ·  <t:${ts}:R>`, inline: false },
+            { name: "Removed By",      value: `${interaction.user}`,                    inline: false },
           ).setFooter({ text: "Single warning removed — others renumbered" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
@@ -2742,15 +2740,15 @@ client.on("interactionCreate", async (interaction) => {
         if (online) {
           const where = [onS1 && "Server 1", onS2 && "Server 2"].filter(Boolean).join("  +  ");
           color = NV.IRRAD_GREEN;
-          desc  = `🟢  **Online right now** on ${where}.`;
+          desc  = `**Online right now** on ${where}.`;
         } else if (last) {
           color = NV.AMBER;
-          desc  = `🔴  Last seen <t:${Math.floor(last / 1000)}:R>  ·  <t:${Math.floor(last / 1000)}:F>`;
+          desc  = `Last seen <t:${Math.floor(last / 1000)}:R>  ·  <t:${Math.floor(last / 1000)}:F>`;
         } else {
           color = NV.DEAD_GREY;
-          desc  = "❔  No sighting on record. This courier hasn't been seen online since the bot started tracking.";
+          desc  = "No sighting on record. This courier hasn't been seen online since the bot started tracking.";
         }
-        const embed = new EmbedBuilder().setColor(color).setTitle(`📡  Last Seen — ${playerId}`)
+        const embed = new EmbedBuilder().setColor(color).setTitle(`Last Seen — ${playerId}`)
           .setDescription(`${DIVIDER}\n${desc}`)
           .setFooter({ text: "Presence sampled every 60s" }).setTimestamp();
         return interaction.reply({ embeds: [embed], ephemeral: true });
@@ -2790,7 +2788,7 @@ client.on("interactionCreate", async (interaction) => {
         const notes = getPlayerNotes(playerId);
         if (!notes.length) {
           return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`📝  No Staff Notes — ${playerId}`)
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`No Staff Notes — ${playerId}`)
               .setDescription("This courier has no staff notes on record.\n\nUse `/note add` to record one.").setTimestamp()
           ], ephemeral: true });
         }
@@ -2799,7 +2797,7 @@ client.on("interactionCreate", async (interaction) => {
           return `\`${String(i + 1).padStart(2, "0")}\`  ${n.text}  ·  *${n.by}*  ·  <t:${ts}:R>`;
         });
         return paginate(interaction, lines, (pageLines) =>
-          new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`📝  Staff Notes — ${playerId}`)
+          new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Staff Notes — ${playerId}`)
             .setDescription(`**${notes.length}** note${notes.length !== 1 ? "s" : ""} on record\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Staff notes · internal only" }),
           { perPage: 10, ephemeral: true });
@@ -2814,20 +2812,20 @@ client.on("interactionCreate", async (interaction) => {
         const history = getPlayerHistory(playerId);
         if (!history.length) {
           return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("📋  No Mod History Found")
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("No Mod History Found")
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
           ], ephemeral: true });
         }
-        const ICONS = { kick: "👢", warn: "⚠️", tempban: "⏳", unban: "🔓", permban: "💀", "auto-unban": "⏰", "auto-tempban": "🤖", "auto-permban": "🤖", "auto-ipban": "🤖", clearwarnings: "🧹", delwarn: "🧹", "note-add": "📝", "note-clear": "🗑️", "donator-add": "💎", "donator-remove": "💎", "wage-payout": "💰", givecaps: "💸", adjustcaps: "⚙️", "faction-add": "⚔️", "faction-remove": "🚪", "faction-rank": "🎖️", "faction-transfer": "↔️" };
+        const ICONS = { kick: "", warn: "", tempban: "", unban: "", permban: "", "auto-unban": "", "auto-tempban": "", "auto-permban": "", "auto-ipban": "", clearwarnings: "", delwarn: "", "note-add": "", "note-clear": "", "donator-add": "", "donator-remove": "", "wage-payout": "", givecaps: "", adjustcaps: "", "faction-add": "", "faction-remove": "", "faction-rank": "", "faction-transfer": "" };
         const lines = history.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
-          const icon   = ICONS[e.action] ?? "📌";
+          const icon   = ICONS[e.action] ?? "";
           const detail = e.reason ? ` — *${e.reason}*` : e.amount ? ` — *${e.amount > 0 ? "+" : ""}${e.amount} caps*` : e.faction ? ` — *${e.faction}*` : "";
           return `${icon}  \`${e.action}\`${detail}  ·  by **${e.by ?? "System"}**  ·  <t:${ts}:R>`;
         });
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.AMBER)
-            .setTitle(`📋  Moderation History — ${playerId}`)
+            .setTitle(`Moderation History — ${playerId}`)
             .setDescription(`**${history.length}** total action${history.length !== 1 ? "s" : ""} on record *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log — full history retained" }).setTimestamp(),
           { perPage: 12, ephemeral: true });
@@ -2886,23 +2884,23 @@ client.on("interactionCreate", async (interaction) => {
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
         writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         const ts = Math.floor(expires / 1000);
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("⏳  Courier Exiled from the Mojave")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Courier Exiled from the Mojave")
           .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",  value: `\`${playerId}\``,                                inline: true },
-            { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`, inline: true },
-            { name: "⏱️  Duration", value: `**${label}**`,                                   inline: true },
-            { name: "⚖️  Offense",  value: reason,                                           inline: false },
-            { name: "🔓  Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`,                     inline: true },
-            { name: "🛡️  By",       value: `${interaction.user}`,                            inline: true },
+            { name: "Courier",  value: `\`${playerId}\``,                                inline: true },
+            { name: "Server",   value: `${serverLabel(server)}`, inline: true },
+            { name: "Duration", value: `**${label}**`,                                   inline: true },
+            { name: "Offense",  value: reason,                                           inline: false },
+            { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`,                     inline: true },
+            { name: "By",       value: `${interaction.user}`,                            inline: true },
           ), replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires");
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
           fields: [
-            { name: "⏱️  Duration", value: `**${label}**`,            inline: true },
-            { name: "🖥️  Server",   value: serverLabel(server),       inline: true },
-            { name: "🔓  Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false },
+            { name: "Duration", value: `**${label}**`,            inline: true },
+            { name: "Server",   value: serverLabel(server),       inline: true },
+            { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false },
           ],
         });
         const tbDmField = dmStatusField(tbDm, tbTarget);
@@ -2930,14 +2928,14 @@ client.on("interactionCreate", async (interaction) => {
         const ipLifted = c && (c.ips + c.names) > 0
           ? `Cleared ${c.ips} IP(s) and ${c.names} username flag(s).`
           : "Nothing was flagged for this player.";
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("🔓  Exile Lifted — Welcome Back to the Strip")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Lifted — Welcome Back to the Strip")
           .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",     value: `\`${playerId}\``,     inline: true },
-            { name: "🖥️  Server",      value: serverLabel(server),   inline: true },
-            { name: "🛡️  Pardoned By", value: `${interaction.user}`, inline: true },
-            { name: "📋  Record",       value: removed ? "Temp ban record cleared." : "No temp ban record — RCON Unban sent.", inline: false },
-            { name: "🌐  IP Enforcement", value: ipLifted, inline: false },
+            { name: "Courier",     value: `\`${playerId}\``,     inline: true },
+            { name: "Server",      value: serverLabel(server),   inline: true },
+            { name: "Pardoned By", value: `${interaction.user}`, inline: true },
+            { name: "Record",       value: removed ? "Temp ban record cleared." : "No temp ban record — RCON Unban sent.", inline: false },
+            { name: "IP Enforcement", value: ipLifted, inline: false },
           ));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
@@ -2954,16 +2952,16 @@ client.on("interactionCreate", async (interaction) => {
         if (tb) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("⏳  Temporary Exile Active")
+            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Temporary Exile Active")
               .setDescription(`${DIVIDER}`)
               .addFields(
-                { name: "🎯  Courier",   value: `\`${playerId}\``,                  inline: true },
-                { name: "🖥️  Server",    value: serverLabel(server),                inline: true },
-                { name: "⏱️  Duration",  value: tb.durationLabel ?? "?",            inline: true },
-                { name: "⚖️  Offense",   value: tb.reason,                          inline: false },
-                { name: "🛡️  By",        value: tb.moderator,                       inline: true },
-                { name: "⏰  Remaining", value: `**${formatTimeLeft(tb.expires)}**`, inline: true },
-                { name: "🔓  Expires",   value: `<t:${ts}:F>  ·  <t:${ts}:R>`,       inline: false },
+                { name: "Courier",   value: `\`${playerId}\``,                  inline: true },
+                { name: "Server",    value: serverLabel(server),                inline: true },
+                { name: "Duration",  value: tb.durationLabel ?? "?",            inline: true },
+                { name: "Offense",   value: tb.reason,                          inline: false },
+                { name: "By",        value: tb.moderator,                       inline: true },
+                { name: "Remaining", value: `**${formatTimeLeft(tb.expires)}**`, inline: true },
+                { name: "Expires",   value: `<t:${ts}:F>  ·  <t:${ts}:R>`,       inline: false },
               ), "Auto-lifted when timer expires")
           ]});
         }
@@ -2977,16 +2975,16 @@ client.on("interactionCreate", async (interaction) => {
           : [server === "server1" ? await checkOne("server1") : false, server === "server2" ? await checkOne("server2") : false];
         if (!b1 && !b2) {
           return interaction.editReply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  No Exile Found")
+            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exile Found")
               .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` has no active exile on any server.`))
           ]});
         }
         return interaction.editReply({ embeds: [
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("💀  Permanent Exile Active")
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Active")
             .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",   value: `\`${playerId}\``,                                                 inline: true },
-              { name: "🖥️  Banned On", value: [b1 && "**Server 1**", b2 && "**Server 2**"].filter(Boolean).join("  +  "), inline: true },
+              { name: "Courier",   value: `\`${playerId}\``,                                                 inline: true },
+              { name: "Banned On", value: [b1 && "**Server 1**", b2 && "**Server 2**"].filter(Boolean).join("  +  "), inline: true },
             ), "Permanent exile — use /unban to lift")
         ]});
       }
@@ -3016,20 +3014,20 @@ client.on("interactionCreate", async (interaction) => {
         const extractId = e => typeof e === "string" ? e : (e.name ?? e.username ?? e.uniqueId ?? e.id ?? "");
         if (!tempBans.length && !pb1.length && !pb2.length) {
           return interaction.editReply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  Exile Registry Clear")
+            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Registry Clear")
               .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles on any server.'))
           ]});
         }
         // Flatten every exile into a single tagged line so long lists paginate cleanly.
         const lines = [
-          ...tempBans.map(b => `⏳  \`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
-          ...pb1.map(b => `💀  \`${extractId(b)}\`  ·  *Permanent · S1*`),
-          ...pb2.map(b => `💀  \`${extractId(b)}\`  ·  *Permanent · S2*`),
+          ...tempBans.map(b => `\`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
+          ...pb1.map(b => `\`${extractId(b)}\`  ·  *Permanent · S1*`),
+          ...pb2.map(b => `\`${extractId(b)}\`  ·  *Permanent · S2*`),
         ];
         const total = lines.length;
-        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ⏳ ${tempBans.length} temp  ·  💀 ${pb1.length + pb2.length} permanent`;
+        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${tempBans.length} temp  ·  ${pb1.length + pb2.length} permanent`;
         return paginate(interaction, lines, (pageLines) =>
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle(`📜  Exile Registry — ${serverLabel(server)}`)
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle(`Exile Registry — ${serverLabel(server)}`)
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`), `${total} exile${total !== 1 ? "s" : ""} active`),
           { perPage: 15 });
       }
@@ -3048,22 +3046,22 @@ client.on("interactionCreate", async (interaction) => {
         const ipEnf = await banWithIp(playerId, server);
         await removeBans(playerId);   // a permanent ban supersedes any temp ban
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("💀  Permanent Exile Issued")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
           .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",  value: `\`${playerId}\``,                                inline: true },
-            { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`, inline: true },
-            { name: "⏱️  Sentence", value: "**Permanent**",                                  inline: true },
-            { name: "⚖️  Offense",  value: reason,                                           inline: false },
-            { name: "🔒  Admin",    value: `${interaction.user}`,                            inline: false },
+            { name: "Courier",  value: `\`${playerId}\``,                                inline: true },
+            { name: "Server",   value: `${serverLabel(server)}`, inline: true },
+            { name: "Sentence", value: "**Permanent**",                                  inline: true },
+            { name: "Offense",  value: reason,                                           inline: false },
+            { name: "Admin",    value: `${interaction.user}`,                            inline: false },
           ));
-        if (notes) embed.addFields({ name: "📝  Notes", value: notes });
+        if (notes) embed.addFields({ name: "Notes", value: notes });
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
           fields: [
-            { name: "⏱️  Sentence", value: "**Permanent**",      inline: true },
-            { name: "🖥️  Server",   value: serverLabel(server),  inline: true },
+            { name: "Sentence", value: "**Permanent**",      inline: true },
+            { name: "Server",   value: serverLabel(server),  inline: true },
           ],
         });
         const pbDmField = dmStatusField(pbDm, pbTarget);
@@ -3080,11 +3078,11 @@ client.on("interactionCreate", async (interaction) => {
         const bans = loadBans();
         if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear", "No active temporary exiles to remove.")], ephemeral: true });
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("ctb_confirm").setLabel(`Clear all ${bans.length} temp ban${bans.length !== 1 ? "s" : ""}`).setStyle(ButtonStyle.Danger).setEmoji("🧹"),
+          new ButtonBuilder().setCustomId("ctb_confirm").setLabel(`Clear all ${bans.length} temp ban${bans.length !== 1 ? "s" : ""}`).setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("ctb_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
         );
         const msg = await interaction.reply({
-          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🧹  Confirm Mass Clearance")
+          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm Mass Clearance")
             .setDescription(`> *"Are you sure? Every exile gets pardoned."*\n\n${DIVIDER}\n` +
               `This will lift **${bans.length}** exile${bans.length !== 1 ? "s" : ""} and unban all on both servers.\n\n` +
               bans.map(b => `·  \`${b.playerId}\`  —  *${b.reason}*`).join("\n").slice(0, 3500)), "Expires in 30 seconds")],
@@ -3093,7 +3091,7 @@ client.on("interactionCreate", async (interaction) => {
         try {
           const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
           if (btn.customId === "ctb_cancel") {
-            return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("🪖  Stand Down").setDescription("Clearance cancelled — all exiles remain active."))], components: [] });
+            return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Stand Down").setDescription("Clearance cancelled — all exiles remain active."))], components: [] });
           }
           await btn.deferUpdate();
           const ok = [], fail = [];
@@ -3103,14 +3101,14 @@ client.on("interactionCreate", async (interaction) => {
           }
           await removeBans(...ok);   // drop only those actually lifted; keep failures & any concurrent additions
           writeModLog({ action: "cleartempbans", count: ok.length, by: interaction.user.tag });
-          const lines = [...ok.map(id => `✅  \`${id}\``), ...fail.map(id => `☢️  \`${id}\`  — failed, kept on record`)];
-          const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🧹  Temp Bans Cleared")
+          const lines = [...ok.map(id => `\`${id}\``), ...fail.map(id => `\`${id}\`  — failed, kept on record`)];
+          const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Temp Bans Cleared")
             .setDescription(`> *"Clean slate."*\n\n${DIVIDER}\n**${ok.length}** released${fail.length ? `  ·  **${fail.length}** failed` : ""}\n\n${lines.join("\n")}`.slice(0, 4000))
-            .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }));
+            .addFields({ name: "By", value: `${interaction.user}`, inline: false }));
           await logBan(embed);
           return btn.editReply({ embeds: [embed], components: [] });
         } catch {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("⌛  Timed Out").setDescription("Confirmation expired. No changes made."))], components: [] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Timed Out").setDescription("Confirmation expired. No changes made."))], components: [] });
         }
       }
 
@@ -3130,26 +3128,26 @@ client.on("interactionCreate", async (interaction) => {
         const [b1, b2] = await Promise.all([fetchBans("server1"), process.env.RCON_HOST_2 ? fetchBans("server2") : Promise.resolve([])]);
         const names = [...new Set([...loadBans().map(b => b.playerId), ...b1, ...b2].map(s => String(s).trim()).filter(Boolean))];
         if (!names.length) {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("✅  No Exiles on Record").setDescription(`${hero("The wasteland is at peace.")}\nNothing to clear — no bans on record.`))] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The wasteland is at peace.")}\nNothing to clear — no bans on record.`))] });
         }
 
         // confirmation gate (irreversible)
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("cab_confirm").setLabel(`Unban all ${names.length}`).setStyle(ButtonStyle.Danger).setEmoji("🧹"),
+          new ButtonBuilder().setCustomId("cab_confirm").setLabel(`Unban all ${names.length}`).setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("cab_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
         );
         const preview = names.slice(0, 30).map(n => `·  \`${n}\``).join("\n") + (names.length > 30 ? `\n…and ${names.length - 30} more` : "");
         const msg = await interaction.editReply({
-          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("🧹  Confirm — Pardon the Whole Mojave")
+          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm — Pardon the Whole Mojave")
             .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\n` +
               `Runs \`Unban\` for **${names.length}** courier(s) on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`.slice(0, 4000)), "Expires in 30 seconds")],
           components: [row],
         });
         let btn;
         try { btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id }); }
-        catch { return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("⌛  Timed Out").setDescription("Confirmation expired. No bans were lifted."))], components: [] }); }
+        catch { return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Timed Out").setDescription("Confirmation expired. No bans were lifted."))], components: [] }); }
         if (btn.customId === "cab_cancel") {
-          return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("🪖  Stand Down").setDescription("Cancelled — all bans remain in place."))], components: [] });
+          return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Stand Down").setDescription("Cancelled — all bans remain in place."))], components: [] });
         }
         await btn.deferUpdate();
 
@@ -3161,11 +3159,11 @@ client.on("interactionCreate", async (interaction) => {
         }
         await removeBans(...names);   // clear the bot's temp-ban records
         writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("🧹  All Exiles Pardoned")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("All Exiles Pardoned")
           .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\nRan \`Unban\` for **${names.length}** courier(s) on both servers and lifted their IP/username flags.`)
           .addFields(
-            { name: "✅  Unbanned", value: `**${ok}**${failed ? `  ·  ⚠️ ${failed} failed` : ""}`, inline: true },
-            { name: "🔒  By",       value: `${interaction.user}`, inline: true },
+            { name: "Unbanned", value: `**${ok}**${failed ? `  ·  ${failed} failed` : ""}`, inline: true },
+            { name: "By",       value: `${interaction.user}`, inline: true },
           ));
         await logBan(embed);
         return btn.editReply({ embeds: [embed], components: [] });
@@ -3181,12 +3179,12 @@ client.on("interactionCreate", async (interaction) => {
         if (!modRole && !adminRole && !flRole) {
           const c = loadRoles();
           return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.AMBER).setTitle("🔑  Role Configuration")
+            new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Configuration")
               .setDescription(`> *Current role settings. Pass role options to update.*\n\nIf no roles are configured, all commands are unrestricted.\n\n${DIVIDER}`)
               .addFields(
-                { name: "🛡️  Moderator",     value: c.modRoleId           ? `<@&${c.modRoleId}>`           : "`not set`", inline: true },
-                { name: "🔒  Admin",          value: c.adminRoleId         ? `<@&${c.adminRoleId}>`         : "`not set`", inline: true },
-                { name: "⚔️  Faction Leader", value: c.factionLeaderRoleId ? `<@&${c.factionLeaderRoleId}>` : "`not set`", inline: true },
+                { name: "Moderator",     value: c.modRoleId           ? `<@&${c.modRoleId}>`           : "`not set`", inline: true },
+                { name: "Admin",          value: c.adminRoleId         ? `<@&${c.adminRoleId}>`         : "`not set`", inline: true },
+                { name: "Faction Leader", value: c.factionLeaderRoleId ? `<@&${c.factionLeaderRoleId}>` : "`not set`", inline: true },
               ).setFooter({ text: "Pass role options to /setroles to update" }).setTimestamp()
           ], ephemeral: true });
         }
@@ -3195,10 +3193,10 @@ client.on("interactionCreate", async (interaction) => {
         if (adminRole) c.adminRoleId         = adminRole.id;
         if (flRole)    c.factionLeaderRoleId = flRole.id;
         saveRoles(c);
-        const changes = [modRole && `🛡️  Mod → <@&${modRole.id}>`, adminRole && `🔒  Admin → <@&${adminRole.id}>`, flRole && `⚔️  Faction → <@&${flRole.id}>`].filter(Boolean);
-        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("🔑  Role Permissions Updated")
+        const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Faction → <@&${flRole.id}>`].filter(Boolean);
+        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Permissions Updated")
           .setDescription(changes.join("\n"))
-          .addFields({ name: "🔒  By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
+          .addFields({ name: "By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
@@ -3253,14 +3251,14 @@ client.on("interactionCreate", async (interaction) => {
 
         writeModLog({ action: "staffapp-accept", targetUserId: user.id, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(rolesGranted ? NV.IRRAD_GREEN : NV.NCR_TAN)
-          .setTitle("✅  Staff Application Accepted")
+          .setTitle("Staff Application Accepted")
           .setDescription(RULE)
           .addFields(
-            { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
-            { name: "📨  DM",        value: sent ? "✅  Acceptance DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
-            { name: "🎖️  Roles",     value: rolesGranted ? `✅  Granted <@&${STAFF_ROLE_IDS[0]}> & <@&${STAFF_ROLE_IDS[1]}>` : `⚠️  Could not grant roles — ${roleErr || "check the bot's role position & Manage Roles permission"}`, inline: false },
-            { name: "📢  Announced",  value: announced ? `✅  Posted in <#${STAFF_ANNOUNCE_CHANNEL}>` : `⚠️  Couldn't post announcement — ${announceErr || "check the channel ID & bot permissions"}`, inline: false },
-            { name: "🔒  By",        value: `${interaction.user}`, inline: false },
+            { name: "Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
+            { name: "DM",        value: sent ? "Acceptance DM delivered" : "Couldn't DM (DMs closed / bot blocked)", inline: false },
+            { name: "Roles",     value: rolesGranted ? `Granted <@&${STAFF_ROLE_IDS[0]}> & <@&${STAFF_ROLE_IDS[1]}>` : `Could not grant roles — ${roleErr || "check the bot's role position & Manage Roles permission"}`, inline: false },
+            { name: "Announced",  value: announced ? `Posted in <#${STAFF_ANNOUNCE_CHANNEL}>` : `Couldn't post announcement — ${announceErr || "check the channel ID & bot permissions"}`, inline: false },
+            { name: "By",        value: `${interaction.user}`, inline: false },
           );
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -3283,17 +3281,17 @@ client.on("interactionCreate", async (interaction) => {
             `Thanks for your interest.`
           )
           .setFooter({ text: "Nuclear RP Staff Team" });
-        if (reason) dm.addFields({ name: "📋  Note from the team", value: reason });
+        if (reason) dm.addFields({ name: "Note from the team", value: reason });
         const sent = await dmEmbed(user, dm);
 
         // Deny does nothing else — no roles, no logging beyond this reply.
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN)
-          .setTitle("📪  Staff Application Denied")
+          .setTitle("Staff Application Denied")
           .setDescription(RULE)
           .addFields(
-            { name: "🎯  Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
-            { name: "📨  DM",        value: sent ? "✅  Denial DM delivered" : "⚠️  Couldn't DM (DMs closed / bot blocked)", inline: false },
-            { name: "🔒  By",        value: `${interaction.user}`, inline: false },
+            { name: "Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
+            { name: "DM",        value: sent ? "Denial DM delivered" : "Couldn't DM (DMs closed / bot blocked)", inline: false },
+            { name: "By",        value: `${interaction.user}`, inline: false },
           );
         brand(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -3312,14 +3310,14 @@ client.on("interactionCreate", async (interaction) => {
           }
           if (!lines.length) {
             return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("💎  Donator List — Empty")
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Donator List — Empty")
                 .setDescription("No players are in the donator file yet.\n\nUse `/donator add` to enrol someone.").setTimestamp()
             ], ephemeral: true });
           }
           const out = lines.map((id, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${id}**`);
           return paginate(interaction, out, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
-              .setTitle(`💎  Donators — ${lines.length}`)
+              .setTitle(`Donators — ${lines.length}`)
               .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
               .setFooter({ text: DONATOR_FILE }),
             { perPage: 20, ephemeral: true });
@@ -3333,12 +3331,12 @@ client.on("interactionCreate", async (interaction) => {
           if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], ephemeral: true });
           if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], ephemeral: true });
           writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💎  Donator Added")
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Donator Added")
             .setDescription(`> *"A generous soul joins the ranks of the Strip's patrons."*\n\n${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier", value: `\`${playerId}\``,        inline: true },
-              { name: "🔒  Added By", value: `${interaction.user}`,   inline: true },
-              { name: "📄  File",     value: `\`${DONATOR_FILE}\``,   inline: false },
+              { name: "Courier", value: `\`${playerId}\``,        inline: true },
+              { name: "Added By", value: `${interaction.user}`,   inline: true },
+              { name: "File",     value: `\`${DONATOR_FILE}\``,   inline: false },
             ).setFooter({ text: "Written to the donator file." }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
@@ -3349,11 +3347,11 @@ client.on("interactionCreate", async (interaction) => {
           if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], ephemeral: true });
           if (missing) return interaction.reply({ embeds: [warningEmbed("Not a Donator", `\`${playerId}\` is not in the donator file.`)], ephemeral: true });
           writeModLog({ action: "donator-remove", playerId, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("💎  Donator Removed")
+          const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Donator Removed")
             .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",   value: `\`${playerId}\``,      inline: true },
-              { name: "🔒  Removed By", value: `${interaction.user}`, inline: true },
+              { name: "Courier",   value: `\`${playerId}\``,      inline: true },
+              { name: "Removed By", value: `${interaction.user}`, inline: true },
             ).setFooter({ text: "Removed from the donator file." }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
@@ -3393,18 +3391,18 @@ client.on("interactionCreate", async (interaction) => {
         const anyOk  = acks.some(Boolean);
         writeModLog({ action: "announce", message, target, by: interaction.user.tag, server, delivered: allOk });
         const deliveryNote = allOk
-          ? "✅  Sent via RCON `Notify` — visible in-game if your build supports it."
+          ? "Sent via RCON `Notify` — visible in-game if your build supports it."
           : anyOk
-            ? "⚠️  One server may not support `Notify`. Message logged here regardless."
-            : "⚠️  Server gave no acknowledgement — your Pavlov build may not support `Notify`. Message logged here only.";
-        const embed = new EmbedBuilder().setColor(allOk ? NV.BLUE_VATS : NV.NCR_TAN).setTitle("📢  Broadcast Sent")
+            ? "One server may not support `Notify`. Message logged here regardless."
+            : "Server gave no acknowledgement — your Pavlov build may not support `Notify`. Message logged here only.";
+        const embed = new EmbedBuilder().setColor(allOk ? NV.BLUE_VATS : NV.NCR_TAN).setTitle("Broadcast Sent")
           .setDescription(`> *${randomQuote("announce")}*\n\n${DIVIDER}`)
           .addFields(
-            { name: "📣  Message",  value: `> ${message}`,                                     inline: false },
-            { name: "🎯  Target",   value: isAll ? "**All players**" : `\`${target}\``,         inline: true },
-            { name: "🖥️  Server",   value: `${serverEmoji(server)}  ${serverLabel(server)}`,   inline: true },
-            { name: "🛡️  By",       value: `${interaction.user}`,                              inline: true },
-            { name: "📡  Delivery", value: deliveryNote,                                       inline: false },
+            { name: "Message",  value: `> ${message}`,                                     inline: false },
+            { name: "Target",   value: isAll ? "**All players**" : `\`${target}\``,         inline: true },
+            { name: "Server",   value: `${serverLabel(server)}`,   inline: true },
+            { name: "By",       value: `${interaction.user}`,                              inline: true },
+            { name: "Delivery", value: deliveryNote,                                       inline: false },
           ).setFooter({ text: "RCON Notify broadcast" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -3441,18 +3439,18 @@ client.on("interactionCreate", async (interaction) => {
           removeMenuGrant(playerId, server, menuValue);
         }
         const embed = new EmbedBuilder().setColor(isGive ? NV.AMBER : NV.NCR_TAN)
-          .setTitle(isGive ? "🎛️  Menu Access Granted" : "🗑️  Menu Access Revoked")
+          .setTitle(isGive ? "Menu Access Granted" : "Menu Access Revoked")
           .setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier", value: `\`${playerId}\``,                                  inline: true },
-            { name: "🖥️  Server",  value: `${serverEmoji(server)}  ${serverLabel(server)}`,   inline: true },
-            { name: "📋  Menu",    value: menuMeta?.name ?? menuValue,                        inline: true },
-            { name: isGive ? "🔒  Granted By" : "🔒  Revoked By", value: `${interaction.user}`, inline: false },
-            { name: isGive ? "♻️  Persistence" : "🗑️  Persistence", value: isGive ? "✅  Will be re-applied automatically on rejoin." : "✅  Removed from persistent store — will not reapply.", inline: false },
+            { name: "Courier", value: `\`${playerId}\``,                                  inline: true },
+            { name: "Server",  value: `${serverLabel(server)}`,   inline: true },
+            { name: "Menu",    value: menuMeta?.name ?? menuValue,                        inline: true },
+            { name: isGive ? "Granted By" : "Revoked By", value: `${interaction.user}`, inline: false },
+            { name: isGive ? "Persistence" : "Persistence", value: isGive ? "Will be re-applied automatically on rejoin." : "Removed from persistent store — will not reapply.", inline: false },
           ).setTimestamp();
         // High Staff: the bot ran all three commands automatically (each separately).
         if (isGive && menuValue === "highstaff") {
-          embed.addFields({ name: "⚙️  Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
+          embed.addFields({ name: "Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
         }
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
@@ -3479,13 +3477,13 @@ client.on("interactionCreate", async (interaction) => {
         }
 
         const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
-          .setTitle("🧹  Mass Menu Revocation")
+          .setTitle("Mass Menu Revocation")
           .setDescription(hero(`Pulled **${menuMeta?.name ?? menuValue}** access from every courier who held it.`))
           .addFields(
-            { name: "📋  Menu",     value: menuMeta?.name ?? menuValue,                         inline: true },
-            { name: "👥  Holders",  value: `**${holders.length}**`,                              inline: true },
-            { name: "🖥️  Server",   value: "Both servers",                                       inline: true },
-            { name: "✅  Revoked",  value: `**${ok}** RCON ${ok === 1 ? "call" : "calls"} sent${failed ? ` · ⚠️ ${failed} failed` : ""}`, inline: false },
+            { name: "Menu",     value: menuMeta?.name ?? menuValue,                         inline: true },
+            { name: "Holders",  value: `**${holders.length}**`,                              inline: true },
+            { name: "Server",   value: "Both servers",                                       inline: true },
+            { name: "Revoked",  value: `**${ok}** RCON ${ok === 1 ? "call" : "calls"} sent${failed ? ` · ${failed} failed` : ""}`, inline: false },
           ).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -3500,22 +3498,22 @@ client.on("interactionCreate", async (interaction) => {
 
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
-            { label: "Blacklist IP / username", value: "blacklist_ip", description: "Auto-ban anyone matching an IP or username", emoji: "🚫" },
-            { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs and usernames", emoji: "📜" },
-            { label: "View alt accounts",       value: "view_alts",      description: "A courier's known alt accounts (shared IP)", emoji: "🔗" },
-            { label: "Bar a Discord user",     value: "user_bl_add",    description: "Block a Discord user from ALL bot commands", emoji: "⛔" },
-            { label: "Un-bar a Discord user",  value: "user_bl_remove", description: "Restore a Discord user's command access", emoji: "✅" },
-            { label: "List barred Discord users", value: "user_bl_list", description: "Show Discord users barred from commands", emoji: "📵" },
-            { label: "View verification links", value: "verify_list",  description: "Show Pavlov name -> Discord links", emoji: "🎫" },
-            { label: "Clear a verification link", value: "verify_clear", description: "Free up a Pavlov name / re-verify a user", emoji: "🧾" },
-            { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs",        emoji: "🙈" },
-            { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player",            emoji: "👁️" },
-            { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list",                emoji: "📋" },
-            { label: "Clear all flagged IPs",  value: "clear_flags",   description: "Stop every IP auto-ban (keep history)", emoji: "🧹" },
-            { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP",             emoji: "🌐" },
-            { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset",          emoji: "💥" },
+            { label: "Blacklist IP / username", value: "blacklist_ip", description: "Auto-ban anyone matching an IP or username" },
+            { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs and usernames" },
+            { label: "View alt accounts",       value: "view_alts",      description: "A courier's known alt accounts (shared IP)" },
+            { label: "Bar a Discord user",     value: "user_bl_add",    description: "Block a Discord user from ALL bot commands" },
+            { label: "Un-bar a Discord user",  value: "user_bl_remove", description: "Restore a Discord user's command access" },
+            { label: "List barred Discord users", value: "user_bl_list", description: "Show Discord users barred from commands" },
+            { label: "View verification links", value: "verify_list",  description: "Show Pavlov name -> Discord links" },
+            { label: "Clear a verification link", value: "verify_clear", description: "Free up a Pavlov name / re-verify a user" },
+            { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs" },
+            { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player" },
+            { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list" },
+            { label: "Clear all flagged IPs",  value: "clear_flags",   description: "Stop every IP auto-ban (keep history)" },
+            { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP" },
+            { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset" },
           );
-        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Configure — Hidden Commands"));
+        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Configure — Hidden Commands"));
         await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         const msg = await interaction.fetchReply();
 
@@ -3543,7 +3541,7 @@ client.on("interactionCreate", async (interaction) => {
               ? alts.map(n => `• **${n}**`).join("\n").slice(0, 4000)
               : "*No known alt accounts (no other account shares a confirmed IP).*";
             const eAlt = brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN)
-              .setTitle(`🔗  Alt Accounts — ${val}`)
+              .setTitle(`Alt Accounts — ${val}`)
               .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
               .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
             return sub.reply({ embeds: [eAlt], ephemeral: true });
@@ -3553,23 +3551,23 @@ client.on("interactionCreate", async (interaction) => {
             const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else a username
             for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) { try { await banWithIp(nm, "both"); } catch {} } }   // ban matching accounts now (by name)
             color = NV.LEGION_RED;
-            desc = `🚫 ${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
+            desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record.` : `\nNo accounts on record yet — future connections will be caught.`);
-            const e1 = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Blacklisted").setDescription(hero(desc)).setTimestamp());
+            const e1 = brand(new EmbedBuilder().setColor(color).setTitle("Blacklisted").setDescription(hero(desc)).setTimestamp());
             await logAction(e1);
             return sub.editReply({ embeds: [e1] });
           }
-          if (choice === "user_bl_add")        { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `⛔ <@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
-          else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `✅ <@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
-          else if (choice === "ignore_add")    { const r = ipBans.addUntracked(val); desc = `🙈 **${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
-          else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `👁️ **${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
+          if (choice === "user_bl_add")        { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `<@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
+          else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `<@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
+          else if (choice === "ignore_add")    { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
+          else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `**${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
           else if (choice === "verify_clear")  {
             const links = loadVerifyLinks(); const key = val.toLowerCase(); const had = links[key];
             if (had) { delete links[key]; safeWrite(FILES.VERIFY_LINKS, links); }
-            desc = had ? `🧾 Verification link for \`${val}\` (<@${had}>) cleared — the name is free and they can re-verify.` : `No verification link found for \`${val}\`.`;
+            desc = had ? `Verification link for \`${val}\` (<@${had}>) cleared — the name is free and they can re-verify.` : `No verification link found for \`${val}\`.`;
           }
-          else                               { const r = ipBans.clearIp(val); desc = `🧹 \`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
-          const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Done").setDescription(hero(desc)).setTimestamp());
+          else                               { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
+          const e = brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp());
           await logAction(e);
           return sub.reply({ embeds: [e], ephemeral: true });
         }
@@ -3578,10 +3576,10 @@ client.on("interactionCreate", async (interaction) => {
         if (choice === "view_blacklist") {
           const b = ipBans.getBlacklist();
           const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  ·  ").slice(0, 1024) : "*none*";
-          const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("📜  Blacklist")
+          const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklist")
             .addFields(
-              { name: `🌐  IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
-              { name: `🎯  Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
+              { name: `IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
+              { name: `Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
             ).setTimestamp());
           return sel.update({ embeds: [e], components: [] });
         }
@@ -3591,9 +3589,9 @@ client.on("interactionCreate", async (interaction) => {
         if (choice === "ignore_list")      { const n = ipBans.getUntracked(); desc = n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked."; audit = false; }
         else if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; desc = ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands."; audit = false; }
         else if (choice === "verify_list")  { const lk = loadVerifyLinks(); const es = Object.entries(lk); desc = es.length ? es.map(([n, id]) => `• \`${n}\` → <@${id}>`).join("\n").slice(0, 4000) : "No verified couriers yet."; audit = false; }
-        else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `🧹 Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
-        else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `💥 Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
-        const e = brand(new EmbedBuilder().setColor(color).setTitle("⚙️  Configure").setDescription(hero(desc)).setTimestamp());
+        else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
+        else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
+        const e = brand(new EmbedBuilder().setColor(color).setTitle("Configure").setDescription(hero(desc)).setTimestamp());
         if (audit) await logAction(e);
         return sel.update({ embeds: [e], components: [] });
       }
@@ -3615,13 +3613,13 @@ client.on("interactionCreate", async (interaction) => {
           writeModLog({ action: "faction-setcap", faction, cap, by: interaction.user.tag });
           const spawn   = SPAWN_FILE_MAP[faction];
           const current = spawn ? (readFactionFile(spawn)?.length ?? 0) : 0;
-          const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Faction Size Cap Updated")
+          const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Size Cap Updated")
             .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "⚔️  Faction",      value: faction,                                                       inline: true },
-              { name: "📏  New Cap",       value: `**${cap}** members`,                                          inline: true },
-              { name: "👥  Current Size",  value: `${current} / ${cap}${current > cap ? "  ⚠️  over cap!" : ""}`, inline: true },
-              { name: "🔒  Set By",        value: `${interaction.user}`,                                          inline: false },
+              { name: "Faction",      value: faction,                                                       inline: true },
+              { name: "New Cap",       value: `**${cap}** members`,                                          inline: true },
+              { name: "Current Size",  value: `${current} / ${cap}${current > cap ? "  over cap!" : ""}`, inline: true },
+              { name: "Set By",        value: `${interaction.user}`,                                          inline: false },
             ).setFooter({ text: "Cap enforced on /faction add" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
@@ -3644,14 +3642,14 @@ client.on("interactionCreate", async (interaction) => {
           writeModLog({ action: "faction-setrankcap", faction, rank, cap, by: interaction.user.tag });
           const current = countFactionRank(faction, rank);
           const capStr  = cap > 0 ? `**${cap}**` : "**Unlimited**";
-          const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("⚙️  Rank Cap Updated")
+          const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Rank Cap Updated")
             .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "⚔️  Faction",     value: faction,                                                              inline: true },
-              { name: "🎖️  Rank",        value: rankBadge(faction, rank),                                             inline: true },
-              { name: "📏  New Cap",      value: capStr,                                                               inline: true },
-              { name: "👥  Currently",    value: `${current}${cap > 0 ? ` / ${cap}${current > cap ? "  ⚠️  over cap!" : ""}` : ""}`, inline: true },
-              { name: "🔒  Set By",       value: `${interaction.user}`,                                                inline: false },
+              { name: "Faction",     value: faction,                                                              inline: true },
+              { name: "Rank",        value: rankBadge(faction, rank),                                             inline: true },
+              { name: "New Cap",      value: capStr,                                                               inline: true },
+              { name: "Currently",    value: `${current}${cap > 0 ? ` / ${cap}${current > cap ? "  over cap!" : ""}` : ""}`, inline: true },
+              { name: "Set By",       value: `${interaction.user}`,                                                inline: false },
             ).setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], ephemeral: true });
@@ -3663,7 +3661,7 @@ client.on("interactionCreate", async (interaction) => {
           for (const faction of ALL_FACTIONS) {
             const members = getFactionMembers(faction);
             if (members === null) {
-              fields.push({ name: `⚔️  ${faction}`, value: "⚠️  Spawn file unreadable", inline: true });
+              fields.push({ name: `${faction}`, value: "Spawn file unreadable", inline: true });
               continue;
             }
             const cap    = getFactionCap(faction);
@@ -3683,11 +3681,11 @@ client.on("interactionCreate", async (interaction) => {
                   .filter(r => rankCaps[r] > 0)
                   .map(r => {
                     const c = countFactionRank(faction, r);
-                    return `${getFactionRankBadge(faction, r)} ${c}/${rankCaps[r]}${c > rankCaps[r] ? "⚠️" : ""}`;
+                    return `${getFactionRankBadge(faction, r)} ${c}/${rankCaps[r]}${c > rankCaps[r] ? "" : ""}`;
                   }).join("  ·  ")
               : "";
             fields.push({
-              name:  `⚔️  ${faction}`,
+              name:  `${faction}`,
               value: `\`${bar}\`  **${total}/${cap}**\n${topStr}${cappedStr}`,
               inline: true,
             });
@@ -3697,10 +3695,10 @@ client.on("interactionCreate", async (interaction) => {
             return cfg ? `**${f}:** ${cfg.order.map(r => `${cfg.badges[r]}${r}`).join(" → ")}` : null;
           }).filter(Boolean).join("\n");
           const embed = new EmbedBuilder().setColor(NV.GOLD)
-            .setTitle("⚔️  Faction Overview — Mojave Authority")
+            .setTitle("Faction Overview — Mojave Authority")
             .setDescription(`> *${randomQuote("faction")}*\n\n${DIVIDER}`)
             .addFields(...fields)
-            .addFields({ name: "⚔️  Rank Ladders", value: rankSummary, inline: false })
+            .addFields({ name: "Rank Ladders", value: rankSummary, inline: false })
             .setTimestamp();
           return interaction.reply({ embeds: [embed] });
         }
@@ -3714,7 +3712,7 @@ client.on("interactionCreate", async (interaction) => {
           }
           if (!members.length) {
             return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`⚔️  ${faction} — Empty Roster`)
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
                 .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
                 .setTimestamp()
             ], ephemeral: true });
@@ -3724,15 +3722,15 @@ client.on("interactionCreate", async (interaction) => {
             const n = members.filter(m => m.rank === r).length;
             const rcap = getFactionRankCap(faction, r);
             if (!n && !rcap) return null;
-            const count = rcap ? `${n}/${rcap}${n > rcap ? "⚠️" : ""}` : `${n}`;
+            const count = rcap ? `${n}/${rcap}${n > rcap ? "" : ""}` : `${n}`;
             return `${getFactionRankBadge(faction, r)} ${r}: **${count}**`;
           }).filter(Boolean).join("  ·  ");
           const lines = members.map((m, i) =>
             `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  *${m.rank}*`);
-          const header = `**${members.length}/${cap}** members${members.length > cap ? " ⚠️ over cap" : ""}  ·  ${summary}`;
+          const header = `**${members.length}/${cap}** members${members.length > cap ? " over cap" : ""}  ·  ${summary}`;
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
-              .setTitle(`⚔️  ${faction} — Roster`)
+              .setTitle(`${faction} — Roster`)
               .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
               .setFooter({ text: SPAWN_FILE_MAP[faction] }),
             { perPage: 20 });
@@ -3744,21 +3742,21 @@ client.on("interactionCreate", async (interaction) => {
           const allAudit  = loadFactionAudit().filter(e => e.faction === faction).reverse();
           if (!allAudit.length) {
             return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`📋  ${faction} — Audit Log`)
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Audit Log`)
                 .setDescription("No faction changes recorded yet for this faction.")
                 .setTimestamp()
             ], ephemeral: true });
           }
-          const ACTION_ICONS = { "add": "➕", "remove": "➖", "rank": "🎖️", "transfer-in": "📥", "transfer-out": "📤" };
+          const ACTION_ICONS = { "add": "", "remove": "", "rank": "", "transfer-in": "", "transfer-out": "" };
           const lines = allAudit.map(e => {
             const ts     = Math.floor(e.at / 1000);
-            const icon   = ACTION_ICONS[e.action] ?? "📌";
+            const icon   = ACTION_ICONS[e.action] ?? "";
             const detail = e.rank ? ` → **${e.rank}**` : e.oldRank ? ` *(was ${e.oldRank})*` : "";
             return `${icon}  \`${e.action}\`  **${e.playerId}**${detail}  ·  by *${e.by}*  ·  <t:${ts}:R>`;
           });
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.AMBER)
-              .setTitle(`📋  ${faction} — Audit Log`)
+              .setTitle(`${faction} — Audit Log`)
               .setDescription(`**${allAudit.length}** total changes *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`),
             { perPage: 15, ephemeral: true });
         }
@@ -3796,15 +3794,15 @@ client.on("interactionCreate", async (interaction) => {
           await setFactionRank(faction, playerId, rank);
           writeFactionAudit({ action: "rank", faction, playerId, rank, oldRank, by: interaction.user.tag });
           writeModLog({ action: "faction-rank", playerId, faction, rank, oldRank, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("🎖️  Faction Rank Updated")
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Faction Rank Updated")
             .setDescription(`> *${randomQuote("faction")}*\n\n${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",     value: `\`${playerId}\``,                inline: true },
-              { name: "⚔️  Faction",     value: faction,                          inline: true },
-              { name: "⬆️  New Rank",    value: rankBadge(faction, rank),         inline: true },
-              { name: "⬇️  Old Rank",    value: rankBadge(faction, oldRank),      inline: true },
-              { name: "⚔️  Assigned By", value: `${interaction.user}`,            inline: true },
-              { name: "📁  Rank Files",  value: `Removed from \`${getFactionRankConfig(faction)?.rankFiles[oldRank] ?? "n/a"}\`\nAdded to \`${getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a"}\``, inline: false },
+              { name: "Courier",     value: `\`${playerId}\``,                inline: true },
+              { name: "Faction",     value: faction,                          inline: true },
+              { name: "New Rank",    value: rankBadge(faction, rank),         inline: true },
+              { name: "Old Rank",    value: rankBadge(faction, oldRank),      inline: true },
+              { name: "Assigned By", value: `${interaction.user}`,            inline: true },
+              { name: "Rank Files",  value: `Removed from \`${getFactionRankConfig(faction)?.rankFiles[oldRank] ?? "n/a"}\`\nAdded to \`${getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a"}\``, inline: false },
             ).setFooter({ text: "Rank change logged · rank files updated on disk" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -3868,15 +3866,15 @@ client.on("interactionCreate", async (interaction) => {
           writeFactionAudit({ action: "transfer-out", faction: fromFaction, playerId, oldRank, by: interaction.user.tag });
           writeFactionAudit({ action: "transfer-in",  faction: toFaction,   playerId, rank: newRank, by: interaction.user.tag });
           writeModLog({ action: "faction-transfer", playerId, fromFaction, toFaction, oldRank, newRank, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("↔️  Faction Transfer Complete")
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Faction Transfer Complete")
             .setDescription(`> *${randomQuote("faction")}*\n\n${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",       value: `\`${playerId}\``,                                          inline: true },
-              { name: "📤  From",           value: `**${fromFaction}**  *(${rankBadge(fromFaction, oldRank)})*`, inline: true },
-              { name: "📥  To",             value: `**${toFaction}**  *(${rankBadge(toFaction, newRank)})*`,   inline: true },
-              { name: "👥  New Roster Size",value: `${toLines.length} / ${toCap}`,                            inline: true },
-              { name: "🛡️  Transferred By", value: `${interaction.user}`,                                     inline: true },
-              { name: "📁  Rank Files",     value: `Cleared from **${fromFaction}** rank files\nAdded to \`${getFactionRankConfig(toFaction)?.rankFiles[newRank] ?? "n/a"}\``, inline: false },
+              { name: "Courier",       value: `\`${playerId}\``,                                          inline: true },
+              { name: "From",           value: `**${fromFaction}**  *(${rankBadge(fromFaction, oldRank)})*`, inline: true },
+              { name: "To",             value: `**${toFaction}**  *(${rankBadge(toFaction, newRank)})*`,   inline: true },
+              { name: "New Roster Size",value: `${toLines.length} / ${toCap}`,                            inline: true },
+              { name: "Transferred By", value: `${interaction.user}`,                                     inline: true },
+              { name: "Rank Files",     value: `Cleared from **${fromFaction}** rank files\nAdded to \`${getFactionRankConfig(toFaction)?.rankFiles[newRank] ?? "n/a"}\``, inline: false },
             ).setFooter({ text: "Both faction files updated · rank files updated on disk · audit logged" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -3922,15 +3920,15 @@ client.on("interactionCreate", async (interaction) => {
           writeFactionAudit({ action: "add", faction, playerId, rank, by: interaction.user.tag });
           writeModLog({ action: "faction-add", playerId, faction, rank, by: interaction.user.tag });
           const rankFile = getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a";
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(`⚔️  Added to ${faction}`)
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(`Added to ${faction}`)
             .setDescription(`> *${randomQuote("faction")}*\n\n${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",       value: `\`${playerId}\``,            inline: true },
-              { name: "⚔️  Faction",       value: faction,                      inline: true },
-              { name: "🎖️  Starting Rank", value: rankBadge(faction, rank),     inline: true },
-              { name: "👥  Roster Size",    value: `${lines.length} / ${cap}`,  inline: true },
-              { name: "🔒  Added By",       value: `${interaction.user}`,       inline: true },
-              { name: "📁  Rank File",      value: `\`${rankFile}\``,           inline: true },
+              { name: "Courier",       value: `\`${playerId}\``,            inline: true },
+              { name: "Faction",       value: faction,                      inline: true },
+              { name: "Starting Rank", value: rankBadge(faction, rank),     inline: true },
+              { name: "Roster Size",    value: `${lines.length} / ${cap}`,  inline: true },
+              { name: "Added By",       value: `${interaction.user}`,       inline: true },
+              { name: "Rank File",      value: `\`${rankFile}\``,           inline: true },
             ).setFooter({ text: "Main spawn file + rank file updated · audit logged" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -3959,14 +3957,14 @@ client.on("interactionCreate", async (interaction) => {
           writeFactionAudit({ action: "remove", faction, playerId, oldRank, by: interaction.user.tag });
           writeModLog({ action: "faction-remove", playerId, faction, oldRank, by: interaction.user.tag });
           const cap = getFactionCap(faction);
-          const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`⚔️  Removed from ${faction}`)
+          const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Removed from ${faction}`)
             .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",    value: `\`${playerId}\``,             inline: true },
-              { name: "⚔️  Faction",    value: faction,                       inline: true },
-              { name: "🎖️  Was",         value: rankBadge(faction, oldRank),  inline: true },
-              { name: "👥  Roster Size", value: `${lines.length} / ${cap}`,   inline: true },
-              { name: "🔒  Removed By",  value: `${interaction.user}`,        inline: true },
+              { name: "Courier",    value: `\`${playerId}\``,             inline: true },
+              { name: "Faction",    value: faction,                       inline: true },
+              { name: "Was",         value: rankBadge(faction, oldRank),  inline: true },
+              { name: "Roster Size", value: `${lines.length} / ${cap}`,   inline: true },
+              { name: "Removed By",  value: `${interaction.user}`,        inline: true },
             ).setFooter({ text: "Removed from spawn file and all rank files · audit logged" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -3986,26 +3984,26 @@ client.on("interactionCreate", async (interaction) => {
           if (server === "both") {
             const [r1, r2] = await Promise.all([sendRcon(command, "server1"), sendRcon(command, "server2")]);
             return interaction.editReply({ embeds: [
-              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("📡  Raw RCON — Both Servers").setDescription(`${DIVIDER}`)
+              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — Both Servers").setDescription(`${DIVIDER}`)
                 .addFields(
-                  { name: "📤  Signal",             value: `\`\`\`${command}\`\`\``,                                     inline: false },
-                  { name: "1️⃣  Server 1 Response",  value: `\`\`\`${(r1.trim() || "no response").slice(0, 900)}\`\`\``, inline: false },
-                  { name: "2️⃣  Server 2 Response",  value: `\`\`\`${(r2.trim() || "no response").slice(0, 900)}\`\`\``, inline: false },
-                  { name: "🔒  By",                  value: `${interaction.user}`,                                         inline: false },
+                  { name: "Signal",             value: `\`\`\`${command}\`\`\``,                                     inline: false },
+                  { name: "Server 1 Response",  value: `\`\`\`${(r1.trim() || "no response").slice(0, 900)}\`\`\``, inline: false },
+                  { name: "Server 2 Response",  value: `\`\`\`${(r2.trim() || "no response").slice(0, 900)}\`\`\``, inline: false },
+                  { name: "By",                  value: `${interaction.user}`,                                         inline: false },
                 ).setTimestamp()
             ]});
           }
           const result = await sendRcon(command, server);
           writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
-          await logAction(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("📡  Manual RCON")
+          await logAction(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Manual RCON")
             .addFields({ name: "Signal", value: `\`${command}\``, inline: true }, { name: "Server", value: serverLabel(server), inline: true }, { name: "By", value: interaction.user.tag, inline: true }).setTimestamp());
           return interaction.editReply({ embeds: [
-            new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("📡  RCON Transmission Complete").setDescription(`${DIVIDER}`)
+            new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("RCON Transmission Complete").setDescription(`${DIVIDER}`)
               .addFields(
-                { name: "📤  Signal",  value: `\`\`\`${command}\`\`\``,                                             inline: false },
-                { name: "🖥️  Server",  value: `${serverEmoji(server)}  ${serverLabel(server)}`,                     inline: true },
-                { name: "🔒  By",      value: `${interaction.user}`,                                                inline: true },
-                { name: "📥  Response",value: `\`\`\`${(result.trim() || "no response").slice(0, 1000)}\`\`\``,    inline: false },
+                { name: "Signal",  value: `\`\`\`${command}\`\`\``,                                             inline: false },
+                { name: "Server",  value: `${serverLabel(server)}`,                     inline: true },
+                { name: "By",      value: `${interaction.user}`,                                                inline: true },
+                { name: "Response",value: `\`\`\`${(result.trim() || "no response").slice(0, 1000)}\`\`\``,    inline: false },
               ).setTimestamp()
           ]});
         } catch (err) {
@@ -4019,7 +4017,7 @@ client.on("interactionCreate", async (interaction) => {
       case "rotatemap": {
         const server = interaction.options.getString("server");
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("rm_confirm").setLabel("Yes, rotate now").setStyle(ButtonStyle.Danger).setEmoji("🔄"),
+          new ButtonBuilder().setCustomId("rm_confirm").setLabel("Yes, rotate now").setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("rm_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
         );
         const msg = await interaction.reply({
@@ -4030,13 +4028,13 @@ client.on("interactionCreate", async (interaction) => {
         });
         try {
           const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
-          if (btn.customId === "rm_cancel") return btn.update({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("🪖  Rotation Cancelled").setDescription("Map rotation cancelled.").setTimestamp()], components: [] });
+          if (btn.customId === "rm_cancel") return btn.update({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Rotation Cancelled").setDescription("Map rotation cancelled.").setTimestamp()], components: [] });
           await btn.deferUpdate();
           await sendRconBoth("Rotatemap", server);
           writeModLog({ action: "rotatemap", server, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("🔄  Map Rotation Initiated")
+          const embed = new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Map Rotation Initiated")
             .setDescription(`> *"Find new ground, soldier."*\n\n${DIVIDER}`)
-            .addFields({ name: "🖥️  Server", value: `${serverEmoji(server)}  ${serverLabel(server)}`, inline: true }, { name: "🔒  By", value: `${interaction.user}`, inline: true })
+            .addFields({ name: "Server", value: `${serverLabel(server)}`, inline: true }, { name: "By", value: `${interaction.user}`, inline: true })
             .setTimestamp();
           brand(embed); await logAction(embed);
           return btn.editReply({ embeds: [embed], components: [] });
@@ -4061,13 +4059,13 @@ client.on("interactionCreate", async (interaction) => {
           const newBal  = current + tier.amount;
           if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", `Could not deposit **${tier.amount} caps** to \`${playerId}\`. Check \`MODSAVE_PATH\`.`)], ephemeral: true });
           writeModLog({ action: "givecaps", playerId, amount: tier.amount, reason: "Mercenary payment", by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💸  Mercenary Payment Issued")
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Mercenary Payment Issued")
             .setDescription(`> *"Caps now. No strings attached."*\n\n${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",    value: `\`${playerId}\``,                          inline: true },
-              { name: "💰  Payment",    value: `**${tier.amount.toLocaleString()} caps**`, inline: true },
-              { name: "💵  New Balance",value: `**${newBal.toLocaleString()} caps**`,      inline: true },
-              { name: "🔒  By",        value: `${interaction.user}`,                      inline: false },
+              { name: "Courier",    value: `\`${playerId}\``,                          inline: true },
+              { name: "Payment",    value: `**${tier.amount.toLocaleString()} caps**`, inline: true },
+              { name: "New Balance",value: `**${newBal.toLocaleString()} caps**`,      inline: true },
+              { name: "By",        value: `${interaction.user}`,                      inline: false },
             ).setFooter({ text: randomQuote("caps") }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -4080,12 +4078,12 @@ client.on("interactionCreate", async (interaction) => {
           const old = WAGE_TIERS[existing.tier];
           existing.tier = tierKey; existing.updatedAt = Date.now(); existing.updatedBy = interaction.user.tag;
           saveWages(wages);
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("🔄  Payroll Tier Updated").setDescription(`${DIVIDER}`)
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Payroll Tier Updated").setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "🎯  Courier",value: `\`${playerId}\``,                                    inline: true },
-              { name: "⬇️  Old",    value: `${old?.label ?? "?"} (+${old?.amount ?? "?"}/wk)`,   inline: true },
-              { name: "⬆️  New",    value: `**${tier.label}** (+${tier.amount}/wk)`,             inline: true },
-              { name: "🔒  By",     value: `${interaction.user}`,                                inline: false },
+              { name: "Courier",value: `\`${playerId}\``,                                    inline: true },
+              { name: "Old",    value: `${old?.label ?? "?"} (+${old?.amount ?? "?"}/wk)`,   inline: true },
+              { name: "New",    value: `**${tier.label}** (+${tier.amount}/wk)`,             inline: true },
+              { name: "By",     value: `${interaction.user}`,                                inline: false },
             ).setFooter({ text: "Payroll updated — takes effect next cycle" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -4093,15 +4091,15 @@ client.on("interactionCreate", async (interaction) => {
         wages.push({ playerId, tier: tierKey, addedBy: interaction.user.tag, addedAt: Date.now(), lastPaidAt: null, updatedAt: null, updatedBy: null });
         saveWages(wages);
         const bal = readPlayerBalance(playerId);
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💰  Courier Added to Payroll")
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Courier Added to Payroll")
           .setDescription(`> *"A fair day's work for a fair day's pay."*\n\n${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",    value: `\`${playerId}\``,                                              inline: true },
-            { name: "📋  Tier",       value: `**${tier.label}**`,                                            inline: true },
-            { name: "💵  Weekly",     value: `+**${tier.amount} caps/week**`,                                inline: true },
-            { name: "💰  Balance",    value: bal !== null ? `${bal.toLocaleString()} caps` : "*no ledger*", inline: true },
-            { name: "🔒  By",        value: `${interaction.user}`,                                          inline: true },
-            { name: "⏰  Next Payout",value: "Within 7 days of enrolment",                                  inline: true },
+            { name: "Courier",    value: `\`${playerId}\``,                                              inline: true },
+            { name: "Tier",       value: `**${tier.label}**`,                                            inline: true },
+            { name: "Weekly",     value: `+**${tier.amount} caps/week**`,                                inline: true },
+            { name: "Balance",    value: bal !== null ? `${bal.toLocaleString()} caps` : "*no ledger*", inline: true },
+            { name: "By",        value: `${interaction.user}`,                                          inline: true },
+            { name: "Next Payout",value: "Within 7 days of enrolment",                                  inline: true },
           ).setFooter({ text: randomQuote("wages") }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -4118,12 +4116,12 @@ client.on("interactionCreate", async (interaction) => {
         if (!removed) return interaction.reply({ embeds: [warningEmbed("Not on Payroll", `\`${playerId}\` isn't enrolled.\nUse \`/wagelist\` to see who's on the books.`)], ephemeral: true });
         saveWages(wages.filter(w => w.playerId.toLowerCase() !== playerId.toLowerCase()));
         const tier = WAGE_TIERS[removed.tier];
-        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("📤  Removed from Payroll").setDescription(`${DIVIDER}`)
+        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Removed from Payroll").setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",value: `\`${playerId}\``,                                          inline: true },
-            { name: "📋  Was",    value: `${tier?.label ?? removed.tier} (+${tier?.amount ?? "?"}/wk)`, inline: true },
-            { name: "🔒  By",    value: `${interaction.user}`,                                       inline: true },
-            { name: "ℹ️  Note",  value: "Existing balance unchanged. No further weekly payouts.",    inline: false },
+            { name: "Courier",value: `\`${playerId}\``,                                          inline: true },
+            { name: "Was",    value: `${tier?.label ?? removed.tier} (+${tier?.amount ?? "?"}/wk)`, inline: true },
+            { name: "By",    value: `${interaction.user}`,                                       inline: true },
+            { name: "Note",  value: "Existing balance unchanged. No further weekly payouts.",    inline: false },
           ).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -4134,7 +4132,7 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "wagelist": {
         const wages = loadWages().filter(w => WAGE_TIERS[w.tier]?.weekly);
-        if (!wages.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("💰  Payroll — Empty").setDescription('> *"No couriers on the books yet."*\n\nUse `/addwage` to enrol someone.').setTimestamp()], ephemeral: true });
+        if (!wages.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Payroll — Empty").setDescription('> *"No couriers on the books yet."*\n\nUse `/addwage` to enrol someone.').setTimestamp()], ephemeral: true });
         const totalPay = wages.reduce((s, w) => s + (WAGE_TIERS[w.tier]?.amount ?? 0), 0);
         const tierSummary = Object.entries(WAGE_TIERS).filter(([, t]) => t.weekly)
           .map(([k, t]) => { const n = wages.filter(w => w.tier === k).length; return n ? `${t.label}: **${n}**` : null; }).filter(Boolean).join("  ·  ");
@@ -4146,7 +4144,7 @@ client.on("interactionCreate", async (interaction) => {
         });
         const header = `> *"The House always pays its debts."*\n\n${DIVIDER}\n**${wages.length}** enrolled  ·  ${tierSummary}  ·  **${totalPay.toLocaleString()} caps/week total**`;
         return paginate(interaction, lines, (pageLines) =>
-          new EmbedBuilder().setColor(NV.GOLD).setTitle("💰  Weekly Payroll — The House's Ledger")
+          new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Payroll — The House's Ledger")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Wages disbursed automatically every 7 days" }).setTimestamp(),
           { perPage: 12, ephemeral: true });
@@ -4166,13 +4164,13 @@ client.on("interactionCreate", async (interaction) => {
         const wage   = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier  = wage ? (WAGE_TIERS[wage.tier] ?? { label: wage.tier, amount: "?", weekly: true }) : null;
         const nextTs = wage?.lastPaidAt ? Math.floor((wage.lastPaidAt + WAGE_INTERVAL_MS) / 1000) : null;
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💵  Courier Ledger").setDescription(`${DIVIDER}`)
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Courier Ledger").setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier", value: `\`${playerId}\``,                          inline: true },
-            { name: "💰  Balance", value: `**${balance.toLocaleString()} caps**`,      inline: true },
-            { name: "📋  Payroll", value: wTier ? `✅  ${wTier.label} (+${wTier.amount}/wk)` : "❌  Not enrolled", inline: true },
+            { name: "Courier", value: `\`${playerId}\``,                          inline: true },
+            { name: "Balance", value: `**${balance.toLocaleString()} caps**`,      inline: true },
+            { name: "Payroll", value: wTier ? `${wTier.label} (+${wTier.amount}/wk)` : "Not enrolled", inline: true },
           ).setFooter({ text: randomQuote("caps") }).setTimestamp();
-        if (nextTs) embed.addFields({ name: "⏰  Next Payout", value: `<t:${nextTs}:R>`, inline: true });
+        if (nextTs) embed.addFields({ name: "Next Payout", value: `<t:${nextTs}:R>`, inline: true });
         return interaction.reply({ embeds: [embed], ephemeral: true });
       }
 
@@ -4188,13 +4186,13 @@ client.on("interactionCreate", async (interaction) => {
         const newBal  = current + amount;
         if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", "Check `MODSAVE_PATH`.")], ephemeral: true });
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💸  Caps Given").setDescription(`${DIVIDER}`)
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Caps Given").setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",    value: `\`${playerId}\``,                      inline: true },
-            { name: "💰  Given",      value: `**+${amount.toLocaleString()} caps**`, inline: true },
-            { name: "💵  New Balance",value: `**${newBal.toLocaleString()} caps**`,  inline: true },
-            { name: "📋  Reason",     value: reason,                                 inline: false },
-            { name: "🔒  By",        value: `${interaction.user}`,                  inline: false },
+            { name: "Courier",    value: `\`${playerId}\``,                      inline: true },
+            { name: "Given",      value: `**+${amount.toLocaleString()} caps**`, inline: true },
+            { name: "New Balance",value: `**${newBal.toLocaleString()} caps**`,  inline: true },
+            { name: "Reason",     value: reason,                                 inline: false },
+            { name: "By",        value: `${interaction.user}`,                  inline: false },
           ).setFooter({ text: randomQuote("caps") }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -4223,12 +4221,12 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not credit the recipient — transfer rolled back, no caps moved.")], ephemeral: true });
         }
         writeModLog({ action: "transfercaps", fromId, toId, amount, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("💱  Caps Transfer Complete").setDescription(`${DIVIDER}`)
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Caps Transfer Complete").setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "📤  From",  value: `\`${fromId}\`\n**${(fromBal - amount).toLocaleString()} caps** remaining`, inline: true },
-            { name: "📥  To",    value: `\`${toId}\`\n**${(toBal + amount).toLocaleString()} caps** balance`,       inline: true },
-            { name: "💸  Amount",value: `**${amount.toLocaleString()} caps**`,                                       inline: true },
-            { name: "🔒  By",    value: `${interaction.user}`,                                                       inline: false },
+            { name: "From",  value: `\`${fromId}\`\n**${(fromBal - amount).toLocaleString()} caps** remaining`, inline: true },
+            { name: "To",    value: `\`${toId}\`\n**${(toBal + amount).toLocaleString()} caps** balance`,       inline: true },
+            { name: "Amount",value: `**${amount.toLocaleString()} caps**`,                                       inline: true },
+            { name: "By",    value: `${interaction.user}`,                                                       inline: false },
           ).setFooter({ text: randomQuote("caps") }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -4248,13 +4246,13 @@ client.on("interactionCreate", async (interaction) => {
         writeModLog({ action: "adjustcaps", playerId, amount, reason, by: interaction.user.tag });
         const pos = amount >= 0;
         const embed = new EmbedBuilder().setColor(pos ? NV.IRRAD_GREEN : NV.RUST_RED)
-          .setTitle(`⚙️  Caps ${pos ? "Credited" : "Debited"}`).setDescription(`${DIVIDER}`)
+          .setTitle(`Caps ${pos ? "Credited" : "Debited"}`).setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "🎯  Courier",     value: `\`${playerId}\``,                                    inline: true },
-            { name: `${pos ? "📈" : "📉"}  Change`,value: `**${pos ? "+" : ""}${amount.toLocaleString()} caps**`, inline: true },
-            { name: "💰  New Balance", value: `**${newBal.toLocaleString()} caps**`,                inline: true },
-            { name: "📋  Reason",      value: reason,                                               inline: false },
-            { name: "🔒  By",         value: `${interaction.user}`,                                inline: false },
+            { name: "Courier",     value: `\`${playerId}\``,                                    inline: true },
+            { name: `${pos ? "" : ""}  Change`,value: `**${pos ? "+" : ""}${amount.toLocaleString()} caps**`, inline: true },
+            { name: "New Balance", value: `**${newBal.toLocaleString()} caps**`,                inline: true },
+            { name: "Reason",      value: reason,                                               inline: false },
+            { name: "By",         value: `${interaction.user}`,                                inline: false },
           ).setFooter({ text: "Manual cap adjustment · logged" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -4282,42 +4280,42 @@ client.on("interactionCreate", async (interaction) => {
         const lastSeen = getLastSeen(playerId);
         const donator  = isDonator(playerId);
 
-        const fStr = factions === null ? "⚠️  Folder unreadable"
+        const fStr = factions === null ? "Folder unreadable"
           : !factions.length ? "*No faction access*"
           : factions.map(f => {
               const rank = getFactionRank(f, playerId);
               return `${getFactionRankBadge(f, rank)}  **${f}** *(${rank})*`;
             }).join("\n");
 
-        const statusStr = !online ? "🔴  Offline" : [onS1 && "🟢  Server 1", onS2 && "🟢  Server 2"].filter(Boolean).join("  +  ");
+        const statusStr = !online ? "Offline" : [onS1 && "Server 1", onS2 && "Server 2"].filter(Boolean).join("  +  ");
         const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`🪪  Courier Dossier — ${playerId}`)
+          .setTitle(`Courier Dossier — ${playerId}`)
           .setDescription(
             tb ? hero(`Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
             online ? hero("Currently active on the Strip.") :
             hero("Offline — last tracked playtime shown.")
           )
           .addFields(
-            { name: "📡  Status",        value: statusStr,                                                          inline: true },
-            { name: "⏱️  Playtime",      value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*No record*", inline: true },
-            { name: "⚠️  Warnings",      value: warns.length ? `**${warns.length}** on record` : "Clean record",    inline: true },
-            { name: "👁️  Last Seen",     value: online ? "🟢  Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
-            { name: "📝  Staff Notes",   value: notes.length ? `**${notes.length}** — use \`/note list ${playerId}\`` : "*None*", inline: true },
-            { name: "💎  Donator",       value: donator ? "✅  Yes" : "❌  No",                                       inline: true },
-            { name: "⚔️  Faction Ranks", value: fStr,                                                               inline: false },
+            { name: "Status",        value: statusStr,                                                          inline: true },
+            { name: "Playtime",      value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*No record*", inline: true },
+            { name: "Warnings",      value: warns.length ? `**${warns.length}** on record` : "Clean record",    inline: true },
+            { name: "Last Seen",     value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
+            { name: "Staff Notes",   value: notes.length ? `**${notes.length}** — use \`/note list ${playerId}\`` : "*None*", inline: true },
+            { name: "Donator",       value: donator ? "Yes" : "No",                                       inline: true },
+            { name: "Faction Ranks", value: fStr,                                                               inline: false },
           );
 
         if (balance !== null) {
-          embed.addFields({ name: "💰  Balance", value: `**${balance.toLocaleString()} caps**${wTier ? `  ·  Payroll: ${wTier.label} (+${wTier.amount}/wk)` : "  ·  Not on payroll"}`, inline: false });
+          embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} caps**${wTier ? `  ·  Payroll: ${wTier.label} (+${wTier.amount}/wk)` : "  ·  Not on payroll"}`, inline: false });
         }
         if (tb) {
           const ts = Math.floor(tb.expires / 1000);
-          embed.addFields({ name: "⏳  Active Exile", value: `Temp ban — *${tb.reason}*  ·  expires <t:${ts}:R>`, inline: false });
+          embed.addFields({ name: "Active Exile", value: `Temp ban — *${tb.reason}*  ·  expires <t:${ts}:R>`, inline: false });
         }
         if (history.length) {
-          embed.addFields({ name: "📋  Mod Actions", value: `**${history.length}** total — use \`/history ${playerId}\` to view`, inline: false });
+          embed.addFields({ name: "Mod Actions", value: `**${history.length}** total — use \`/history ${playerId}\` to view`, inline: false });
         }
 
         brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });
@@ -4353,44 +4351,44 @@ client.on("interactionCreate", async (interaction) => {
         let ips = [], alts = [], flagged = [];
         try { ips = ipBans.getConfirmedIPsForPlayer(playerId); alts = ipBans.getAltNamesOf(playerId); flagged = ips.filter(ip => ipBans.blacklist.includes(ip)); } catch {}
 
-        const fStr = factions === null ? "⚠️  Folder unreadable"
+        const fStr = factions === null ? "Folder unreadable"
           : !factions.length ? "*None*"
           : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))}  **${f}** *(${getFactionRank(f, playerId)})*`).join("\n");
-        const statusStr = !online ? "🔴  Offline" : [onS1 && "🟢  S1", onS2 && "🟢  S2"].filter(Boolean).join(" + ");
+        const statusStr = !online ? "Offline" : [onS1 && "S1", onS2 && "S2"].filter(Boolean).join(" + ");
         const color = flagged.length ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`👁️  Full Dossier — ${playerId}`)
+          .setTitle(`Full Dossier — ${playerId}`)
           .setDescription(hero("Everything on record. Owner eyes only."))
           .addFields(
-            { name: "📡  Status",     value: statusStr,                                                              inline: true },
-            { name: "⏱️  Playtime",   value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*None*",          inline: true },
-            { name: "👁️  Last Seen",  value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*Never*", inline: true },
-            { name: "💰  Balance",    value: balance !== null ? `**${balance.toLocaleString()}** caps` : "*No ledger*", inline: true },
-            { name: "📋  Payroll",    value: wTier ? `${wTier.label} (+${wTier.amount}/wk)` : "❌",                    inline: true },
-            { name: "💎  Donator",    value: donator ? "✅" : "❌",                                                    inline: true },
-            { name: "⚠️  Warnings",   value: `**${warns.length}**`,                                                   inline: true },
-            { name: "🗒️  Mod Actions", value: `**${history.length}**`,                                                inline: true },
-            { name: "📝  Staff Notes", value: `**${notes.length}**`,                                                  inline: true },
-            { name: "⚔️  Factions & Ranks", value: fStr, inline: false },
+            { name: "Status",     value: statusStr,                                                              inline: true },
+            { name: "Playtime",   value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*None*",          inline: true },
+            { name: "Last Seen",  value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*Never*", inline: true },
+            { name: "Balance",    value: balance !== null ? `**${balance.toLocaleString()}** caps` : "*No ledger*", inline: true },
+            { name: "Payroll",    value: wTier ? `${wTier.label} (+${wTier.amount}/wk)` : "",                    inline: true },
+            { name: "Donator",    value: donator ? "" : "",                                                    inline: true },
+            { name: "Warnings",   value: `**${warns.length}**`,                                                   inline: true },
+            { name: "Mod Actions", value: `**${history.length}**`,                                                inline: true },
+            { name: "Staff Notes", value: `**${notes.length}**`,                                                  inline: true },
+            { name: "Factions & Ranks", value: fStr, inline: false },
           );
 
         // ban status
         const banLines = [];
-        if (tb) banLines.push(`⏳  **Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
-        embed.addFields({ name: "🚫  Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "✅  No active bans", inline: false });
+        if (tb) banLines.push(`**Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
+        embed.addFields({ name: "Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "No active bans", inline: false });
 
         // IP intel
         embed.addFields(
-          { name: `🌐  Confirmed IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " 🔨" : ""}`).join("  ·  ") : "*none confirmed yet*").slice(0, 1024), inline: false },
-          { name: `🔗  Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: `Confirmed IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " " : ""}`).join("  ·  ") : "*none confirmed yet*").slice(0, 1024), inline: false },
+          { name: `Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
         );
-        if (flagged.length) embed.addFields({ name: "🛑  IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
+        if (flagged.length) embed.addFields({ name: "IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
 
         // recent staff notes (inline, since owner)
         if (notes.length) {
           const recent = notes.slice(-5).map((n, i) => `\`${i + 1}.\` ${n.text} — *${n.by}*`).join("\n");
-          embed.addFields({ name: "📝  Latest Notes", value: recent.slice(0, 1024), inline: false });
+          embed.addFields({ name: "Latest Notes", value: recent.slice(0, 1024), inline: false });
         }
 
         const footerBits = [];
