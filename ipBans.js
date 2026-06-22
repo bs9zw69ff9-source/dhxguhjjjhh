@@ -80,6 +80,7 @@ const pendingTs   = {};           // per-file: log-timestamp of that accept line
 const pendingSet  = {};           // per-file: distinct IPs accepted since the last login (size 1 = unambiguous)
 const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
 const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe — collapse a disconnect's multiple close lines)
+const lastCloseTs   = new Map();  // id    -> log ts (count one connection per disconnect, by log time)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
 const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet — flag it when the kick confirms one)
 let lastTs = 0, saveTimer = null, dirty = false;
@@ -123,7 +124,8 @@ function getRecord(input) {
   const ids = resolveIds(input);
   if (!ids.length) return null;
   const ips = new Set(), cips = new Set();
-  let name = null, firstSeen = Infinity, lastSeen = 0;
+  let name = null, firstSeen = Infinity, lastSeen = 0, logins = 0;
+  let recent = [];
   for (const id of ids) {
     const e = registry[id]; if (!e) continue;
     if (e.name && !name) name = e.name;
@@ -131,7 +133,11 @@ function getRecord(input) {
     for (const ip of (e.cips || [])) cips.add(ip);
     if (e.firstSeen) firstSeen = Math.min(firstSeen, e.firstSeen);
     if (e.lastSeen)  lastSeen  = Math.max(lastSeen, e.lastSeen);
+    logins += e.logins || 0;
+    if (Array.isArray(e.recent)) recent = recent.concat(e.recent);
   }
+  recent.sort((a, b) => (b.ts || 0) - (a.ts || 0));   // newest first
+  const nm = norm(name);
   return {
     name: name || String(input),
     ips: [...ips],
@@ -139,6 +145,10 @@ function getRecord(input) {
     firstSeen: firstSeen === Infinity ? null : firstSeen,
     lastSeen: lastSeen || null,
     alts: altNamesForIps([...cips], ids),
+    logins,
+    recent: recent.slice(0, 8),
+    bypass: untrackedNames.has(nm),                                   // ignore-listed (never auto-banned/tracked)
+    flagged: [...cips].some(ip => flagged.has(ip)) || flaggedNames.has(nm),
   };
 }
 
@@ -377,6 +387,17 @@ function parseLine(line, server, key) {
   if (c && !skipId(c[2])) {
     const id = cleanId(c[2]), ip = c[1];
     record(c[2], null, ip, ts, true);          // confirmed same-line pairing
+    // count one completed connection per disconnect (a disconnect emits several
+    // close lines a few ms apart — collapse them by LOG time so backfill counts too).
+    const e = registry[id];
+    if (e && (ts - (lastCloseTs.get(id) ?? -Infinity)) > 5000) {
+      lastCloseTs.set(id, ts);
+      e.logins = (e.logins || 0) + 1;
+      e.recent = Array.isArray(e.recent) ? e.recent : [];
+      e.recent.unshift({ ts: ts || Date.now(), ip });
+      if (e.recent.length > 8) e.recent.length = 8;
+      scheduleSave();
+    }
     // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect.
     // Only when we actually know who this is (a login captured a name) — skip
     // anonymous/partial connections so the feed isn't full of "unknown".

@@ -2198,19 +2198,35 @@ client.once("ready", async () => {
       if (!feedHook) return;
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
-      const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null };
-      const ts = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:f>` : "unknown";
-      const tsR = (ms) => ms ? `<t:${Math.floor(ms / 1000)}:R>` : "unknown";
-      const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Courier Logged — IP Confirmed")
-        .setDescription(`${hero(randomQuote("connect"))}`)
+      const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
+      const fmt = (ms) => { if (!ms) return "unknown"; try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19); } catch { return "unknown"; } };
+
+      // recent connections — newest first; fold in this live join, dedupe near-duplicates
+      const conns = [];
+      if (ip) conns.push({ ts: Date.now(), ip });
+      for (const c of (rec.recent || [])) conns.push(c);
+      const seen = new Set(); const connLines = [];
+      for (const c of conns) {
+        const k = `${Math.floor((c.ts || 0) / 1000)}|${c.ip}`;
+        if (seen.has(k)) continue; seen.add(k);
+        connLines.push(`${fmt(c.ts)}   ${c.ip ?? "unknown"}`);
+        if (connLines.length >= 8) break;
+      }
+      const lastActivity = Math.max(rec.lastSeen || 0, conns[0]?.ts || 0) || null;
+
+      const embed = clinical(new EmbedBuilder().setColor(CLIN.green)
+        .setTitle(`Player Information: ${name}`)
+        .setDescription("Database Info")
         .addFields(
-          { name: "Name",       value: `\`${name}\``,                                            inline: true },
-          { name: "Current IP", value: `\`${ip ?? "unknown"}\``,                                 inline: true },
-          { name: "Server",     value: srvName,                                                  inline: true },
-          { name: `Confirmed IPs (${rec.cips.length})`, value: (rec.cips.length ? rec.cips.map(x => `\`${x}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
-          { name: "First Seen",  value: ts(rec.firstSeen),                                        inline: true },
-          { name: "Last Seen",  value: tsR(rec.lastSeen),                                        inline: true },
-          { name: `Known Alts (${rec.alts.length})`, value: (rec.alts.length ? rec.alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
+          { name: "First Seen",      value: fmt(rec.firstSeen),                  inline: true },
+          { name: "Last Seen",       value: fmt(rec.lastSeen),                   inline: true },
+          { name: "Login Count",     value: String(rec.logins ?? 0),             inline: true },
+          { name: "Possible Alts",   value: (rec.alts && rec.alts.length ? rec.alts.join(", ") : "None").slice(0, 1024), inline: false },
+          { name: "Bypass Auto-Ban", value: rec.bypass ? "Yes" : "No",           inline: true },
+          { name: "Server",          value: srvName,                             inline: true },
+          { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist" : "No matches", inline: false },
+          { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
+          { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
         ), "Connection log · Mojave Authority");
       feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
     },
