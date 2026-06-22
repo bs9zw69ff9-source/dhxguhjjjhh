@@ -1784,12 +1784,25 @@ async function postPlayerList() {
    VERIFICATION  (link a Discord user to their Pavlov username)
    ================================================================ */
 const loadVerifyLinks = () => safeRead(FILES.VERIFY_LINKS, {});
-// Resolve the verified Discord user for a Pavlov username (set at /verify), or
-// null. Lets bans auto-DM the linked account without a discord_user option.
-async function dmUserForPavlov(name) {
-  const id = loadVerifyLinks()[String(name ?? "").trim().toLowerCase()];
-  if (!id) return null;
-  try { return await client.users.fetch(id); } catch { return null; }
+// Find the Discord user to DM for a Pavlov username. Primary match is the guild
+// member whose server NICKNAME (or display name) equals the name — that's what
+// verification sets, and it also catches anyone nicknamed by hand. Falls back to
+// the stored verify link (survives nickname changes). Returns a User or null.
+async function dmUserForPavlov(name, guild) {
+  const key = String(name ?? "").trim().toLowerCase();
+  if (!key) return null;
+  // 1) match by server nickname / display name
+  if (guild) {
+    try {
+      const found = await guild.members.fetch({ query: name, limit: 100 });   // query (op8) — no privileged intent needed
+      const m = found.find(mm => (mm.nickname && mm.nickname.toLowerCase() === key) || mm.displayName.toLowerCase() === key);
+      if (m) return m.user;
+    } catch { /* ignore — fall back to the link store */ }
+  }
+  // 2) stored verification link (Pavlov name -> Discord id)
+  const id = loadVerifyLinks()[key];
+  if (id) { try { return await client.users.fetch(id); } catch {} }
+  return null;
 }
 // True if the name matches any Pavlov player the bot has on record: online now,
 // known-players registry (seeded from playtime/factions/wages/donators/bans),
@@ -2588,7 +2601,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🛡️  By",      value: `${interaction.user}`,                              inline: true },
             { name: "📋  Reason",  value: reason,                                             inline: false },
           ).setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
-        const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
           action: "Kick", color: NV.NCR_TAN, playerId, reason,
           fields: [{ name: "🖥️  Server", value: serverLabel(server), inline: true }],
@@ -2635,7 +2648,7 @@ client.on("interactionCreate", async (interaction) => {
         const wExtra = [{ name: "⚠️  Warning #", value: `**${count}**`, inline: true }];
         if (escalated?.type === "tempban") wExtra.push({ name: "🔴  Escalation", value: `Auto temp-ban: **${escalated.label}**`, inline: false });
         else if (escalated?.type === "permban") wExtra.push({ name: "🔴  Escalation", value: "Auto **permanent ban**", inline: false });
-        const wTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const wTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const wDm = await dmPunishmentNotice(wTarget, {
           action: "Warning", color: escalated ? NV.RUST_RED : NV.NCR_TAN, playerId, reason, fields: wExtra,
         });
@@ -2891,7 +2904,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔓  Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`,                     inline: true },
             { name: "🛡️  By",       value: `${interaction.user}`,                            inline: true },
           ), replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires");
-        const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
           fields: [
@@ -3053,7 +3066,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "🔒  Admin",    value: `${interaction.user}`,                            inline: false },
           ));
         if (notes) embed.addFields({ name: "📝  Notes", value: notes });
-        const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId);
+        const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
           fields: [
