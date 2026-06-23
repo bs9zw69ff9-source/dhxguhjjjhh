@@ -431,7 +431,8 @@ function commandPlayerCandidates(interaction) {
   const known = loadKnownPlayers();
   const disp  = (k) => known[String(k).toLowerCase()]?.name ?? k;   // recover display casing for lowercased keys
 
-  if (cmd === "unban")        return loadBans().map(b => b.playerId);                                  // currently temp-banned
+  if (cmd === "unban" || cmd === "checkban")
+                              return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()])];  // temp-banned + blacklist.txt
   if (cmd === "warnings" || cmd === "clearwarnings" || cmd === "delwarn")
                               return Object.keys(loadWarns()).map(disp);                               // has warnings
   if (cmd === "history")      return [...new Set(loadModLog().map(e => e.playerId).filter(Boolean))];  // has mod history
@@ -732,8 +733,98 @@ function rankHasRoom(faction, rank) {
   return { ok: count < cap, cap, count };
 }
 
-const FACTION_ROLES_PATH  = "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/FactionRoles";
+/* Two Pavlov server installs, kept in sync. server 1 = pavlovserver,
+   server 2 = pavlovserver1. Override the roots with PAVLOV_BASE_1 / PAVLOV_BASE_2.
+   Every game file the bot writes is mirrored into BOTH trees. */
+const PAVLOV_BASE_1 = process.env.PAVLOV_BASE_1 || "/home/steam/pavlovserver";
+const PAVLOV_BASE_2 = process.env.PAVLOV_BASE_2 || "/home/steam/pavlovserver1";
+const PAVLOV_BASES  = [...new Set([PAVLOV_BASE_1, PAVLOV_BASE_2])];
+
+// Given a path under one install, return it plus its mirror(s) in the other install.
+function mirrorPaths(p) {
+  const out = new Set([p]);
+  for (const [a, b] of [[PAVLOV_BASE_1, PAVLOV_BASE_2], [PAVLOV_BASE_2, PAVLOV_BASE_1]]) {
+    if (a !== b && p.startsWith(a + path.sep)) out.add(b + p.slice(a.length));
+  }
+  return [...out];
+}
+// Write a game file into every install (creating dirs, fixing ownership). Returns true if any write succeeded.
+function writeGameFile(primaryPath, content) {
+  let ok = false;
+  for (const fp of mirrorPaths(primaryPath)) {
+    try { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, content, "utf8"); matchTreeOwner(fp); ok = true; }
+    catch (err) { logger.error("Sync", `write failed for ${fp}: ${err.message}`); }
+  }
+  return ok;
+}
+
+const FACTION_ROLES_PATH  = path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/FactionRoles");
 const FACTION_DEFAULT_CAP = 50;
+
+/* ---------------- blacklist.txt (Pavlov Shack name blacklist), synced ---------------- */
+// One name per line, kept identical across both installs. Names may contain
+// spaces (e.g. "Butter Life"), so we preserve them — only control chars are stripped.
+const blacklistPathFor = (base) => path.join(base, "Pavlov/Saved/Config/blacklist.txt");
+function sanitizeBanName(raw) { return String(raw ?? "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 80); }
+function readBlacklist(base) {
+  try { return fs.readFileSync(blacklistPathFor(base), "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean); }
+  catch (err) { if (err.code === "ENOENT") return []; logger.error("Blacklist", `read ${base}: ${err.message}`); return null; }
+}
+// Every blacklisted name across both installs (deduped, case-insensitive, original casing kept).
+function blacklistAll() {
+  const map = new Map();
+  for (const base of PAVLOV_BASES) for (const n of (readBlacklist(base) || [])) map.set(n.toLowerCase(), n);
+  return [...map.values()];
+}
+// Which server numbers (1/2) currently list this name.
+function blacklistHas(name) {
+  const nm = sanitizeBanName(name).toLowerCase();
+  const hits = [];
+  PAVLOV_BASES.forEach((base, i) => { const c = readBlacklist(base); if (c && c.some(x => x.toLowerCase() === nm)) hits.push(i + 1); });
+  return hits;
+}
+// Add a name to blacklist.txt on BOTH installs (synced). Returns { name, servers:[ok bases] }.
+function blacklistAdd(name) {
+  const nm = sanitizeBanName(name);
+  let servers = 0;
+  if (!nm) return { name: nm, servers };
+  for (const base of PAVLOV_BASES) {
+    const cur = readBlacklist(base); if (cur === null) continue;
+    if (!cur.some(x => x.toLowerCase() === nm.toLowerCase())) cur.push(nm);
+    if (writeGameFileSingle(blacklistPathFor(base), cur.join("\n") + "\n")) servers++;
+  }
+  return { name: nm, servers };
+}
+// Remove a name from blacklist.txt on BOTH installs. Returns { name, removed } (# of installs changed).
+function blacklistRemove(name) {
+  const nm = sanitizeBanName(name);
+  let removed = 0;
+  for (const base of PAVLOV_BASES) {
+    const cur = readBlacklist(base); if (cur === null) continue;
+    const next = cur.filter(x => x.toLowerCase() !== nm.toLowerCase());
+    if (next.length !== cur.length && writeGameFileSingle(blacklistPathFor(base), next.join("\n") + "\n")) removed++;
+  }
+  return { name: nm, removed };
+}
+// Write one exact path (no mirroring — the blacklist helpers already loop both installs).
+function writeGameFileSingle(fp, content) {
+  try { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, content, "utf8"); matchTreeOwner(fp); return true; }
+  catch (err) { logger.error("Blacklist", `write ${fp}: ${err.message}`); return false; }
+}
+// Heal divergence: make both installs' blacklist.txt equal their union. Run on startup,
+// so names already on only one server (or bans made directly on one) propagate to both.
+function reconcileBlacklists() {
+  const union = blacklistAll();
+  let wrote = 0;
+  for (const base of PAVLOV_BASES) {
+    const cur = readBlacklist(base); if (cur === null) continue;
+    const set = new Set(cur.map(x => x.toLowerCase()));
+    const same = cur.length === union.length && union.every(n => set.has(n.toLowerCase()));
+    if (!same && writeGameFileSingle(blacklistPathFor(base), union.join("\n") + "\n")) wrote++;
+  }
+  if (wrote) logger.info("Blacklist", `Reconciled blacklist.txt across ${wrote} install(s) — ${union.length} name(s)`);
+}
+
 
 /* Donator whitelist file. Lives in the FactionRoles dir alongside the other
    whitelist files. Override the exact path/filename with the DONATOR_PATH env. */
@@ -1251,23 +1342,30 @@ async function sendRconBoth(command, server) {
   return { s1: v, s2: null, ok1: true, ok2: false };
 }
 
-/* RCON-ban an id on the chosen server(s) AND flag every IP we've ever seen
-   that id connect from. Any account that later connects from a flagged IP is
-   auto-banned by the live log watcher. Never throws — failures are logged.
-   Returns ipBans' enforcement summary plus the RCON outcome:
-   { ids, ips, alts, field, rcon: { ok, ok1, ok2, s1, s2 } }. */
+/* Ban a player by writing their name to blacklist.txt on BOTH installs (synced),
+   AND flag every IP we've ever seen them connect from for alt enforcement.
+   No RCON — file-based, so it never hangs on an unreachable server.
+   Returns ipBans' enforcement summary plus the blacklist outcome:
+   { ids, ips, alts, field, blacklist: { name, servers }, ok }. */
 async function banWithIp(playerId, server = "both") {
-  const cmd = `Ban ${sanitizeId(playerId)}`;
-  let rcon = { ok: false, ok1: false, ok2: false, s1: null, s2: null };
-  try {
-    const r = await sendRconBoth(cmd, server);
-    rcon = { ...r, ok: (server === "both") ? (r.ok1 || r.ok2) : r.ok1 };
-    logger.info("Bans", `Sent "${cmd}" [${server}] -> s1=${rcon.ok1 ? "ok" : "fail"}${server === "both" ? ` s2=${rcon.ok2 ? "ok" : "fail"}` : ""}; resp: ${JSON.stringify(rcon.s1 ?? rcon.s2 ?? "").slice(0, 160)}`);
-  } catch (err) { logger.warn("Bans", `RCON ban failed for ${playerId}: ${err.message}`); }
+  const name = sanitizeBanName(playerId);
+  let bl = { name, servers: 0 };
+  try { bl = blacklistAdd(name); }
+  catch (err) { logger.error("Bans", `blacklist add failed for "${name}": ${err.message}`); }
+  logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
   let enf;
-  try { enf = ipBans.blacklistPlayer(playerId); }
-  catch (err) { logger.warn("IPBan", `IP enforcement failed for ${playerId}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
-  return { ...enf, rcon };
+  try { enf = ipBans.blacklistPlayer(name); }
+  catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
+  return { ...enf, blacklist: bl, ok: bl.servers > 0 };
+}
+// Lift a ban: remove the name from blacklist.txt on both installs + clear IP flags.
+function unbanEverywhere(playerId) {
+  const name = sanitizeBanName(playerId);
+  let bl = { name, removed: 0 };
+  try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
+  let cleared = null;
+  try { cleared = ipBans.unblacklistPlayer(name); } catch {}
+  return { blacklist: bl, cleared: cleared?.cleared ?? { ips: 0, names: 0 } };
 }
 
 function parseRcon(raw) {
@@ -1442,14 +1540,9 @@ function readFactionFile(spawnFile) {
 
 function writeFactionFile(spawnFile, lines) {
   const fp = path.join(FACTION_ROLES_PATH, spawnFile);
-  try {
-    fs.writeFileSync(fp, lines.join("\n") + "\n", "utf8");
-    matchTreeOwner(fp);   // don't leave a root-owned file in the steam-owned game tree
-    return true;
-  } catch (err) {
-    logger.error("Faction", `Write failed for ${spawnFile}: ${err.message}`);
-    return false;
-  }
+  if (writeGameFile(fp, lines.join("\n") + "\n")) return true;   // mirrored to both installs
+  logger.error("Faction", `Write failed for ${spawnFile}`);
+  return false;
 }
 
 /* ================================================================
@@ -1466,16 +1559,12 @@ function readDonatorFile() {
 }
 
 function writeDonatorFile(lines) {
-  try {
-    fs.mkdirSync(path.dirname(DONATOR_FILE), { recursive: true });
-    fs.writeFileSync(DONATOR_FILE, lines.join("\n") + "\n", "utf8");
-    matchTreeOwner(DONATOR_FILE);   // keep it owned by the steam game tree, not root
-    logger.info("Donator", `Wrote ${lines.length} entr${lines.length === 1 ? "y" : "ies"} to ${DONATOR_FILE}`);
+  if (writeGameFile(DONATOR_FILE, lines.join("\n") + "\n")) {   // mirrored to both installs
+    logger.info("Donator", `Wrote ${lines.length} entr${lines.length === 1 ? "y" : "ies"} to ${DONATOR_FILE} (both installs)`);
     return true;
-  } catch (err) {
-    logger.error("Donator", `Write failed: ${err.message}`);
-    return false;
   }
+  logger.error("Donator", "Write failed");
+  return false;
 }
 
 function isDonator(playerId) {
@@ -1586,8 +1675,9 @@ function readPlayerBalance(playerId) {
 function writePlayerBalance(playerId, amount) {
   const fp = getPlayerFilePath(playerId);
   if (!fp) return false;
-  try { fs.writeFileSync(fp, String(Math.max(0, Math.floor(amount))), "utf8"); matchTreeOwner(fp); return true; }
-  catch (err) { logger.error("Balance", `Write failed for ${playerId}: ${err.message}`); return false; }
+  if (writeGameFile(fp, String(Math.max(0, Math.floor(amount))))) return true;   // mirrored to both installs
+  logger.error("Balance", `Write failed for ${playerId}`);
+  return false;
 }
 
 /* ================================================================
@@ -1633,9 +1723,7 @@ async function processExpiredBans() {
   for (const ban of loadBans()) {
     if (ban.expires > now) continue;
     try {
-      await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server1");
-      await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server2");
-      try { ipBans.unblacklistPlayer(ban.playerId); } catch {}   // clear that player's flagged IPs
+      unbanEverywhere(ban.playerId);   // remove from blacklist.txt (both installs) + clear IP flags
       lifted.push(ban.playerId);
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
@@ -2104,7 +2192,7 @@ const commands = [
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
   new SlashCommandBuilder().setName("clearallbans")
-    .setDescription("Owner — Unban everyone (runs Unban per player on both servers)"),
+    .setDescription("Owner — Unban everyone (clears blacklist.txt on both servers)"),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -2259,18 +2347,18 @@ client.once("ready", async () => {
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, ip, reason }) => {
       const res = await banWithIp(name, "both");
-      const rc = res?.rcon || { ok: false, ok1: false, ok2: false };
-      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}${rc.ok ? "" : " [RCON FAILED]"}`, by: "IP-Guard" });
-      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""} — RCON s1=${rc.ok1 ? "ok" : "fail"} s2=${rc.ok2 ? "ok" : "fail"}`);
-      const banEmbed = clinical(new EmbedBuilder().setColor(rc.ok ? CLIN.red : CLIN.grey)
-        .setTitle(rc.ok ? "Blacklisted Courier Blocked" : "Blacklist Match — BAN FAILED")
-        .setDescription(rc.ok ? `${hero(randomQuote("autoban"))}` : "> *The order went out, but the wire went dead. This courier is NOT banned — check the server connection and ban them by hand.*")
+      const ok  = res?.ok;
+      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}${ok ? "" : " [BLACKLIST WRITE FAILED]"}`, by: "IP-Guard" });
+      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""} — blacklisted on ${res?.blacklist?.servers ?? 0}/${PAVLOV_BASES.length} install(s)`);
+      const banEmbed = clinical(new EmbedBuilder().setColor(ok ? CLIN.red : CLIN.grey)
+        .setTitle(ok ? "Blacklisted Courier Blocked" : "Blacklist Match — WRITE FAILED")
+        .setDescription(ok ? `${hero(randomQuote("autoban"))}` : "> *The order went out, but the ledger wouldn't take it. This courier is NOT blacklisted — check the file paths and ban them by hand.*")
         .addFields(
           { name: "Courier", value: `\`${name}\``,            inline: true },
           { name: "IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
           { name: "Reason",  value: reason || "blacklist match", inline: true },
-          { name: "Ban result", value: `Server 1: ${rc.ok1 ? "banned" : "FAILED"}  ·  Server 2: ${rc.ok2 ? "banned" : "FAILED"}`, inline: false },
-        ), "Auto-ban · both servers");
+          { name: "Blacklisted on", value: `${res?.blacklist?.servers ?? 0} of ${PAVLOV_BASES.length} install(s)`, inline: false },
+        ), "Auto-ban · blacklist.txt · both servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       // also surface it in the connection feed (the channel you watch for joins)
       if (feedHook) feedHook.send({ embeds: [banEmbed] }).catch(err => logger.warn("Feed", `auto-ban post failed: ${err.message}`));
@@ -2278,6 +2366,7 @@ client.once("ready", async () => {
   });
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
+  try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
 });
@@ -2472,7 +2561,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall <menu>` — *Owner only* — revoke a menu from EVERY holder",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
-                "`/clearallbans` — *Owner only* — unban everyone (runs Unban per player)",
+                "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -2914,7 +3003,7 @@ client.on("interactionCreate", async (interaction) => {
          TEMPBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "tempban": {
-        const playerId    = sanitizeId(interaction.options.getString("playerid"));
+        const playerId    = sanitizeBanName(interaction.options.getString("playerid"));
         const durationKey = interaction.options.getString("duration");
         const server      = interaction.options.getString("server");
         const reasonKey   = interaction.options.getString("reason");
@@ -2958,17 +3047,14 @@ client.on("interactionCreate", async (interaction) => {
          UNBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "unban": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const playerId = sanitizeBanName(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
-        await sendRconBoth(`Unban ${playerId}`, server);
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await removeBans(playerId);
-        let cleared = null;
-        try { cleared = ipBans.unblacklistPlayer(playerId); } catch {}   // also lift IP/username/ID blacklist
+        const { blacklist: bl, cleared: c } = unbanEverywhere(playerId);   // blacklist.txt (both installs) + IP flags
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
-        const c = cleared?.cleared;
         const ipLifted = c && (c.ips + c.names) > 0
           ? `Cleared ${c.ips} IP(s) and ${c.names} username flag(s).`
           : "Nothing was flagged for this player.";
@@ -2976,9 +3062,9 @@ client.on("interactionCreate", async (interaction) => {
           .setDescription(`> *${randomQuote("unban")}*\n\n${DIVIDER}`)
           .addFields(
             { name: "Courier",     value: `\`${playerId}\``,     inline: true },
-            { name: "Server",      value: serverLabel(server),   inline: true },
             { name: "Pardoned By", value: `${interaction.user}`, inline: true },
-            { name: "Record",       value: removed ? "Temp ban record cleared." : "No temp ban record — RCON Unban sent.", inline: false },
+            { name: "Record",       value: removed ? "Temp ban record cleared." : "No temp ban record.", inline: false },
+            { name: "Blacklist",    value: bl.removed ? `Removed from blacklist.txt on ${bl.removed} install(s).` : "Was not on blacklist.txt.", inline: false },
             { name: "IP Enforcement", value: ipLifted, inline: false },
           ));
         await logBan(embed);
@@ -2989,7 +3075,7 @@ client.on("interactionCreate", async (interaction) => {
          CHECKBAN
          ───────────────────────────────────────────────────── */
       case "checkban": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const playerId = sanitizeBanName(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const tb = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
@@ -3009,27 +3095,20 @@ client.on("interactionCreate", async (interaction) => {
               ), "Auto-lifted when timer expires")
           ]});
         }
-        await interaction.deferReply();
-        const checkOne = async (srv) => {
-          try { const r = await sendRcon(`CheckBan ${playerId}`, srv); return r.toLowerCase().includes("banned") || r.toLowerCase().includes("true"); }
-          catch { return false; }
-        };
-        const [b1, b2] = server === "both"
-          ? await Promise.all([checkOne("server1"), checkOne("server2")])
-          : [server === "server1" ? await checkOne("server1") : false, server === "server2" ? await checkOne("server2") : false];
-        if (!b1 && !b2) {
-          return interaction.editReply({ embeds: [
+        const hits = blacklistHas(playerId);   // which installs list this name in blacklist.txt
+        if (!hits.length) {
+          return interaction.reply({ embeds: [
             clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exile Found")
-              .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` has no active exile on any server.`))
+              .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` is not on blacklist.txt on either server.`))
           ]});
         }
-        return interaction.editReply({ embeds: [
+        return interaction.reply({ embeds: [
           clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Active")
             .setDescription(`${DIVIDER}`)
             .addFields(
-              { name: "Courier",   value: `\`${playerId}\``,                                                 inline: true },
-              { name: "Banned On", value: [b1 && "**Server 1**", b2 && "**Server 2**"].filter(Boolean).join("  +  "), inline: true },
-            ), "Permanent exile — use /unban to lift")
+              { name: "Courier",   value: `\`${playerId}\``,                                          inline: true },
+              { name: "Banned On", value: hits.map(n => `**Server ${n}**`).join("  +  "),             inline: true },
+            ), "Blacklisted — use /unban to lift")
         ]});
       }
 
@@ -3037,41 +3116,26 @@ client.on("interactionCreate", async (interaction) => {
          BANLIST
          ───────────────────────────────────────────────────── */
       case "banlist": {
-        const server = interaction.options.getString("server");
         await interaction.deferReply();
         const tempBans   = loadBans();
         const tempBanIds = new Set(tempBans.map(b => b.playerId.toLowerCase()));
-        const fetchPermBans = async (srv) => {
-          try {
-            const r = await sendRcon("BanList", srv);
-            const d = parseRcon(r);
-            return (d?.BanList ?? []).filter(e => {
-              const id = (typeof e === "string" ? e : e.name ?? e.username ?? e.uniqueId ?? e.id ?? "").toLowerCase();
-              return id && !tempBanIds.has(id);
-            });
-          } catch { return []; }
-        };
-        let pb1 = [], pb2 = [];
-        if (server === "both")         [pb1, pb2] = await Promise.all([fetchPermBans("server1"), fetchPermBans("server2")]);
-        else if (server === "server2") pb2 = await fetchPermBans("server2");
-        else                           pb1 = await fetchPermBans("server1");
-        const extractId = e => typeof e === "string" ? e : (e.name ?? e.username ?? e.uniqueId ?? e.id ?? "");
-        if (!tempBans.length && !pb1.length && !pb2.length) {
+        // permanent bans = names in blacklist.txt (synced across both installs), minus active temp bans
+        const perm = blacklistAll().filter(n => !tempBanIds.has(n.toLowerCase()));
+        if (!tempBans.length && !perm.length) {
           return interaction.editReply({ embeds: [
             clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Registry Clear")
-              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles on any server.'))
+              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles — blacklist.txt is empty on both servers.'))
           ]});
         }
         // Flatten every exile into a single tagged line so long lists paginate cleanly.
         const lines = [
           ...tempBans.map(b => `\`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
-          ...pb1.map(b => `\`${extractId(b)}\`  ·  *Permanent · S1*`),
-          ...pb2.map(b => `\`${extractId(b)}\`  ·  *Permanent · S2*`),
+          ...perm.map(n => `\`${n}\`  ·  *Permanent*`),
         ];
         const total = lines.length;
-        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${tempBans.length} temp  ·  ${pb1.length + pb2.length} permanent`;
+        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${tempBans.length} temp  ·  ${perm.length} permanent`;
         return paginate(interaction, lines, (pageLines) =>
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle(`Exile Registry — ${serverLabel(server)}`)
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry — blacklist.txt")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`), `${total} exile${total !== 1 ? "s" : ""} active`),
           { perPage: 15 });
       }
@@ -3080,7 +3144,7 @@ client.on("interactionCreate", async (interaction) => {
          PERMBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "permban": {
-        const playerId  = sanitizeId(interaction.options.getString("playerid"));
+        const playerId  = sanitizeBanName(interaction.options.getString("playerid"));
         const server    = interaction.options.getString("server");
         const reasonKey = interaction.options.getString("reason");
         const notes     = interaction.options.getString("notes") ?? null;
@@ -3140,7 +3204,7 @@ client.on("interactionCreate", async (interaction) => {
           await btn.deferUpdate();
           const ok = [], fail = [];
           for (const ban of bans) {
-            try { await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server1"); await sendRcon(`Unban ${sanitizeId(ban.playerId)}`, "server2"); ok.push(ban.playerId); }
+            try { unbanEverywhere(ban.playerId); ok.push(ban.playerId); }   // blacklist.txt (both installs) + IP flags
             catch { fail.push(ban.playerId); }
           }
           await removeBans(...ok);   // drop only those actually lifted; keep failures & any concurrent additions
@@ -3162,15 +3226,8 @@ client.on("interactionCreate", async (interaction) => {
       case "clearallbans": {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
         await interaction.deferReply({ ephemeral: true });
-        // gather every banned name: bot temp bans + the server BanList(s)
-        const fetchBans = async (srv) => {
-          try {
-            const d = parseRcon(await sendRcon("BanList", srv, 3000, 1));
-            return (d?.BanList ?? []).map(e => typeof e === "string" ? e : (e.name ?? e.username ?? e.uniqueId ?? e.id ?? "")).filter(Boolean);
-          } catch { return []; }
-        };
-        const [b1, b2] = await Promise.all([fetchBans("server1"), process.env.RCON_HOST_2 ? fetchBans("server2") : Promise.resolve([])]);
-        const names = [...new Set([...loadBans().map(b => b.playerId), ...b1, ...b2].map(s => String(s).trim()).filter(Boolean))];
+        // gather every banned name: bot temp bans + blacklist.txt on both installs
+        const names = [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()].map(s => String(s).trim()).filter(Boolean))];
         if (!names.length) {
           return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The wasteland is at peace.")}\nNothing to clear — no bans on record.`))] });
         }
@@ -3184,7 +3241,7 @@ client.on("interactionCreate", async (interaction) => {
         const msg = await interaction.editReply({
           embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm — Pardon the Whole Mojave")
             .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\n` +
-              `Runs \`Unban\` for **${names.length}** courier(s) on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`.slice(0, 4000)), "Expires in 30 seconds")],
+              `Removes **${names.length}** courier(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`.slice(0, 4000)), "Expires in 30 seconds")],
           components: [row],
         });
         let btn;
@@ -3197,14 +3254,13 @@ client.on("interactionCreate", async (interaction) => {
 
         let ok = 0, failed = 0;
         for (const n of names) {
-          try { await sendRconBoth(`Unban ${sanitizeId(n)}`, "both"); ok++; }
+          try { unbanEverywhere(n); ok++; }   // remove from blacklist.txt (both installs) + lift IP flags
           catch (e) { failed++; logger.warn("ClearAllBans", `Unban ${n} failed: ${e.message}`); }
-          try { ipBans.unblacklistPlayer(n); } catch {}   // also lift IP/username flags
         }
         await removeBans(...names);   // clear the bot's temp-ban records
         writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("All Exiles Pardoned")
-          .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\nRan \`Unban\` for **${names.length}** courier(s) on both servers and lifted their IP/username flags.`)
+          .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\nRemoved **${names.length}** courier(s) from blacklist.txt on both servers and lifted their IP/username flags.`)
           .addFields(
             { name: "Unbanned", value: `**${ok}**${failed ? `  ·  ${failed} failed` : ""}`, inline: true },
             { name: "By",       value: `${interaction.user}`, inline: true },
