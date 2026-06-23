@@ -1202,21 +1202,39 @@ async function sendRcon(command, server = "server1", timeoutMs = 3000, retries =
 
 async function sendRconBoth(command, server) {
   if (server === "both") {
-    const [s1, s2] = await Promise.all([sendRcon(command, "server1"), sendRcon(command, "server2")]);
-    return { s1, s2 };
+    // allSettled: a failure on one server must not abort/mask the command on the
+    // other (a banned player on the still-reachable server still gets banned).
+    const [r1, r2] = await Promise.allSettled([sendRcon(command, "server1"), sendRcon(command, "server2")]);
+    if (r1.status === "rejected") logger.warn("RCON", `[server1] "${command}" failed: ${r1.reason?.message || r1.reason}`);
+    if (r2.status === "rejected") logger.warn("RCON", `[server2] "${command}" failed: ${r2.reason?.message || r2.reason}`);
+    return {
+      s1: r1.status === "fulfilled" ? r1.value : null,
+      s2: r2.status === "fulfilled" ? r2.value : null,
+      ok1: r1.status === "fulfilled",
+      ok2: r2.status === "fulfilled",
+    };
   }
-  return { s1: await sendRcon(command, server), s2: null };
+  const v = await sendRcon(command, server);
+  return { s1: v, s2: null, ok1: true, ok2: false };
 }
 
 /* RCON-ban an id on the chosen server(s) AND flag every IP we've ever seen
    that id connect from. Any account that later connects from a flagged IP is
    auto-banned by the live log watcher. Never throws — failures are logged.
-   Returns ipBans' enforcement summary ({ ids, ips, alts, field }). */
+   Returns ipBans' enforcement summary plus the RCON outcome:
+   { ids, ips, alts, field, rcon: { ok, ok1, ok2, s1, s2 } }. */
 async function banWithIp(playerId, server = "both") {
-  try { await sendRconBoth(`Ban ${sanitizeId(playerId)}`, server); }
-  catch (err) { logger.warn("Bans", `RCON ban failed for ${playerId}: ${err.message}`); }
-  try { return ipBans.blacklistPlayer(playerId); }
-  catch (err) { logger.warn("IPBan", `IP enforcement failed for ${playerId}: ${err.message}`); return { ids: [], ips: [], alts: [], field: null }; }
+  const cmd = `Ban ${sanitizeId(playerId)}`;
+  let rcon = { ok: false, ok1: false, ok2: false, s1: null, s2: null };
+  try {
+    const r = await sendRconBoth(cmd, server);
+    rcon = { ...r, ok: (server === "both") ? (r.ok1 || r.ok2) : r.ok1 };
+    logger.info("Bans", `Sent "${cmd}" [${server}] -> s1=${rcon.ok1 ? "ok" : "fail"}${server === "both" ? ` s2=${rcon.ok2 ? "ok" : "fail"}` : ""}; resp: ${JSON.stringify(rcon.s1 ?? rcon.s2 ?? "").slice(0, 160)}`);
+  } catch (err) { logger.warn("Bans", `RCON ban failed for ${playerId}: ${err.message}`); }
+  let enf;
+  try { enf = ipBans.blacklistPlayer(playerId); }
+  catch (err) { logger.warn("IPBan", `IP enforcement failed for ${playerId}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
+  return { ...enf, rcon };
 }
 
 function parseRcon(raw) {
@@ -2233,15 +2251,18 @@ client.once("ready", async () => {
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, ip, reason }) => {
-      await banWithIp(name, "both");
-      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`, by: "IP-Guard" });
-      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}`);
-      const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Blacklisted Courier Blocked")
-        .setDescription(`${hero(randomQuote("autoban"))}`)
+      const res = await banWithIp(name, "both");
+      const rc = res?.rcon || { ok: false, ok1: false, ok2: false };
+      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}${rc.ok ? "" : " [RCON FAILED]"}`, by: "IP-Guard" });
+      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""} — RCON s1=${rc.ok1 ? "ok" : "fail"} s2=${rc.ok2 ? "ok" : "fail"}`);
+      const banEmbed = clinical(new EmbedBuilder().setColor(rc.ok ? CLIN.red : CLIN.grey)
+        .setTitle(rc.ok ? "Blacklisted Courier Blocked" : "Blacklist Match — BAN FAILED")
+        .setDescription(rc.ok ? `${hero(randomQuote("autoban"))}` : "> *The order went out, but the wire went dead. This courier is NOT banned — check the server connection and ban them by hand.*")
         .addFields(
           { name: "Courier", value: `\`${name}\``,            inline: true },
           { name: "IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
           { name: "Reason",  value: reason || "blacklist match", inline: true },
+          { name: "Ban result", value: `Server 1: ${rc.ok1 ? "banned" : "FAILED"}  ·  Server 2: ${rc.ok2 ? "banned" : "FAILED"}`, inline: false },
         ), "Auto-ban · both servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       // also surface it in the connection feed (the channel you watch for joins)

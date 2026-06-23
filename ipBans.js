@@ -414,12 +414,15 @@ function parseLine(line, server, key) {
       Promise.resolve(onConfirm({ name: registry[id].name, ip, server, record: rec }))
         .catch(e => console.error("[ipBans] onConfirm failed:", e.message));
     }
-    // NOTE: we deliberately do NOT auto-ban here at disconnect. RCON `Ban <name>`
-    // only removes a CONNECTED player, so banning someone who has already left is a
-    // no-op (the embed posts but nobody is removed — they just reconnect). It would
-    // also burn the per-id auto-ban debounce, suppressing the login-time ban that
-    // WOULD work. The confirmed IP is still recorded above, so the next time this id
-    // logs in it's caught by the login-time check below while they're connected.
+    // retroactive auto-ban: an alt that slipped the ambiguous join check is caught
+    // here with the 100%-accurate confirmed IP. Skip the freshly-banned account
+    // itself (pendingFlag). The login-time check also catches them next connect.
+    if (live && flagged.has(ip) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
+        && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
+      recentAuto.set(id, Date.now());
+      Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: "blacklisted IP" }))
+        .catch(e => { console.error("[ipBans] onAutoBan (confirm) failed:", e.message); recentAuto.delete(id); });
+    }
     return;
   }
 

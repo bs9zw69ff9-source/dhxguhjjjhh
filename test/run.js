@@ -421,17 +421,11 @@ const ok = (cond, msg) => {
       "[2026.06.27-10.02.00:200][7]LogNet: Login request: ?Name=AltSeven?pid=AltSeven userId: NULL:aa02 platform: NULL\n");
     await new Promise(r => setTimeout(r, 60));
     ok(autoC === null, "ambiguous concurrent join is NOT instantly auto-banned");
-    // alt disconnects -> confirms 7.7.7.7 in its record, but we do NOT ban at
-    // disconnect (Ban only removes a CONNECTED player, so it would be a no-op).
+    // alt disconnects -> confirmed IP 7.7.7.7 -> retroactive auto-ban
     fs.appendFileSync(logC, "[2026.06.27-10.05.00:000][8]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 7.7.7.7:3, UniqueId: NULL:aa02\n");
     await new Promise(r => setTimeout(r, 60));
-    ok(autoC === null, "departed alt is NOT auto-banned at disconnect (would be a no-op)");
-    // alt comes back -> now we have its confirmed flagged IP -> banned at LOGIN, while
-    // connected, so the RCON ban actually removes them.
-    fs.appendFileSync(logC, "[2026.06.27-10.10.00:200][9]LogNet: Login request: ?Name=AltSeven?pid=AltSeven userId: NULL:aa02 platform: NULL\n");
-    await new Promise(r => setTimeout(r, 60));
     clearInterval(tC);
-    ok(autoC && autoC.name === "AltSeven" && autoC.reason === "blacklisted IP", "slipped alt is caught at its next login (while connected) via confirmed IP");
+    ok(autoC && autoC.name === "AltSeven" && autoC.ip === "7.7.7.7", "slipped alt is caught at disconnect via confirmed IP");
   }
 
   console.log("Faction rank caps:");
