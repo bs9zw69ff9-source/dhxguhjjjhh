@@ -25,6 +25,7 @@ player_notes.json
 lastseen.json
 known_players.json
 user_blacklist.json
+user_unbarred.json
 verify_panel.json
 verify_links.json
 autoban_patterns.json

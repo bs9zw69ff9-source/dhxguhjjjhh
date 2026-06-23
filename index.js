@@ -137,6 +137,7 @@ const FILES = {
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
   USER_BLACKLIST: "./user_blacklist.json",
+  USER_UNBARRED:  "./user_unbarred.json",
   VERIFY_PANEL:   "./verify_panel.json",
   VERIFY_LINKS:   "./verify_links.json",
 };
@@ -156,6 +157,7 @@ const DEFAULTS = {
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
   [FILES.USER_BLACKLIST]: "[]",
+  [FILES.USER_UNBARRED]:  "[]",
   [FILES.VERIFY_PANEL]:   "{}",
   [FILES.VERIFY_LINKS]:   "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
@@ -915,15 +917,32 @@ function hasFactionLeaderRole(member) {
    Seeded from the BLACKLIST_IDS env var (comma / space / newline separated
    Discord user IDs) AND a runtime store managed from /configure. Owners
    (OWNER_IDS) are always exempt.
+
+   Un-bars are remembered in USER_UNBARRED so the env-var seed can't silently
+   re-add someone you un-barred the next time the bot restarts.
    ================================================================ */
+const UNBARRED_IDS = new Set((safeRead(FILES.USER_UNBARRED, []) || []).map(String));
 const BLACKLIST_IDS = new Set([
   ...String(process.env.BLACKLIST_IDS ?? "").split(/[\s,]+/).map(s => s.trim()).filter(Boolean),
   ...(safeRead(FILES.USER_BLACKLIST, []) || []).map(String),
-]);
+].filter(id => !UNBARRED_IDS.has(id)));   // anything explicitly un-barred stays un-barred
 function isBlacklisted(userId)  { return BLACKLIST_IDS.has(String(userId)); }
 function saveUserBlacklist()    { safeWrite(FILES.USER_BLACKLIST, [...BLACKLIST_IDS]); }
-function addUserBlacklist(id)   { id = String(id).trim(); const added = !!id && !BLACKLIST_IDS.has(id); if (added) { BLACKLIST_IDS.add(id); saveUserBlacklist(); } return added; }
-function removeUserBlacklist(id) { id = String(id).trim(); const removed = BLACKLIST_IDS.delete(id); if (removed) saveUserBlacklist(); return removed; }
+function saveUnbarred()         { safeWrite(FILES.USER_UNBARRED, [...UNBARRED_IDS]); }
+function addUserBlacklist(id)   {
+  id = String(id).trim();
+  const added = !!id && !BLACKLIST_IDS.has(id);
+  if (added) { BLACKLIST_IDS.add(id); UNBARRED_IDS.delete(id); saveUserBlacklist(); saveUnbarred(); }
+  return added;
+}
+function removeUserBlacklist(id) {
+  id = String(id).trim();
+  const removed = BLACKLIST_IDS.delete(id);
+  // remember the un-bar even if they were only in the env seed, so it sticks on restart
+  if (id && !UNBARRED_IDS.has(id)) { UNBARRED_IDS.add(id); saveUnbarred(); }
+  if (removed) saveUserBlacklist();
+  return removed || !!id;
+}
 
 /* ================================================================
    UTILITY HELPERS
