@@ -196,6 +196,20 @@ function _rawRead(file, fallback) {
   }
 }
 
+// Keep a file owned by whoever owns its parent directory. When the bot runs as
+// root but writes into the Steam/Pavlov tree (FactionRoles, ModSave economy),
+// a freshly-written file is root-owned and the game server (running as `steam`)
+// can no longer manage it. After writing such a file, match it to the dir owner.
+// chown only works as root; otherwise it throws and we ignore it (no-op).
+function matchTreeOwner(filePath) {
+  try {
+    if (!process.getuid || process.getuid() !== 0) return;   // only root can chown to another user
+    const dir = fs.statSync(path.dirname(filePath));
+    const f   = fs.statSync(filePath);
+    if (f.uid !== dir.uid || f.gid !== dir.gid) fs.chownSync(filePath, dir.uid, dir.gid);
+  } catch {}
+}
+
 function _rawWrite(file, data) {
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
@@ -1430,6 +1444,7 @@ function writeFactionFile(spawnFile, lines) {
   const fp = path.join(FACTION_ROLES_PATH, spawnFile);
   try {
     fs.writeFileSync(fp, lines.join("\n") + "\n", "utf8");
+    matchTreeOwner(fp);   // don't leave a root-owned file in the steam-owned game tree
     return true;
   } catch (err) {
     logger.error("Faction", `Write failed for ${spawnFile}: ${err.message}`);
@@ -1454,6 +1469,7 @@ function writeDonatorFile(lines) {
   try {
     fs.mkdirSync(path.dirname(DONATOR_FILE), { recursive: true });
     fs.writeFileSync(DONATOR_FILE, lines.join("\n") + "\n", "utf8");
+    matchTreeOwner(DONATOR_FILE);   // keep it owned by the steam game tree, not root
     logger.info("Donator", `Wrote ${lines.length} entr${lines.length === 1 ? "y" : "ies"} to ${DONATOR_FILE}`);
     return true;
   } catch (err) {
@@ -1570,7 +1586,7 @@ function readPlayerBalance(playerId) {
 function writePlayerBalance(playerId, amount) {
   const fp = getPlayerFilePath(playerId);
   if (!fp) return false;
-  try { fs.writeFileSync(fp, String(Math.max(0, Math.floor(amount))), "utf8"); return true; }
+  try { fs.writeFileSync(fp, String(Math.max(0, Math.floor(amount))), "utf8"); matchTreeOwner(fp); return true; }
   catch (err) { logger.error("Balance", `Write failed for ${playerId}: ${err.message}`); return false; }
 }
 
