@@ -366,11 +366,15 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
 
   // auto-ban if this join matches a flagged username or IP.
   //  • username comes straight from the login line -> reliable, ban on sight.
-  //  • IP comes from join correlation -> only when unambiguous (one connection
-  //    pending); ambiguous joins are caught later at disconnect via the confirmed IP.
+  //  • IP: ban on sight if any of this id's CONFIRMED IPs (same-line disconnect
+  //    pairings — trustworthy) is flagged, OR the current join IP is flagged when
+  //    the correlation is unambiguous. A returning ban-evader is caught the moment
+  //    they log in instead of only when they next disconnect.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
-    const reason = (name && flaggedNames.has(norm(name))) ? "blacklisted username"
-                 : (confident && ip && flagged.has(ip))   ? "blacklisted IP"
+    const knownFlagged = (registry[id]?.cips || []).some(x => flagged.has(x));
+    const reason = (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
+                 : knownFlagged                              ? "blacklisted IP"
+                 : (confident && ip && flagged.has(ip))      ? "blacklisted IP"
                  : null;
     if (reason) {
       recentAuto.set(id, Date.now());
@@ -410,14 +414,12 @@ function parseLine(line, server, key) {
       Promise.resolve(onConfirm({ name: registry[id].name, ip, server, record: rec }))
         .catch(e => console.error("[ipBans] onConfirm failed:", e.message));
     }
-    // retroactive auto-ban: an alt that slipped the ambiguous join check is caught
-    // here with the 100%-accurate IP. Skip the freshly-banned account itself (pendingFlag).
-    if (live && flagged.has(ip) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
-        && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
-      recentAuto.set(id, Date.now());
-      Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: "blacklisted IP" }))
-        .catch(e => { console.error("[ipBans] onAutoBan (confirm) failed:", e.message); recentAuto.delete(id); });
-    }
+    // NOTE: we deliberately do NOT auto-ban here at disconnect. RCON `Ban <name>`
+    // only removes a CONNECTED player, so banning someone who has already left is a
+    // no-op (the embed posts but nobody is removed — they just reconnect). It would
+    // also burn the per-id auto-ban debounce, suppressing the login-time ban that
+    // WOULD work. The confirmed IP is still recorded above, so the next time this id
+    // logs in it's caught by the login-time check below while they're connected.
     return;
   }
 

@@ -215,6 +215,28 @@ const ok = (cond, msg) => {
     ok(ipBans.blacklist.includes("4.4.4.4"), "ban flags the player's IP (live)");
     ok(autoBanned && autoBanned.name === "AltOfBad" && autoBanned.ip === "4.4.4.4", "alt connecting from a flagged IP triggers onAutoBan");
 
+    // returning evader: a known id whose CONFIRMED IP is flagged is banned at LOGIN,
+    // even with no accept line / ambiguous correlation (the previous build only
+    // caught these at disconnect, so flagged-IP players seemed to slip through).
+    const logR = path.join(sandbox, "PavlovR.log");
+    fs.writeFileSync(logR, "");
+    let autoRet = null;
+    const tR = ipBans.init({ logFiles: [logR], onAutoBan: async (i) => { autoRet = i; }, pollMs: 20 });
+    // first session: connect + disconnect to record a CONFIRMED IP (5.5.5.5)
+    fs.appendFileSync(logR,
+      "[2026.06.21-11.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 5.5.5.5:5000\n" +
+      "[2026.06.21-11.00.00:200][2]LogNet: Login request: ?Name=Returner?pid=Returner userId: NULL:ret001 platform: NULL\n" +
+      "[2026.06.21-11.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 5.5.5.5:5000, Name: IpConnection_5, IsServer: YES, UniqueId: NULL:ret001\n");
+    await new Promise(r => setTimeout(r, 60));
+    ipBans.flagIp("5.5.5.5");                              // flag the IP (no one auto-banned yet)
+    ok(autoRet === null, "flagging an IP alone does not retroactively fire onAutoBan");
+    // they come back with ONLY a login line (no accept, not 'confident') -> banned anyway
+    fs.appendFileSync(logR,
+      "[2026.06.21-11.05.00:200][9]LogNet: Login request: ?Name=Returner?pid=Returner userId: NULL:ret001 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tR);
+    ok(autoRet && autoRet.name === "Returner" && autoRet.reason === "blacklisted IP", "returning id with a flagged confirmed IP is banned at login (no accept line needed)");
+
     // log auto-discovery: probe a temp tree shaped like a real Pavlov install
     const root = path.join(sandbox, "discovery");
     const realLog = path.join(root, "steamuser", "pavlovserver", "Pavlov", "Saved", "Logs", "Pavlov.log");
@@ -399,11 +421,17 @@ const ok = (cond, msg) => {
       "[2026.06.27-10.02.00:200][7]LogNet: Login request: ?Name=AltSeven?pid=AltSeven userId: NULL:aa02 platform: NULL\n");
     await new Promise(r => setTimeout(r, 60));
     ok(autoC === null, "ambiguous concurrent join is NOT instantly auto-banned");
-    // alt disconnects -> confirmed IP 7.7.7.7 -> retroactive auto-ban
+    // alt disconnects -> confirms 7.7.7.7 in its record, but we do NOT ban at
+    // disconnect (Ban only removes a CONNECTED player, so it would be a no-op).
     fs.appendFileSync(logC, "[2026.06.27-10.05.00:000][8]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 7.7.7.7:3, UniqueId: NULL:aa02\n");
     await new Promise(r => setTimeout(r, 60));
+    ok(autoC === null, "departed alt is NOT auto-banned at disconnect (would be a no-op)");
+    // alt comes back -> now we have its confirmed flagged IP -> banned at LOGIN, while
+    // connected, so the RCON ban actually removes them.
+    fs.appendFileSync(logC, "[2026.06.27-10.10.00:200][9]LogNet: Login request: ?Name=AltSeven?pid=AltSeven userId: NULL:aa02 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
     clearInterval(tC);
-    ok(autoC && autoC.name === "AltSeven" && autoC.ip === "7.7.7.7", "slipped alt is caught at disconnect via confirmed IP");
+    ok(autoC && autoC.name === "AltSeven" && autoC.reason === "blacklisted IP", "slipped alt is caught at its next login (while connected) via confirmed IP");
   }
 
   console.log("Faction rank caps:");
