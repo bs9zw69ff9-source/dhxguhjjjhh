@@ -767,13 +767,15 @@ function mirrorPaths(p) {
 // Atomic write: write a temp file then rename over the target. rename(2) is atomic
 // on the same filesystem, so a crash/kill mid-write can never leave the game server
 // a half-written file to choke on (and a reader sees the old or new file, never a
-// torn one). Returns true on success.
+// torn one). Skips the write entirely if the file already holds this exact content,
+// so we only ever rewrite files that actually changed. Returns true on success.
 function atomicWriteFile(fp, content) {
+  try { if (fs.readFileSync(fp, "utf8") === content) return true; } catch {}   // already up to date — don't rewrite
   const tmp = `${fp}.tmp.${process.pid}.${Date.now()}`;
   try {
     fs.mkdirSync(path.dirname(fp), { recursive: true });
     fs.writeFileSync(tmp, content, "utf8");
-    fs.renameSync(tmp, fp);          // atomic swap
+    fs.renameSync(tmp, fp);          // atomic swap — never a torn file
     matchTreeOwner(fp);
     return true;
   } catch (err) {
