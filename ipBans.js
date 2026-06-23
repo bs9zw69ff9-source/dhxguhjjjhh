@@ -28,6 +28,7 @@ const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
 const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");      // flagged IPs
 const FNAMES_PATH    = path.join(__dirname, "ip_flagged_names.json");  // flagged usernames
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
+const CUTOFF_PATH    = path.join(__dirname, "ip_cutoff.json");      // ignore log lines older than this (set by "wipe all IP data")
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 
@@ -84,6 +85,8 @@ const lastCloseTs   = new Map();  // id    -> log ts (count one connection per d
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
 const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet — flag it when the kick confirms one)
 let lastTs = 0, saveTimer = null, dirty = false;
+let cutoffTs = Number(loadJSON(CUTOFF_PATH, 0)) || 0;   // log lines at/older than this are ignored (post-wipe)
+function saveCutoff() { try { fs.writeFileSync(CUTOFF_PATH, JSON.stringify(cutoffTs)); } catch (e) { console.error("[ipBans] save cutoff:", e.message); } }
 
 /* ---------------- persistence ---------------- */
 function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2)); } catch (e) { console.error("[ipBans] save registry:", e.message); } }
@@ -303,11 +306,14 @@ function clearIp(ip) {
   return { flagRemoved, players };
 }
 // Wipe the whole IP registry AND all flags (full reset). Untracked list is kept.
+// Also set a cutoff at the latest log time so the next restart's backfill won't
+// rebuild what we just wiped — only connections AFTER the wipe are tracked again.
 function clearAll() {
   const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size;
   for (const k of Object.keys(registry)) delete registry[k];
   flagged.clear(); flaggedNames.clear();
-  flushRegistry(); saveFlagged(); saveFNames();
+  cutoffTs = Math.max(cutoffTs, lastTs || Date.now());
+  flushRegistry(); saveFlagged(); saveFNames(); saveCutoff();
   return { ids, flagged: fl };
 }
 
@@ -388,6 +394,9 @@ function parseLine(line, server, key) {
   const t  = parseTs(line);
   if (t != null) lastTs = t;
   const ts = t ?? lastTs;
+  // Ignore everything at/before the last "wipe all IP data" so a restart's log
+  // backfill can't rebuild the data you just cleared.
+  if (cutoffTs && ts && ts <= cutoffTs) return;
 
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
   const c = line.match(CLOSE_RE);

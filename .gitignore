@@ -33,6 +33,7 @@ ip_registry.json
 ip_blacklist.json
 ip_flagged_names.json
 ip_untracked.json
+ip_cutoff.json
 
 # OS / editor noise
 .DS_Store
