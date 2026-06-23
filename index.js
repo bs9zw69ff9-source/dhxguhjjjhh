@@ -1929,34 +1929,6 @@ function removeMenuGrant(playerId, server, menuValue) {
   saveMenuGrants(grants);
 }
 
-async function reapplyMenuGrants(playerId, server) {
-  const grants = loadMenuGrants();
-  const key    = playerId.toLowerCase();
-  const list   = (grants[key] ?? []).filter(g => g.server === server || g.server === "both");
-  for (const g of list) {
-    try {
-      await sendRcon(`GiveMenu ${playerId} ${g.menuId}`, server, 3000, 1);
-      logger.debug("Menu", `Re-applied ${g.menuValue} to ${playerId} on ${server}`);
-    } catch (err) {
-      logger.warn("Menu", `Failed to re-apply ${g.menuValue} to ${playerId}: ${err.message}`);
-    }
-  }
-}
-
-const prevCache = { server1: new Set(), server2: new Set() };
-
-async function refreshPlayerCacheWithMenuReapply(server) {
-  const prev = new Set(prevCache[server]);
-  await refreshPlayerCache(server);
-  for (const name of playerCache[server]) {
-    if (!prev.has(name.toLowerCase())) {
-      prevCache[server].add(name.toLowerCase());
-      reapplyMenuGrants(name, server).catch(() => {});
-    }
-  }
-  prevCache[server] = new Set(playerCache[server].map(n => n.toLowerCase()));
-}
-
 async function rconHealthCheck() {
   for (const srv of ["server1", "server2"]) {
     try {
@@ -1979,8 +1951,8 @@ setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(async () => {
-  await refreshPlayerCacheWithMenuReapply("server1");
-  await refreshPlayerCacheWithMenuReapply("server2");
+  await refreshPlayerCache("server1");
+  await refreshPlayerCache("server2");
   tickPlaytime();
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
@@ -3518,7 +3490,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Server",  value: `${serverLabel(server)}`,   inline: true },
             { name: "Menu",    value: menuMeta?.name ?? menuValue,                        inline: true },
             { name: isGive ? "Granted By" : "Revoked By", value: `${interaction.user}`, inline: false },
-            { name: isGive ? "Persistence" : "Persistence", value: isGive ? "Will be re-applied automatically on rejoin." : "Removed from persistent store — will not reapply.", inline: false },
+            { name: "Persistence", value: isGive ? "Recorded for tracking. Not re-applied automatically on rejoin." : "Removed from the grant record.", inline: false },
           ).setTimestamp();
         // High Staff: the bot ran all three commands automatically (each separately).
         if (isGive && menuValue === "highstaff") {
