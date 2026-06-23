@@ -733,69 +733,103 @@ function rankHasRoom(faction, rank) {
   return { ok: count < cap, cap, count };
 }
 
-/* Two Pavlov server installs, kept in sync. server 1 = pavlovserver,
-   server 2 = pavlovserver1. Override the roots with PAVLOV_BASE_1 / PAVLOV_BASE_2.
-   Every game file the bot writes is mirrored into BOTH trees. */
+/* Pavlov server installs, kept in sync. Every game file the bot writes (bans,
+   faction roles, donator, economy) is mirrored into EVERY install so all servers
+   stay identical. By default we auto-detect every "pavlovserver*" directory next
+   to PAVLOV_BASE_1 (pavlovserver, pavlovserver1, pavlovserver2, …). Override with
+   PAVLOV_BASES (comma/colon-separated absolute paths) or PAVLOV_BASE_1. */
 const PAVLOV_BASE_1 = process.env.PAVLOV_BASE_1 || "/home/steam/pavlovserver";
-const PAVLOV_BASE_2 = process.env.PAVLOV_BASE_2 || "/home/steam/pavlovserver1";
-const PAVLOV_BASES  = [...new Set([PAVLOV_BASE_1, PAVLOV_BASE_2])];
+function discoverPavlovBases() {
+  const explicit = String(process.env.PAVLOV_BASES ?? "").split(/[,:]/).map(s => s.trim()).filter(Boolean);
+  if (explicit.length) return [...new Set(explicit)];
+  const parent = path.dirname(PAVLOV_BASE_1);
+  const prefix = path.basename(PAVLOV_BASE_1);          // e.g. "pavlovserver"
+  try {
+    const dirs = fs.readdirSync(parent, { withFileTypes: true })
+      .filter(d => (d.isDirectory() || d.isSymbolicLink()) && d.name.startsWith(prefix))
+      .map(d => path.join(parent, d.name))
+      .filter(p => { try { return fs.existsSync(path.join(p, "Pavlov")); } catch { return false; } });   // real installs only
+    if (dirs.length) return [...new Set(dirs)].sort();
+  } catch (err) { logger.warn("Sync", `install discovery failed: ${err.message}`); }
+  return [PAVLOV_BASE_1];
+}
+const PAVLOV_BASES = discoverPavlovBases();   // resolved once at startup
+logger.info("Sync", `Syncing ${PAVLOV_BASES.length} install(s): ${PAVLOV_BASES.map(b => path.basename(b)).join(", ")}`);
 
-// Given a path under one install, return it plus its mirror(s) in the other install.
+// Given a path under one install, return it plus the equivalent path in every other install.
 function mirrorPaths(p) {
   const out = new Set([p]);
-  for (const [a, b] of [[PAVLOV_BASE_1, PAVLOV_BASE_2], [PAVLOV_BASE_2, PAVLOV_BASE_1]]) {
-    if (a !== b && p.startsWith(a + path.sep)) out.add(b + p.slice(a.length));
-  }
+  const src = PAVLOV_BASES.find(b => p === b || p.startsWith(b + path.sep));
+  if (src) for (const b of PAVLOV_BASES) if (b !== src) out.add(b + p.slice(src.length));
   return [...out];
 }
-// Write a game file into every install (creating dirs, fixing ownership). Returns true if any write succeeded.
+
+// Atomic write: write a temp file then rename over the target. rename(2) is atomic
+// on the same filesystem, so a crash/kill mid-write can never leave the game server
+// a half-written file to choke on (and a reader sees the old or new file, never a
+// torn one). Returns true on success.
+function atomicWriteFile(fp, content) {
+  const tmp = `${fp}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(tmp, content, "utf8");
+    fs.renameSync(tmp, fp);          // atomic swap
+    matchTreeOwner(fp);
+    return true;
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    logger.error("Sync", `write failed for ${fp}: ${err.message}`);
+    return false;
+  }
+}
+// Write a game file into EVERY install (atomic, dirs created, ownership fixed). True if any succeeded.
 function writeGameFile(primaryPath, content) {
   let ok = false;
-  for (const fp of mirrorPaths(primaryPath)) {
-    try { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, content, "utf8"); matchTreeOwner(fp); ok = true; }
-    catch (err) { logger.error("Sync", `write failed for ${fp}: ${err.message}`); }
-  }
+  for (const fp of mirrorPaths(primaryPath)) if (atomicWriteFile(fp, content)) ok = true;
   return ok;
 }
+// Write one exact path atomically (blacklist helpers loop the installs themselves).
+const writeGameFileSingle = atomicWriteFile;
 
 const FACTION_ROLES_PATH  = path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/FactionRoles");
 const FACTION_DEFAULT_CAP = 50;
 
 /* ---------------- blacklist.txt (Pavlov Shack name blacklist), synced ---------------- */
-// One name per line, kept identical across both installs. Names may contain
-// spaces (e.g. "Butter Life"), so we preserve them — only control chars are stripped.
+// One name per line, kept identical across every install. Names may contain spaces
+// (e.g. "Butter Life"), so we preserve them — only control chars are stripped.
 const blacklistPathFor = (base) => path.join(base, "Pavlov/Saved/Config/blacklist.txt");
 function sanitizeBanName(raw) { return String(raw ?? "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 80); }
 function readBlacklist(base) {
   try { return fs.readFileSync(blacklistPathFor(base), "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean); }
   catch (err) { if (err.code === "ENOENT") return []; logger.error("Blacklist", `read ${base}: ${err.message}`); return null; }
 }
-// Every blacklisted name across both installs (deduped, case-insensitive, original casing kept).
+// Every blacklisted name across all installs (deduped, case-insensitive, original casing kept).
 function blacklistAll() {
   const map = new Map();
   for (const base of PAVLOV_BASES) for (const n of (readBlacklist(base) || [])) map.set(n.toLowerCase(), n);
   return [...map.values()];
 }
-// Which server numbers (1/2) currently list this name.
+// Which server numbers currently list this name.
 function blacklistHas(name) {
   const nm = sanitizeBanName(name).toLowerCase();
   const hits = [];
   PAVLOV_BASES.forEach((base, i) => { const c = readBlacklist(base); if (c && c.some(x => x.toLowerCase() === nm)) hits.push(i + 1); });
   return hits;
 }
-// Add a name to blacklist.txt on BOTH installs (synced). Returns { name, servers:[ok bases] }.
+// Add a name to blacklist.txt on EVERY install (synced). Skips installs already listing it (no rewrite).
 function blacklistAdd(name) {
   const nm = sanitizeBanName(name);
   let servers = 0;
   if (!nm) return { name: nm, servers };
   for (const base of PAVLOV_BASES) {
     const cur = readBlacklist(base); if (cur === null) continue;
-    if (!cur.some(x => x.toLowerCase() === nm.toLowerCase())) cur.push(nm);
+    if (cur.some(x => x.toLowerCase() === nm.toLowerCase())) { servers++; continue; }   // already present — skip
+    cur.push(nm);
     if (writeGameFileSingle(blacklistPathFor(base), cur.join("\n") + "\n")) servers++;
   }
   return { name: nm, servers };
 }
-// Remove a name from blacklist.txt on BOTH installs. Returns { name, removed } (# of installs changed).
+// Remove a name from blacklist.txt on every install. Returns { name, removed } (# of installs changed).
 function blacklistRemove(name) {
   const nm = sanitizeBanName(name);
   let removed = 0;
@@ -805,11 +839,6 @@ function blacklistRemove(name) {
     if (next.length !== cur.length && writeGameFileSingle(blacklistPathFor(base), next.join("\n") + "\n")) removed++;
   }
   return { name: nm, removed };
-}
-// Write one exact path (no mirroring — the blacklist helpers already loop both installs).
-function writeGameFileSingle(fp, content) {
-  try { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, content, "utf8"); matchTreeOwner(fp); return true; }
-  catch (err) { logger.error("Blacklist", `write ${fp}: ${err.message}`); return false; }
 }
 // Heal divergence: make both installs' blacklist.txt equal their union. Run on startup,
 // so names already on only one server (or bans made directly on one) propagate to both.
