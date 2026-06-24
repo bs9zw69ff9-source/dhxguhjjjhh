@@ -432,7 +432,7 @@ function commandPlayerCandidates(interaction) {
   const disp  = (k) => known[String(k).toLowerCase()]?.name ?? k;   // recover display casing for lowercased keys
 
   if (cmd === "unban" || cmd === "checkban")
-                              return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()])];  // temp-banned + blacklist.txt
+                              return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAllCached()])];  // temp-banned + blacklist.txt (cached for autocomplete)
   if (cmd === "warnings" || cmd === "clearwarnings" || cmd === "delwarn")
                               return Object.keys(loadWarns()).map(disp);                               // has warnings
   if (cmd === "history")      return [...new Set(loadModLog().map(e => e.playerId).filter(Boolean))];  // has mod history
@@ -810,6 +810,14 @@ function blacklistAll() {
   const map = new Map();
   for (const base of PAVLOV_BASES) for (const n of (readBlacklist(base) || [])) map.set(n.toLowerCase(), n);
   return [...map.values()];
+}
+// Cached union for the autocomplete hot path (fires per keystroke) — avoids reading
+// every install's blacklist.txt off disk on every character typed. ~3s staleness is fine.
+let _blAllCache = { ts: 0, names: [] };
+function blacklistAllCached() {
+  if (Date.now() - _blAllCache.ts < 3000) return _blAllCache.names;
+  _blAllCache = { ts: Date.now(), names: blacklistAll() };
+  return _blAllCache.names;
 }
 // Which server numbers currently list this name.
 function blacklistHas(name) {
@@ -1356,10 +1364,12 @@ async function sendRcon(command, server = "server1", timeoutMs = 3000, retries =
 }
 
 async function sendRconBoth(command, server) {
+  // Interactive commands use this — keep it snappy (2.5s, 1 retry) so a slow/down
+  // server can't make a slash command spin for ~10s ("infinite load"). allSettled:
+  // a failure on one server must not abort/mask the command on the other.
+  const T = 2500, R = 1;
   if (server === "both") {
-    // allSettled: a failure on one server must not abort/mask the command on the
-    // other (a banned player on the still-reachable server still gets banned).
-    const [r1, r2] = await Promise.allSettled([sendRcon(command, "server1"), sendRcon(command, "server2")]);
+    const [r1, r2] = await Promise.allSettled([sendRcon(command, "server1", T, R), sendRcon(command, "server2", T, R)]);
     if (r1.status === "rejected") logger.warn("RCON", `[server1] "${command}" failed: ${r1.reason?.message || r1.reason}`);
     if (r2.status === "rejected") logger.warn("RCON", `[server2] "${command}" failed: ${r2.reason?.message || r2.reason}`);
     return {
@@ -1369,8 +1379,8 @@ async function sendRconBoth(command, server) {
       ok2: r2.status === "fulfilled",
     };
   }
-  const v = await sendRcon(command, server);
-  return { s1: v, s2: null, ok1: true, ok2: false };
+  try { const v = await sendRcon(command, server, T, R); return { s1: v, s2: null, ok1: true, ok2: false }; }
+  catch (err) { logger.warn("RCON", `[${server}] "${command}" failed: ${err.message}`); return { s1: null, s2: null, ok1: false, ok2: false }; }
 }
 
 /* Ban a player by writing their name to blacklist.txt on BOTH installs (synced),
