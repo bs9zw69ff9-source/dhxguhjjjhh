@@ -281,6 +281,24 @@ function upsertTempBan(entry) {
 function upsertPermBan({ playerId, reason, moderator, server }) {
   return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", server: server || "both", at: Date.now(), permanent: true });
 }
+/** One-time/startup import: pull any names already in blacklist.txt into the ban JSON
+    (as permanent entries) so /banlist — which reads the JSON — shows pre-existing bans. */
+function importBlacklistToBans() {
+  let names = [];
+  try { names = blacklistAll(); } catch { return; }
+  if (!names.length) return;
+  return update(FILES.TEMPBAN, [], (bans) => {
+    const have = new Set(bans.map(b => String(b.playerId).toLowerCase()));
+    let added = 0;
+    for (const nm of names) {
+      if (have.has(nm.toLowerCase())) continue;
+      bans.push({ playerId: nm, reason: "Imported from blacklist.txt", moderator: "system", at: Date.now(), permanent: true });
+      added++;
+    }
+    if (added) logger.info("Bans", `Imported ${added} blacklist.txt name(s) into the ban registry for /banlist`);
+    return bans;
+  });
+}
 /** Remove one or more player IDs from the temp-ban list (case-insensitive). */
 function removeBans(...ids) {
   const drop = ids.filter(Boolean).map(s => String(s).toLowerCase());
@@ -2439,6 +2457,7 @@ client.once("ready", async () => {
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
+  try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
 });
