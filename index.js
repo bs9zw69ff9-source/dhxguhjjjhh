@@ -3219,8 +3219,10 @@ client.on("interactionCreate", async (interaction) => {
          BANLIST
          ───────────────────────────────────────────────────── */
       case "banlist": {
+        logger.info("Banlist", `requested by ${interaction.user.tag}`);   // proves the live build is this code
         await interaction.deferReply();
-        // Read the bot's own ban JSON (always readable) — not blacklist.txt.
+        // Read the bot's own ban JSON (always readable) — not blacklist.txt. No RCON,
+        // no pagination/awaitMessageComponent — a single reply that cannot hang.
         const all  = loadBans();
         const temp = all.filter(b => !b.permanent && b.expires);
         const perm = all.filter(b => b.permanent || !b.expires);
@@ -3230,17 +3232,18 @@ client.on("interactionCreate", async (interaction) => {
               .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo bans on record.'))
           ]});
         }
-        // Flatten every exile into a single tagged line so long lists paginate cleanly.
         const lines = [
           ...temp.map(b => `\`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
           ...perm.map(b => `\`${b.playerId}\`  ·  *Permanent*${b.reason ? `  ·  ${b.reason}` : ""}`),
         ];
         const total = lines.length;
+        const shown = lines.slice(0, 40);
+        const more  = total - shown.length;
         const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${temp.length} temp  ·  ${perm.length} permanent`;
-        return paginate(interaction, lines, (pageLines) =>
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry")
-            .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`), `${total} exile${total !== 1 ? "s" : ""} active`),
-          { perPage: 15 });
+        const body = `${header}\n${DIVIDER}\n${shown.join("\n")}${more > 0 ? `\n…and **${more}** more` : ""}`.slice(0, 4000);
+        return interaction.editReply({ embeds: [
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry").setDescription(body), `${total} exile${total !== 1 ? "s" : ""} active`)
+        ]});
       }
 
       /* ─────────────────────────────────────────────────────
