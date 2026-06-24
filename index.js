@@ -395,7 +395,7 @@ function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
     .filter(p => !exclude.has(p.name.toLowerCase()) && (!q || p.name.toLowerCase().includes(q)))
     .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
     .slice(0, limit)
-    .map(p => ({ name: `${p.name} (offline)`, value: p.name }));
+    .map(p => ({ name: p.name, value: p.name }));
 }
 
 /** One-time backfill of the registry from data the bot already has on disk,
@@ -1536,14 +1536,11 @@ function getPlayerChoices(server, focused = "") {
   // 1) currently-online players first
   for (const srv of servers) {
     if (now - playerCache.lastUpdated[srv] > CACHE_TTL_MS) refreshPlayerCache(srv);
-    const label = srv === "server1" ? "[S1]" : "[S2]";
     for (const name of playerCache[srv]) {
       const key = name.toLowerCase();
       if (seen.has(key) || (focused && !key.includes(focused.toLowerCase()))) continue;
       seen.add(key);
-      const onBoth = playerCache.server1.some(n => n.toLowerCase() === key)
-                  && playerCache.server2.some(n => n.toLowerCase() === key);
-      choices.push({ name: onBoth ? `${name} [S1+S2]` : `${name} ${label}`, value: name });
+      choices.push({ name, value: name });
     }
   }
   // 2) fall back to previously-seen (offline) players so anyone who's ever
@@ -2481,7 +2478,7 @@ client.on("interactionCreate", async (interaction) => {
         .slice(0, 25)
         .map(n => ({ name: n, value: n }));
       if (focused.value && !out.find(c => c.value.toLowerCase() === query)) {
-        out.unshift({ name: `${focused.value} (manual entry)`, value: focused.value });
+        out.unshift({ name: focused.value, value: focused.value });
       }
       return interaction.respond(out.slice(0, 25)).catch(() => {});
     }
@@ -2490,7 +2487,7 @@ client.on("interactionCreate", async (interaction) => {
     const server  = interaction.options.getString("server") ?? null;
     const choices = getPlayerChoices(server, query);
     if (query && !choices.find(c => c.value.toLowerCase() === query)) {
-      choices.unshift({ name: `${focused.value} (manual entry)`, value: focused.value });
+      choices.unshift({ name: focused.value, value: focused.value });
     }
     // /announce target field also offers "All"
     if (cmdName === "announce" && focused.name === "target" && (!query || "all".includes(query))) {

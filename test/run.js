@@ -74,7 +74,7 @@ const ok = (cond, msg) => {
   ok(bot.loadKnownPlayers()["ncr_private"].name === "NCR_Private", "stores original display casing");
   const ncr = bot.getKnownPlayerChoices("ncr_");
   ok(ncr.length === 2 && ncr.every(c => c.value.toLowerCase().startsWith("ncr_")), "substring query 'ncr_' matches both NCR players");
-  ok(ncr[0].name.includes("(offline)"), "offline players are labelled");
+  ok(ncr[0].name === ncr[0].value && !/\(offline\)|\[S\d/.test(ncr[0].name), "autocomplete shows the bare name (no decorations)");
   ok(bot.getKnownPlayerChoices("private").length === 1, "mid-string match works");
   const excl = bot.getKnownPlayerChoices("ncr_", new Set(["ncr_private"]));
   ok(excl.length === 1 && excl[0].value === "NCR_Sergeant", "exclude set drops already-listed names");
