@@ -805,6 +805,15 @@ function readBlacklist(base) {
   try { return fs.readFileSync(blacklistPathFor(base), "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean); }
   catch (err) { if (err.code === "ENOENT") return []; logger.error("Blacklist", `read ${base}: ${err.message}`); return null; }
 }
+// Per-install read status for diagnostics (banlist surfaces this so a permission/path
+// failure is visible instead of looking like an empty ban list).
+function blacklistStatus() {
+  return PAVLOV_BASES.map(base => {
+    const fp = blacklistPathFor(base);
+    try { const n = fs.readFileSync(fp, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean).length; return { base, fp, count: n, error: null }; }
+    catch (err) { return { base, fp, count: 0, error: err.code === "ENOENT" ? "missing" : (err.code || err.message) }; }
+  });
+}
 // Every blacklisted name across all installs (deduped, case-insensitive, original casing kept).
 function blacklistAll() {
   const map = new Map();
@@ -1384,9 +1393,22 @@ async function sendRconBoth(command, server) {
   catch (err) { logger.warn("RCON", `[${server}] "${command}" failed: ${err.message}`); return { s1: null, s2: null, ok1: false, ok2: false }; }
 }
 
-/* Ban a player by writing their name to blacklist.txt on BOTH installs (synced),
-   AND flag every IP we've ever seen them connect from for alt enforcement.
-   No RCON — file-based, so it never hangs on an unreachable server.
+/* Immediately remove a (possibly in-game) player from every reachable server via
+   RCON Kick. blacklist.txt only blocks RECONNECTS, so without this an already-connected
+   player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
+   delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
+function kickEverywhere(name) {
+  const id = sanitizeId(name);                 // RCON Kick is space-delimited — use a clean token
+  if (!id) return;
+  Promise.resolve(sendRconBoth(`Kick ${id}`, "both"))
+    .then(r => logger.info("Bans", `Kick ${id} -> s1=${r.ok1 ? "ok" : "fail"} s2=${r.ok2 ? "ok" : "fail"}`))
+    .catch(err => logger.warn("Bans", `Kick ${id} failed: ${err.message}`));
+}
+
+/* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
+   kick them off now (RCON) so they don't keep playing, AND flag every IP we've ever
+   seen them connect from for alt enforcement. The blacklist write is file-based so it
+   never hangs; the kick is fire-and-forget.
    Returns ipBans' enforcement summary plus the blacklist outcome:
    { ids, ips, alts, field, blacklist: { name, servers }, ok }. */
 async function banWithIp(playerId, server = "both") {
@@ -1395,6 +1417,7 @@ async function banWithIp(playerId, server = "both") {
   try { bl = blacklistAdd(name); }
   catch (err) { logger.error("Bans", `blacklist add failed for "${name}": ${err.message}`); }
   logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
+  kickEverywhere(name);                        // remove them immediately if they're online
   let enf;
   try { enf = ipBans.blacklistPlayer(name); }
   catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
@@ -3161,12 +3184,21 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply();
         const tempBans   = loadBans();
         const tempBanIds = new Set(tempBans.map(b => b.playerId.toLowerCase()));
-        // permanent bans = names in blacklist.txt (synced across both installs), minus active temp bans
+        const status     = blacklistStatus();                     // per-install read result
+        const readErrors = status.filter(s => s.error && s.error !== "missing");
+        // permanent bans = names in blacklist.txt (synced across all installs), minus active temp bans
         const perm = blacklistAll().filter(n => !tempBanIds.has(n.toLowerCase()));
         if (!tempBans.length && !perm.length) {
+          if (readErrors.length) {   // the list looks empty only because we couldn't read the file(s)
+            return interaction.editReply({ embeds: [
+              clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Ban List Unreadable")
+                .setDescription(`Couldn't read blacklist.txt — fix the file path/permissions:\n` +
+                  readErrors.map(s => `• \`${s.fp}\` — **${s.error}**`).join("\n").slice(0, 3500)), "Check the bot can read the game tree")
+            ]});
+          }
           return interaction.editReply({ embeds: [
             clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Registry Clear")
-              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles — blacklist.txt is empty on both servers.'))
+              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles — blacklist.txt is empty on every server.'))
           ]});
         }
         // Flatten every exile into a single tagged line so long lists paginate cleanly.
@@ -3175,7 +3207,8 @@ client.on("interactionCreate", async (interaction) => {
           ...perm.map(n => `\`${n}\`  ·  *Permanent*`),
         ];
         const total = lines.length;
-        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${tempBans.length} temp  ·  ${perm.length} permanent`;
+        const perInstall = status.map(s => `${path.basename(s.base)}: ${s.error ? s.error : s.count}`).join("  ·  ");
+        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${tempBans.length} temp  ·  ${perm.length} permanent\nblacklist.txt — ${perInstall}`;
         return paginate(interaction, lines, (pageLines) =>
           clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry — blacklist.txt")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`), `${total} exile${total !== 1 ? "s" : ""} active`),
@@ -3693,12 +3726,17 @@ client.on("interactionCreate", async (interaction) => {
           if (choice === "blacklist_ip") {
             await sub.deferReply({ ephemeral: true });
             const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else a username
-            for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) { try { await banWithIp(nm, "both"); } catch {} } }   // ban matching accounts now (by name)
+            // Ban (blacklist.txt + kick + IP-flag) the username itself and every on-record
+            // account matching the target, so an in-game player is removed immediately.
+            const toBan = new Set();
+            if (r.kind === "username" && r.value) toBan.add(r.value);
+            for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) toBan.add(nm); }
+            for (const nm of toBan) { try { await banWithIp(nm, "both"); } catch {} }
             color = NV.LEGION_RED;
             desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
-              (r.ids.length ? `\nBanned **${r.ids.length}** account(s) already on record.` : `\nNo accounts on record yet — future connections will be caught.`);
+              (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet — future connections will be caught.`);
             const e1 = brand(new EmbedBuilder().setColor(color).setTitle("Blacklisted").setDescription(hero(desc)).setTimestamp());
-            await logAction(e1);
+            logAction(e1);
             return sub.editReply({ embeds: [e1] });
           }
           if (choice === "user_bl_add")        { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `<@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
