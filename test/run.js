@@ -465,6 +465,13 @@ const ok = (cond, msg) => {
   await bot.removeBans("BANNED1");
   ok(!bot.loadBans().some(b => b.playerId.toLowerCase() === "banned1"), "removeBans removes case-insensitively");
   ok(bot.loadBans().some(b => b.playerId === "Banned2"), "removeBans leaves other bans intact");
+  // permanent bans recorded in the same ban JSON (so /banlist shows them) without an expiry
+  await bot.upsertPermBan({ playerId: "PermGuy", reason: "cheating", moderator: "m" });
+  const pg = bot.loadBans().find(b => b.playerId === "PermGuy");
+  ok(pg && pg.permanent === true && !pg.expires, "upsertPermBan records a permanent entry with no expiry");
+  await bot.upsertTempBan({ playerId: "PermGuy", reason: "t", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
+  ok(bot.loadBans().filter(b => b.playerId === "PermGuy").length === 1 && !bot.loadBans().find(b => b.playerId === "PermGuy").permanent, "perm/temp share one entry (upsert by id) — temp supersedes");
+  await bot.removeBans("PermGuy", "Banned2");
 
   console.log("Punishment DM status field:");
   ok(bot.dmStatusField(null, null) === null, "no linked account -> no field");

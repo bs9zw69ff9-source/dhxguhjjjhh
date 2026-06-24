@@ -276,6 +276,11 @@ function upsertTempBan(entry) {
     return next;
   });
 }
+/** Record a PERMANENT ban in the same ban JSON (no expiry). Upserts by playerId,
+    so it supersedes any existing temp ban for that player. */
+function upsertPermBan({ playerId, reason, moderator, server }) {
+  return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", server: server || "both", at: Date.now(), permanent: true });
+}
 /** Remove one or more player IDs from the temp-ban list (case-insensitive). */
 function removeBans(...ids) {
   const drop = ids.filter(Boolean).map(s => String(s).toLowerCase());
@@ -1772,6 +1777,7 @@ async function issueWarn(playerId, reason, moderator, server, interaction) {
     writeModLog({ action: "auto-tempban", playerId, reason: escalation.label, duration: label });
   } else if (escalation && escalation.action === "permban") {
     await banWithIp(playerId, server);
+    await upsertPermBan({ playerId, reason: `Auto-ban: ${escalation.label}`, moderator: "Auto-Escalation", server });
     escalated = { type: "permban" };
     writeModLog({ action: "auto-permban", playerId, reason: escalation.label });
   }
@@ -1786,7 +1792,7 @@ async function processExpiredBans() {
   const now = Date.now();
   const lifted = [];
   for (const ban of loadBans()) {
-    if (ban.expires > now) continue;
+    if (ban.permanent || !ban.expires || ban.expires > now) continue;   // never auto-lift permanent bans
     try {
       unbanEverywhere(ban.playerId);   // remove from blacklist.txt (both installs) + clear IP flags
       lifted.push(ban.playerId);
@@ -2413,6 +2419,7 @@ client.once("ready", async () => {
     onAutoBan: async ({ name, ip, reason }) => {
       const res = await banWithIp(name, "both");
       const ok  = res?.ok;
+      try { await upsertPermBan({ playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}`, moderator: "IP-Guard" }); } catch {}   // show in /banlist
       writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}${ok ? "" : " [BLACKLIST WRITE FAILED]"}`, by: "IP-Guard" });
       logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""} — blacklisted on ${res?.blacklist?.servers ?? 0}/${PAVLOV_BASES.length} install(s)`);
       const banEmbed = clinical(new EmbedBuilder().setColor(ok ? CLIN.red : CLIN.grey)
@@ -3144,7 +3151,7 @@ client.on("interactionCreate", async (interaction) => {
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         const tb = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
-        if (tb) {
+        if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
             clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Temporary Exile Active")
@@ -3161,6 +3168,18 @@ client.on("interactionCreate", async (interaction) => {
           ]});
         }
         const hits = blacklistHas(playerId);   // which installs list this name in blacklist.txt
+        if (tb && tb.permanent) {   // permanent ban recorded in the ban JSON
+          return interaction.reply({ embeds: [
+            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Active")
+              .setDescription(`${DIVIDER}`)
+              .addFields(
+                { name: "Courier", value: `\`${playerId}\``,                          inline: true },
+                { name: "Offense", value: tb.reason ?? "Permanent ban",               inline: true },
+                { name: "By",      value: tb.moderator ?? "?",                         inline: true },
+                { name: "On file", value: hits.length ? hits.map(n => `Server ${n}`).join(" + ") : "ban JSON", inline: false },
+              ), "Permanent — use /unban to lift")
+          ]});
+        }
         if (!hits.length) {
           return interaction.reply({ embeds: [
             clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exile Found")
@@ -3182,35 +3201,25 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "banlist": {
         await interaction.deferReply();
-        const tempBans   = loadBans();
-        const tempBanIds = new Set(tempBans.map(b => b.playerId.toLowerCase()));
-        const status     = blacklistStatus();                     // per-install read result
-        const readErrors = status.filter(s => s.error && s.error !== "missing");
-        // permanent bans = names in blacklist.txt (synced across all installs), minus active temp bans
-        const perm = blacklistAll().filter(n => !tempBanIds.has(n.toLowerCase()));
-        if (!tempBans.length && !perm.length) {
-          if (readErrors.length) {   // the list looks empty only because we couldn't read the file(s)
-            return interaction.editReply({ embeds: [
-              clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Ban List Unreadable")
-                .setDescription(`Couldn't read blacklist.txt — fix the file path/permissions:\n` +
-                  readErrors.map(s => `• \`${s.fp}\` — **${s.error}**`).join("\n").slice(0, 3500)), "Check the bot can read the game tree")
-            ]});
-          }
+        // Read the bot's own ban JSON (always readable) — not blacklist.txt.
+        const all  = loadBans();
+        const temp = all.filter(b => !b.permanent && b.expires);
+        const perm = all.filter(b => b.permanent || !b.expires);
+        if (!all.length) {
           return interaction.editReply({ embeds: [
             clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Registry Clear")
-              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo active exiles — blacklist.txt is empty on every server.'))
+              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo bans on record.'))
           ]});
         }
         // Flatten every exile into a single tagged line so long lists paginate cleanly.
         const lines = [
-          ...tempBans.map(b => `\`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
-          ...perm.map(n => `\`${n}\`  ·  *Permanent*`),
+          ...temp.map(b => `\`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
+          ...perm.map(b => `\`${b.playerId}\`  ·  *Permanent*${b.reason ? `  ·  ${b.reason}` : ""}`),
         ];
         const total = lines.length;
-        const perInstall = status.map(s => `${path.basename(s.base)}: ${s.error ? s.error : s.count}`).join("  ·  ");
-        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${tempBans.length} temp  ·  ${perm.length} permanent\nblacklist.txt — ${perInstall}`;
+        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${temp.length} temp  ·  ${perm.length} permanent`;
         return paginate(interaction, lines, (pageLines) =>
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry — blacklist.txt")
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`), `${total} exile${total !== 1 ? "s" : ""} active`),
           { perPage: 15 });
       }
@@ -3227,7 +3236,7 @@ client.on("interactionCreate", async (interaction) => {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
         const ipEnf = await banWithIp(playerId, server);
-        await removeBans(playerId);   // a permanent ban supersedes any temp ban
+        await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
           .setDescription(`> *${randomQuote("ban")}*\n\n${DIVIDER}`)
@@ -3258,7 +3267,7 @@ client.on("interactionCreate", async (interaction) => {
          CLEARTEMPBANS
          ───────────────────────────────────────────────────── */
       case "cleartempbans": {
-        const bans = loadBans();
+        const bans = loadBans().filter(b => !b.permanent && b.expires);   // temp bans only — leave permanent bans in place
         if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear", "No active temporary exiles to remove.")], ephemeral: true });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("ctb_confirm").setLabel(`Clear all ${bans.length} temp ban${bans.length !== 1 ? "s" : ""}`).setStyle(ButtonStyle.Danger),
@@ -3731,7 +3740,7 @@ client.on("interactionCreate", async (interaction) => {
             const toBan = new Set();
             if (r.kind === "username" && r.value) toBan.add(r.value);
             for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) toBan.add(nm); }
-            for (const nm of toBan) { try { await banWithIp(nm, "both"); } catch {} }
+            for (const nm of toBan) { try { await banWithIp(nm, "both"); await upsertPermBan({ playerId: nm, reason: "Blacklisted via /configure", moderator: interaction.user.tag }); } catch {} }
             color = NV.LEGION_RED;
             desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet — future connections will be caught.`);
@@ -4624,7 +4633,7 @@ module.exports = {
   // warnings
   removeWarningAt,
   // bans (serialized)
-  loadBans, upsertTempBan, removeBans,
+  loadBans, upsertTempBan, upsertPermBan, removeBans,
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
