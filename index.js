@@ -3237,13 +3237,19 @@ client.on("interactionCreate", async (interaction) => {
           ...perm.map(b => `\`${b.playerId}\`  ·  *Permanent*${b.reason ? `  ·  ${b.reason}` : ""}`),
         ];
         const total = lines.length;
-        const shown = lines.slice(0, 40);
-        const more  = total - shown.length;
         const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${temp.length} temp  ·  ${perm.length} permanent`;
-        const body = `${header}\n${DIVIDER}\n${shown.join("\n")}${more > 0 ? `\n…and **${more}** more` : ""}`.slice(0, 4000);
-        return interaction.editReply({ embeds: [
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Exile Registry").setDescription(body), `${total} exile${total !== 1 ? "s" : ""} active`)
-        ]});
+        // Show ALL bans across multiple embeds (no pagination buttons). 18 lines/embed,
+        // up to 5 embeds (~6000 char limit) per message; overflow goes to follow-ups.
+        const PER = 18;
+        const chunks = [];
+        for (let i = 0; i < lines.length; i += PER) chunks.push(lines.slice(i, i + PER));
+        const embeds = chunks.map((c, i) => clinical(new EmbedBuilder().setColor(CLIN.red)
+          .setTitle(i === 0 ? "Exile Registry" : `Exile Registry (${i + 1})`)
+          .setDescription(((i === 0 ? `${header}\n${DIVIDER}\n` : "") + c.join("\n")).slice(0, 4000)),
+          `${total} exile${total !== 1 ? "s" : ""} active`));
+        await interaction.editReply({ embeds: embeds.slice(0, 5) });
+        for (let i = 5; i < embeds.length; i += 5) await interaction.followUp({ embeds: embeds.slice(i, i + 5) });
+        return;
       }
 
       /* ─────────────────────────────────────────────────────
