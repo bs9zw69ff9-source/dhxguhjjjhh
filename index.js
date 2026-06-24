@@ -1046,7 +1046,8 @@ function hasAdminRole(member) {
 }
 function hasModRole(member) {
   if (isOwner(member?.id)) return true;
-  const { modRoleId } = loadRoles();
+  const { modRoleId, adminRoleId } = loadRoles();
+  if (adminRoleId && member?.roles?.cache?.has(adminRoleId)) return true;   // admins outrank mods
   return !modRoleId || member.roles.cache.has(modRoleId);
 }
 function hasFactionLeaderRole(member) {
@@ -1424,26 +1425,25 @@ function parseRcon(raw) {
    ================================================================ */
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-async function logAction(embed) {
+function logAction(embed) {
   if (!process.env.MOD_LOG_CHANNEL) return;
-  try {
-    const ch = await client.channels.fetch(process.env.MOD_LOG_CHANNEL);
-    if (ch?.isTextBased()) await ch.send({ embeds: [embed] });
-  } catch (err) {
-    logger.warn("Log", `Failed to post mod log: ${err.message}`);
-  }
+  // Fire-and-forget: never block a command's reply on a log post. Several
+  // non-deferred handlers call this before their first interaction.reply(); if we
+  // awaited the channel fetch+send, a slow post could blow the 3s ack window and
+  // make Discord show "this application did not respond".
+  client.channels.fetch(process.env.MOD_LOG_CHANNEL)
+    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
+    .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
-async function logBan(embed) {
+function logBan(embed) {
   const channelId = process.env.BAN_LOG_CHANNEL;
   if (!channelId) return logAction(embed);
-  try {
-    const ch = await client.channels.fetch(channelId);
-    if (ch?.isTextBased()) await ch.send({ embeds: [embed] });
-  } catch (err) {
-    logger.warn("Log", `Failed to post ban log: ${err.message}`);
-  }
+  // fire-and-forget (see logAction)
+  client.channels.fetch(channelId)
+    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
+    .catch(err => logger.warn("Log", `Failed to post ban log: ${err.message}`));
 }
 
 /* ================================================================
@@ -1663,6 +1663,7 @@ function removePlayerFromRankFile(faction, playerId, rank) {
   if (!cfg) return true;
   const rankFile = cfg.rankFiles[rank];
   if (!rankFile) return true;
+  if (rankFile === SPAWN_FILE_MAP[faction]) return true;   // never drop membership via a rank op (Khans High Rank maps to the spawn file)
   const lines = readFactionFile(rankFile);
   if (!lines) return true;
   const updated = lines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
@@ -1674,6 +1675,7 @@ function removePlayerFromAllRankFiles(faction, playerId) {
   const cfg = getFactionRankConfig(faction);
   if (!cfg) return;
   for (const rankFile of Object.values(cfg.rankFiles)) {
+    if (rankFile === SPAWN_FILE_MAP[faction]) continue;   // membership roster is handled by the caller, never here
     const lines = readFactionFile(rankFile);
     if (!lines) continue;
     const updated = lines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
@@ -1733,7 +1735,9 @@ async function issueWarn(playerId, reason, moderator, server, interaction) {
 
   writeModLog({ action: "warn", playerId, reason, by: moderator, count });
 
-  const escalation = [...WARN_THRESHOLDS].reverse().find(t => count >= t.count);
+  // escalate only AT a threshold (3/5/7), not on every warning past it — otherwise
+  // a 4th/6th warning would re-ban and reset the timer, contradicting the embed.
+  const escalation = WARN_THRESHOLDS.find(t => t.count === count);
   let escalated = null;
 
   if (escalation && escalation.action === "tempban") {
@@ -3011,7 +3015,7 @@ client.on("interactionCreate", async (interaction) => {
         const uname = (staff.username || "").toLowerCase();
         const matches = loadModLog().filter(e => {
           const by = String(e.by ?? "").toLowerCase();
-          return by && (by === tag || by === uname || by.includes(uname));
+          return by && (by === tag || by === uname);   // exact match (mod-log stores user.tag) — no substring false positives
         });
         if (!matches.length) {
           return interaction.reply({ embeds: [
@@ -3612,6 +3616,7 @@ client.on("interactionCreate", async (interaction) => {
           catch (err) { failed++; logger.warn("StripAll", `RemoveMenu failed for ${pid}: ${err.message}`); }
           removeMenuGrant(pid, "server1", menuValue);
           removeMenuGrant(pid, "server2", menuValue);
+          removeMenuGrant(pid, "both", menuValue);   // givemenu on "both" stores a single "both" record
         }
 
         const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
@@ -3996,7 +4001,7 @@ client.on("interactionCreate", async (interaction) => {
           await removeFactionRank(fromFaction, playerId);
           toLines.push(playerId);
           if (!writeFactionFile(toSpawn, toLines)) {
-            fromLines.push(playerId); writeFactionFile(fromSpawn, fromLines);
+            writeFactionFile(fromSpawn, fromLines);   // fromLines still has the player once — restore original (no dup)
             addPlayerToRankFile(fromFaction, playerId, oldRank);
             await setFactionRank(fromFaction, playerId, oldRank);
             return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update \`${toSpawn}\`. Transfer rolled back.`)], ephemeral: true });
@@ -4122,14 +4127,17 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply({ ephemeral: true });
         try {
           if (server === "both") {
-            const [r1, r2] = await Promise.all([sendRcon(command, "server1"), sendRcon(command, "server2")]);
+            // allSettled so one unreachable server doesn't fail the whole command
+            const [s1, s2] = await Promise.allSettled([sendRcon(command, "server1"), sendRcon(command, "server2")]);
+            const fmt = (r) => r.status === "fulfilled" ? ((r.value.trim() || "no response").slice(0, 900)) : `unreachable: ${r.reason?.message || r.reason}`;
+            writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
             return interaction.editReply({ embeds: [
               new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — Both Servers").setDescription(`${DIVIDER}`)
                 .addFields(
-                  { name: "Signal",             value: `\`\`\`${command}\`\`\``,                                     inline: false },
-                  { name: "Server 1 Response",  value: `\`\`\`${(r1.trim() || "no response").slice(0, 900)}\`\`\``, inline: false },
-                  { name: "Server 2 Response",  value: `\`\`\`${(r2.trim() || "no response").slice(0, 900)}\`\`\``, inline: false },
-                  { name: "By",                  value: `${interaction.user}`,                                         inline: false },
+                  { name: "Signal",             value: `\`\`\`${command}\`\`\``,           inline: false },
+                  { name: "Server 1 Response",  value: `\`\`\`${fmt(s1)}\`\`\``,           inline: false },
+                  { name: "Server 2 Response",  value: `\`\`\`${fmt(s2)}\`\`\``,           inline: false },
+                  { name: "By",                  value: `${interaction.user}`,             inline: false },
                 ).setTimestamp()
             ]});
           }

@@ -81,7 +81,6 @@ const pendingTs   = {};           // per-file: log-timestamp of that accept line
 const pendingSet  = {};           // per-file: distinct IPs accepted since the last login (size 1 = unambiguous)
 const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
 const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe — collapse a disconnect's multiple close lines)
-const lastCloseTs   = new Map();  // id    -> log ts (count one connection per disconnect, by log time)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
 const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet — flag it when the kick confirms one)
 let lastTs = 0, saveTimer = null, dirty = false;
@@ -396,7 +395,7 @@ function parseLine(line, server, key) {
   const ts = t ?? lastTs;
   // Ignore everything at/before the last "wipe all IP data" so a restart's log
   // backfill can't rebuild the data you just cleared.
-  if (cutoffTs && ts && ts <= cutoffTs) return;
+  if (cutoffTs && ts && ts < cutoffTs) return;
 
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
   const c = line.match(CLOSE_RE);
@@ -405,12 +404,16 @@ function parseLine(line, server, key) {
     record(c[2], null, ip, ts, true);          // confirmed same-line pairing
     // count one completed connection per disconnect (a disconnect emits several
     // close lines a few ms apart — collapse them by LOG time so backfill counts too).
+    // Count one completed connection per disconnect, using a PERSISTED per-id
+    // high-water-mark so a restart's log re-read can't re-count old disconnects
+    // (lastCountedTs lives on the registry entry, which is saved to disk). The
+    // >5000ms gap still collapses the several close lines of a single disconnect.
     const e = registry[id];
-    if (e && (ts - (lastCloseTs.get(id) ?? -Infinity)) > 5000) {
-      lastCloseTs.set(id, ts);
+    if (e && (ts - (e.lastCountedTs ?? -Infinity)) > 5000) {
+      e.lastCountedTs = ts;
       e.logins = (e.logins || 0) + 1;
       e.recent = Array.isArray(e.recent) ? e.recent : [];
-      e.recent.unshift({ ts: ts || Date.now(), ip });
+      if (!(e.recent[0] && e.recent[0].ts === ts && e.recent[0].ip === ip)) e.recent.unshift({ ts: ts || Date.now(), ip });
       if (e.recent.length > 8) e.recent.length = 8;
       scheduleSave();
     }
@@ -482,6 +485,20 @@ function poll() {
     for (const l of lines) if (l) parseLine(l, label, f);
   }
   if (dirty) flushRegistry();
+  pruneDebounceMaps();
+}
+
+// Drop stale debounce entries so these maps don't grow without bound over long uptime.
+let lastPrune = 0;
+function pruneDebounceMaps() {
+  const now = Date.now();
+  if (now - lastPrune < 60_000) return;            // at most once a minute
+  lastPrune = now;
+  const sweep = (map, ttl) => { for (const [k, t] of map) if (now - t > ttl) map.delete(k); };
+  sweep(recentJoin,    JOIN_DEBOUNCE_MS * 2);
+  sweep(recentConfirm, CONFIRM_DEBOUNCE_MS * 2);
+  sweep(recentAuto,    AUTO_DEBOUNCE_MS * 2);
+  sweep(pendingFlag,   PENDING_FLAG_MS * 2);
 }
 
 /* ---------------- log discovery ---------------- */
@@ -544,6 +561,12 @@ function init(opts = {}) {
   watchList = [...expanded].sort((a, b) => mtimeOf(a) - mtimeOf(b));
   const backups = watchList.filter(f => !files.includes(f));
   if (backups.length) console.log(`[ipBans] also backfilling ${backups.length} rotated log(s): ${backups.map(b => path.basename(b)).join(", ")}`);
+
+  // untrackedIds isn't persisted — rebuild it from the loaded registry so ignore-listed
+  // players stay ignored across restarts (disconnect lines carry no name to re-match on).
+  for (const [id, e] of Object.entries(registry)) {
+    if (e && untrackedNames.has(norm(e.name))) { untrackedIds.add(id); delete registry[id]; }
+  }
 
   live = false; poll();              // backfill (no feed / no auto-ban for old joins)
   live = true;                       // everything from here on is a live event

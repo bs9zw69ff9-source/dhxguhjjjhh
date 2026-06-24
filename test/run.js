@@ -152,6 +152,8 @@ const ok = (cond, msg) => {
     const rec = ipBans.getRecord("NCR_Ranger");
     ok(rec && rec.name === "NCR_Ranger" && rec.cips.includes("198.51.100.9") && rec.lastSeen, "getRecord returns name + confirmed IPs + lastSeen");
     ok(rec.logins === 1, "getRecord counts one completed connection (login count)");
+    clearInterval(ipBans.init({ logFiles: [logPath], onAutoBan: async () => {}, pollMs: 9e8 }));   // simulate a restart re-reading the same log
+    ok(ipBans.getRecord("NCR_Ranger").logins === 1, "login count does NOT inflate when the log is re-read on restart");
     ok(Array.isArray(rec.recent) && rec.recent[0] && rec.recent[0].ip === "198.51.100.9", "getRecord lists recent connections (newest first, with IP)");
     ok(rec.bypass === false && typeof rec.flagged === "boolean", "getRecord reports bypass + flag status");
     ok(ipBans.getIPsForPlayer("aaa111").includes("198.51.100.9"), "disconnect line -> same-line IP+id learned");
