@@ -1195,9 +1195,9 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
   const total = pages.length;
   let page = 0;
   const row = (p) => new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("pg_prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+    new ButtonBuilder().setCustomId("pg_prev").setLabel("Prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
     new ButtonBuilder().setCustomId("pg_ind").setLabel(`Page ${p + 1} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-    new ButtonBuilder().setCustomId("pg_next").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
+    new ButtonBuilder().setCustomId("pg_next").setLabel("Next").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
   );
   const render = (p) => ({ embeds: [brand(buildEmbed(pages[p], p, total))], components: total > 1 ? [row(p)] : [] });
 
@@ -3238,8 +3238,9 @@ client.on("interactionCreate", async (interaction) => {
         ];
         const total = lines.length;
         const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${temp.length} temp  ·  ${perm.length} permanent`;
-        // Show ALL bans across multiple embeds (no pagination buttons). 18 lines/embed,
-        // up to 5 embeds (~6000 char limit) per message; overflow goes to follow-ups.
+        // Show ALL bans across multiple embeds (no pagination buttons). 18 lines/embed;
+        // group embeds into messages under Discord's 6000-char and 10-embed limits, then
+        // send the first via editReply and any overflow as follow-up messages.
         const PER = 18;
         const chunks = [];
         for (let i = 0; i < lines.length; i += PER) chunks.push(lines.slice(i, i + PER));
@@ -3247,8 +3248,17 @@ client.on("interactionCreate", async (interaction) => {
           .setTitle(i === 0 ? "Exile Registry" : `Exile Registry (${i + 1})`)
           .setDescription(((i === 0 ? `${header}\n${DIVIDER}\n` : "") + c.join("\n")).slice(0, 4000)),
           `${total} exile${total !== 1 ? "s" : ""} active`));
-        await interaction.editReply({ embeds: embeds.slice(0, 5) });
-        for (let i = 5; i < embeds.length; i += 5) await interaction.followUp({ embeds: embeds.slice(i, i + 5) });
+        // pack embeds into messages: ≤10 embeds and ≤5500 chars each (safe under the 6000 limit)
+        const messages = [];
+        let cur = [], curLen = 0;
+        for (const e of embeds) {
+          const len = (e.data.description?.length || 0) + (e.data.title?.length || 0) + (e.data.footer?.text?.length || 0) + 50;
+          if (cur.length && (cur.length >= 10 || curLen + len > 5500)) { messages.push(cur); cur = []; curLen = 0; }
+          cur.push(e); curLen += len;
+        }
+        if (cur.length) messages.push(cur);
+        await interaction.editReply({ embeds: messages[0] });
+        for (let i = 1; i < messages.length; i++) await interaction.followUp({ embeds: messages[i] });
         return;
       }
 
