@@ -20,6 +20,7 @@ modlog.json
 faction_ranks.json
 faction_config.json
 faction_audit.json
+faction_backup.json
 menu_grants.json
 player_notes.json
 lastseen.json

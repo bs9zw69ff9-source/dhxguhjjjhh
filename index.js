@@ -132,6 +132,7 @@ const FILES = {
   FACTION_RANKS:  "./faction_ranks.json",
   FACTION_CONFIG: "./faction_config.json",
   FACTION_AUDIT:  "./faction_audit.json",
+  FACTION_BACKUP: "./faction_backup.json",
   MENU_GRANTS:    "./menu_grants.json",
   PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
@@ -152,6 +153,7 @@ const DEFAULTS = {
   [FILES.FACTION_RANKS]:  "{}",
   [FILES.FACTION_CONFIG]: "{}",
   [FILES.FACTION_AUDIT]:  "[]",
+  [FILES.FACTION_BACKUP]: "{}",
   [FILES.MENU_GRANTS]:    "{}",
   [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
@@ -1838,6 +1840,38 @@ function writePlayerBalance(playerId, amount) {
   if (writeGameFile(fp, String(Math.max(0, Math.floor(amount))))) return true;   // mirrored to both installs
   logger.error("Balance", `Write failed for ${playerId}`);
   return false;
+}
+// Set EVERY player's caps to 0 (owner-only money wipe). Mirrors to all installs.
+function wipeAllMoney() {
+  const base = getModsavePath();
+  if (!base) return { ok: false, error: "MODSAVE_PATH not set" };
+  let files;
+  try { files = fs.readdirSync(base).filter(f => f.endsWith(".txt")); }
+  catch (e) { return { ok: false, error: e.code || e.message }; }
+  let wiped = 0;
+  for (const f of files) { if (writePlayerBalance(path.basename(f, ".txt"), 0)) wiped++; }
+  return { ok: true, wiped, total: files.length };
+}
+
+/* ---------------- faction whitelist snapshot (save/load) ---------------- */
+// Snapshot every faction file (spawn + rank rosters) to a JSON we control, so the
+// owner can restore the whole whitelist set after accidents/wipes.
+function saveFactionBackup() {
+  let files;
+  try { files = fs.readdirSync(FACTION_ROLES_PATH).filter(f => f.endsWith(".txt")); }
+  catch (e) { return { ok: false, error: e.code || e.message }; }
+  const data = { savedAt: Date.now(), files: {} };
+  for (const f of files) { const lines = readFactionFile(f); if (lines) data.files[f] = lines; }
+  if (!safeWrite(FILES.FACTION_BACKUP, data)) return { ok: false, error: "could not write backup" };
+  return { ok: true, count: Object.keys(data.files).length };
+}
+// Restore the last snapshot, writing every saved file back (mirrored to all installs).
+function loadFactionBackup() {
+  const data = safeRead(FILES.FACTION_BACKUP, null);
+  if (!data || !data.files || !Object.keys(data.files).length) return { ok: false, empty: true };
+  let restored = 0;
+  for (const [f, lines] of Object.entries(data.files)) { if (writeFactionFile(f, lines)) restored++; }
+  return { ok: true, restored, savedAt: data.savedAt };
 }
 
 /* ================================================================
@@ -3812,6 +3846,9 @@ client.on("interactionCreate", async (interaction) => {
             { label: "Clear all flagged IPs",  value: "clear_flags",   description: "Stop every IP auto-ban (keep history)" },
             { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP" },
             { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset" },
+            { label: "Save faction whitelists", value: "save_factions", description: "Snapshot all faction spawn + rank files" },
+            { label: "Load faction whitelists", value: "load_factions", description: "Restore the last snapshot (overwrites current)" },
+            { label: "Wipe ALL money",          value: "wipe_money",    description: "Set every player's caps to 0 (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Configure — Hidden Commands"));
         await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
@@ -3823,9 +3860,9 @@ client.on("interactionCreate", async (interaction) => {
         const choice = sel.values[0];
 
         // actions that need text input -> open a modal
-        if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove", "verify_clear"].includes(choice)) {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user", verify_clear: "Clear a verification link" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", verify_clear: "Pavlov username" };
+        if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove", "verify_clear", "wipe_money", "load_factions"].includes(choice)) {
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user", verify_clear: "Clear a verification link", wipe_money: "Wipe ALL money", load_factions: "Restore faction whitelists" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", verify_clear: "Pavlov username", wipe_money: "Type WIPE to confirm", load_factions: "Type LOAD to confirm" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -3862,6 +3899,24 @@ client.on("interactionCreate", async (interaction) => {
             logAction(e1);
             return sub.editReply({ embeds: [e1] });
           }
+          if (choice === "wipe_money") {
+            await sub.deferReply({ ephemeral: true });
+            if (val.toUpperCase() !== "WIPE") return sub.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped."))] });
+            const r = wipeAllMoney();
+            const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped")
+              .setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`)).setTimestamp());
+            logAction(e);
+            return sub.editReply({ embeds: [e] });
+          }
+          if (choice === "load_factions") {
+            await sub.deferReply({ ephemeral: true });
+            if (val.toUpperCase() !== "LOAD") return sub.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored."))] });
+            const r = loadFactionBackup();
+            const e = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored")
+              .setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found — use **Save faction whitelists** first." : `Load failed: ${r.error}`))).setTimestamp());
+            logAction(e);
+            return sub.editReply({ embeds: [e] });
+          }
           if (choice === "user_bl_add")        { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `<@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
           else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `<@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
           else if (choice === "ignore_add")    { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
@@ -3897,6 +3952,7 @@ client.on("interactionCreate", async (interaction) => {
         else if (choice === "clear_names") { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
         else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
         else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
+        else if (choice === "save_factions") { const r = saveFactionBackup(); color = NV.AMBER; desc = r.ok ? `Snapshot saved — **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
         const e = brand(new EmbedBuilder().setColor(color).setTitle("Configure").setDescription(hero(desc)).setTimestamp());
         if (audit) await logAction(e);
         return sel.update({ embeds: [e], components: [] });
