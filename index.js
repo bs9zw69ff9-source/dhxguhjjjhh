@@ -1455,6 +1455,29 @@ async function sendRconBoth(command, server) {
   catch (err) { logger.warn("RCON", `[${server}] "${command}" failed: ${err.message}`); return { s1: null, s2: null, ok1: false, ok2: false }; }
 }
 
+/* Pavlov's economy mod can wipe a player's saved caps when they're force-kicked
+   (it writes their save on the abrupt disconnect). Snapshot the balance before a
+   kick and restore it afterwards if it got wiped/lowered, so a kick or ban never
+   costs the player their money. Only restores when the value DROPPED, so legit
+   in-game earnings (if they reconnect) are never clobbered. */
+function preserveBalanceAcrossKick(name) {
+  if (!getModsavePath()) return;
+  let before;
+  try { before = readPlayerBalance(name); } catch { return; }
+  if (before == null || before <= 0) return;        // nothing worth preserving
+  for (const delay of [8000, 25000]) {              // re-check after the disconnect save (and a late one)
+    setTimeout(() => {
+      try {
+        const after = readPlayerBalance(name);
+        if (after == null || after < before) {
+          writePlayerBalance(name, before);
+          logger.info("Caps", `Restored ${name}'s caps after kick: ${after ?? "missing"} -> ${before}`);
+        }
+      } catch (e) { logger.warn("Caps", `balance restore failed for ${name}: ${e.message}`); }
+    }, delay);
+  }
+}
+
 /* Immediately remove a (possibly in-game) player from every reachable server via
    RCON Kick. blacklist.txt only blocks RECONNECTS, so without this an already-connected
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
@@ -1462,6 +1485,7 @@ async function sendRconBoth(command, server) {
 function kickEverywhere(name) {
   const id = sanitizeId(name);                 // RCON Kick is space-delimited — use a clean token
   if (!id) return;
+  preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
   Promise.resolve(sendRconBoth(`Kick ${id}`, "both"))
     .then(r => logger.info("Bans", `Kick ${id} -> s1=${r.ok1 ? "ok" : "fail"} s2=${r.ok2 ? "ok" : "fail"}`))
     .catch(err => logger.warn("Bans", `Kick ${id} failed: ${err.message}`));
@@ -2856,6 +2880,7 @@ client.on("interactionCreate", async (interaction) => {
         const reason   = interaction.options.getString("reason") ?? "No reason provided";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
+        preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
         await sendRconBoth(`Kick ${playerId}`, server);
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
