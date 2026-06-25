@@ -705,7 +705,24 @@ function rankWeight(faction, rank) {
   return idx === -1 ? -1 : idx;
 }
 
+// All ranks a player currently holds in a faction (a player may hold several),
+// derived from the rank files (the source of truth), ordered low -> high.
+function getPlayerRanks(faction, playerId) {
+  const cfg = getFactionRankConfig(faction);
+  if (!cfg) return [];
+  const id = playerId.toLowerCase();
+  return cfg.order.filter(r => {
+    const f = cfg.rankFiles[r];
+    if (!f || f === SPAWN_FILE_MAP[faction]) return false;   // spawn file is membership, not a rank
+    const lines = readFactionFile(f);
+    return lines && lines.some(l => l.toLowerCase() === id);
+  });
+}
+
+// The player's highest held rank (for sorting/weight/display), else the stored or default rank.
 function getFactionRank(faction, playerId) {
+  const held = getPlayerRanks(faction, playerId);
+  if (held.length) return held[held.length - 1];
   const ranks = loadFactionRanks();
   return ranks[faction]?.[playerId.toLowerCase()] ?? getFactionDefaultRank(faction);
 }
@@ -1756,12 +1773,23 @@ function getFactionMembers(faction) {
   if (!spawn) return null;
   const lines = readFactionFile(spawn);
   if (!lines) return null;
+  const cfg          = getFactionRankConfig(faction);
   const factionRanks = loadFactionRanks()[faction] ?? {};
   const defaultRank  = getFactionDefaultRank(faction);
+  // read each rank file ONCE -> rank -> Set of lowercased names (members can hold several ranks)
+  const rankMembers = {};
+  if (cfg) for (const r of cfg.order) {
+    const f = cfg.rankFiles[r];
+    if (!f || f === spawn) continue;
+    rankMembers[r] = new Set((readFactionFile(f) || []).map(x => x.toLowerCase()));
+  }
   return lines
     .map(id => {
-      const rank = factionRanks[id.toLowerCase()] ?? defaultRank;
-      return { playerId: id, rank, weight: rankWeight(faction, rank) };
+      const key  = id.toLowerCase();
+      const held = cfg ? cfg.order.filter(r => rankMembers[r]?.has(key)) : [];
+      const ranks = held.length ? held : [factionRanks[key] ?? defaultRank];
+      const top   = ranks[ranks.length - 1];
+      return { playerId: id, rank: top, ranks, weight: rankWeight(faction, top) };
     })
     .sort((a, b) => b.weight - a.weight || a.playerId.localeCompare(b.playerId));
 }
@@ -2319,10 +2347,11 @@ const commands = [
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("rank")
-      .setDescription("Faction Leader — Set or change a member's rank within a faction")
+      .setDescription("Faction Leader — Add or remove a rank for a member (a member can hold several)")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("New rank to assign (faction-specific)").setRequired(true).setAutocomplete(true)))
+      .addStringOption(o => o.setName("rank").setDescription("Rank to add (faction-specific)").setRequired(true).setAutocomplete(true))
+      .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
     .addSubcommand(s => s.setName("transfer")
       .setDescription("Mod — Transfer a player from one faction to another")
       .addStringOption(o => o.setName("from_faction").setDescription("Current faction").setRequired(true).addChoices(...factionChoices))
@@ -3971,14 +4000,14 @@ client.on("interactionCreate", async (interaction) => {
           }
           const cap = getFactionCap(faction);
           const summary = getFactionRankOrder(faction).slice().reverse().map(r => {
-            const n = members.filter(m => m.rank === r).length;
+            const n = countFactionRank(faction, r);   // file-based: counts every holder (a member may hold several ranks)
             const rcap = getFactionRankCap(faction, r);
             if (!n && !rcap) return null;
-            const count = rcap ? `${n}/${rcap}${n > rcap ? "" : ""}` : `${n}`;
+            const count = rcap ? `${n}/${rcap}` : `${n}`;
             return `${getFactionRankBadge(faction, r)} ${r}: **${count}**`;
           }).filter(Boolean).join("  ·  ");
           const lines = members.map((m, i) =>
-            `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  *${m.rank}*`);
+            `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  *${(m.ranks || [m.rank]).join(", ")}*`);
           const header = `**${members.length}/${cap}** members${members.length > cap ? " over cap" : ""}  ·  ${summary}`;
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
@@ -4021,6 +4050,7 @@ client.on("interactionCreate", async (interaction) => {
           const playerId = sanitizeId(interaction.options.getString("playerid"));
           const faction  = interaction.options.getString("faction");
           const rank     = interaction.options.getString("rank");
+          const removing = interaction.options.getBoolean("remove") === true;
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
@@ -4033,29 +4063,38 @@ client.on("interactionCreate", async (interaction) => {
           if (!lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
             return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not whitelisted in **${faction}**.\n\nUse \`/faction add\` first.`)], ephemeral: true });
           }
-          const oldRank = getFactionRank(faction, playerId);
-          if (oldRank !== rank) {
-            const room = rankHasRoom(faction, rank);
+          const had = getPlayerRanks(faction, playerId);
+          if (removing) {
+            if (!had.includes(rank)) {
+              return interaction.reply({ embeds: [warningEmbed("Rank Not Held", `\`${playerId}\` doesn't hold **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ") || "none"}.`)], ephemeral: true });
+            }
+            removePlayerFromRankFile(faction, playerId, rank);
+          } else {
+            if (had.includes(rank)) {
+              return interaction.reply({ embeds: [warningEmbed("Already Holds Rank", `\`${playerId}\` already holds **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ")}.`)], ephemeral: true });
+            }
+            const room = rankHasRoom(faction, rank);   // a member can hold MULTIPLE ranks; cap is per rank file
             if (!room.ok) {
               return interaction.reply({ embeds: [errorEmbed("Rank Full",
-                `**${rank}** in **${faction}** is at its cap (**${room.count}/${room.cap}**).\n\nPromote someone out first, or raise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
+                `**${rank}** in **${faction}** is at its cap (**${room.count}/${room.cap}**).\n\nRaise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
             }
-            removePlayerFromRankFile(faction, playerId, oldRank);
             addPlayerToRankFile(faction, playerId, rank);
           }
-          await setFactionRank(faction, playerId, rank);
-          writeFactionAudit({ action: "rank", faction, playerId, rank, oldRank, by: interaction.user.tag });
-          writeModLog({ action: "faction-rank", playerId, faction, rank, oldRank, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Faction Rank Updated")
+          const now = getPlayerRanks(faction, playerId);
+          await setFactionRank(faction, playerId, now[now.length - 1] ?? getFactionDefaultRank(faction));   // track highest as primary
+          writeFactionAudit({ action: "rank", faction, playerId, rank: removing ? `-${rank}` : rank, by: interaction.user.tag });
+          writeModLog({ action: removing ? "faction-unrank" : "faction-rank", playerId, faction, rank, by: interaction.user.tag });
+          const rankFile = getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a";
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(removing ? "Faction Rank Removed" : "Faction Rank Added")
             .setDescription(`> *${randomQuote("faction")}*\n\n${DIVIDER}`)
             .addFields(
-              { name: "Courier",     value: `\`${playerId}\``,                inline: true },
-              { name: "Faction",     value: faction,                          inline: true },
-              { name: "New Rank",    value: rankBadge(faction, rank),         inline: true },
-              { name: "Old Rank",    value: rankBadge(faction, oldRank),      inline: true },
-              { name: "Assigned By", value: `${interaction.user}`,            inline: true },
-              { name: "Rank Files",  value: `Removed from \`${getFactionRankConfig(faction)?.rankFiles[oldRank] ?? "n/a"}\`\nAdded to \`${getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a"}\``, inline: false },
-            ).setFooter({ text: "Rank change logged · rank files updated on disk" }).setTimestamp();
+              { name: "Courier",      value: `\`${playerId}\``,                inline: true },
+              { name: "Faction",      value: faction,                          inline: true },
+              { name: removing ? "Removed Rank" : "Added Rank", value: rankBadge(faction, rank), inline: true },
+              { name: "Holds Now",    value: now.length ? now.map(r => `**${r}**`).join(", ") : "*no ranks*", inline: false },
+              { name: "By",           value: `${interaction.user}`,            inline: true },
+              { name: "Rank File",    value: `${removing ? "Removed from" : "Added to"} \`${rankFile}\``, inline: true },
+            ).setFooter({ text: "Members can hold multiple ranks · rank files updated on disk" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
@@ -4146,10 +4185,15 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
               `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], ephemeral: true });
           }
+          // One faction per courier — block if they're already in a different faction.
+          const otherFactions = (getPlayerFactions(playerId) || []).filter(f => f !== faction);
+          if (otherFactions.length) {
+            return interaction.reply({ embeds: [errorEmbed("Already in a Faction",
+              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A courier can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], ephemeral: true });
+          }
           const lines = readFactionFile(spawn) ?? [];
           if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            const existingRank = getFactionRank(faction, playerId);
-            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** as ${rankBadge(faction, existingRank)}.\n\nUse \`/faction rank\` to change their rank.`)], ephemeral: true });
+            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks — a member can hold several.`)], ephemeral: true });
           }
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
