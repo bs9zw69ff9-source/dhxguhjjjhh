@@ -2242,6 +2242,20 @@ setInterval(async () => {
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
+// Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure → Load.
+function autoBackupFactions() {
+  const r = saveFactionBackup();
+  if (r.ok) logger.info("Backup", `Auto-saved faction whitelists — ${r.count} file(s)`);
+  else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
+}
+setInterval(autoBackupFactions, 24 * 60 * 60 * 1000);
+// Seed a snapshot shortly after startup only if none exists yet (don't clobber an
+// existing/manual backup on every restart).
+setTimeout(() => {
+  const b = safeRead(FILES.FACTION_BACKUP, {});
+  if (!b || !b.files || !Object.keys(b.files).length) autoBackupFactions();
+}, 30_000);
+
 setTimeout(postLeaderboard, 20_000);
 setTimeout(postPlaytimeLeaderboard, 25_000);
 setTimeout(() => {
