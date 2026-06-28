@@ -1881,6 +1881,21 @@ function syncModsaveBanlist() {
   try { writeGameFile(modsaveBanlistPath(), buildModsaveBanlist()); }   // atomic, mirrored, skips if unchanged
   catch (e) { logger.warn("Banlist", `modsave banlist write failed: ${e.message}`); }
 }
+// UTC epoch ms for 12:00 PM America/New_York on a YYYY-MM-DD date (DST-aware:
+// noon EST = 17:00 UTC, noon EDT = 16:00 UTC). Date-based bans lift at noon Eastern.
+function easternNoonUTC(dateStr) {
+  const m0 = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!m0) { const t = Date.parse(dateStr); return isNaN(t) ? null : t; }
+  const y = +m0[1], mo = +m0[2], d = +m0[3];
+  const guess = Date.UTC(y, mo - 1, d, 12, 0, 0);
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const p = {}; for (const part of fmt.formatToParts(guess)) p[part.type] = part.value;
+    const nyAsUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +(p.hour === "24" ? 0 : p.hour), +p.minute, +p.second);
+    return guess + (guess - nyAsUTC);          // shift so NY wall-clock reads 12:00
+  } catch { return Date.UTC(y, mo - 1, d, 17, 0, 0); }   // fallback: noon EST
+}
 // Read the modsave banlist (parsing Name / Reason / Unban blocks) and add any entry
 // the database doesn't already have — so bans made from the in-game admin menu show
 // up in /banlist with their reason/unban date. Idempotent (skips known names).
@@ -1906,7 +1921,7 @@ function importModsaveBanlist() {
     let added = 0;
     for (const p of parsed) {
       if (have.has(p.name.toLowerCase())) continue;
-      const expires   = /^perm/i.test(p.unban) || !p.unban ? null : (Date.parse(p.unban) || null);
+      const expires   = /^perm/i.test(p.unban) || !p.unban ? null : easternNoonUTC(p.unban);   // lift at noon Eastern that day
       bans.push(expires
         ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: "until " + p.unban }
         : { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), permanent: true });
