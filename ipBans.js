@@ -177,6 +177,8 @@ function getRecord(input) {
   const nm = norm(name);
   return {
     name: name || String(input),
+    id: ids[0],
+    ids,
     ips: [...ips],
     cips: [...cips],
     firstSeen: firstSeen === Infinity ? null : firstSeen,
@@ -185,7 +187,7 @@ function getRecord(input) {
     logins,
     recent: recent.slice(0, 8),
     bypass: untrackedNames.has(nm),                                   // ignore-listed (never auto-banned/tracked)
-    flagged: [...cips].some(ip => flagged.has(ip)) || flaggedNames.has(nm),
+    flagged: [...cips].some(ip => flagged.has(ip)) || flaggedNames.has(nm) || ids.some(id => flaggedIds.has(id)),
   };
 }
 

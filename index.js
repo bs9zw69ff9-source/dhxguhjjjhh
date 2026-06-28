@@ -2634,6 +2634,7 @@ client.once("ready", async () => {
         .setTitle(`Player Information: ${name}`)
         .setDescription("Database Info")
         .addFields(
+          { name: "EOS ID",          value: rec.id ? `\`${rec.id}\`` : "unknown", inline: false },
           { name: "First Seen",      value: fmt(rec.firstSeen),                  inline: true },
           { name: "Last Seen",       value: fmt(rec.lastSeen),                   inline: true },
           { name: "Login Count",     value: String(rec.logins ?? 0),             inline: true },
@@ -2660,6 +2661,7 @@ client.once("ready", async () => {
         .addFields(
           { name: "Courier", value: `\`${name}\``,            inline: true },
           { name: "IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
+          { name: "EOS ID",  value: (() => { try { const r = ipBans.getRecord(name); return r?.id ? `\`${r.id}\`` : "unknown"; } catch { return "unknown"; } })(), inline: true },
           { name: "Reason",  value: reason || "blacklist match", inline: true },
           { name: "Blacklisted on", value: `${res?.blacklist?.servers ?? 0} of ${PAVLOV_BASES.length} install(s)`, inline: false },
         ), "Auto-ban · blacklist.txt · both servers");
