@@ -559,10 +559,8 @@ const LEADERBOARD_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
 const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1520598950787158107";
-/* Connection feed channel — used when no CONNECT_WEBHOOK_URL is set (bot posts directly). */
-const CONNECT_CHANNEL         = process.env.CONNECT_CHANNEL || "1520598950787158106";
 /* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
-const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1518016127077318897";
+const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1520598950787158106";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 /* Verification: panel channel + the role swapped on success. */
@@ -1551,14 +1549,10 @@ function logAction(embed) {
     .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
     .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
 }
-// Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set, otherwise
-// post directly into CONNECT_CHANNEL (bot needs send perms there). Fire-and-forget.
+// Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set (no-op otherwise).
 function postFeed(embed) {
-  if (feedHook) { feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`)); return; }
-  if (!CONNECT_CHANNEL) return;
-  client.channels.fetch(CONNECT_CHANNEL)
-    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
-    .catch(err => logger.warn("Feed", `channel post failed: ${err.message}`));
+  if (!feedHook) return;
+  feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
@@ -2614,6 +2608,7 @@ client.once("ready", async () => {
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
+      if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
