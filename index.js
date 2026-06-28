@@ -1859,7 +1859,7 @@ function wipeAllMoney() {
    write a rich banlist into the ModSave tree that the custom game mode reads to
    show the player WHY they're banned: reason, unban date, and an appeal link.
    Built from the ban JSON; mirrored to every install. */
-const APPEAL_LINK = process.env.APPEAL_LINK || "discord.gg/nuclearrp";
+const APPEAL_LINK = process.env.APPEAL_LINK || "discord.gg/newvegasrp";
 function modsaveBanlistPath() {
   return process.env.MODSAVE_BLACKLIST_PATH || path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/banlist.txt");
 }
@@ -1880,6 +1880,41 @@ function buildModsaveBanlist() {
 function syncModsaveBanlist() {
   try { writeGameFile(modsaveBanlistPath(), buildModsaveBanlist()); }   // atomic, mirrored, skips if unchanged
   catch (e) { logger.warn("Banlist", `modsave banlist write failed: ${e.message}`); }
+}
+// Read the modsave banlist (parsing Name / Reason / Unban blocks) and add any entry
+// the database doesn't already have — so bans made from the in-game admin menu show
+// up in /banlist with their reason/unban date. Idempotent (skips known names).
+function importModsaveBanlist() {
+  let text;
+  try { text = fs.readFileSync(modsaveBanlistPath(), "utf8"); } catch { return; }
+  if (!text.trim()) return;
+  const parsed = [];
+  for (const block of text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean)) {
+    const lines = block.split(/\r?\n/).map(l => l.trim());
+    const name = lines[0];
+    if (!name || /^(reason|unban|appeal)\s*:/i.test(name)) continue;     // first line must be the player name
+    let reason = "Imported from banlist", unban = "Permanent";
+    for (const l of lines.slice(1)) {
+      const m = l.match(/^(reason|unban)\s*:\s*(.*)$/i);
+      if (m) (m[1].toLowerCase() === "reason" ? (reason = m[2] || reason) : (unban = m[2] || unban));
+    }
+    parsed.push({ name, reason, unban });
+  }
+  if (!parsed.length) return;
+  return update(FILES.TEMPBAN, [], (bans) => {
+    const have = new Set(bans.map(b => String(b.playerId).toLowerCase()));
+    let added = 0;
+    for (const p of parsed) {
+      if (have.has(p.name.toLowerCase())) continue;
+      const expires   = /^perm/i.test(p.unban) || !p.unban ? null : (Date.parse(p.unban) || null);
+      bans.push(expires
+        ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: "until " + p.unban }
+        : { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), permanent: true });
+      added++;
+    }
+    if (added) logger.info("Bans", `Imported ${added} ban(s) from the modsave banlist into the database`);
+    return bans;
+  });
 }
 
 /* ---------------- faction whitelist snapshot (save/load) ---------------- */
@@ -2278,7 +2313,10 @@ function autoBackupFactions() {
   else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
 }
 setInterval(autoBackupFactions, 24 * 60 * 60 * 1000);
-setInterval(syncModsaveBanlist, 5 * 60 * 1000);   // safety-net rebuild of the custom ban-message file
+setInterval(async () => {        // capture any in-game-menu bans, then rebuild the file from the DB
+  try { await importModsaveBanlist(); } catch {}
+  syncModsaveBanlist();
+}, 5 * 60 * 1000);
 // Seed a snapshot shortly after startup only if none exists yet (don't clobber an
 // existing/manual backup on every restart).
 setTimeout(() => {
@@ -2611,7 +2649,8 @@ client.once("ready", async () => {
   refreshPlayerCache("server2");
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }
-  try { syncModsaveBanlist(); } catch {}   // build the custom ban-message file on startup
+  try { await importModsaveBanlist(); } catch (e) { logger.warn("Bans", `modsave banlist import failed: ${e.message}`); }   // pull in-game-menu bans into the DB
+  try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
 });
