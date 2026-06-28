@@ -276,7 +276,7 @@ function upsertTempBan(entry) {
     const next = bans.filter(b => !_sameId(b.playerId, entry.playerId));
     next.push(entry);
     return next;
-  });
+  }).then(r => { syncModsaveBanlist(); return r; });   // refresh the custom ban-message file
 }
 /** Record a PERMANENT ban in the same ban JSON (no expiry). Upserts by playerId,
     so it supersedes any existing temp ban for that player. */
@@ -304,7 +304,8 @@ function importBlacklistToBans() {
 /** Remove one or more player IDs from the temp-ban list (case-insensitive). */
 function removeBans(...ids) {
   const drop = ids.filter(Boolean).map(s => String(s).toLowerCase());
-  return update(FILES.TEMPBAN, [], (bans) => bans.filter(b => !drop.includes(String(b.playerId).toLowerCase())));
+  return update(FILES.TEMPBAN, [], (bans) => bans.filter(b => !drop.includes(String(b.playerId).toLowerCase())))
+    .then(r => { syncModsaveBanlist(); return r; });   // refresh the custom ban-message file
 }
 const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" });
 const saveRoles         = (d) => safeWrite(FILES.ROLES,         d);
@@ -1853,6 +1854,34 @@ function wipeAllMoney() {
   return { ok: true, wiped, total: files.length };
 }
 
+/* ---------------- modsave ban-message file (custom ban screen) ----------------
+   Config/blacklist.txt stays NAMES-ONLY (what Pavlov matches on). Separately we
+   write a rich banlist into the ModSave tree that the custom game mode reads to
+   show the player WHY they're banned: reason, unban date, and an appeal link.
+   Built from the ban JSON; mirrored to every install. */
+const APPEAL_LINK = process.env.APPEAL_LINK || "discord.gg/nuclearrp";
+function modsaveBanlistPath() {
+  return process.env.MODSAVE_BLACKLIST_PATH || path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/banlist.txt");
+}
+function buildModsaveBanlist() {
+  const fmtDate = (ms) => { try { return new Date(ms).toISOString().slice(0, 10); } catch { return "unknown"; } };
+  const blocks = [];
+  for (const b of loadBans()) {
+    const unban = (b.permanent || !b.expires) ? "Permanent" : fmtDate(b.expires);
+    blocks.push([
+      b.playerId,
+      `Reason: ${b.reason || "No reason provided"}`,
+      `Unban: ${unban}`,
+      `Appeal: ${APPEAL_LINK}`,
+    ].join("\n"));
+  }
+  return blocks.join("\n\n") + (blocks.length ? "\n" : "");
+}
+function syncModsaveBanlist() {
+  try { writeGameFile(modsaveBanlistPath(), buildModsaveBanlist()); }   // atomic, mirrored, skips if unchanged
+  catch (e) { logger.warn("Banlist", `modsave banlist write failed: ${e.message}`); }
+}
+
 /* ---------------- faction whitelist snapshot (save/load) ---------------- */
 // Snapshot every faction file (spawn + rank rosters) to a JSON we control, so the
 // owner can restore the whole whitelist set after accidents/wipes.
@@ -2249,6 +2278,7 @@ function autoBackupFactions() {
   else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
 }
 setInterval(autoBackupFactions, 24 * 60 * 60 * 1000);
+setInterval(syncModsaveBanlist, 5 * 60 * 1000);   // safety-net rebuild of the custom ban-message file
 // Seed a snapshot shortly after startup only if none exists yet (don't clobber an
 // existing/manual backup on every restart).
 setTimeout(() => {
@@ -2581,6 +2611,7 @@ client.once("ready", async () => {
   refreshPlayerCache("server2");
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }
+  try { syncModsaveBanlist(); } catch {}   // build the custom ban-message file on startup
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
 });
