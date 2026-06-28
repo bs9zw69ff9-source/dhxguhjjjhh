@@ -982,6 +982,34 @@ const FACTION_SPAWN_MAP = {
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
 
+/* The "faction.txt" master roster the gamemode reads, plus any other plain
+   FactionRoles files the bot never writes but the server still expects to
+   exist. These are created empty if missing (never overwritten). */
+const EXTRA_FACTION_FILES = ["faction.txt"];
+
+/* Build every FactionRoles whitelist file on startup so the game server always
+   finds them, even on a brand-new install. We only CREATE missing files (empty)
+   — never touch existing rosters — and we do it in EVERY Pavlov install via
+   mirrorPaths. Covers: faction.txt, each faction's spawn (membership) file, and
+   every rank file, plus the donator file. */
+function ensureFactionFiles() {
+  const names = new Set(EXTRA_FACTION_FILES);
+  for (const faction of ALL_FACTIONS) {
+    if (SPAWN_FILE_MAP[faction]) names.add(SPAWN_FILE_MAP[faction]);
+    const cfg = getFactionRankConfig(faction);
+    if (cfg && cfg.rankFiles) for (const file of Object.values(cfg.rankFiles)) if (file) names.add(file);
+  }
+  // donator file may live outside FactionRoles (DONATOR_PATH) — handle separately
+  let created = 0;
+  for (const name of names) {
+    for (const fp of mirrorPaths(path.join(FACTION_ROLES_PATH, name))) {
+      if (ensureFile(fp, "")) created++;
+    }
+  }
+  for (const fp of mirrorPaths(DONATOR_FILE)) if (ensureFile(fp, "")) created++;
+  logger.info("Init", `Faction files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` — created ${created} missing` : ""));
+}
+
 /* ================================================================
    FALLOUT: NEW VEGAS THEME
    ================================================================ */
@@ -2688,6 +2716,7 @@ client.once("ready", async () => {
   });
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
+  try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }
   try { await importModsaveBanlist(); } catch (e) { logger.warn("Bans", `modsave banlist import failed: ${e.message}`); }   // pull in-game-menu bans into the DB
