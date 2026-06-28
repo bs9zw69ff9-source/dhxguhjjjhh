@@ -573,28 +573,30 @@ const VERIFY_VERIFIED_ROLE    = process.env.VERIFY_VERIFIED_ROLE    || "15006077
    ================================================================ */
 const FACTION_RANKS = {
   "NCR": {
-    order:   ["Private", "Corporal", "Sergeant", "Medic", "Heavy", "MP", "Ranger", "Lieutenant", "Officer"],
+    order:   ["Private", "Corporal", "Sergeant", "Medic", "Heavy", "Power Armor", "MP", "Ranger", "Lieutenant", "Officer"],
     default: "Private",
     badges:  {
-      "Private":    "",
-      "Corporal":   "",
-      "Sergeant":   "",
-      "Medic":      "",
-      "Heavy":      "",
-      "MP":         "",
-      "Ranger":     "",
-      "Lieutenant": "",
-      "Officer":    "",
+      "Private":     "",
+      "Corporal":    "",
+      "Sergeant":    "",
+      "Medic":       "",
+      "Heavy":       "",
+      "Power Armor": "",
+      "MP":          "",
+      "Ranger":      "",
+      "Lieutenant":  "",
+      "Officer":     "",
     },
     rankFiles: {
-      "Private":    "ncrprivate.txt",
-      "Corporal":   "ncrcorporal.txt",
-      "Sergeant":   "ncrsergeant.txt",
-      "Medic":      "ncrmedix.txt",
-      "Heavy":      "ncrheavy.txt",
-      "MP":         "ncrmp.txt",
-      "Ranger":     "ncrranger.txt",
-      "Lieutenant": "ncrlieutenant.txt",
+      "Private":     "ncrprivate.txt",
+      "Corporal":    "ncrcorporal.txt",
+      "Sergeant":    "ncrsergeant.txt",
+      "Medic":       "ncrmedix.txt",
+      "Heavy":       "ncrheavy.txt",
+      "Power Armor": "ncrpowerarmor.txt",
+      "MP":          "ncrmp.txt",
+      "Ranger":      "ncrranger.txt",
+      "Lieutenant":  "ncrlieutenant.txt",
       "Officer":    "ncrofficer.txt",
     },
   },
@@ -1884,9 +1886,13 @@ function syncModsaveBanlist() {
 // UTC epoch ms for 12:00 PM America/New_York on a YYYY-MM-DD date (DST-aware:
 // noon EST = 17:00 UTC, noon EDT = 16:00 UTC). Date-based bans lift at noon Eastern.
 function easternNoonUTC(dateStr) {
-  const m0 = String(dateStr).match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (!m0) { const t = Date.parse(dateStr); return isNaN(t) ? null : t; }
-  const y = +m0[1], mo = +m0[2], d = +m0[3];
+  let y, mo, d;
+  const m0 = String(dateStr).match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m0) { y = +m0[1]; mo = +m0[2]; d = +m0[3]; }
+  else {                                   // accept other parseable formats (e.g. MM/DD/YYYY)
+    const t = Date.parse(dateStr); if (isNaN(t)) return null;
+    const dt = new Date(t); y = dt.getUTCFullYear(); mo = dt.getUTCMonth() + 1; d = dt.getUTCDate();
+  }
   const guess = Date.UTC(y, mo - 1, d, 12, 0, 0);
   try {
     const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour12: false,
@@ -2413,13 +2419,7 @@ const commands = [
   new SlashCommandBuilder().setName("tempban")
     .setDescription("Exile a courier for a set period")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("duration").setDescription("How long to exile").setRequired(true)
-      .addChoices(
-        { name: "1 Hour",   value: "1h"  }, { name: "6 Hours",  value: "6h"  }, { name: "1 Day",    value: "1d"  },
-        { name: "3 Days",   value: "3d"  }, { name: "5 Days",   value: "5d"  }, { name: "1 Week",   value: "1w"  },
-        { name: "2 Weeks",  value: "2w"  }, { name: "1 Month",  value: "1mo" }, { name: "3 Months", value: "3mo" },
-        { name: "6 Months", value: "6mo" }, { name: "1 Year",   value: "1y"  }
-      ))
+    .addStringOption(o => o.setName("date").setDescription("Unban date (YYYY-MM-DD) — lifts at 12pm Eastern that day").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Grounds for exile").setRequired(true).addChoices(...BAN_REASONS))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
@@ -2713,6 +2713,24 @@ client.on("interactionCreate", async (interaction) => {
   if (interaction.isAutocomplete()) {
     const focused  = interaction.options.getFocused(true);
     const cmdName  = interaction.commandName;
+
+    // /tempban date — quick calendar suggestions (always future dates, YYYY-MM-DD)
+    if (focused.name === "date" && cmdName === "tempban") {
+      const q = focused.value.trim();
+      const iso = (days) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+      const opts = [
+        { name: `Tomorrow (${iso(1)})`,  value: iso(1) },
+        { name: `In 3 days (${iso(3)})`, value: iso(3) },
+        { name: `In 1 week (${iso(7)})`, value: iso(7) },
+        { name: `In 2 weeks (${iso(14)})`, value: iso(14) },
+        { name: `In 1 month (${iso(30)})`, value: iso(30) },
+        { name: `In 3 months (${iso(90)})`, value: iso(90) },
+        { name: `In 6 months (${iso(180)})`, value: iso(180) },
+        { name: `In 1 year (${iso(365)})`, value: iso(365) },
+      ];
+      if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(q)) opts.unshift({ name: `${q} (12pm Eastern)`, value: q });   // honour a typed date
+      return interaction.respond(opts.filter(o => !q || o.value.includes(q) || o.name.toLowerCase().includes(q.toLowerCase())).slice(0, 25)).catch(() => {});
+    }
 
     if (focused.name === "rank" && cmdName === "faction") {
       const faction = interaction.options.getString("faction") ?? interaction.options.getString("to_faction");
@@ -3304,14 +3322,18 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "tempban": {
         const playerId    = sanitizeBanName(interaction.options.getString("playerid"));
-        const durationKey = interaction.options.getString("duration");
+        const dateStr     = interaction.options.getString("date");
         const server      = interaction.options.getString("server");
         const reasonKey   = interaction.options.getString("reason");
         const reason      = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        const expires = easternNoonUTC(dateStr);                 // lifts at 12pm Eastern on that date
+        if (!expires || expires <= Date.now()) {
+          return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
+            `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)}\`). The ban lifts at **12pm Eastern** that day.`)], ephemeral: true });
+        }
         await interaction.deferReply();                          // ← ADDED
-        const { ms, label } = BAN_DURATIONS[durationKey];
-        const expires        = Date.now() + ms;
+        const label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
         const replaced       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const ipEnf = await banWithIp(playerId, server);
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
