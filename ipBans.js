@@ -64,7 +64,15 @@ const skipId   = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);    
 const labelFor = f => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
 const mtimeOf  = f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
 const exists   = f => { try { return fs.existsSync(f); } catch { return false; } };
-function loadJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fallback; } }
+function loadJSON(p, fallback) {
+  try { return JSON.parse(fs.readFileSync(p, "utf8")); }
+  catch (err) {
+    if (err.code === "ENOENT") {   // create the file with the fallback so it exists going forward
+      try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(fallback === undefined ? {} : fallback, null, 2)); } catch {}
+    }
+    return fallback;
+  }
+}
 
 /* ---------------- STATE ---------------- */
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }

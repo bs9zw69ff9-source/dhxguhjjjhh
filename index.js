@@ -193,6 +193,10 @@ const _queues = new Map(); // file -> Promise (tail of the per-file chain)
 function _rawRead(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (err) {
+    if (err.code === "ENOENT") {            // missing -> create it with the fallback so it exists going forward
+      ensureFile(file, JSON.stringify(fallback === undefined ? {} : fallback, null, 2));
+      return fallback;
+    }
     logger.warn("IO", `Read failed for ${file}: ${err.message}`);
     return fallback;
   }
@@ -210,6 +214,19 @@ function matchTreeOwner(filePath) {
     const f   = fs.statSync(filePath);
     if (f.uid !== dir.uid || f.gid !== dir.gid) fs.chownSync(filePath, dir.uid, dir.gid);
   } catch {}
+}
+
+// Create a file (and its parent dirs) with default content if it doesn't exist yet,
+// so any access of a missing file transparently produces it instead of failing.
+function ensureFile(fp, defaultContent = "") {
+  try {
+    if (fs.existsSync(fp)) return false;
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, defaultContent, "utf8");
+    matchTreeOwner(fp);
+    logger.info("Init", `Created missing file ${fp}`);
+    return true;
+  } catch (err) { logger.warn("IO", `Could not create ${fp}: ${err.message}`); return false; }
 }
 
 function _rawWrite(file, data) {
@@ -870,7 +887,7 @@ const blacklistPathFor = (base) => path.join(base, "Pavlov/Saved/Config/blacklis
 function sanitizeBanName(raw) { return String(raw ?? "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 80); }
 function readBlacklist(base) {
   try { return fs.readFileSync(blacklistPathFor(base), "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean); }
-  catch (err) { if (err.code === "ENOENT") return []; logger.error("Blacklist", `read ${base}: ${err.message}`); return null; }
+  catch (err) { if (err.code === "ENOENT") { ensureFile(blacklistPathFor(base), ""); return []; } logger.error("Blacklist", `read ${base}: ${err.message}`); return null; }
 }
 // Per-install read status for diagnostics (banlist surfaces this so a permission/path
 // failure is visible instead of looking like an empty ban list).
@@ -1692,7 +1709,7 @@ function readFactionFile(spawnFile) {
   const fp = path.join(FACTION_ROLES_PATH, spawnFile);
   try {
     return fs.readFileSync(fp, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  } catch { return null; }
+  } catch (err) { if (err.code === "ENOENT") { ensureFile(fp, ""); return []; } return null; }
 }
 
 function writeFactionFile(spawnFile, lines) {
@@ -1709,7 +1726,7 @@ function readDonatorFile() {
   try {
     return fs.readFileSync(DONATOR_FILE, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   } catch (err) {
-    if (err.code === "ENOENT") return [];          // not created yet — treat as empty
+    if (err.code === "ENOENT") { ensureFile(DONATOR_FILE, ""); return []; }   // create it empty
     logger.error("Donator", `Read failed: ${err.message}`);
     return null;                                    // real I/O error
   }
