@@ -572,7 +572,7 @@ const WAGE_TIERS = {
 };
 
 const WAGE_INTERVAL_MS        = 7 * 24 * 60 * 60 * 1000;
-const LEADERBOARD_INTERVAL_MS = 30 * 60 * 1000;   // caps + playtime leaderboards refresh every 30 min
+const LEADERBOARD_INTERVAL_MS = 30 * 1000;   // caps + playtime leaderboards refresh every 30s
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
 const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1520598950787158107";
@@ -2944,7 +2944,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Automation",
               value: [
                 "Temp bans auto-lifted every **60s**",
-                "Leaderboard auto-posted every **6h**",
+                "Leaderboards refreshed every **30s**",
                 "Wages disbursed every **7 days**",
                 "RCON health check every **5 min**",
                 `Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
