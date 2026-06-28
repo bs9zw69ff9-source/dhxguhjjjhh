@@ -558,7 +558,9 @@ const WAGE_INTERVAL_MS        = 7 * 24 * 60 * 60 * 1000;
 const LEADERBOARD_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
-const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1517198961918611566";
+const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1520598950787158107";
+/* Connection feed channel — used when no CONNECT_WEBHOOK_URL is set (bot posts directly). */
+const CONNECT_CHANNEL         = process.env.CONNECT_CHANNEL || "1520598950787158106";
 /* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
 const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1518016127077318897";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
@@ -1548,6 +1550,15 @@ function logAction(embed) {
   client.channels.fetch(process.env.MOD_LOG_CHANNEL)
     .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
     .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
+}
+// Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set, otherwise
+// post directly into CONNECT_CHANNEL (bot needs send perms there). Fire-and-forget.
+function postFeed(embed) {
+  if (feedHook) { feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`)); return; }
+  if (!CONNECT_CHANNEL) return;
+  client.channels.fetch(CONNECT_CHANNEL)
+    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
+    .catch(err => logger.warn("Feed", `channel post failed: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
@@ -2603,7 +2614,6 @@ client.once("ready", async () => {
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
-      if (!feedHook) return;
       const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
@@ -2636,7 +2646,7 @@ client.once("ready", async () => {
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
         ), "Connection log · Mojave Authority");
-      feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
+      postFeed(embed);
     },
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
@@ -2656,8 +2666,7 @@ client.once("ready", async () => {
           { name: "Blacklisted on", value: `${res?.blacklist?.servers ?? 0} of ${PAVLOV_BASES.length} install(s)`, inline: false },
         ), "Auto-ban · blacklist.txt · both servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
-      // also surface it in the connection feed (the channel you watch for joins)
-      if (feedHook) feedHook.send({ embeds: [banEmbed] }).catch(err => logger.warn("Feed", `auto-ban post failed: ${err.message}`));
+      postFeed(banEmbed);       // also surface it in the connection feed
     },
   });
   refreshPlayerCache("server1");
