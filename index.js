@@ -1537,16 +1537,7 @@ function parseRcon(raw) {
 /* ================================================================
    DISCORD CLIENT & LOG CHANNEL
    ================================================================ */
-// Optional Discord-server security module (anti raid/nuke/spam/ping). Gated behind
-// GUARDIAN_ENABLED so its privileged intents (Server Members + Message Content) only
-// load when you've enabled them in the Developer Portal — otherwise the bot would
-// fail login. Commands are all suffixed with "discord" (bandiscord, kickdiscord, …).
-const guardian = process.env.GUARDIAN_ENABLED === "true" ? require("./guardian") : null;
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, ...(guardian ? guardian.intents : [])],
-  ...(guardian ? { partials: guardian.partials } : {}),
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 function logAction(embed) {
   if (!process.env.MOD_LOG_CHANNEL) return;
@@ -2610,9 +2601,8 @@ client.once("ready", async () => {
   }
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
   try {
-    const body = guardian ? [...commands, ...guardian.commands.map(c => c.toJSON())] : commands;
-    const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body });
-    logger.info("Bot", `${result.length} slash commands registered${guardian ? " (incl. Guardian)" : ""}`);
+    const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+    logger.info("Bot", `${result.length} slash commands registered`);
   } catch (err) {
     logger.error("Bot", `Command registration failed: ${err.message}`);
   }
@@ -2687,7 +2677,6 @@ client.once("ready", async () => {
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
-  if (guardian) { try { guardian.initEvents(client); } catch (e) { logger.warn("Guardian", `init failed: ${e.message}`); } }
 });
 
 /* ================================================================
@@ -2706,14 +2695,6 @@ process.on("unhandledRejection", r   => logger.error("Unhandled", String(r)));
    INTERACTIONS
    ================================================================ */
 client.on("interactionCreate", async (interaction) => {
-
-  /* ── Guardian (Discord-security) commands are handled by the guardian module. ── */
-  if (guardian && interaction.isChatInputCommand() && guardian.isGuardianCommand(interaction.commandName)) {
-    return guardian.handle(interaction).catch(err => {
-      logger.error("Guardian", `/${interaction.commandName}: ${err.message}`);
-      if (!interaction.replied && !interaction.deferred) interaction.reply({ content: "❌ Guardian command error.", ephemeral: true }).catch(() => {});
-    });
-  }
 
   /* ── Blacklist gate — barred users get nothing, on every interaction.
         Owners are immune and can never be blacklisted. ── */
