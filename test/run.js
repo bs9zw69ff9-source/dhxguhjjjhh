@@ -428,6 +428,19 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 60));
     clearInterval(tC);
     ok(autoC && autoC.name === "AltSeven" && autoC.ip === "7.7.7.7", "slipped alt is caught at disconnect via confirmed IP");
+
+    // K/D from KillData log blocks (multi-line: Killer / Killed / KilledBy)
+    const logKD = path.join(sandbox, "PavlovKD.log");
+    fs.writeFileSync(logKD, "");
+    const tKD = ipBans.init({ logFiles: [logKD], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logKD,
+      '[2026.07.01-10.00.00:000][1]LogStats: "Killer": "Alpha",\n' +
+      '"KillerTeamID": 0,\n"Killed": "Bravo",\n"KilledTeamID": 1,\n"KilledBy": "AK",\n' +
+      '"Killer": "Bravo",\n"Killed": "Bravo",\n"KilledBy": "None",\n');   // suicide
+    await new Promise(r => setTimeout(r, 80));
+    clearInterval(tKD);
+    ok(ipBans.getKD("Alpha").kills === 1 && ipBans.getKD("Alpha").deaths === 0, "kill credited to the killer");
+    ok(ipBans.getKD("Bravo").deaths === 2 && ipBans.getKD("Bravo").kills === 0, "deaths credited; suicide counts as a death only (no kill)");
   }
 
   console.log("Faction rank caps:");

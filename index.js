@@ -555,7 +555,7 @@ const WAGE_TIERS = {
 };
 
 const WAGE_INTERVAL_MS        = 7 * 24 * 60 * 60 * 1000;
-const LEADERBOARD_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const LEADERBOARD_INTERVAL_MS = 30 * 60 * 1000;   // caps + playtime leaderboards refresh every 30 min
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
 const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1520598950787158107";
@@ -2581,6 +2581,9 @@ const commands = [
   new SlashCommandBuilder().setName("inspect")
     .setDescription("Owner — Full dossier on a courier (everything, incl. IPs & alts)")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("kd")
+    .setDescription("Kill/death stats — a courier's K/D, or the leaderboard")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
 ].map(c => c.toJSON());
 
 /* ================================================================
@@ -2782,7 +2785,7 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen"];
+  const PUBLIC         = ["help", "ping", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen", "kd"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
@@ -4766,6 +4769,33 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          STATS
          ───────────────────────────────────────────────────── */
+      case "kd": {
+        const raw = interaction.options.getString("playerid");
+        if (raw && raw.trim()) {
+          const playerId = sanitizeId(raw);
+          let k; try { k = ipBans.getKD(playerId); } catch { k = { name: playerId, kills: 0, deaths: 0 }; }
+          const ratio = (k.deaths ? k.kills / k.deaths : k.kills).toFixed(2);
+          return interaction.reply({ embeds: [
+            new EmbedBuilder().setColor(NV.AMBER).setTitle(`K/D — ${playerId}`)
+              .setDescription(`${DIVIDER}`)
+              .addFields(
+                { name: "Kills",  value: `**${k.kills}**`,  inline: true },
+                { name: "Deaths", value: `**${k.deaths}**`, inline: true },
+                { name: "Ratio",  value: `**${ratio}**`,    inline: true },
+              ).setFooter({ text: "Tracked from live kill logs while the bot is running" }).setTimestamp()
+          ]});
+        }
+        // no player -> leaderboard
+        let top = []; try { top = ipBans.topKD(100); } catch {}
+        if (!top.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("K/D Leaderboard").setDescription("No kill data tracked yet.").setTimestamp()] });
+        await interaction.deferReply();
+        const lines = top.map((e, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${e.name}**  ·  ${e.kills}/${e.deaths}  ·  **${e.ratio.toFixed(2)}** K/D`);
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.AMBER).setTitle("K/D Leaderboard")
+            .setDescription(`> *"Only the deadliest walk the Strip."*\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Sorted by K/D ratio" }), { perPage: 20 });
+      }
+
       case "stats": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
@@ -4809,6 +4839,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Last Seen",     value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
             { name: "Staff Notes",   value: notes.length ? `**${notes.length}** — use \`/note list ${playerId}\`` : "*None*", inline: true },
             { name: "Donator",       value: donator ? "Yes" : "No",                                       inline: true },
+            { name: "K / D",         value: (() => { let k; try { k = ipBans.getKD(playerId); } catch { k = null; } return k && (k.kills + k.deaths) ? `**${k.kills}** / **${k.deaths}**  ·  ${(k.deaths ? k.kills / k.deaths : k.kills).toFixed(2)}` : "*No record*"; })(), inline: true },
             { name: "Faction Ranks", value: fStr,                                                               inline: false },
           );
 

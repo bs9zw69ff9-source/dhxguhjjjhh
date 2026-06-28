@@ -29,6 +29,7 @@ const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");      // flagge
 const FNAMES_PATH    = path.join(__dirname, "ip_flagged_names.json");  // flagged usernames
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const CUTOFF_PATH    = path.join(__dirname, "ip_cutoff.json");      // ignore log lines older than this (set by "wipe all IP data")
+const KD_PATH        = path.join(__dirname, "kd.json");            // per-player kills/deaths
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 
@@ -48,6 +49,10 @@ const CLOSE_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3}):\d+.*?UniqueId:\s*([^
 const LOGIN_RE  = /Login request:\s*\?Name=([^?]+).*?userId:\s*(\S+)/i;                    // name + id
 const BAN_RE    = /Rcon:\s*BanPlayer\s+(\S+)/i;
 const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;
+// Kill/death stats — Pavlov logs a KillData block (fields on separate lines).
+const KILLER_RE   = /"Killer":\s*"([^"]*)"/;
+const KILLED_RE   = /"Killed":\s*"([^"]*)"/;
+const KILLEDBY_RE = /"KilledBy":\s*"([^"]*)"/;
 
 /* ---------------- small helpers ---------------- */
 const norm     = s => String(s ?? "").trim().toLowerCase();
@@ -83,9 +88,36 @@ const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
 const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe — collapse a disconnect's multiple close lines)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
 const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet — flag it when the kick confirms one)
+const pendingKill = {};           // per-file: { killer, killed } accumulated across a KillData block's lines
 let lastTs = 0, saveTimer = null, dirty = false;
 let cutoffTs = Number(loadJSON(CUTOFF_PATH, 0)) || 0;   // log lines at/older than this are ignored (post-wipe)
 function saveCutoff() { try { fs.writeFileSync(CUTOFF_PATH, JSON.stringify(cutoffTs)); } catch (e) { console.error("[ipBans] save cutoff:", e.message); } }
+
+/* ---------------- kill/death stats ---------------- */
+const kd = loadJSON(KD_PATH, {});   // { [nameLower]: { name, kills, deaths } }
+let kdDirty = false, kdTimer = null;
+function flushKD() { kdDirty = false; try { fs.writeFileSync(KD_PATH, JSON.stringify(kd, null, 2)); } catch (e) { console.error("[ipBans] save kd:", e.message); } }
+function scheduleKD() { kdDirty = true; if (kdTimer) return; kdTimer = setTimeout(() => { kdTimer = null; if (kdDirty) flushKD(); }, SAVE_THROTTLE_MS); }
+function bumpKD(name, field) {
+  const k = norm(name); if (!k) return;
+  const e = kd[k] || { name, kills: 0, deaths: 0 };
+  e.name = name; e[field] = (e[field] || 0) + 1; kd[k] = e; scheduleKD();
+}
+// Record one KillData block. Killed always gets a death; killer gets a kill unless
+// it's a suicide/self-death (killer === killed) or there's no real killer.
+function recordKill(pk) {
+  if (!pk || !pk.killed) return;
+  bumpKD(pk.killed, "deaths");
+  if (pk.killer && norm(pk.killer) !== norm(pk.killed)) bumpKD(pk.killer, "kills");
+}
+function getKD(name) { const e = kd[norm(name)]; return e ? { ...e } : { name: String(name), kills: 0, deaths: 0 }; }
+function topKD(limit = 30, minKills = 0) {
+  return Object.values(kd)
+    .filter(e => (e.kills + e.deaths) > 0 && e.kills >= minKills)
+    .map(e => ({ ...e, ratio: e.deaths ? e.kills / e.deaths : e.kills }))
+    .sort((a, b) => b.ratio - a.ratio || b.kills - a.kills)
+    .slice(0, limit);
+}
 
 /* ---------------- persistence ---------------- */
 function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2)); } catch (e) { console.error("[ipBans] save registry:", e.message); } }
@@ -397,6 +429,14 @@ function parseLine(line, server, key) {
   // backfill can't rebuild the data you just cleared.
   if (cutoffTs && ts && ts < cutoffTs) return;
 
+  // Kill/death stats — only live (backfill would re-count old kills on restart).
+  // A KillData block spans lines: "Killer"/"Killed"/"KilledBy"; finalize on KilledBy.
+  if (live) {
+    const mk = line.match(KILLER_RE);   if (mk) { (pendingKill[key] || (pendingKill[key] = {})).killer = mk[1]; return; }
+    const md = line.match(KILLED_RE);   if (md) { (pendingKill[key] || (pendingKill[key] = {})).killed = md[1]; return; }
+    const mb = line.match(KILLEDBY_RE); if (mb) { recordKill(pendingKill[key]); pendingKill[key] = {}; return; }
+  }
+
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
   const c = line.match(CLOSE_RE);
   if (c && !skipId(c[2])) {
@@ -485,6 +525,7 @@ function poll() {
     for (const l of lines) if (l) parseLine(l, label, f);
   }
   if (dirty) flushRegistry();
+  if (kdDirty) flushKD();
   pruneDebounceMaps();
 }
 
@@ -586,6 +627,8 @@ module.exports = {
   getAltsOf:                (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   getAltNamesOf:            (input) => altNamesForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   getRecord,
+  getKD,
+  topKD,
   addUntracked,
   removeUntracked,
   getUntracked,
