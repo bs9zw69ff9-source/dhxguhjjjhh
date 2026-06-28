@@ -27,6 +27,7 @@ const path = require("path");
 const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
 const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");      // flagged IPs
 const FNAMES_PATH    = path.join(__dirname, "ip_flagged_names.json");  // flagged usernames
+const FIDS_PATH      = path.join(__dirname, "ip_flagged_ids.json");    // flagged EOS/unique ids
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const CUTOFF_PATH    = path.join(__dirname, "ip_cutoff.json");      // ignore log lines older than this (set by "wipe all IP data")
 const KD_PATH        = path.join(__dirname, "kd.json");            // per-player kills/deaths
@@ -70,6 +71,7 @@ function loadJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, "utf
 const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
+const flaggedIds   = new Set((loadJSON(FIDS_PATH, []) || []).map(cleanId).filter(Boolean));               // flagged EOS/unique ids
 const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
 const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
 
@@ -124,6 +126,7 @@ function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, 
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
 function saveFlagged()    { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
 function saveFNames()     { try { fs.writeFileSync(FNAMES_PATH, JSON.stringify([...flaggedNames], null, 2)); } catch (e) { console.error("[ipBans] save flagged names:", e.message); } }
+function saveFIds()       { try { fs.writeFileSync(FIDS_PATH, JSON.stringify([...flaggedIds], null, 2)); } catch (e) { console.error("[ipBans] save flagged ids:", e.message); } }
 function saveUntracked()  { try { fs.writeFileSync(UNTRACKED_PATH, JSON.stringify([...untrackedNames], null, 2)); } catch (e) { console.error("[ipBans] save untracked:", e.message); } }
 
 /* ---------------- lookups ---------------- */
@@ -234,19 +237,24 @@ function blacklistPlayer(input) {
   // auto-bans anyone connecting under that name forever, which false-positives on
   // temp bans, kicks, warn-escalations and re-used names ("banned for no reason").
   // Username blacklisting is an explicit, owner-only action (flagTarget).
-  for (const id of ids) pendingFlag.set(id, Date.now());
-  // banned by a raw token not in the registry: flag it only if it's an IP.
+  // flag the player's EOS/unique id(s) — the strongest evader signal. Any account
+  // reconnecting with this id is auto-banned (the ban itself is still issued by name).
+  let fId = false;
+  for (const id of ids) { pendingFlag.set(id, Date.now()); if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; } }
+  if (fId) saveFIds();
+  // banned by a raw token not in the registry: flag it as an IP, otherwise as an id.
   if (!ids.length) {
     const raw = String(input ?? "").trim();
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw) && !flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); }
+    else { const cid = cleanId(raw); if (cid && !skipId(raw) && !flaggedIds.has(cid)) { flaggedIds.add(cid); saveFIds(); } }
   }
   return {
     ids, ips, alts: altNames,
     field: {
       name: "IP Enforcement",
       value: (ips.length
-        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} — any account from them is auto-banned.`
-        : "No connection IPs on record yet.") +
+        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} + ${ids.length} account id(s) — any account from them is auto-banned.`
+        : (ids.length ? `Flagged **${ids.length}** account id(s) — any reconnect with them is auto-banned.` : "No connection data on record yet.")) +
         (altNames.length ? `\nShares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
       inline: false,
     },
@@ -255,20 +263,23 @@ function blacklistPlayer(input) {
 function unblacklistPlayer(input) {
   const ids = resolveIds(input);
   const ips = ipsForIds(ids);
-  let nIp = 0, nName = 0;
+  let nIp = 0, nName = 0, nId = 0;
   for (const ip of ips) if (flagged.delete(ip)) nIp++;
   for (const id of ids) {
     const nm = norm(registry[id]?.name);
     if (nm && flaggedNames.delete(nm)) nName++;
+    if (flaggedIds.delete(id)) nId++;
     pendingFlag.delete(id);
   }
-  // also clear a raw name/ip token (e.g. unbanning by a value not in the registry)
+  // also clear a raw name/ip/id token (e.g. unbanning by a value not in the registry)
   const raw = String(input ?? "").trim();
   if (flaggedNames.delete(norm(raw))) nName++;
   if (flagged.delete(raw)) nIp++;
+  if (flaggedIds.delete(cleanId(raw))) nId++;
   if (nIp) saveFlagged();
   if (nName) saveFNames();
-  return { ids, ips, cleared: { ips: nIp, names: nName } };
+  if (nId) saveFIds();
+  return { ids, ips, cleared: { ips: nIp, names: nName, ids: nId } };
 }
 
 /* ---------------- public: clearing logged data (stop false bans) ---------------- */
@@ -307,12 +318,12 @@ function flagTarget(input) {
   return { kind: "username", value: val, added: fName, ids: [] };
 }
 // Everything currently blacklisted, by category.
-function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames] }; }
-// Clear ALL flags (IPs + usernames). Stops every auto-ban. Registry kept.
+function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames], ids: [...flaggedIds] }; }
+// Clear ALL flags (IPs + usernames + account ids). Stops every auto-ban. Registry kept.
 function clearFlags() {
-  const n = flagged.size + flaggedNames.size;
-  flagged.clear(); flaggedNames.clear();
-  saveFlagged(); saveFNames();
+  const n = flagged.size + flaggedNames.size + flaggedIds.size;
+  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
+  saveFlagged(); saveFNames(); saveFIds();
   return n;
 }
 // Clear only the flagged USERNAMES (keep flagged IPs). Stops "blacklisted
@@ -340,11 +351,11 @@ function clearIp(ip) {
 // Also set a cutoff at the latest log time so the next restart's backfill won't
 // rebuild what we just wiped — only connections AFTER the wipe are tracked again.
 function clearAll() {
-  const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size;
+  const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size + flaggedIds.size;
   for (const k of Object.keys(registry)) delete registry[k];
-  flagged.clear(); flaggedNames.clear();
+  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
   cutoffTs = Math.max(cutoffTs, lastTs || Date.now());
-  flushRegistry(); saveFlagged(); saveFNames(); saveCutoff();
+  flushRegistry(); saveFlagged(); saveFNames(); saveFIds(); saveCutoff();
   return { ids, flagged: fl };
 }
 
@@ -409,7 +420,8 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   //    they log in instead of only when they next disconnect.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
     const knownFlagged = (registry[id]?.cips || []).some(x => flagged.has(x));
-    const reason = (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
+    const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
+                 : (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
                  : knownFlagged                              ? "blacklisted IP"
                  : (confident && ip && flagged.has(ip))      ? "blacklisted IP"
                  : null;
@@ -469,10 +481,10 @@ function parseLine(line, server, key) {
     // retroactive auto-ban: an alt that slipped the ambiguous join check is caught
     // here with the 100%-accurate confirmed IP. Skip the freshly-banned account
     // itself (pendingFlag). The login-time check also catches them next connect.
-    if (live && flagged.has(ip) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
+    if (live && (flagged.has(ip) || flaggedIds.has(id)) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
         && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
       recentAuto.set(id, Date.now());
-      Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: "blacklisted IP" }))
+      Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: flaggedIds.has(id) ? "blacklisted account (EOS id)" : "blacklisted IP" }))
         .catch(e => { console.error("[ipBans] onAutoBan (confirm) failed:", e.message); recentAuto.delete(id); });
     }
     return;

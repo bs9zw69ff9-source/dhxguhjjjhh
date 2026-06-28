@@ -33,6 +33,7 @@ autoban_patterns.json
 ip_registry.json
 ip_blacklist.json
 ip_flagged_names.json
+ip_flagged_ids.json
 ip_untracked.json
 ip_cutoff.json
 

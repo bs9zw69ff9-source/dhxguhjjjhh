@@ -441,6 +441,25 @@ const ok = (cond, msg) => {
     clearInterval(tKD);
     ok(ipBans.getKD("Alpha").kills === 1 && ipBans.getKD("Alpha").deaths === 0, "kill credited to the killer");
     ok(ipBans.getKD("Bravo").deaths === 2 && ipBans.getKD("Bravo").kills === 0, "deaths credited; suicide counts as a death only (no kill)");
+
+    // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
+    const logEid = path.join(sandbox, "PavlovEID.log");
+    fs.writeFileSync(logEid, "");
+    let autoEid = null;
+    const tEid = ipBans.init({ logFiles: [logEid], onAutoBan: async (i) => { autoEid = i; }, pollMs: 20 });
+    fs.appendFileSync(logEid,
+      "[2026.07.02-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 20.20.20.20:1\n" +
+      "[2026.07.02-10.00.00:200][2]LogNet: Login request: ?Name=Evader2?pid=Evader2 userId: NULL:eos01 platform: NULL\n" +
+      "[2026.07.02-10.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 20.20.20.20:1, UniqueId: NULL:eos01\n");
+    await new Promise(r => setTimeout(r, 60));
+    ipBans.blacklistPlayer("Evader2");
+    ok(ipBans.getBlacklist().ids.includes("eos01"), "blacklistPlayer flags the player's EOS/account id");
+    fs.appendFileSync(logEid,
+      "[2026.07.02-10.05.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 30.30.30.30:9\n" +
+      "[2026.07.02-10.05.00:200][5]LogNet: Login request: ?Name=NewAlias?pid=NewAlias userId: NULL:eos01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tEid);
+    ok(autoEid && autoEid.name === "NewAlias", "same EOS id from a new IP/name is auto-banned");
   }
 
   console.log("Faction rank caps:");

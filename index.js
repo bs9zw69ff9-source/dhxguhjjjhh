@@ -4068,6 +4068,7 @@ client.on("interactionCreate", async (interaction) => {
             .addFields(
               { name: `IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
               { name: `Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
+              { name: `Account IDs (${(b.ids || []).length})`, value: fmt(b.ids || []), inline: false },
             ).setTimestamp());
           return sel.update({ embeds: [e], components: [] });
         }
