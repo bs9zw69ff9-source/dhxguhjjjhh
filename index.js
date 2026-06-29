@@ -4059,11 +4059,19 @@ client.on("interactionCreate", async (interaction) => {
         const isGive    = name === "givemenu";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                         // ← ADDED
-        if (isGive && menuValue === "highstaff") {
-          // High Staff needs three distinct RCON commands — run each separately.
-          await sendRconBoth(`AddMod ${playerId}`, server);
-          await sendRconBoth(`AddAccessManager ${playerId}`, server);
-          await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
+        if (menuValue === "highstaff") {
+          // High Staff is three distinct grants — mirror them on strip so revoking
+          // wipes the player's NAME from the Mod / Access Manager lists AND their
+          // menu bit code, instead of only pulling the bit code.
+          if (isGive) {
+            await sendRconBoth(`AddMod ${playerId}`, server);
+            await sendRconBoth(`AddAccessManager ${playerId}`, server);
+            await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
+          } else {
+            await sendRconBoth(`RemoveMenu ${playerId} ${menuId}`, server);
+            await sendRconBoth(`RemoveAccessManager ${playerId}`, server);
+            await sendRconBoth(`RemoveMod ${playerId}`, server);
+          }
         } else {
           await sendRconBoth(`${isGive ? "GiveMenu" : "RemoveMenu"} ${playerId} ${menuId}`, server);
         }
@@ -4087,8 +4095,10 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Persistence", value: isGive ? "Recorded for tracking. Not re-applied automatically on rejoin." : "Removed from the grant record.", inline: false },
           ).setTimestamp();
         // High Staff: the bot ran all three commands automatically (each separately).
-        if (isGive && menuValue === "highstaff") {
-          embed.addFields({ name: "Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
+        if (menuValue === "highstaff") {
+          embed.addFields({ name: "Auto-applied (each run separately)", value: isGive
+            ? `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\``
+            : `\`\`\`\nRemoveMenu ${playerId} <menu bitmask>\nRemoveAccessManager ${playerId}\nRemoveMod ${playerId}\n\`\`\`` , inline: false });
         }
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });     // ← CHANGED
