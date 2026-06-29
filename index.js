@@ -2145,17 +2145,17 @@ function buildLeaderboardEmbed() {
     .setTitle(`New Vegas Caps — Top ${LEADERBOARD_TOP_N}`);
   if (!entries) return brand(embed.setColor(NV.RUST_RED)
     .setDescription(`${hero("Vault records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
-    { footer: { text: `Updated every 6h` } });
+    { footer: { text: `Updated every 30s` } });
   if (!entries.length) return brand(embed.setColor(NV.IRRAD_GREEN)
     .setDescription(`${hero("No ledgers found.")}\nNo cap records on file yet.`),
-    { footer: { text: `Updated every 6h` } });
+    { footer: { text: `Updated every 30s` } });
   const top = entries[0]?.balance || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} caps${meter}`;
   }).join("\n");
   return brand(embed.setDescription(`${hero("War never changes. But caps? Caps fluctuate.")}\n${body}`),
-    { thumb: true, footer: { text: `Updated every 6h` } });
+    { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
 let lastLeaderboardMsgId = null;
@@ -2189,14 +2189,14 @@ function buildPlaytimeLeaderboardEmbed() {
     .setTitle(`Most Active Couriers — Top ${LEADERBOARD_TOP_N}`);
   if (!entries.length) return brand(embed
     .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while couriers are online (sampled every 60s).`),
-    { footer: { text: `Updated every 6h` } });
+    { footer: { text: `Updated every 30s` } });
   const top = entries[0]?.minutes || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.minutes, top, 8)}\`` : "";
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(`${hero("Time served in the Mojave.")}\n${body}`),
-    { thumb: true, footer: { text: `Updated every 6h` } });
+    { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
 let lastPlaytimeLbMsgId = null;
