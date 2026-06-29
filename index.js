@@ -202,17 +202,47 @@ function _rawRead(file, fallback) {
   }
 }
 
-// Keep a file owned by whoever owns its parent directory. When the bot runs as
-// root but writes into the Steam/Pavlov tree (FactionRoles, ModSave economy),
-// a freshly-written file is root-owned and the game server (running as `steam`)
-// can no longer manage it. After writing such a file, match it to the dir owner.
-// chown only works as root; otherwise it throws and we ignore it (no-op).
+// Keep files the bot writes into the Steam/Pavlov tree owned by `steam`, not root.
+// When the bot runs as root, anything it writes — and any directory it has to
+// create on the way — is root-owned, so the game server (running as `steam`) can
+// no longer manage it. Matching only the immediate parent isn't enough: if the bot
+// created that parent dir too, the dir is ALSO root-owned and the file just inherits
+// root. So we climb to the nearest ancestor that ISN'T root-owned (the real `steam`
+// owner) and hand the file plus every root-owned directory in between to that owner.
+// If the whole chain up to the filesystem root is root-owned, the path is part of the
+// bot's own tree (its JSON state) — leave it as root. chown is a no-op unless we're root.
+// Climb from a directory to the nearest ancestor that ISN'T root-owned and return
+// its {uid,gid} — i.e. the user the game server runs as (`steam`). Returns null if
+// everything up to "/" is root-owned (the bot's own tree).
+function intendedOwner(startDir) {
+  let probe = startDir;
+  for (let i = 0; i < 16; i++) {
+    let st; try { st = fs.statSync(probe); } catch { return null; }
+    if (st.uid !== 0 || st.gid !== 0) return { uid: st.uid, gid: st.gid };
+    const parent = path.dirname(probe);
+    if (parent === probe) return null;                       // reached "/"
+    probe = parent;
+  }
+  return null;
+}
+
 function matchTreeOwner(filePath) {
   try {
     if (!process.getuid || process.getuid() !== 0) return;   // only root can chown to another user
-    const dir = fs.statSync(path.dirname(filePath));
-    const f   = fs.statSync(filePath);
-    if (f.uid !== dir.uid || f.gid !== dir.gid) fs.chownSync(filePath, dir.uid, dir.gid);
+    const owner = intendedOwner(path.dirname(filePath));
+    if (!owner) return;                                      // entirely root-owned (bot's own tree) — leave it
+    // Hand the file — and any root-owned directories we had to create on the way —
+    // to the real owner, stopping once we reach a directory it already owns.
+    let cur = filePath;
+    for (let i = 0; i < 16; i++) {
+      let st; try { st = fs.statSync(cur); } catch { break; }
+      if (st.uid !== owner.uid || st.gid !== owner.gid) { try { fs.chownSync(cur, owner.uid, owner.gid); } catch {} }
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      let pst; try { pst = fs.statSync(parent); } catch { break; }
+      if (pst.uid === owner.uid && pst.gid === owner.gid) break;   // parent already correct — done
+      cur = parent;
+    }
   } catch {}
 }
 
@@ -854,7 +884,7 @@ function mirrorPaths(p) {
 // torn one). Skips the write entirely if the file already holds this exact content,
 // so we only ever rewrite files that actually changed. Returns true on success.
 function atomicWriteFile(fp, content) {
-  try { if (fs.readFileSync(fp, "utf8") === content) return true; } catch {}   // already up to date — don't rewrite
+  try { if (fs.readFileSync(fp, "utf8") === content) { matchTreeOwner(fp); return true; } } catch {}   // already up to date — don't rewrite, but still heal ownership
   const tmp = `${fp}.tmp.${process.pid}.${Date.now()}`;
   try {
     fs.mkdirSync(path.dirname(fp), { recursive: true });
@@ -1008,6 +1038,37 @@ function ensureFactionFiles() {
   }
   for (const fp of mirrorPaths(DONATOR_FILE)) if (ensureFile(fp, "")) created++;
   logger.info("Init", `Faction files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` — created ${created} missing` : ""));
+}
+
+// One-time startup sweep: hand any already-root-owned files in the Steam tree the bot
+// writes to (Config/blacklist, ModSave/banlist, FactionRoles, economy) back to the
+// game-server user, so accumulated root ownership self-heals on the next restart.
+function healTreeOwnership() {
+  try {
+    if (!process.getuid || process.getuid() !== 0) return;   // only root can chown
+    const dirs = new Set();
+    for (const base of PAVLOV_BASES) {
+      dirs.add(path.join(base, "Pavlov/Saved/Config"));
+      dirs.add(path.join(base, "Pavlov/Saved/Config/ModSave"));
+      dirs.add(path.join(base, "Pavlov/Saved/Config/ModSave/FactionRoles"));
+    }
+    const mp = getModsavePath(); if (mp) dirs.add(mp);
+    let fixed = 0;
+    for (const dir of dirs) {
+      let st; try { st = fs.statSync(dir); } catch { continue; }
+      const owner = (st.uid !== 0 || st.gid !== 0) ? { uid: st.uid, gid: st.gid } : intendedOwner(path.dirname(dir));
+      if (!owner) continue;                                  // can't tell who should own it — skip
+      if (st.uid !== owner.uid || st.gid !== owner.gid) { try { fs.chownSync(dir, owner.uid, owner.gid); fixed++; } catch {} }
+      let names; try { names = fs.readdirSync(dir); } catch { continue; }
+      for (const name of names) {
+        const fp = path.join(dir, name);
+        let fst; try { fst = fs.statSync(fp); } catch { continue; }
+        if (!fst.isFile()) continue;                         // shallow: leave nested dirs to their own pass
+        if (fst.uid !== owner.uid || fst.gid !== owner.gid) { try { fs.chownSync(fp, owner.uid, owner.gid); fixed++; } catch {} }
+      }
+    }
+    if (fixed) logger.info("Init", `Ownership heal: returned ${fixed} steam file(s)/dir(s) to the game-server user`);
+  } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
 }
 
 /* ================================================================
@@ -2784,6 +2845,7 @@ client.once("ready", async () => {
   });
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
+  try { healTreeOwnership(); } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
   try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }
