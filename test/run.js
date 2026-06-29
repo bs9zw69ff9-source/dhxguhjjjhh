@@ -45,6 +45,13 @@ process.env.LOG_LEVEL       = "ERROR";
 process.env.DONATOR_PATH    = path.join(sandbox, "donator.txt");
 process.env.BLACKLIST_IDS   = "55, 66";
 
+// Point the faction tree at a sandbox install so the destruction-guard tests
+// write to real (throwaway) files instead of /home/steam/pavlovserver.
+const pavBase = path.join(sandbox, "pavlovserver");
+fs.mkdirSync(path.join(pavBase, "Pavlov/Saved/Config/ModSave/FactionRoles"), { recursive: true });
+process.env.PAVLOV_BASE_1 = pavBase;
+process.env.PAVLOV_BASES  = pavBase;
+
 const bot = require(path.join(sandbox, "index.js"));
 
 let pass = 0, fail = 0;
@@ -54,6 +61,19 @@ const ok = (cond, msg) => {
 };
 
 (async () => {
+  console.log("Faction file destruction guard:");
+  {
+    const roster = ["a","b","c","d","e","f","g","h","i","j"];
+    fs.writeFileSync(path.join(bot.FACTION_ROLES_PATH, "ncrspawn.txt"), roster.join("\n") + "\n");
+    ok(bot.writeFactionFile("ncrspawn.txt", [...roster, "k"]) === true, "single add (no drops) allowed");
+    ok(bot.writeFactionFile("ncrspawn.txt", roster) === true, "single remove allowed");
+    ok(bot.writeFactionFile("ncrspawn.txt", ["a"]) === false, "mass deletion refused");
+    ok(bot.readFactionFile("ncrspawn.txt").length === 10, "roster left intact after refused write");
+    ok(bot.writeFactionFile("ncrspawn.txt", ["a"], { allowBulk: true }) === true, "allowBulk overrides the guard");
+    ok(bot.readFactionFile("ncrspawn.txt").length === 1, "bulk write applied");
+    ok(bot.writeFactionFile("ncrspawn.txt", "not-an-array") === false, "non-array payload rejected");
+  }
+
   console.log("Player notes:");
   ok(await bot.addPlayerNote("P1", "a", "m") === 1, "first note -> 1");
   ok(await bot.addPlayerNote("p1", "b", "m") === 2, "case-insensitive key -> 2");

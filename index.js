@@ -1740,9 +1740,52 @@ function readFactionFile(spawnFile) {
   } catch (err) { if (err.code === "ENOENT") { ensureFile(fp, ""); return []; } return null; }
 }
 
-function writeFactionFile(spawnFile, lines) {
+// A normal whitelist op (add / remove / rank / transfer) changes a roster by at most
+// a couple of entries. If a write would DELETE more than this many existing entries it
+// is almost certainly corruption — e.g. a glitched/locked read that came back short, or
+// a bug building the in-memory list — so we REFUSE it. Genuine bulk rewrites (restore a
+// snapshot, import) pass { allowBulk: true } to opt out of the guard.
+const FACTION_BULK_DROP_LIMIT = 5;
+const FACTION_BAK_DIR = "./faction_file_bak";   // bot-local pre-write snapshots (NOT in the game tree)
+
+// Keep one rolling pre-write copy of a faction file so any bad write is recoverable by hand.
+function backupFactionFile(spawnFile, content) {
+  try {
+    fs.mkdirSync(FACTION_BAK_DIR, { recursive: true });
+    fs.writeFileSync(path.join(FACTION_BAK_DIR, spawnFile + ".bak"), content, "utf8");
+  } catch { /* best-effort; never block the real write */ }
+}
+
+function writeFactionFile(spawnFile, lines, opts = {}) {
   const fp = path.join(FACTION_ROLES_PATH, spawnFile);
-  if (writeGameFile(fp, lines.join("\n") + "\n")) return true;   // mirrored to both installs
+  if (!Array.isArray(lines)) {
+    logger.error("Faction", `Refused write to ${spawnFile}: payload is not an array`);
+    return false;
+  }
+  // ---- Destruction guard: verify we're not silently wiping a populated roster. ----
+  if (!opts.allowBulk) {
+    let raw = null;
+    try { raw = fs.readFileSync(fp, "utf8"); }
+    catch (e) {
+      if (e.code !== "ENOENT") {   // can't read current file to compare → refuse rather than risk a wipe
+        logger.error("Faction", `Refused write to ${spawnFile}: cannot verify current contents (${e.code}). Aborting to protect the roster.`);
+        return false;
+      }
+    }
+    if (raw !== null) {
+      const current = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      backupFactionFile(spawnFile, raw);   // snapshot BEFORE we change anything
+      if (current.length) {
+        const keep    = new Set(lines.map(l => String(l).toLowerCase()));
+        const dropped = current.filter(l => !keep.has(l.toLowerCase())).length;
+        if (dropped > FACTION_BULK_DROP_LIMIT) {
+          logger.error("Faction", `REFUSED write to ${spawnFile}: would remove ${dropped} of ${current.length} entries (limit ${FACTION_BULK_DROP_LIMIT}). Suspected corruption — roster left untouched.`);
+          return false;
+        }
+      }
+    }
+  }
+  if (writeGameFile(fp, lines.join("\n") + "\n")) return true;   // mirrored to every install
   logger.error("Faction", `Write failed for ${spawnFile}`);
   return false;
 }
@@ -1760,7 +1803,23 @@ function readDonatorFile() {
   }
 }
 
-function writeDonatorFile(lines) {
+function writeDonatorFile(lines, opts = {}) {
+  if (!Array.isArray(lines)) { logger.error("Donator", "Refused write: payload is not an array"); return false; }
+  if (!opts.allowBulk) {   // same destruction guard as faction files
+    let raw = null;
+    try { raw = fs.readFileSync(DONATOR_FILE, "utf8"); }
+    catch (e) { if (e.code !== "ENOENT") { logger.error("Donator", `Refused write: cannot verify current contents (${e.code})`); return false; } }
+    if (raw !== null) {
+      const current = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      backupFactionFile("donator.txt", raw);
+      const keep    = new Set(lines.map(l => String(l).toLowerCase()));
+      const dropped = current.filter(l => !keep.has(l.toLowerCase())).length;
+      if (dropped > FACTION_BULK_DROP_LIMIT) {
+        logger.error("Donator", `REFUSED write: would remove ${dropped} of ${current.length} entries (limit ${FACTION_BULK_DROP_LIMIT}). Suspected corruption.`);
+        return false;
+      }
+    }
+  }
   if (writeGameFile(DONATOR_FILE, lines.join("\n") + "\n")) {   // mirrored to both installs
     logger.info("Donator", `Wrote ${lines.length} entr${lines.length === 1 ? "y" : "ies"} to ${DONATOR_FILE} (both installs)`);
     return true;
@@ -1816,7 +1875,11 @@ function addPlayerToRankFile(faction, playerId, rank) {
     logger.warn("Faction", `No rank file mapped for ${faction}/${rank}`);
     return true;
   }
-  const lines = readFactionFile(rankFile) ?? [];
+  const lines = readFactionFile(rankFile);
+  if (lines === null) {   // real I/O error — do NOT treat as empty (that would wipe the file)
+    logger.error("Faction", `Cannot read ${rankFile} to add ${playerId}; aborting to protect the roster`);
+    return false;
+  }
   if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) return true;
   lines.push(playerId);
   return writeFactionFile(rankFile, lines);
@@ -2004,8 +2067,13 @@ function saveFactionBackup() {
 function loadFactionBackup() {
   const data = safeRead(FILES.FACTION_BACKUP, null);
   if (!data || !data.files || !Object.keys(data.files).length) return { ok: false, empty: true };
+  // Snapshot the live rosters before overwriting, so a mistaken restore can be undone by hand.
+  for (const f of Object.keys(data.files)) {
+    try { backupFactionFile(f, fs.readFileSync(path.join(FACTION_ROLES_PATH, f), "utf8")); } catch {}
+  }
   let restored = 0;
-  for (const [f, lines] of Object.entries(data.files)) { if (writeFactionFile(f, lines)) restored++; }
+  // allowBulk: a restore legitimately rewrites whole rosters (may remove many entries).
+  for (const [f, lines] of Object.entries(data.files)) { if (writeFactionFile(f, lines, { allowBulk: true })) restored++; }
   return { ok: true, restored, savedAt: data.savedAt };
 }
 
@@ -4383,7 +4451,8 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not whitelisted in **${fromFaction}**.`)], ephemeral: true });
           }
           const toSpawn = SPAWN_FILE_MAP[toFaction];
-          const toLines = readFactionFile(toSpawn) ?? [];
+          const toLines = readFactionFile(toSpawn);
+          if (toLines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${toFaction}**. Transfer aborted to protect the roster.`)], ephemeral: true });
           const toCap   = getFactionCap(toFaction);
           if (toLines.length >= toCap) {
             return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${toFaction}** is at capacity (**${toLines.length}/${toCap}** members).\n\nIncrease the cap with \`/faction setcap\` or remove a member first.`)], ephemeral: true });
@@ -4449,7 +4518,8 @@ client.on("interactionCreate", async (interaction) => {
             return interaction.reply({ embeds: [errorEmbed("Already in a Faction",
               `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A courier can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], ephemeral: true });
           }
-          const lines = readFactionFile(spawn) ?? [];
+          const lines = readFactionFile(spawn);
+          if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], ephemeral: true });
           if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
             return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks — a member can hold several.`)], ephemeral: true });
           }
@@ -5032,4 +5102,6 @@ module.exports = {
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
   getFactionRankCap, getFactionRankCaps, setFactionRankCap,
+  // faction file safety
+  readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
 };
