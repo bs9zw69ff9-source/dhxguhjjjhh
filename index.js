@@ -2653,11 +2653,9 @@ const commands = [
     .addStringOption(o => o.setName("menu").setDescription("Menu to grant").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("stripmenu")
-    .setDescription("Admin — Revoke RCON menu access from a courier")
+    .setDescription("Admin — Revoke ALL RCON menu access from a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption)
-    .addStringOption(o => o.setName("menu").setDescription("Menu to revoke").setRequired(true)
-      .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
+    .addStringOption(serverOption),
   new SlashCommandBuilder().setName("stripmenuall")
     .setDescription("Owner — Revoke a menu from EVERY player who holds it (both servers)")
     .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
@@ -4049,59 +4047,67 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          GIVEMENU / STRIPMENU  ← deferReply added
          ───────────────────────────────────────────────────── */
-      case "givemenu":
-      case "stripmenu": {
+      case "givemenu": {
         const playerId  = sanitizeId(interaction.options.getString("playerid"));
         const server    = interaction.options.getString("server");
         const menuValue = interaction.options.getString("menu");
         const menuMeta  = MENUS.find(m => m.value === menuValue);
         const menuId    = menuMeta?.menuId ?? menuValue;
-        const isGive    = name === "givemenu";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        await interaction.deferReply();                         // ← ADDED
+        await interaction.deferReply();
         if (menuValue === "highstaff") {
-          // High Staff is three distinct grants — mirror them on strip so revoking
-          // wipes the player's NAME from the Mod / Access Manager lists AND their
-          // menu bit code, instead of only pulling the bit code.
-          if (isGive) {
-            await sendRconBoth(`AddMod ${playerId}`, server);
-            await sendRconBoth(`AddAccessManager ${playerId}`, server);
-            await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
-          } else {
-            await sendRconBoth(`RemoveMenu ${playerId} ${menuId}`, server);
-            await sendRconBoth(`RemoveAccessManager ${playerId}`, server);
-            await sendRconBoth(`RemoveMod ${playerId}`, server);
-          }
+          // High Staff needs three distinct RCON commands — run each separately.
+          await sendRconBoth(`AddMod ${playerId}`, server);
+          await sendRconBoth(`AddAccessManager ${playerId}`, server);
+          await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
         } else {
-          await sendRconBoth(`${isGive ? "GiveMenu" : "RemoveMenu"} ${playerId} ${menuId}`, server);
+          await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
         }
-        if (isGive) {
-          addMenuGrant(playerId, server, menuValue, menuId, interaction.user.tag);
-        } else {
-          if (server === "both") {
-            removeMenuGrant(playerId, "server1", menuValue);
-            removeMenuGrant(playerId, "server2", menuValue);
-          }
-          removeMenuGrant(playerId, server, menuValue);
-        }
-        const embed = new EmbedBuilder().setColor(isGive ? NV.AMBER : NV.NCR_TAN)
-          .setTitle(isGive ? "Menu Access Granted" : "Menu Access Revoked")
+        addMenuGrant(playerId, server, menuValue, menuId, interaction.user.tag);
+        const embed = new EmbedBuilder().setColor(NV.AMBER)
+          .setTitle("Menu Access Granted")
           .setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "Courier", value: `\`${playerId}\``,                                  inline: true },
-            { name: "Server",  value: `${serverLabel(server)}`,   inline: true },
-            { name: "Menu",    value: menuMeta?.name ?? menuValue,                        inline: true },
-            { name: isGive ? "Granted By" : "Revoked By", value: `${interaction.user}`, inline: false },
-            { name: "Persistence", value: isGive ? "Recorded for tracking. Not re-applied automatically on rejoin." : "Removed from the grant record.", inline: false },
+            { name: "Courier", value: `\`${playerId}\``,            inline: true },
+            { name: "Server",  value: `${serverLabel(server)}`,    inline: true },
+            { name: "Menu",    value: menuMeta?.name ?? menuValue,  inline: true },
+            { name: "Granted By", value: `${interaction.user}`,     inline: false },
+            { name: "Persistence", value: "Recorded for tracking. Not re-applied automatically on rejoin.", inline: false },
           ).setTimestamp();
-        // High Staff: the bot ran all three commands automatically (each separately).
         if (menuValue === "highstaff") {
-          embed.addFields({ name: "Auto-applied (each run separately)", value: isGive
-            ? `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\``
-            : `\`\`\`\nRemoveMenu ${playerId} <menu bitmask>\nRemoveAccessManager ${playerId}\nRemoveMod ${playerId}\n\`\`\`` , inline: false });
+          embed.addFields({ name: "Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
         }
         brand(embed); await logAction(embed);
-        return interaction.editReply({ embeds: [embed] });     // ← CHANGED
+        return interaction.editReply({ embeds: [embed] });
+      }
+
+      case "stripmenu": {
+        // RemoveMenu clears the player's menu bit code regardless of which menu —
+        // so there's no menu to choose. We wipe everything: the bit code AND the
+        // player's NAME from the Mod / Access Manager lists (for any High Staff grant).
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const server   = interaction.options.getString("server");
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        await interaction.deferReply();
+        await sendRconBoth(`RemoveMenu ${playerId}`, server);          // clears the menu bit code
+        await sendRconBoth(`RemoveAccessManager ${playerId}`, server); // wipe name from Access Manager
+        await sendRconBoth(`RemoveMod ${playerId}`, server);           // wipe name from Mods
+        // Clear every menu grant record for this player on the affected server(s).
+        for (const m of MENUS) {
+          if (server === "both") { removeMenuGrant(playerId, "server1", m.value); removeMenuGrant(playerId, "server2", m.value); }
+          removeMenuGrant(playerId, server, m.value);
+        }
+        const embed = brand(new EmbedBuilder().setColor(NV.NCR_TAN)
+          .setTitle("Menu Access Revoked")
+          .setDescription(`${DIVIDER}`)
+          .addFields(
+            { name: "Courier", value: `\`${playerId}\``,         inline: true },
+            { name: "Server",  value: `${serverLabel(server)}`, inline: true },
+            { name: "Revoked By", value: `${interaction.user}`,  inline: false },
+            { name: "Applied (each run separately)", value: `\`\`\`\nRemoveMenu ${playerId}\nRemoveAccessManager ${playerId}\nRemoveMod ${playerId}\n\`\`\``, inline: false },
+          ).setTimestamp());
+        await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
