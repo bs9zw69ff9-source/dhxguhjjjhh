@@ -46,8 +46,27 @@ const SAVE_THROTTLE_MS    = 3000;             // coalesce registry writes (disco
 /* ---------------- REGEXES (validated against real Pavlov logs) ---------------- */
 const TS_RE     = /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3})\]/;
 const ACCEPT_RE = /(?:NotifyAcceptingConnection accepted from:|NotifyAcceptedConnection:.*?RemoteAddr:|AddClientConnection:.*?RemoteAddr:)\s*((?:\d{1,3}\.){3}\d{1,3})/;
-const CLOSE_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3}):\d+.*?UniqueId:\s*([^\s,]+)/;   // same-line IP + id
-const LOGIN_RE  = /Login request:\s*\?Name=([^?]+).*?userId:\s*(\S+)/i;                    // name + id
+// Order-independent field extractors. Any line carrying BOTH a RemoteAddr IP and a
+// UniqueId is a confirmed IP<->id pairing (no matter the field order); any Login/Join
+// request line yields the player name + id. This is far more tolerant than a single
+// rigid same-line regex when Pavlov pads or reorders these fields between versions.
+const IP_FIELD_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3})/i;                    // the IP, anywhere on the line
+const UID_FIELD_RE = /UniqueId:\s*([^\s,]+)/i;                                      // disconnect-style id field
+const NAME_OPT_RE  = /[?&]Name=([^?&]+)/i;                                          // ?Name=Foo option
+const UID_LOGIN_RE = /(?:userId|PlayerId|UniqueId|userid)\s*[:=]\s*([^\s,?&]+)/i;   // login-style id field
+// A confirmed pairing = a line with both an IP and a disconnect-style id.
+function extractClose(line) {
+  const ipm = line.match(IP_FIELD_RE), idm = line.match(UID_FIELD_RE);
+  return (ipm && idm) ? { ip: ipm[1], id: idm[1] } : null;
+}
+// A login/join line = name (optional) + id (required to link).
+function extractLogin(line) {
+  if (!/Login request:|Join request:/i.test(line)) return null;
+  const idm = line.match(UID_LOGIN_RE);
+  if (!idm) return null;
+  const nm = line.match(NAME_OPT_RE);
+  return { name: nm ? nm[1].trim() : null, id: idm[1] };
+}
 const BAN_RE    = /Rcon:\s*BanPlayer\s+(\S+)/i;
 const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;
 // Kill/death stats — Pavlov logs a KillData block (fields on separate lines).
@@ -460,10 +479,11 @@ function parseLine(line, server, key) {
   }
 
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
-  const c = line.match(CLOSE_RE);
-  if (c && !skipId(c[2])) {
-    const id = cleanId(c[2]), ip = c[1];
-    record(c[2], null, ip, ts, true);          // confirmed same-line pairing
+  const c = extractClose(line);
+  if (c && !skipId(c.id)) {
+    const id = cleanId(c.id), ip = c.ip;
+    const nm = line.match(NAME_OPT_RE);         // some close lines also carry ?Name= — attach it if so
+    record(c.id, nm ? nm[1].trim() : null, ip, ts, true);   // confirmed same-line pairing
     // count one completed connection per disconnect (a disconnect emits several
     // close lines a few ms apart — collapse them by LOG time so backfill counts too).
     // Count one completed connection per disconnect, using a PERSISTED per-id
@@ -506,14 +526,14 @@ function parseLine(line, server, key) {
   if (a) { pendingIP[key] = a[1]; pendingTs[key] = ts; (pendingSet[key] || (pendingSet[key] = new Set())).add(a[1]); return; }
 
   // 3) login line — name + id, correlated with the most recent accept IP
-  const m = line.match(LOGIN_RE);
-  if (m) {
+  const lg = extractLogin(line);
+  if (lg) {
     const within    = ts - (pendingTs[key] ?? 0) <= CORRELATE_WINDOW_MS;
     const ip        = within ? (pendingIP[key] ?? null) : null;
     const confident = within && !!pendingSet[key] && pendingSet[key].size === 1;   // exactly one connection pending
     pendingIP[key] = null;
     if (pendingSet[key]) pendingSet[key].clear();
-    handleJoin(m[1].trim(), m[2], ip, ts, server, confident);
+    handleJoin(lg.name, lg.id, ip, ts, server, confident);
     return;
   }
 
@@ -633,7 +653,16 @@ function init(opts = {}) {
 
   live = false; poll();              // backfill (no feed / no auto-ban for old joins)
   live = true;                       // everything from here on is a live event
-  console.log(`[ipBans] ready — ${Object.keys(registry).length} known IDs, ${flagged.size} flagged IPs. Watching ${watchList.length} file(s) every ${(opts.pollMs || POLL_MS) / 1000}s.`);
+
+  // Linkage health: how many accounts have a NAME and a CONFIRMED IP. If ids are
+  // known but none are fully linked, the log format isn't pairing IPs to accounts
+  // (so account bans can't flag IPs) — surface it loudly with the fix pointer.
+  const all   = Object.keys(registry);
+  const named = all.filter(id => registry[id].name).length;
+  const cipd  = all.filter(id => (registry[id].cips || []).length).length;
+  const linked = all.filter(id => registry[id].name && (registry[id].cips || []).length).length;
+  console.log(`[ipBans] ready — ${all.length} known IDs (${named} named, ${cipd} with a confirmed IP, ${linked} fully linked), ${flagged.size} flagged IPs. Watching ${watchList.length} file(s) every ${(opts.pollMs || POLL_MS) / 1000}s.`);
+  if (all.length && !linked) console.warn(`[ipBans] WARNING: no account has a confirmed IP yet — account bans can't flag IPs. Run \`node ipBans.js\` and check the close=(IP+id) count to verify the log format.`);
   return setInterval(poll, opts.pollMs || POLL_MS);
 }
 
@@ -682,7 +711,7 @@ if (require.main === module) {
     try { fs.accessSync(f, fs.constants.R_OK); console.log("  ✓ readable"); } catch { console.log("  ✗ NOT readable by this user"); continue; }
     const tail = (() => { const from = Math.max(0, st.size - 2 * 1024 * 1024); const fd = fs.openSync(f, "r"); const b = Buffer.alloc(st.size - from); fs.readSync(fd, b, 0, b.length, from); fs.closeSync(fd); return b.toString("utf8").split(/\r?\n/); })();
     let nA = 0, nL = 0, nC = 0, nB = 0;
-    for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (LOGIN_RE.test(l)) nL++; if (CLOSE_RE.test(l)) nC++; if (BAN_RE.test(l)) nB++; }
+    for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (extractLogin(l)) nL++; if (extractClose(l)) nC++; if (BAN_RE.test(l)) nB++; }
     console.log(`  matches in last ${tail.length} lines:  accept=${nA}  login=${nL}  close(IP+id)=${nC}  ban=${nB}`);
     if (!nL && !nC) console.log("  no join/disconnect lines matched — wrong/empty log, or unexpected format.");
   }
