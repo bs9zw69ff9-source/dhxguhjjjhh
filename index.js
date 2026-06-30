@@ -1040,34 +1040,42 @@ function ensureFactionFiles() {
   logger.info("Init", `Faction files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` — created ${created} missing` : ""));
 }
 
-// One-time startup sweep: hand any already-root-owned files in the Steam tree the bot
-// writes to (Config/blacklist, ModSave/banlist, FactionRoles, economy) back to the
-// game-server user, so accumulated root ownership self-heals on the next restart.
+// One-time startup sweep: hand any already-root-owned files THE BOT WRITES back to
+// the game-server user, so accumulated root ownership self-heals on restart.
+// CRITICAL: this only ever touches files the bot itself writes (blacklist.txt,
+// banlist.txt, donator + faction whitelists, economy balances). It must NEVER touch
+// the server's own config (Game.ini, mods.txt, RconSettings.txt, game saves) — the
+// server WRITES those, and changing their owner would crash it on the next map load.
 function healTreeOwnership() {
   try {
     if (!process.getuid || process.getuid() !== 0) return;   // only root can chown
-    const dirs = new Set();
-    for (const base of PAVLOV_BASES) {
-      dirs.add(path.join(base, "Pavlov/Saved/Config"));
-      dirs.add(path.join(base, "Pavlov/Saved/Config/ModSave"));
-      dirs.add(path.join(base, "Pavlov/Saved/Config/ModSave/FactionRoles"));
-    }
-    const mp = getModsavePath(); if (mp) dirs.add(mp);
     let fixed = 0;
+    const heal = (fp) => {
+      try {
+        const before = fs.statSync(fp);
+        matchTreeOwner(fp);                                  // climbs to the real (non-root) owner of the tree
+        const after = fs.statSync(fp);
+        if (after.uid !== before.uid || after.gid !== before.gid) fixed++;
+      } catch {}
+    };
+    // Specific bot-written files (the server only READS these).
+    const files = new Set();
+    for (const base of PAVLOV_BASES) files.add(blacklistPathFor(base));   // Config/blacklist.txt
+    for (const fp of mirrorPaths(modsaveBanlistPath())) files.add(fp);    // ModSave/banlist.txt
+    for (const fp of mirrorPaths(DONATOR_FILE)) files.add(fp);            // donator whitelist
+    for (const fp of files) if (fp && fs.existsSync(fp)) heal(fp);
+    // Wholly bot-managed directories — every file in them is written by the bot.
+    const dirs = new Set(mirrorPaths(FACTION_ROLES_PATH));               // faction whitelist files
+    const mp = getModsavePath(); if (mp) dirs.add(mp);                   // economy balance files
     for (const dir of dirs) {
-      let st; try { st = fs.statSync(dir); } catch { continue; }
-      const owner = (st.uid !== 0 || st.gid !== 0) ? { uid: st.uid, gid: st.gid } : intendedOwner(path.dirname(dir));
-      if (!owner) continue;                                  // can't tell who should own it — skip
-      if (st.uid !== owner.uid || st.gid !== owner.gid) { try { fs.chownSync(dir, owner.uid, owner.gid); fixed++; } catch {} }
       let names; try { names = fs.readdirSync(dir); } catch { continue; }
       for (const name of names) {
         const fp = path.join(dir, name);
-        let fst; try { fst = fs.statSync(fp); } catch { continue; }
-        if (!fst.isFile()) continue;                         // shallow: leave nested dirs to their own pass
-        if (fst.uid !== owner.uid || fst.gid !== owner.gid) { try { fs.chownSync(fp, owner.uid, owner.gid); fixed++; } catch {} }
+        let st; try { st = fs.statSync(fp); } catch { continue; }
+        if (st.isFile()) heal(fp);
       }
     }
-    if (fixed) logger.info("Init", `Ownership heal: returned ${fixed} steam file(s)/dir(s) to the game-server user`);
+    if (fixed) logger.info("Init", `Ownership heal: returned ${fixed} bot-written file(s) to the game-server user`);
   } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
 }
 
