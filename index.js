@@ -2450,6 +2450,43 @@ async function postPlayerList() {
   try { const m = await channel.send({ embeds: [embed] }); lastPlayerListMsgId = m.id; } catch {}
 }
 
+// Delete every message in a channel — used on startup so stale leaderboard/player-list
+// messages from previous runs don't pile up (the bot re-posts a fresh one). Bulk-deletes
+// recent messages (<14 days) in batches; deletes older ones one by one. Needs the
+// "Manage Messages" permission in the channel. Bounded so it can't loop forever.
+async function purgeChannel(channelId) {
+  if (!channelId) return 0;
+  let channel;
+  try { channel = await client.channels.fetch(channelId); } catch { return 0; }
+  if (!channel || typeof channel.bulkDelete !== "function") return 0;
+  let total = 0;
+  for (let pass = 0; pass < 12; pass++) {              // up to ~1200 messages
+    let msgs;
+    try { msgs = await channel.messages.fetch({ limit: 100 }); } catch { break; }
+    if (!msgs.size) break;
+    let removed = 0;
+    try { const d = await channel.bulkDelete(msgs, true); removed = d.size; } catch {}   // true = ignore >14d
+    if (removed < msgs.size) {                         // leftovers are >14d — bulkDelete skips them
+      for (const m of msgs.values()) { try { await m.delete(); removed++; } catch {} }
+    }
+    total += removed;
+    if (removed === 0) break;                          // nothing deletable (e.g. missing permission) — stop
+  }
+  return total;
+}
+
+// Clear all leaderboard/player-list channels, then post fresh single messages.
+async function refreshLeaderboardChannels() {
+  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, PLAYTIME_LB_CHANNEL, PLAYERLIST_CHANNEL].filter(Boolean))];
+  for (const ch of channels) {
+    try { const n = await purgeChannel(ch); if (n) logger.info("Purge", `Cleared ${n} old message(s) from channel ${ch}`); }
+    catch (e) { logger.warn("Purge", `Could not purge ${ch}: ${e.message}`); }
+  }
+  // reset tracked ids (channel is now empty) so the next post creates a fresh message
+  lastLeaderboardMsgId = null; lastPlaytimeLbMsgId = null; lastPlayerListMsgId = null;
+  postLeaderboard(); postPlaytimeLeaderboard(); postPlayerList();
+}
+
 /* ================================================================
    VERIFICATION  (link a Discord user to their Pavlov username)
    ================================================================ */
@@ -2946,6 +2983,8 @@ client.once("ready", async () => {
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
+  // Wipe stale leaderboard/player-list messages from the previous run, then post fresh.
+  try { await refreshLeaderboardChannels(); } catch (e) { logger.warn("Purge", `leaderboard refresh failed: ${e.message}`); }
 });
 
 /* ================================================================
