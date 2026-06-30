@@ -2863,14 +2863,22 @@ client.once("ready", async () => {
     ...PAVLOV_BASES.map(b => path.join(b, "Pavlov/Saved/Logs/Pavlov.log")),
   ])];
   logger.info("IPBans", `Watching ${ipLogFiles.length} server log(s): ${ipLogFiles.join(", ")}`);
+  // Map each watched log's label (the install dir name ipBans tags lines with) to a
+  // friendly "Server N" by INSTALL ORDER — robust regardless of folder naming, so
+  // server 2's feed isn't mislabeled as server 1.
+  const labelOfLog = (f) => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
+  const serverNameByLabel = new Map();
+  PAVLOV_BASES.forEach((b, i) => serverNameByLabel.set(path.basename(b), `Server ${i + 1}`));   // install order = Server 1, 2, …
+  let _extra = PAVLOV_BASES.length;
+  ipLogFiles.forEach((f) => { const l = labelOfLog(f); if (!serverNameByLabel.has(l)) serverNameByLabel.set(l, `Server ${++_extra}`); });
+  logger.info("IPBans", `Server labels: ${[...serverNameByLabel].map(([l, n]) => `${l}=${n}`).join(", ")}`);
   ipBans.init({
     logFiles: ipLogFiles,
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
       if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
-      const _sm = String(server).match(/(\d+)\s*$/);   // install dir e.g. "pavlovserver2" -> Server 2; bare "pavlovserver" -> Server 1
-      const srvName = _sm ? `Server ${_sm[1]}` : "Server 1";
+      const srvName = serverNameByLabel.get(String(server)) || "Server 1";
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
       const fmt = (ms) => { if (!ms) return "unknown"; try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19); } catch { return "unknown"; } };
