@@ -74,6 +74,27 @@ const ok = (cond, msg) => {
     ok(bot.writeFactionFile("ncrspawn.txt", "not-an-array") === false, "non-array payload rejected");
   }
 
+  console.log("ModSave full sync:");
+  {
+    const sub = path.join("Pavlov", "Saved", "Config", "ModSave");
+    const ia = path.join(sandbox, "msync_a"), ib = path.join(sandbox, "msync_b");
+    fs.mkdirSync(path.join(ia, sub, "stats"), { recursive: true });
+    fs.mkdirSync(path.join(ib, sub), { recursive: true });
+    // a new file present only in A propagates to B
+    fs.writeFileSync(path.join(ia, sub, "stats", "p1.txt"), "100");
+    bot.syncAllModSave([ia, ib]);
+    ok(fs.existsSync(path.join(ib, sub, "stats", "p1.txt")), "new ModSave file propagates to the other install");
+    ok(fs.readFileSync(path.join(ib, sub, "stats", "p1.txt"), "utf8") === "100", "propagated content matches");
+    // newest-wins: same file in both, B is newer -> A gets B's content
+    const fa = path.join(ia, sub, "econ.txt"), fb = path.join(ib, sub, "econ.txt");
+    fs.writeFileSync(fa, "old"); fs.utimesSync(fa, new Date(1_000_000), new Date(1_000_000));
+    fs.writeFileSync(fb, "new"); // mtime ~now, newer
+    bot.syncAllModSave([ia, ib]);
+    ok(fs.readFileSync(fa, "utf8") === "new", "newest version wins across installs");
+    // single install -> no-op (no throw)
+    ok(bot.syncAllModSave([ia]).synced === 0, "single install is a no-op");
+  }
+
   console.log("Player notes:");
   ok(await bot.addPlayerNote("P1", "a", "m") === 1, "first note -> 1");
   ok(await bot.addPlayerNote("p1", "b", "m") === 2, "case-insensitive key -> 2");

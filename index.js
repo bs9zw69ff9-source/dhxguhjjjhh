@@ -910,6 +910,72 @@ function writeGameFile(primaryPath, content) {
 // Write one exact path atomically (blacklist helpers loop the installs themselves).
 const writeGameFileSingle = atomicWriteFile;
 
+/* ---------------- whole-ModSave sync across installs ----------------
+   Keep the ENTIRE ModSave tree (economy, stats, faction roles, ban-message file,
+   any custom gamemode saves) identical across every install. Convergent newest-
+   wins per file: the most recently modified copy of each file is propagated to
+   every other install. Binary-safe, atomic, ownership-preserving, and it NEVER
+   deletes anything. Set MODSAVE_SYNC=off to disable. */
+const MODSAVE_REL = path.join("Pavlov", "Saved", "Config", "ModSave");
+const MODSAVE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+// Recursively list every file under root, as paths relative to base.
+function listFilesRec(root, base = root, out = []) {
+  let entries;
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const abs = path.join(root, e.name);
+    if (e.isDirectory()) listFilesRec(abs, base, out);
+    else if (e.isFile()) out.push(path.relative(base, abs));
+  }
+  return out;
+}
+// Atomic, binary-safe copy that PRESERVES the source mtime — so once two installs
+// hold the same file they compare equal and the sync converges (no ping-pong).
+function atomicCopyPreservingMtime(dstAbs, contentBuf, mtimeMs) {
+  const tmp = `${dstAbs}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+    fs.writeFileSync(tmp, contentBuf);
+    fs.renameSync(tmp, dstAbs);
+    try { fs.utimesSync(dstAbs, new Date(), new Date(mtimeMs)); } catch {}
+    matchTreeOwner(dstAbs);
+    return true;
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    logger.error("Sync", `ModSave copy failed for ${dstAbs}: ${err.message}`);
+    return false;
+  }
+}
+function syncAllModSave(bases = PAVLOV_BASES) {
+  if (process.env.MODSAVE_SYNC === "off") return { synced: 0, installs: bases.length, off: true };
+  if (!Array.isArray(bases) || bases.length < 2) return { synced: 0, installs: bases.length };
+  // Find the newest version of every relative file path across all installs.
+  const newest = new Map();   // rel -> { mtime, srcBase }
+  for (const base of bases) {
+    const root = path.join(base, MODSAVE_REL);
+    for (const rel of listFilesRec(root)) {
+      let m; try { m = fs.statSync(path.join(root, rel)).mtimeMs; } catch { continue; }
+      const cur = newest.get(rel);
+      if (!cur || m > cur.mtime) newest.set(rel, { mtime: m, srcBase: base });
+    }
+  }
+  let synced = 0;
+  for (const [rel, { mtime, srcBase }] of newest) {
+    let content;
+    try { content = fs.readFileSync(path.join(srcBase, MODSAVE_REL, rel)); } catch { continue; }   // Buffer (binary-safe)
+    for (const base of bases) {
+      if (base === srcBase) continue;
+      const dstAbs = path.join(base, MODSAVE_REL, rel);
+      let dm = -1; try { dm = fs.statSync(dstAbs).mtimeMs; } catch {}
+      if (dm >= mtime - 2000) continue;          // already as new (2s tolerance for fs precision) — skip
+      if (atomicCopyPreservingMtime(dstAbs, content, mtime)) synced++;
+    }
+  }
+  if (synced) logger.info("Sync", `ModSave sync — propagated ${synced} file copy(ies) across ${bases.length} installs`);
+  return { synced, installs: bases.length };
+}
+
 const FACTION_ROLES_PATH  = path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/FactionRoles");
 const FACTION_DEFAULT_CAP = 50;
 
@@ -2528,6 +2594,8 @@ setInterval(async () => {        // capture any in-game-menu bans, then rebuild 
   try { await importModsaveBanlist(); } catch {}
   syncModsaveBanlist();
 }, 5 * 60 * 1000);
+// Keep the whole ModSave tree identical across all installs (newest-wins).
+setInterval(() => { try { syncAllModSave(); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); } }, MODSAVE_SYNC_INTERVAL_MS);
 // Seed a snapshot shortly after startup only if none exists yet (don't clobber an
 // existing/manual backup on every restart).
 setTimeout(() => {
@@ -2853,6 +2921,7 @@ client.once("ready", async () => {
   refreshPlayerCache("server1");
   refreshPlayerCache("server2");
   try { healTreeOwnership(); } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
+  try { const r = syncAllModSave(); if (r.installs > 1 && !r.off) logger.info("Sync", `ModSave sync on startup — ${r.synced} file(s) propagated across ${r.installs} installs`); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); }
   try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }
@@ -5193,4 +5262,6 @@ module.exports = {
   getFactionRankCap, getFactionRankCaps, setFactionRankCap,
   // faction file safety
   readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
+  // modsave sync
+  syncAllModSave,
 };
