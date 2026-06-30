@@ -1671,12 +1671,21 @@ function preserveBalanceAcrossKick(name) {
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
    delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
 function kickEverywhere(name) {
-  const id = sanitizeId(name);                 // RCON Kick is space-delimited — use a clean token
-  if (!id) return;
+  const clean = sanitizeId(name);              // fallback token if we can't resolve a live id
+  if (!clean) return;
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  Promise.resolve(sendRconBoth(`Kick ${id}`, "both"))
-    .then(r => logger.info("Bans", `Kick ${id} -> s1=${r.ok1 ? "ok" : "fail"} s2=${r.ok2 ? "ok" : "fail"}`))
-    .catch(err => logger.warn("Bans", `Kick ${id} failed: ${err.message}`));
+  // Pavlov's RCON Kick targets the player's UniqueId, not their display name — so we
+  // look the name up in each server's live player list and kick by that id. Without
+  // this the auto-ban kick (and any name-based kick) silently does nothing.
+  (async () => {
+    const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
+    for (const srv of servers) {
+      let target = clean;
+      try { const id = await resolveOnlineId(name, srv); if (id) target = id; } catch {}
+      try { await sendRcon(`Kick ${target}`, srv, 2500, 1); logger.info("Bans", `Kick ${target} on ${srv} (was "${name}")`); }
+      catch (err) { logger.warn("Bans", `Kick ${target} on ${srv} failed: ${err.message}`); }
+    }
+  })().catch(() => {});
 }
 
 /* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
@@ -1808,6 +1817,24 @@ function extractPlayerNames(data) {
   return (data?.PlayerList ?? [])
     .map(p => String(p.Username ?? p.username ?? p.PlayerName ?? p.name ?? p.Name ?? "").trim())
     .filter(Boolean);
+}
+
+/** Live online players for a server as { name, id } — id is the Pavlov UniqueId,
+    which is what RCON Kick actually targets (NOT the display name). */
+async function getOnlinePlayers(server) {
+  let data;
+  try { data = parseRcon(await sendRcon("RefreshList", server, 3000, 1)); } catch { return []; }
+  return (data?.PlayerList ?? []).map(p => ({
+    name: String(p.Username ?? p.username ?? p.PlayerName ?? p.name ?? p.Name ?? "").trim(),
+    id:   String(p.UniqueId ?? p.uniqueId ?? p.UniqueID ?? p.Id ?? p.id ?? "").trim(),
+  })).filter(p => p.name || p.id);
+}
+
+/** Resolve a display name to the live UniqueId on a server (case-insensitive), or null. */
+async function resolveOnlineId(name, server) {
+  const key = String(name).toLowerCase();
+  const hit = (await getOnlinePlayers(server)).find(p => p.name.toLowerCase() === key);
+  return hit?.id || null;
 }
 
 /** Update the cached player list for one server from a parsed payload. */
@@ -2674,6 +2701,9 @@ const commands = [
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Reason for ejection"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
+  new SlashCommandBuilder().setName("flush")
+    .setDescription("Randomly kick one online player from a server")
+    .addStringOption(serverOption),
   new SlashCommandBuilder().setName("warn")
     .setDescription("Issue a warning to a courier — auto-escalates to bans at thresholds")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
@@ -3161,6 +3191,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
+                "`/flush <server>` — Randomly kick one online player",
                 "`/warn <id> <reason> <server>` — Issue warning *(auto-bans at 3/5/7)*",
                 "`/delwarn <id> <number>` — Remove a single warning",
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
@@ -3349,7 +3380,12 @@ client.on("interactionCreate", async (interaction) => {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
-        await sendRconBoth(`Kick ${playerId}`, server);
+        // Kick by the live UniqueId (what Pavlov RCON Kick needs), per targeted server.
+        for (const srv of (server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server])) {
+          let target = playerId;
+          try { const id = await resolveOnlineId(playerId, srv); if (id) target = id; } catch {}
+          try { await sendRcon(`Kick ${target}`, srv, 2500, 1); } catch {}
+        }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
           .setDescription(`> *${randomQuote("kick")}*\n\n${DIVIDER}`)
@@ -3368,6 +3404,39 @@ client.on("interactionCreate", async (interaction) => {
         if (kDmField) embed.addFields(kDmField);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });      // ← CHANGED
+      }
+
+      /* ─────────────────────────────────────────────────────
+         FLUSH — randomly kick one online player from a server
+         ───────────────────────────────────────────────────── */
+      case "flush": {
+        if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], ephemeral: true });
+        const server = interaction.options.getString("server");
+        await interaction.deferReply();
+        const servers = server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server];
+        const pool = [];
+        for (const srv of servers) {
+          try { for (const p of await getOnlinePlayers(srv)) if (p.name) pool.push({ ...p, srv }); } catch {}
+        }
+        if (!pool.length) {
+          return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", "No players are currently online on the selected server.")] });
+        }
+        const pick   = pool[Math.floor(Math.random() * pool.length)];
+        const target = pick.id || sanitizeId(pick.name);
+        preserveBalanceAcrossKick(pick.name);                   // don't let the kick wipe their caps
+        let kicked = false;
+        try { await sendRcon(`Kick ${target}`, pick.srv, 2500, 1); kicked = true; } catch {}
+        writeModLog({ action: "flush-kick", playerId: pick.name, server: pick.srv, by: interaction.user.tag });
+        const embed = brand(new EmbedBuilder().setColor(kicked ? NV.AMBER : NV.NCR_TAN).setTitle("Flush — Random Kick")
+          .setDescription(`${DIVIDER}`)
+          .addFields(
+            { name: "Flushed",  value: `\`${pick.name}\``,                                  inline: true },
+            { name: "Server",   value: `${serverLabel(pick.srv)}`,                          inline: true },
+            { name: "By",       value: `${interaction.user}`,                               inline: true },
+            { name: "Pool",     value: `Picked at random from **${pool.length}** online player(s)`, inline: false },
+          ).setFooter({ text: kicked ? "Random kick — no ban issued" : "Kick command sent (no RCON confirmation)" }).setTimestamp());
+        await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
