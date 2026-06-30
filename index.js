@@ -4097,7 +4097,14 @@ client.on("interactionCreate", async (interaction) => {
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();
+        // If they were ever granted High Staff, also revoke Access Manager (RCON+).
+        const wasHighStaff = (loadMenuGrants()[playerId.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
+        const applied = [`RemoveMenu ${playerId}`];
         await sendRconBoth(`RemoveMenu ${playerId}`, server);          // clears the menu bit code
+        if (wasHighStaff) {
+          await sendRconBoth(`RemoveAccessManager ${playerId}`, server);
+          applied.push(`RemoveAccessManager ${playerId}`);
+        }
         // Clear every menu grant record for this player on the affected server(s).
         for (const m of MENUS) {
           if (server === "both") { removeMenuGrant(playerId, "server1", m.value); removeMenuGrant(playerId, "server2", m.value); }
@@ -4110,7 +4117,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Courier", value: `\`${playerId}\``,         inline: true },
             { name: "Server",  value: `${serverLabel(server)}`, inline: true },
             { name: "Revoked By", value: `${interaction.user}`,  inline: false },
-            { name: "Applied", value: `\`\`\`\nRemoveMenu ${playerId}\n\`\`\``, inline: false },
+            { name: "Applied", value: `\`\`\`\n${applied.join("\n")}\n\`\`\``, inline: false },
           ).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -4123,8 +4130,10 @@ client.on("interactionCreate", async (interaction) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
         await interaction.deferReply();
 
-        // ClearMenuAccess wipes every player's menu access in one command (no args).
+        // ClearMenuAccess wipes every player's menu access; ClearAccessManagers wipes
+        // everyone's access-manager rights (both RCON+, no args).
         await sendRconBoth("ClearMenuAccess", "both");
+        await sendRconBoth("ClearAccessManagers", "both");
         // Clear every menu grant record across both servers.
         const grants = loadMenuGrants();
         const holders = Object.keys(grants);
@@ -4138,9 +4147,9 @@ client.on("interactionCreate", async (interaction) => {
           .setTitle("Mass Menu Revocation")
           .setDescription(hero("Cleared menu access for every courier on both servers."))
           .addFields(
-            { name: "Command",       value: "`ClearMenuAccess`",                inline: true },
-            { name: "Server",        value: "Both servers",                      inline: true },
-            { name: "Grants cleared", value: `**${holders.length}**`,            inline: true },
+            { name: "Applied",        value: "`ClearMenuAccess`\n`ClearAccessManagers`", inline: true },
+            { name: "Server",         value: "Both servers",                      inline: true },
+            { name: "Grants cleared", value: `**${holders.length}**`,             inline: true },
           ).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
