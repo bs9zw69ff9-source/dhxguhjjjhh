@@ -69,10 +69,12 @@ function extractLogin(line) {
 }
 const BAN_RE    = /Rcon:\s*BanPlayer\s+(\S+)/i;
 const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;
-// Kill/death stats — Pavlov logs a KillData block (fields on separate lines).
-const KILLER_RE   = /"Killer":\s*"([^"]*)"/;
-const KILLED_RE   = /"Killed":\s*"([^"]*)"/;
-const KILLEDBY_RE = /"KilledBy":\s*"([^"]*)"/;
+// Kill/death stats (requires bVerboseLogging=true in Game.ini). Pavlov logs a
+// KillData record — either as a single JSON line or split across lines. Match each
+// field anywhere, case-insensitively.
+const KILLER_RE   = /"Killer":\s*"([^"]*)"/i;
+const KILLED_RE   = /"Killed":\s*"([^"]*)"/i;
+const KILLEDBY_RE = /"KilledBy":\s*"([^"]*)"/i;
 
 /* ---------------- small helpers ---------------- */
 const norm     = s => String(s ?? "").trim().toLowerCase();
@@ -478,11 +480,22 @@ function parseLine(line, server, key) {
   if (cutoffTs && ts && ts < cutoffTs) return;
 
   // Kill/death stats — only live (backfill would re-count old kills on restart).
-  // A KillData block spans lines: "Killer"/"Killed"/"KilledBy"; finalize on KilledBy.
+  // Handles BOTH a single-line JSON record ({"Killer":..,"Killed":..,"KilledBy":..})
+  // and a multi-line block (one field per line, finalized by KilledBy). Match every
+  // field present on the line, then finalize once we have a victim + the KilledBy.
   if (live) {
-    const mk = line.match(KILLER_RE);   if (mk) { (pendingKill[key] || (pendingKill[key] = {})).killer = mk[1]; return; }
-    const md = line.match(KILLED_RE);   if (md) { (pendingKill[key] || (pendingKill[key] = {})).killed = md[1]; return; }
-    const mb = line.match(KILLEDBY_RE); if (mb) { recordKill(pendingKill[key]); pendingKill[key] = {}; return; }
+    const mk = line.match(KILLER_RE);
+    const md = line.match(KILLED_RE);
+    const mb = line.match(KILLEDBY_RE);
+    if (mk || md || mb) {
+      const pk = pendingKill[key] || (pendingKill[key] = {});
+      if (mk) pk.killer = mk[1];
+      if (md) pk.killed = md[1];
+      if (mb) pk.killedBy = mb[1];
+      // KilledBy is the last field of a kill record (single- or multi-line) — finalize.
+      if (mb) { recordKill(pendingKill[key]); pendingKill[key] = {}; }
+      return;
+    }
   }
 
   // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
@@ -717,16 +730,18 @@ if (require.main === module) {
     console.log(`  ✓ ${(st.size / 1048576).toFixed(2)} MB, modified ${st.mtime.toISOString()}`);
     try { fs.accessSync(f, fs.constants.R_OK); console.log("  ✓ readable"); } catch { console.log("  ✗ NOT readable by this user"); continue; }
     const tail = (() => { const from = Math.max(0, st.size - 2 * 1024 * 1024); const fd = fs.openSync(f, "r"); const b = Buffer.alloc(st.size - from); fs.readSync(fd, b, 0, b.length, from); fs.closeSync(fd); return b.toString("utf8").split(/\r?\n/); })();
-    let nA = 0, nL = 0, nC = 0, nB = 0;
-    for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (extractLogin(l)) nL++; if (extractClose(l)) nC++; if (BAN_RE.test(l)) nB++; }
-    console.log(`  matches in last ${tail.length} lines:  accept=${nA}  login=${nL}  close(IP+id)=${nC}  ban=${nB}`);
+    let nA = 0, nL = 0, nC = 0, nB = 0, nK = 0;
+    for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (extractLogin(l)) nL++; if (extractClose(l)) nC++; if (BAN_RE.test(l)) nB++; if (KILLEDBY_RE.test(l)) nK++; }
+    console.log(`  matches in last ${tail.length} lines:  accept=${nA}  login=${nL}  close(IP+id)=${nC}  ban=${nB}  kill(KilledBy)=${nK}`);
     if (!nL && !nC) console.log("  no join/disconnect lines matched — wrong/empty log, or unexpected format.");
+    if (!nK) console.log("  no kill data matched — set bVerboseLogging=true in Game.ini (else K/D can't work).");
     // Dump real sample lines so the exact format can be matched if the counts are low.
     const sample = (label, test, n = 2) => {
       const hits = tail.filter(test).slice(-n);
       if (hits.length) { console.log(`  sample ${label}:`); hits.forEach(l => console.log("    " + l.slice(0, 220))); }
       else console.log(`  sample ${label}: (none found)`);
     };
+    sample("KillData lines",   l => /"Kill(ed|er|edBy)"/i.test(l));
     sample("RemoteAddr lines", l => /RemoteAddr/i.test(l));
     sample("UniqueId lines",   l => /UniqueId/i.test(l));
     sample("Login/Join lines", l => /Login request:|Join request:/i.test(l));

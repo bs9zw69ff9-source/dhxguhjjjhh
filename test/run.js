@@ -461,6 +461,16 @@ const ok = (cond, msg) => {
     clearInterval(tKD);
     ok(ipBans.getKD("Alpha").kills === 1 && ipBans.getKD("Alpha").deaths === 0, "kill credited to the killer");
     ok(ipBans.getKD("Bravo").deaths === 2 && ipBans.getKD("Bravo").kills === 0, "deaths credited; suicide counts as a death only (no kill)");
+    // single-line JSON KillData record (all fields on one line) must also register
+    const logKD2 = path.join(sandbox, "PavlovKD2.log");
+    fs.writeFileSync(logKD2, "");
+    const tKD2 = ipBans.init({ logFiles: [logKD2], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logKD2,
+      '[2026.07.01-11.00.00:000][1]LogStats: KillData: {"Killer": "Solo", "KillerTeamID": 0, "Killed": "Target", "KilledBy": "Sniper"}\n');
+    await new Promise(r => setTimeout(r, 80));
+    clearInterval(tKD2);
+    ok(ipBans.getKD("Solo").kills === 1, "single-line JSON KillData credits the kill");
+    ok(ipBans.getKD("Target").deaths === 1, "single-line JSON KillData credits the death");
 
     // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
     const logEid = path.join(sandbox, "PavlovEID.log");
