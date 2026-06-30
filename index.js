@@ -2856,12 +2856,21 @@ client.once("ready", async () => {
     logger.error("Bot", `Command registration failed: ${err.message}`);
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
+  // Watch EVERY install's Pavlov.log (server 1, 2, …) — derived from the discovered
+  // installs, unioned with any explicit PAVLOV_LOGS, so server 2 is never missed.
+  const ipLogFiles = [...new Set([
+    ...String(process.env.PAVLOV_LOGS ?? "").split(/[,:]/).map(s => s.trim()).filter(Boolean),
+    ...PAVLOV_BASES.map(b => path.join(b, "Pavlov/Saved/Logs/Pavlov.log")),
+  ])];
+  logger.info("IPBans", `Watching ${ipLogFiles.length} server log(s): ${ipLogFiles.join(", ")}`);
   ipBans.init({
+    logFiles: ipLogFiles,
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
       if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
-      const srvName = /1$/.test(String(server)) ? "Server 2" : (server ? "Server 1" : "unknown");
+      const _sm = String(server).match(/(\d+)\s*$/);   // install dir e.g. "pavlovserver2" -> Server 2; bare "pavlovserver" -> Server 1
+      const srvName = _sm ? `Server ${_sm[1]}` : "Server 1";
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
       const fmt = (ms) => { if (!ms) return "unknown"; try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19); } catch { return "unknown"; } };
