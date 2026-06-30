@@ -410,9 +410,9 @@ const ok = (cond, msg) => {
     fs.appendFileSync(logB,
       "[2026.06.26-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 5.6.7.8:5000\n" +
       "[2026.06.26-10.00.00:200][2]LogNet: Login request: ?Name=FreshBan?pid=FreshBan userId: NULL:fresh01 platform: NULL\n" +
-      "[2026.06.26-10.01.00:000][3]LogTemp: Rcon: BanPlayer FreshBan\n");   // no confirmed IP yet -> nothing flagged
+      "[2026.06.26-10.01.00:000][3]LogTemp: Rcon: BanPlayer FreshBan\n");   // no confirmed IP yet -> best-effort tentative IP flagged
     await new Promise(r => setTimeout(r, 80));
-    ok(!ipBans.blacklist.includes("5.6.7.8"), "no confirmed IP at ban time -> not flagged yet");
+    ok(ipBans.blacklist.includes("5.6.7.8"), "no confirmed IP at ban time -> best-effort (tentative) IP IS flagged so the ban still enforces");
     fs.appendFileSync(logB,
       "[2026.06.26-10.01.05:000][4]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 5.6.7.8:5000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:fresh01\n");
     await new Promise(r => setTimeout(r, 80));

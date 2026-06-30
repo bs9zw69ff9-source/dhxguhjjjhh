@@ -256,11 +256,18 @@ function altNamesForIps(ips, excludeIds = []) {
 // connects matching either is auto-banned. (No hex ids — Shack bans by name.)
 function blacklistPlayer(input) {
   const ids  = resolveIds(input);
-  const ips  = confirmedIpsForIds(ids);             // only trustworthy same-line IPs
+  const cips = confirmedIpsForIds(ids);             // trustworthy same-line pairings
+  // Flag confirmed IPs. If none are on record yet — the usual case when you ban a
+  // player who is still ONLINE (logged in, not yet disconnected) — fall back to their
+  // best-effort (join-correlated) IPs so the ban actually enforces instead of flagging
+  // nothing. pendingFlag (below) still upgrades to the confirmed IP on their next close.
+  const bestEffort = cips.length === 0;
+  const ips  = bestEffort ? ipsForIds(ids) : cips;
   const altNames = altNamesForIps(ips, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
+  console.log(`[ipBans] blacklistPlayer "${input}" -> ${ids.length} id(s), flagged ${ips.length} IP(s)${bestEffort && ips.length ? " (best-effort, no confirmed yet)" : ""}, ${flagged.size} total flagged`);
   // remember the player so the IP the kick confirms is flagged too (if none yet).
   // NOTE: we deliberately do NOT auto-flag the username here. A flagged username
   // auto-bans anyone connecting under that name forever, which false-positives on
@@ -714,6 +721,15 @@ if (require.main === module) {
     for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (extractLogin(l)) nL++; if (extractClose(l)) nC++; if (BAN_RE.test(l)) nB++; }
     console.log(`  matches in last ${tail.length} lines:  accept=${nA}  login=${nL}  close(IP+id)=${nC}  ban=${nB}`);
     if (!nL && !nC) console.log("  no join/disconnect lines matched — wrong/empty log, or unexpected format.");
+    // Dump real sample lines so the exact format can be matched if the counts are low.
+    const sample = (label, test, n = 2) => {
+      const hits = tail.filter(test).slice(-n);
+      if (hits.length) { console.log(`  sample ${label}:`); hits.forEach(l => console.log("    " + l.slice(0, 220))); }
+      else console.log(`  sample ${label}: (none found)`);
+    };
+    sample("RemoteAddr lines", l => /RemoteAddr/i.test(l));
+    sample("UniqueId lines",   l => /UniqueId/i.test(l));
+    sample("Login/Join lines", l => /Login request:|Join request:/i.test(l));
   }
   console.log(`\n${bar}\nRunning backfill…\n${bar}`);
   clearInterval(init({ logFiles: files, pollMs: 9e8 }));
