@@ -554,9 +554,12 @@ function writeFactionAudit(entry) {
 /* ================================================================
    CONSTANTS
    ================================================================ */
+const STAFF_MENU_ID = "0011110000000000101000000000000 10101101000000";
 const MENUS = [
-  { name: "Staff",      value: "staff",     menuId: "0011110000000000101000000000000 01001100000000" },
-  { name: "High Staff", value: "highstaff", menuId: "111110011110001000001101000000000010 1011110000001" },
+  { name: "Staff",      value: "staff",     menuId: STAFF_MENU_ID },
+  // High Staff uses the SAME bit code as Staff, but the grant also runs AddMod + AddAccessManager.
+  { name: "High Staff", value: "highstaff", menuId: STAFF_MENU_ID },
+  { name: "Faction",    value: "faction",   menuId: "0000000000000000000000000000010 00110000000001" },
 ];
 
 const BAN_REASONS = [
@@ -2665,9 +2668,7 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("stripmenuall")
-    .setDescription("Owner — Revoke a menu from EVERY player who holds it (both servers)")
-    .addStringOption(o => o.setName("menu").setDescription("Menu to revoke from everyone").setRequired(true)
-      .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
+    .setDescription("Owner — Clear ALL menu access from every player (both servers)"),
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
   new SlashCommandBuilder().setName("clearallbans")
@@ -3067,7 +3068,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/rotatemap` `/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
                 "`/inspect <id>` — *Owner only* — full dossier (everything, incl. IPs & alts)",
-                "`/stripmenuall <menu>` — *Owner only* — revoke a menu from EVERY holder",
+                "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
@@ -4090,16 +4091,13 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       case "stripmenu": {
-        // RemoveMenu clears the player's menu bit code regardless of which menu —
-        // so there's no menu to choose. We wipe everything: the bit code AND the
-        // player's NAME from the Mod / Access Manager lists (for any High Staff grant).
+        // RemoveMenu <user> clears the player's menu bit code regardless of which menu —
+        // no menu choice, no bit code needed.
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();
         await sendRconBoth(`RemoveMenu ${playerId}`, server);          // clears the menu bit code
-        await sendRconBoth(`RemoveAccessManager ${playerId}`, server); // wipe name from Access Manager
-        await sendRconBoth(`RemoveMod ${playerId}`, server);           // wipe name from Mods
         // Clear every menu grant record for this player on the affected server(s).
         for (const m of MENUS) {
           if (server === "both") { removeMenuGrant(playerId, "server1", m.value); removeMenuGrant(playerId, "server2", m.value); }
@@ -4112,41 +4110,37 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Courier", value: `\`${playerId}\``,         inline: true },
             { name: "Server",  value: `${serverLabel(server)}`, inline: true },
             { name: "Revoked By", value: `${interaction.user}`,  inline: false },
-            { name: "Applied (each run separately)", value: `\`\`\`\nRemoveMenu ${playerId}\nRemoveAccessManager ${playerId}\nRemoveMod ${playerId}\n\`\`\``, inline: false },
+            { name: "Applied", value: `\`\`\`\nRemoveMenu ${playerId}\n\`\`\``, inline: false },
           ).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
-         STRIPMENUALL — owner only: revoke one menu from everyone
+         STRIPMENUALL — owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
       case "stripmenuall": {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
-        const menuValue = interaction.options.getString("menu");
-        const menuMeta  = MENUS.find(m => m.value === menuValue);
-        const menuId    = menuMeta?.menuId ?? menuValue;
         await interaction.deferReply();
 
-        const grants  = loadMenuGrants();
-        const holders = Object.keys(grants).filter(pid => (grants[pid] || []).some(g => g.menuValue === menuValue));
-        let ok = 0, failed = 0;
-        for (const pid of holders) {
-          try { await sendRconBoth(`RemoveMenu ${pid} ${menuId}`, "both"); ok++; }
-          catch (err) { failed++; logger.warn("StripAll", `RemoveMenu failed for ${pid}: ${err.message}`); }
-          removeMenuGrant(pid, "server1", menuValue);
-          removeMenuGrant(pid, "server2", menuValue);
-          removeMenuGrant(pid, "both", menuValue);   // givemenu on "both" stores a single "both" record
+        // ClearMenuAccess wipes every player's menu access in one command (no args).
+        await sendRconBoth("ClearMenuAccess", "both");
+        // Clear every menu grant record across both servers.
+        const grants = loadMenuGrants();
+        const holders = Object.keys(grants);
+        for (const pid of holders) for (const m of MENUS) {
+          removeMenuGrant(pid, "server1", m.value);
+          removeMenuGrant(pid, "server2", m.value);
+          removeMenuGrant(pid, "both", m.value);
         }
 
         const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
           .setTitle("Mass Menu Revocation")
-          .setDescription(hero(`Pulled **${menuMeta?.name ?? menuValue}** access from every courier who held it.`))
+          .setDescription(hero("Cleared menu access for every courier on both servers."))
           .addFields(
-            { name: "Menu",     value: menuMeta?.name ?? menuValue,                         inline: true },
-            { name: "Holders",  value: `**${holders.length}**`,                              inline: true },
-            { name: "Server",   value: "Both servers",                                       inline: true },
-            { name: "Revoked",  value: `**${ok}** RCON ${ok === 1 ? "call" : "calls"} sent${failed ? ` · ${failed} failed` : ""}`, inline: false },
+            { name: "Command",       value: "`ClearMenuAccess`",                inline: true },
+            { name: "Server",        value: "Both servers",                      inline: true },
+            { name: "Grants cleared", value: `**${holders.length}**`,            inline: true },
           ).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
