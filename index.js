@@ -141,6 +141,7 @@ const FILES = {
   USER_UNBARRED:  "./user_unbarred.json",
   VERIFY_PANEL:   "./verify_panel.json",
   VERIFY_LINKS:   "./verify_links.json",
+  MENU_PANEL:     "./menu_panel.json",
 };
 
 const DEFAULTS = {
@@ -162,6 +163,7 @@ const DEFAULTS = {
   [FILES.USER_UNBARRED]:  "[]",
   [FILES.VERIFY_PANEL]:   "{}",
   [FILES.VERIFY_LINKS]:   "{}",
+  [FILES.MENU_PANEL]:     "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -560,6 +562,19 @@ const MENUS = [
   // High Staff uses the SAME bit code as Staff, but the grant also runs AddMod + AddAccessManager.
   { name: "High Staff", value: "highstaff", menuId: STAFF_MENU_ID },
   { name: "Faction",    value: "faction",   menuId: "0000000000000000000000000000010 00110000000001" },
+];
+
+/* Self-service RCON-menu panel: a channel where staff enter their in-game name and
+   the bot grants the menu that matches their HIGHEST Discord role. */
+const MENU_PANEL_CHANNEL  = process.env.MENU_PANEL_CHANNEL  || "1520598952670662677";
+const MENU_ROLE_HIGHSTAFF = process.env.MENU_ROLE_HIGHSTAFF || "1521827868756152450";
+const MENU_ROLE_STAFF     = process.env.MENU_ROLE_STAFF     || "1520598947180314836";
+const MENU_ROLE_FACTION   = process.env.MENU_ROLE_FACTION   || "1520598947129852082";
+// Highest role wins, in this order.
+const MENU_ROLE_TIERS = [
+  { role: MENU_ROLE_HIGHSTAFF, menu: "highstaff" },
+  { role: MENU_ROLE_STAFF,     menu: "staff"     },
+  { role: MENU_ROLE_FACTION,   menu: "faction"   },
 ];
 
 const BAN_REASONS = [
@@ -1837,6 +1852,16 @@ async function resolveOnlineId(name, server) {
   return hit?.id || null;
 }
 
+/** Best UniqueId for a name: live online id (either server) → EOS id from the IP
+    tracker → the sanitized name as a last resort. Used for GiveMenu/Kick targeting. */
+async function resolvePlayerId(name) {
+  for (const srv of (hasServer2 ? ["server1", "server2"] : ["server1"])) {
+    try { const id = await resolveOnlineId(name, srv); if (id) return id; } catch {}
+  }
+  try { const r = ipBans.getRecord(name); if (r?.id) return r.id; } catch {}
+  return sanitizeId(name);
+}
+
 /** Update the cached player list for one server from a parsed payload. */
 function setPlayerCacheFromData(server, data) {
   if (!data?.Successful) return false;
@@ -2599,6 +2624,63 @@ async function handleVerifySubmit(interaction) {
 }
 
 /* ================================================================
+   SELF-SERVICE RCON MENU PANEL
+   ================================================================
+   A channel with a button. Staff press it, enter their in-game name, and the bot
+   grants the RCON menu matching their HIGHEST Discord role (High Staff > Staff >
+   Faction). High Staff also gets Mod + Access Manager. */
+async function ensureMenuPanel() {
+  if (!MENU_PANEL_CHANNEL) return;
+  let ch; try { ch = await client.channels.fetch(MENU_PANEL_CHANNEL); } catch { return; }
+  if (!ch?.isTextBased()) return;
+  const saved = safeRead(FILES.MENU_PANEL, {});
+  if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
+  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("RCON Menu Access")
+    .setDescription(`${hero("Tools for those the NCR trusts.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.`));
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("menu_start").setLabel("Get Menu").setStyle(ButtonStyle.Success));
+  try { const m = await ch.send({ embeds: [embed], components: [row] }); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
+  catch (e) { logger.warn("MenuPanel", `panel post failed: ${e.message}`); }
+}
+
+async function handleMenuPanelSubmit(interaction) {
+  const name = sanitizeMessage(interaction.fields.getTextInputValue("menu_name")).trim();
+  if (!name) {
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
+      .setDescription("Enter your exact Pavlov in-game name."))], ephemeral: true });
+  }
+  // Highest role wins.
+  const roles = interaction.member?.roles?.cache;
+  const tier  = MENU_ROLE_TIERS.find(t => t.role && roles?.has(t.role));
+  if (!tier) {
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("No Menu Role")
+      .setDescription("You don't hold a High Staff, Staff, or Faction RCON role, so there's no menu to grant. Ask an admin if this is wrong."))], ephemeral: true });
+  }
+  const meta = MENUS.find(m => m.value === tier.menu);
+  await interaction.deferReply({ ephemeral: true });
+  const target = await resolvePlayerId(name);   // GiveMenu targets the UniqueId
+  if (tier.menu === "highstaff") {
+    await sendRconBoth(`AddMod ${target}`, "both");
+    await sendRconBoth(`AddAccessManager ${target}`, "both");
+    await sendRconBoth(`GiveMenu ${target} ${meta.menuId}`, "both");
+  } else {
+    await sendRconBoth(`GiveMenu ${target} ${meta.menuId}`, "both");
+  }
+  addMenuGrant(name, "both", tier.menu, meta.menuId, `self-service:${interaction.user.tag}`);
+  logger.info("MenuPanel", `${interaction.user.tag} self-granted ${meta.name} to "${name}" (${target})`);
+  const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Menu Granted")
+    .setDescription(`Granted the **${meta.name}** menu to \`${name}\` on both servers. Open your in-game menu to use it.${tier.menu === "highstaff" ? "\nAlso granted Mod + Access Manager." : ""}`));
+  // mirror to the mod log for an audit trail
+  logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Self-Service")
+    .addFields(
+      { name: "Discord", value: `${interaction.user}`, inline: true },
+      { name: "In-game", value: `\`${name}\``,          inline: true },
+      { name: "Menu",    value: meta.name,               inline: true },
+    )));
+  return interaction.editReply({ embeds: [embed] });
+}
+
+/* ================================================================
    MENU GRANT PERSISTENCE
    ================================================================ */
 function addMenuGrant(playerId, server, menuValue, menuId, grantedBy) {
@@ -3013,6 +3095,7 @@ client.once("ready", async () => {
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
+  ensureMenuPanel();
   // Wipe stale leaderboard/player-list messages from the previous run, then post fresh.
   try { await refreshLeaderboardChannels(); } catch (e) { logger.warn("Purge", `leaderboard refresh failed: ${e.message}`); }
 });
@@ -3054,6 +3137,16 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (interaction.isModalSubmit() && interaction.customId === "verify_modal") {
     return handleVerifySubmit(interaction).catch(e => logger.warn("Verify", e.message));
+  }
+  if (interaction.isButton() && interaction.customId === "menu_start") {
+    const modal = new ModalBuilder().setCustomId("menu_modal").setTitle("Get RCON menu access")
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId("menu_name").setLabel("Your exact Pavlov in-game name")
+          .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64)));
+    return interaction.showModal(modal).catch(() => {});
+  }
+  if (interaction.isModalSubmit() && interaction.customId === "menu_modal") {
+    return handleMenuPanelSubmit(interaction).catch(e => logger.warn("MenuPanel", e.message));
   }
 
   /* ── Autocomplete ─────────────────────────────────────── */
