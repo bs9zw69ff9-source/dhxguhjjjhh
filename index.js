@@ -929,6 +929,15 @@ const writeGameFileSingle = atomicWriteFile;
    deletes anything. Set MODSAVE_SYNC=off to disable. */
 const MODSAVE_REL = path.join("Pavlov", "Saved", "Config", "ModSave");
 const MODSAVE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+// NEVER sync RCON+ menu-access files. Those are managed live by GiveMenu / RemoveMenu
+// / ClearMenuAccess; blindly mirroring them (newest-wins) can wipe a player's menu
+// access on one install with a staler copy from another — which looked like "menus
+// removed when users leave". Add more names via MODSAVE_SYNC_SKIP_EXTRA (comma list).
+const MODSAVE_SYNC_SKIP = new RegExp(
+  ["menuaccess", "accessmanager", "rconplus", "rcon_plus",
+   ...String(process.env.MODSAVE_SYNC_SKIP_EXTRA ?? "").split(",").map(s => s.trim()).filter(Boolean)]
+    .map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  "i");
 
 // Recursively list every file under root, as paths relative to base.
 function listFilesRec(root, base = root, out = []) {
@@ -966,6 +975,7 @@ function syncAllModSave(bases = PAVLOV_BASES) {
   for (const base of bases) {
     const root = path.join(base, MODSAVE_REL);
     for (const rel of listFilesRec(root)) {
+      if (MODSAVE_SYNC_SKIP.test(rel)) continue;             // never mirror menu-access files
       let m; try { m = fs.statSync(path.join(root, rel)).mtimeMs; } catch { continue; }
       const cur = newest.get(rel);
       if (!cur || m > cur.mtime) newest.set(rel, { mtime: m, srcBase: base });

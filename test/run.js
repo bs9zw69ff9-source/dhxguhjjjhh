@@ -93,6 +93,13 @@ const ok = (cond, msg) => {
     ok(fs.readFileSync(fa, "utf8") === "new", "newest version wins across installs");
     // single install -> no-op (no throw)
     ok(bot.syncAllModSave([ia]).synced === 0, "single install is a no-op");
+    // RCON+ menu-access files are NEVER synced (would wipe menu access)
+    fs.writeFileSync(path.join(ia, sub, "MenuAccess.cfg"), "player1\nplayer2");
+    bot.syncAllModSave([ia, ib]);
+    ok(!fs.existsSync(path.join(ib, sub, "MenuAccess.cfg")), "MenuAccess.cfg is never mirrored across installs");
+    fs.writeFileSync(path.join(ia, sub, "AccessManager.cfg"), "player1");
+    bot.syncAllModSave([ia, ib]);
+    ok(!fs.existsSync(path.join(ib, sub, "AccessManager.cfg")), "AccessManager.cfg is never mirrored across installs");
   }
 
   console.log("Player notes:");
