@@ -2345,11 +2345,18 @@ function removeFactionMemberEverywhere(faction, name) {
   if (lines) { const upd = lines.filter(l => l.toLowerCase() !== name.toLowerCase()); if (upd.length !== lines.length) writeFactionFile(spawn, upd); }
   removePlayerFromAllRankFiles(faction, name);
 }
+// File-accurate counts / membership tests for cap enforcement on the role path.
+function factionMemberCount(faction) { const l = readFactionFile(SPAWN_FILE_MAP[faction]); return Array.isArray(l) ? l.length : 0; }
+function rankFileCount(faction, rank) { const f = getFactionRankConfig(faction)?.rankFiles?.[rank]; if (!f) return 0; const l = readFactionFile(f); return Array.isArray(l) ? l.length : 0; }
+function isInFactionFile(faction, name) { const l = readFactionFile(SPAWN_FILE_MAP[faction]); return Array.isArray(l) && l.some(x => x.toLowerCase() === name.toLowerCase()); }
+function isInRankFile(faction, rank, name) { const f = getFactionRankConfig(faction)?.rankFiles?.[rank]; if (!f) return false; const l = readFactionFile(f); return Array.isArray(l) && l.some(x => x.toLowerCase() === name.toLowerCase()); }
+
 // Sync ONE member's faction ranks from their Discord roles. Adds every mapped rank
 // whose role they hold (multiple ranks supported); removes mapped ranks they've lost.
 // If they hold no rank roles, they're removed from the faction entirely. The in-game
 // name is supplied explicitly (self-service panel) or taken from the member's server
-// nickname / display name (automatic sweeps).
+// nickname / display name (automatic sweeps). Respects the faction size cap and each
+// rank cap — a full faction/rank is never exceeded via roles.
 function applyMemberFactionRanks(member, faction, explicitName) {
   const entry = loadFactionRoleMap()[faction];
   if (!entry || !entry.ranks || !Object.keys(entry.ranks).length) return { skipped: "no role mapping" };
@@ -2371,14 +2378,35 @@ function applyMemberFactionRanks(member, faction, explicitName) {
     if (roleId && memberHasRole(roleId)) held.push(rank);
   }
   if (held.length) {
+    const removeLostRanks = () => { for (const [rank, roleId] of Object.entries(entry.ranks)) if (roleId && !held.includes(rank)) removePlayerFromRankFile(faction, name, rank); };
+    // Which held ranks have room in their .txt (respecting per-rank caps).
+    const addable = [], skipped = [];
+    for (const rank of held) {
+      const rc = getFactionRankCap(faction, rank);
+      if (rc !== null && !isInRankFile(faction, rank, name) && rankFileCount(faction, rank) >= rc) skipped.push(rank);
+      else addable.push(rank);
+    }
+    if (!addable.length) {                                 // every held rank is full — don't add to the faction
+      removeLostRanks();
+      return { name, ranks: [], skipped };
+    }
+    // Faction size cap — a new member can't push the roster past its cap.
+    const alreadyMember = isInFactionFile(faction, name);
+    if (!alreadyMember) {
+      const cap = getFactionCap(faction);
+      if (factionMemberCount(faction) >= cap) return { name, ranks: [], capped: "faction", cap };
+    }
     ensureFactionMember(faction, name);                    // auto-add to the spawn (membership) file
+    const added = [];
     for (const [rank, roleId] of Object.entries(entry.ranks)) {
       if (!roleId) continue;
-      if (held.includes(rank)) addPlayerToRankFile(faction, name, rank);   // add to EVERY held rank's .txt
-      else                     removePlayerFromRankFile(faction, name, rank);
+      if (!held.includes(rank)) { removePlayerFromRankFile(faction, name, rank); continue; }
+      if (skipped.includes(rank)) continue;                // rank full — leave it
+      addPlayerToRankFile(faction, name, rank);            // add to each held rank's .txt (within cap)
+      added.push(rank);
     }
-    try { setFactionRank(faction, name, held[held.length - 1]); } catch {}  // track a primary rank
-    return { name, ranks: held };
+    if (added.length) { try { setFactionRank(faction, name, added[added.length - 1]); } catch {} }  // track a primary rank
+    return { name, ranks: added, skipped };
   }
   // no rank roles anymore — drop them from this faction
   removeFactionMemberEverywhere(faction, name);
@@ -2449,19 +2477,27 @@ async function handleWhitelistClaim(interaction, faction) {
   }
   await interaction.deferReply({ ephemeral: true });
   const r = applyMemberFactionRanks(interaction.member, faction, name);   // roles from the interaction, name from the modal
-  if (!r.ranks || !r.ranks.length) {
-    return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("No Rank Roles")
-      .setDescription(`You don't hold any Discord role mapped to a **${faction}** rank, so there's nothing to whitelist. Ask your faction leadership for a rank role.`))] });
+  if (r.capped === "faction") {
+    return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Faction Full")
+      .setDescription(`**${faction}** is at its member cap (**${r.cap}**), so you can't be added right now. Ask an admin to raise the cap with \`/faction setcap\` or free up a slot.`))] });
   }
+  if (!r.ranks || !r.ranks.length) {
+    const allFull = r.skipped && r.skipped.length;
+    return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(allFull ? "Ranks Full" : "No Rank Roles")
+      .setDescription(allFull
+        ? `Every rank your roles grant is at its cap: ${r.skipped.map(x => `**${x}**`).join(", ")}. Ask an admin to raise the rank cap with \`/faction setrankcap\`.`
+        : `You don't hold any Discord role mapped to a **${faction}** rank, so there's nothing to whitelist. Ask your faction leadership for a rank role.`))] });
+  }
+  const capNote = r.skipped && r.skipped.length ? `\n\n*Skipped (rank full):* ${r.skipped.map(x => `**${x}**`).join(", ")}` : "";
   logAction(clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Whitelist Self-Service")
     .addFields(
       { name: "Discord", value: `${interaction.user}`, inline: true },
       { name: "In-game", value: `\`${name}\``,          inline: true },
       { name: "Faction", value: faction,                inline: true },
-      { name: "Ranks",   value: r.ranks.join(", "),     inline: false },
+      { name: "Ranks",   value: r.ranks.join(", ") + (r.skipped?.length ? ` (skipped full: ${r.skipped.join(", ")})` : ""), inline: false },
     )));
   return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Whitelisted")
-    .setDescription(`Added \`${name}\` to **${faction}** at: ${r.ranks.map(x => `**${x}**`).join(", ")}. Hop in-game and pick your loadout.`))] });
+    .setDescription(`Added \`${name}\` to **${faction}** at: ${r.ranks.map(x => `**${x}**`).join(", ")}. Hop in-game and pick your loadout.${capNote}`))] });
 }
 
 /* ================================================================
@@ -5736,7 +5772,7 @@ module.exports = {
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
-  getFactionRankCap, getFactionRankCaps, setFactionRankCap,
+  getFactionRankCap, getFactionRankCaps, setFactionRankCap, getFactionCap, setFactionCap,
   // faction file safety
   readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
   // modsave sync
