@@ -4603,32 +4603,42 @@ client.on("interactionCreate", async (interaction) => {
         if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], ephemeral: true });
         await setFactionGuild(faction, interaction.guildId);   // bind this faction to the guild it's configured from
 
-        const render = () => {
+        const ranks = cfg.order;
+        // Walk through every rank one at a time, prompting an all-roles picker for each.
+        const render = (i) => {
           const entry = loadFactionRoleMap()[faction] || { ranks: {} };
-          const lines = cfg.order.map(r => `**${r}** → ${entry.ranks?.[r] ? `<@&${entry.ranks[r]}>` : "*(unset)*"}`);
+          const lines = ranks.map((r, idx) => `${idx === i ? "▶︎ " : "   "}**${r}** → ${entry.ranks?.[r] ? `<@&${entry.ranks[r]}>` : "*(unset)*"}`);
+          const cur = ranks[i];
           return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Faction Role Mapping — ${faction}`)
-            .setDescription(`Bound to **this** server. Pick a rank, then choose the role that grants it. A member who holds several rank roles gets **all** those ranks.\n\n${lines.join("\n")}`).setTimestamp());
+            .setDescription(`Bound to **this** server. Going rank by rank — pick the Discord role that grants each one. A member who holds several rank roles gets **all** those ranks.\n\n${lines.join("\n")}`)
+            .setFooter({ text: cur ? `Rank ${i + 1}/${ranks.length}: pick the role for ${cur} (or Skip)` : "All ranks mapped" }).setTimestamp());
         };
-        const rankRow = () => new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder().setCustomId("sfr_rank").setPlaceholder("Choose a rank to map…")
-            .addOptions(cfg.order.slice(0, 25).map(r => ({ label: r, value: r }))));
+        const controls = (i) => {
+          const cur = ranks[i];
+          const rows = [];
+          if (cur) rows.push(new ActionRowBuilder().addComponents(
+            new RoleSelectMenuBuilder().setCustomId(`sfr_pick:${i}`).setPlaceholder(`Role that grants ${cur}…`).setMinValues(0).setMaxValues(1)));
+          rows.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("sfr_skip").setLabel(cur ? "Skip / Clear" : "Restart").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("sfr_done").setLabel("Finish").setStyle(ButtonStyle.Success)));
+          return rows;
+        };
 
-        await interaction.reply({ embeds: [render()], components: [rankRow()], ephemeral: true });
+        let i = 0;
+        await interaction.reply({ embeds: [render(i)], components: controls(i), ephemeral: true });
         const msg = await interaction.fetchReply();
         while (true) {
           let sel;
-          try { sel = await msg.awaitMessageComponent({ time: 180_000, filter: i => i.user.id === interaction.user.id }); }
+          try { sel = await msg.awaitMessageComponent({ time: 180_000, filter: x => x.user.id === interaction.user.id }); }
           catch { try { await interaction.editReply({ components: [] }); } catch {} break; }
-          if (sel.customId === "sfr_rank") {
-            const rank = sel.values[0];
-            const roleRow = new ActionRowBuilder().addComponents(
-              new RoleSelectMenuBuilder().setCustomId(`sfr_role:${rank}`).setPlaceholder(`Role that grants ${rank}…`).setMinValues(0).setMaxValues(1));
-            await sel.update({ embeds: [render().setFooter({ text: `Pick the role for ${rank} (or clear it)` })], components: [roleRow] });
-          } else if (sel.customId.startsWith("sfr_role:")) {
-            const rank = sel.customId.slice("sfr_role:".length);
-            const roleId = sel.values[0] || null;
-            await setFactionRankRole(faction, rank, roleId, interaction.guildId);
-            await sel.update({ embeds: [render()], components: [rankRow()] });
+          if (sel.customId === "sfr_done") { await sel.update({ embeds: [render(-1)], components: [] }); break; }
+          if (sel.customId === "sfr_skip") { i = i >= ranks.length - 1 ? 0 : i + 1; await sel.update({ embeds: [render(i)], components: controls(i) }); continue; }
+          if (sel.customId.startsWith("sfr_pick:")) {
+            const rank = ranks[Number(sel.customId.slice("sfr_pick:".length))];
+            await setFactionRankRole(faction, rank, sel.values[0] || null, interaction.guildId);
+            i = i >= ranks.length - 1 ? -1 : i + 1;                    // advance; -1 = finished all ranks
+            if (i === -1) { await sel.update({ embeds: [render(-1)], components: [] }); break; }
+            await sel.update({ embeds: [render(i)], components: controls(i) });
           }
         }
         return;
