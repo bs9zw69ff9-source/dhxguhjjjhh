@@ -9,6 +9,7 @@ const ipBans = require("./ipBans");
 const {
   Client,
   GatewayIntentBits,
+  PermissionFlagsBits,
   ActivityType,
   REST,
   Routes,
@@ -3090,12 +3091,15 @@ const commands = [
     .setDescription("Owner — Unban everyone (clears blacklist.txt on both servers)"),
   new SlashCommandBuilder().setName("setfactionroles")
     .setDescription("Owner — Map this server's Discord roles to a faction's ranks")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)   // hidden from non-admins; runtime check restricts to the bot owner
     .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
   new SlashCommandBuilder().setName("syncfactionroles")
     .setDescription("Owner — Sync faction whitelists from Discord roles now")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption(o => o.setName("faction").setDescription("Faction (blank = all)").setRequired(false).addChoices(...factionChoices)),
   new SlashCommandBuilder().setName("setwhitelistchannel")
     .setDescription("Owner — Post this faction's self-service whitelist panel in this channel")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
 
   /* ── FACTION ─────────────────────────────────────────── */
