@@ -126,22 +126,22 @@ const ok = (cond, msg) => {
 
   console.log("Faction whitelists from Discord roles:");
   {
-    bot.recordKnownPlayers(["RangerRick"]);                       // known player -> display casing
-    fs.writeFileSync(path.join(sandbox, "verify_links.json"), JSON.stringify({ "rangerrick": "disc1" }));
     await bot.setFactionRankRole("NCR", "Private", "roleP", "guildNCR");
     await bot.setFactionRankRole("NCR", "Ranger",  "roleR", "guildNCR");
     const memberBoth = { id: "disc1", roles: { cache: new Set(["roleP", "roleR"]) } };
-    const res = bot.applyMemberFactionRanks(memberBoth, "NCR");
+    const res = bot.applyMemberFactionRanks(memberBoth, "NCR", "RangerRick");   // name supplied (modal)
     ok(res.ranks && res.ranks.includes("Private") && res.ranks.includes("Ranger"), "member holding TWO rank roles gets BOTH ranks");
     ok((bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rangerrick"), "written into the Private rank file");
     ok((bot.readFactionFile("ncrranger.txt")  || []).some(n => n.toLowerCase() === "rangerrick"), "written into the Ranger rank file");
     ok((bot.readFactionFile("ncrspawn.txt")   || []).some(n => n.toLowerCase() === "rangerrick"), "added to the NCR membership file");
     const memberOne = { id: "disc1", roles: { cache: new Set(["roleR"]) } };   // dropped the Private role
-    bot.applyMemberFactionRanks(memberOne, "NCR");
+    bot.applyMemberFactionRanks(memberOne, "NCR", "RangerRick");
     ok(!(bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rangerrick"), "losing a role removes that rank");
     ok((bot.readFactionFile("ncrranger.txt")   || []).some(n => n.toLowerCase() === "rangerrick"), "the still-held rank remains");
-    const unverified = bot.applyMemberFactionRanks({ id: "nobody", roles: { cache: new Set(["roleP"]) } }, "NCR");
-    ok(unverified.skipped === "not verified", "unverified Discord user is skipped (no Pavlov name)");
+    const viaNick = bot.applyMemberFactionRanks({ id: "y", displayName: "NickCourier", roles: { cache: new Set(["roleR"]) } }, "NCR");
+    ok(viaNick.name === "NickCourier", "falls back to the member's display name when no explicit name is given");
+    const noName = bot.applyMemberFactionRanks({ id: "z", roles: { cache: new Set(["roleP"]) } }, "NCR");
+    ok(noName.skipped === "no name", "member with no resolvable name is skipped");
   }
 
   console.log("Context-aware autocomplete:");

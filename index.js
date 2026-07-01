@@ -141,8 +141,6 @@ const FILES = {
   KNOWN:          "./known_players.json",
   USER_BLACKLIST: "./user_blacklist.json",
   USER_UNBARRED:  "./user_unbarred.json",
-  VERIFY_PANEL:   "./verify_panel.json",
-  VERIFY_LINKS:   "./verify_links.json",
   MENU_PANEL:     "./menu_panel.json",
   FACTION_ROLE_MAP: "./faction_role_map.json",
 };
@@ -164,8 +162,6 @@ const DEFAULTS = {
   [FILES.KNOWN]:          "{}",
   [FILES.USER_BLACKLIST]: "[]",
   [FILES.USER_UNBARRED]:  "[]",
-  [FILES.VERIFY_PANEL]:   "{}",
-  [FILES.VERIFY_LINKS]:   "{}",
   [FILES.MENU_PANEL]:     "{}",
   [FILES.FACTION_ROLE_MAP]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
@@ -632,10 +628,6 @@ const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "152059895078
 const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1520598950787158106";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
-/* Verification: panel channel + the role swapped on success. */
-const VERIFY_CHANNEL          = process.env.VERIFY_CHANNEL          || "1518205248907513966";
-const VERIFY_UNVERIFIED_ROLE  = process.env.VERIFY_UNVERIFIED_ROLE  || "1518204521916928030";
-const VERIFY_VERIFIED_ROLE    = process.env.VERIFY_VERIFIED_ROLE    || "1500607750361583687";
 
 /* ================================================================
    FACTION-SPECIFIC RANK SYSTEM
@@ -1268,12 +1260,6 @@ const QUOTES = {
     '"You\'re not welcome at the Tops tonight. Beat it."',
     '"Ejected. Take a walk down the Long 15 and cool off."',
   ],
-  verify:  [
-    '"Papers, please. The Strip opens to those it knows."',
-    '"State your name, courier. The Securitrons are checking the registry."',
-    '"Mr. House keeps a list. Let\'s get you on the right one."',
-    '"No name, no entry. Those are the rules of New Vegas."',
-  ],
   connect: [
     '"A courier strides into the Mojave."',
     '"Boots on the Strip. The Securitrons log every arrival."',
@@ -1564,13 +1550,13 @@ function factionLeaderOnlyEmbed() {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
     .setTitle("Faction Authority Required")
     .setDescription('> *"Only faction leaders pull strings around here, stranger."*\n\nRequires the **Faction Leader** role (or Moderator).'),
-    { footer: { text: "Faction access not verified" } });
+    { footer: { text: "Faction access not authorized" } });
 }
 function factionLeaderStrictEmbed() {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
     .setTitle("Faction Leader Authority Required")
     .setDescription('> *"Rank assignments are the sole domain of faction leadership."*\n\nThis action requires the **Faction Leader** role specifically.'),
-    { footer: { text: "Rank authority not verified" } });
+    { footer: { text: "Rank authority not authorized" } });
 }
 function emptyIdEmbed() {
   return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
@@ -1975,13 +1961,13 @@ function writeFactionFile(spawnFile, lines, opts = {}) {
     logger.error("Faction", `Refused write to ${spawnFile}: payload is not an array`);
     return false;
   }
-  // ---- Destruction guard: verify we're not silently wiping a populated roster. ----
+  // ---- Destruction guard: confirm we are not silently wiping a populated roster. ----
   if (!opts.allowBulk) {
     let raw = null;
     try { raw = fs.readFileSync(fp, "utf8"); }
     catch (e) {
       if (e.code !== "ENOENT") {   // can't read current file to compare → refuse rather than risk a wipe
-        logger.error("Faction", `Refused write to ${spawnFile}: cannot verify current contents (${e.code}). Aborting to protect the roster.`);
+        logger.error("Faction", `Refused write to ${spawnFile}: cannot read current contents (${e.code}). Aborting to protect the roster.`);
         return false;
       }
     }
@@ -2021,7 +2007,7 @@ function writeDonatorFile(lines, opts = {}) {
   if (!opts.allowBulk) {   // same destruction guard as faction files
     let raw = null;
     try { raw = fs.readFileSync(DONATOR_FILE, "utf8"); }
-    catch (e) { if (e.code !== "ENOENT") { logger.error("Donator", `Refused write: cannot verify current contents (${e.code})`); return false; } }
+    catch (e) { if (e.code !== "ENOENT") { logger.error("Donator", `Refused write: cannot read current contents (${e.code})`); return false; } }
     if (raw !== null) {
       const current = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
       backupFactionFile("donator.txt", raw);
@@ -2295,9 +2281,9 @@ function loadFactionBackup() {
    ================================================================
    Each faction lives in its own Discord guild. Roles there map to the faction's
    ranks (configured via /setfactionroles). A member who holds several rank roles is
-   whitelisted into ALL of those ranks (not just one). Requires a verified Pavlov name
-   (the verify panel) to know who they are in-game, and FACTION_ROLE_SYNC=on (+ the
-   Server Members Intent) for the automatic/full sweeps. */
+   whitelisted into ALL of those ranks (not just one). The in-game name comes from the
+   whitelist panel modal (self-service) or the member's server nickname/display name
+   (automatic sweeps, which need FACTION_ROLE_SYNC=on + the Server Members Intent). */
 const loadFactionRoleMap = () => safeRead(FILES.FACTION_ROLE_MAP, {});
 function setFactionGuild(faction, guildId) {
   return update(FILES.FACTION_ROLE_MAP, {}, (m) => {
@@ -2320,13 +2306,6 @@ function factionForGuild(guildId) {
   const map = loadFactionRoleMap();
   return ALL_FACTIONS.find(f => (map[f]?.guildId || FACTION_GUILDS[f]) === guildId) || null;
 }
-// Reverse the verify links (pavlovNameLower -> discordId) and recover display casing.
-function pavlovNameForDiscord(discordId) {
-  const links = loadVerifyLinks();
-  const known = loadKnownPlayers();
-  for (const [nameLower, id] of Object.entries(links)) if (id === discordId) return known[nameLower]?.name || nameLower;
-  return null;
-}
 // Ensure a name is in the faction's spawn (membership) file. Returns true if present/added.
 function ensureFactionMember(faction, name) {
   const spawn = SPAWN_FILE_MAP[faction];
@@ -2344,12 +2323,14 @@ function removeFactionMemberEverywhere(faction, name) {
 }
 // Sync ONE member's faction ranks from their Discord roles. Adds every mapped rank
 // whose role they hold (multiple ranks supported); removes mapped ranks they've lost.
-// If they hold no rank roles, they're removed from the faction entirely.
-function applyMemberFactionRanks(member, faction) {
+// If they hold no rank roles, they're removed from the faction entirely. The in-game
+// name is supplied explicitly (self-service panel) or taken from the member's server
+// nickname / display name (automatic sweeps).
+function applyMemberFactionRanks(member, faction, explicitName) {
   const entry = loadFactionRoleMap()[faction];
   if (!entry || !entry.ranks || !Object.keys(entry.ranks).length) return { skipped: "no role mapping" };
-  const name = pavlovNameForDiscord(member.id);
-  if (!name) return { skipped: "not verified" };          // no Pavlov name linked to this Discord user
+  const name = (explicitName && String(explicitName).trim()) || member?.displayName || member?.nickname || member?.user?.username || null;
+  if (!name) return { skipped: "no name" };               // no in-game name to whitelist under
   const held = [];
   for (const [rank, roleId] of Object.entries(entry.ranks)) {
     if (roleId && member.roles?.cache?.has(roleId)) held.push(rank);
@@ -2377,18 +2358,19 @@ async function syncFactionFromRoles(faction) {
   if (!entry?.ranks || !Object.keys(entry.ranks).length) return { ok: false, reason: "no role mapping" };
   let guild; try { guild = await client.guilds.fetch(guildId); } catch { return { ok: false, reason: "guild unreachable" }; }
   let members; try { members = await guild.members.fetch(); } catch (e) { return { ok: false, reason: "member fetch failed (enable Server Members Intent)" }; }
-  let verified = 0, applied = 0;
+  let named = 0, applied = 0;
   for (const member of members.values()) {
     const r = applyMemberFactionRanks(member, faction);
-    if (r.name) { verified++; if (r.ranks?.length) applied++; }
+    if (r.name) { named++; if (r.ranks?.length) applied++; }
   }
-  return { ok: true, faction, members: members.size, verified, applied };
+  return { ok: true, faction, members: members.size, named, applied };
 }
 
 /* ---------------- self-service whitelist panel (per faction guild) ----------------
-   A button in each faction's Discord channel. A verified member presses it and the
-   bot whitelists them into that faction at every rank their roles grant — reading
-   their roles straight off the interaction, so NO privileged intent is needed. */
+   A button in each faction's Discord channel. A member presses it, enters their
+   in-game name, and the bot whitelists them into that faction at every rank their
+   roles grant — reading their roles straight off the interaction, so NO privileged
+   intent is needed. */
 function setWhitelistChannel(faction, channelId, guildId) {
   return update(FILES.FACTION_ROLE_MAP, {}, (m) => {
     m[faction] = m[faction] || { guildId: guildId || FACTION_GUILDS[faction] || null, ranks: {} };
@@ -2409,7 +2391,7 @@ async function postWhitelistPanel(faction) {
   if (!ch?.isTextBased()) return false;
   if (entry.panelMsgId) { try { await ch.messages.fetch(entry.panelMsgId); return true; } catch {} }   // still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`${faction} — Whitelist`)
-    .setDescription(`${hero("Earn your place on the roster.")}\n**Verify first** (set your Pavlov name), then press **Get Whitelisted**. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.`));
+    .setDescription(`${hero("Earn your place on the roster.")}\nPress **Get Whitelisted** and enter your **exact** Pavlov in-game name. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_claim:${faction}`).setLabel("Get Whitelisted").setStyle(ButtonStyle.Success));
   try { const m = await ch.send({ embeds: [embed], components: [row] }); await setWhitelistPanelMsg(faction, m.id); return true; }
@@ -2425,13 +2407,13 @@ async function handleWhitelistClaim(interaction, faction) {
   if (!entry?.ranks || !Object.keys(entry.ranks).length) {
     return interaction.reply({ embeds: [warningEmbed("Not Configured", `No Discord roles are mapped to **${faction}** ranks yet. An admin needs to run \`/setfactionroles\` first.`)], ephemeral: true });
   }
-  const name = pavlovNameForDiscord(interaction.user.id);
+  const name = sanitizeMessage(interaction.fields.getTextInputValue("wl_name")).trim();
   if (!name) {
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Verify First")
-      .setDescription("You need to verify your Pavlov in-game name before claiming a whitelist. Use the verification panel, then come back."))], ephemeral: true });
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Name Required")
+      .setDescription("Enter your exact Pavlov in-game name."))], ephemeral: true });
   }
   await interaction.deferReply({ ephemeral: true });
-  const r = applyMemberFactionRanks(interaction.member, faction);   // reads roles from the interaction
+  const r = applyMemberFactionRanks(interaction.member, faction, name);   // roles from the interaction, name from the modal
   if (!r.ranks || !r.ranks.length) {
     return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("No Rank Roles")
       .setDescription(`You don't hold any Discord role mapped to a **${faction}** rank, so there's nothing to whitelist. Ask your faction leadership for a rank role.`))] });
@@ -2719,88 +2701,17 @@ async function refreshLeaderboardChannels() {
   postLeaderboard(); postPlaytimeLeaderboard(); postPlayerList();
 }
 
-/* ================================================================
-   VERIFICATION  (link a Discord user to their Pavlov username)
-   ================================================================ */
-const loadVerifyLinks = () => safeRead(FILES.VERIFY_LINKS, {});
-// Find the Discord user to DM for a Pavlov username. Primary match is the guild
-// member whose server NICKNAME (or display name) equals the name — that's what
-// verification sets, and it also catches anyone nicknamed by hand. Falls back to
-// the stored verify link (survives nickname changes). Returns a User or null.
+/* Find the Discord user to DM for a Pavlov username, by matching the guild member
+   whose server NICKNAME (or display name) equals the name. Returns a User or null. */
 async function dmUserForPavlov(name, guild) {
   const key = String(name ?? "").trim().toLowerCase();
-  if (!key) return null;
-  // 1) match by server nickname / display name
-  if (guild) {
-    try {
-      const found = await guild.members.fetch({ query: name, limit: 100 });   // query (op8) — no privileged intent needed
-      const m = found.find(mm => (mm.nickname && mm.nickname.toLowerCase() === key) || mm.displayName.toLowerCase() === key);
-      if (m) return m.user;
-    } catch { /* ignore — fall back to the link store */ }
-  }
-  // 2) stored verification link (Pavlov name -> Discord id)
-  const id = loadVerifyLinks()[key];
-  if (id) { try { return await client.users.fetch(id); } catch {} }
+  if (!key || !guild) return null;
+  try {
+    const found = await guild.members.fetch({ query: name, limit: 100 });   // query (op8) — no privileged intent needed
+    const m = found.find(mm => (mm.nickname && mm.nickname.toLowerCase() === key) || mm.displayName.toLowerCase() === key);
+    if (m) return m.user;
+  } catch { /* ignore */ }
   return null;
-}
-// True if the name matches any Pavlov player the bot has on record: online now,
-// known-players registry (seeded from playtime/factions/wages/donators/bans),
-// the playtime leaderboard, or the IP log registry.
-function isKnownPavlovPlayer(name) {
-  const key = String(name ?? "").trim().toLowerCase();
-  if (!key) return false;
-  if (playerCache.server1.some(n => n.toLowerCase() === key)) return true;
-  if (playerCache.server2.some(n => n.toLowerCase() === key)) return true;
-  if (Object.keys(loadKnownPlayers()).some(k => k.toLowerCase() === key)) return true;
-  if (Object.keys(loadPlaytime()).some(k => k.toLowerCase() === key)) return true;
-  try { if (ipBans.resolveIds(name).length) return true; } catch {}
-  return false;
-}
-
-// Post (or re-use) the persistent verification panel in VERIFY_CHANNEL.
-async function ensureVerifyPanel() {
-  if (!VERIFY_CHANNEL) return;
-  let ch; try { ch = await client.channels.fetch(VERIFY_CHANNEL); } catch { return; }
-  if (!ch?.isTextBased()) return;
-  const saved = safeRead(FILES.VERIFY_PANEL, {});
-  if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
-  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Mojave Checkpoint — Verification")
-    .setDescription(`${hero(randomQuote("verify"))}\n**Halt, courier.** Before the Strip opens to you, the Securitrons need a name on file.\n\nPress **Verify** below and enter your **exact** Pavlov username. Match the registry and the gates swing wide — vault door, NCR checkpoint, the whole Mojave.`));
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("verify_start").setLabel("Verify").setStyle(ButtonStyle.Success));
-  try { const m = await ch.send({ embeds: [embed], components: [row] }); safeWrite(FILES.VERIFY_PANEL, { id: m.id }); }
-  catch (e) { logger.warn("Verify", `panel post failed: ${e.message}`); }
-}
-
-// Handle the verification modal submit: check the name, then nickname + role swap.
-async function handleVerifySubmit(interaction) {
-  const name = sanitizeMessage(interaction.fields.getTextInputValue("verify_name")).trim();
-  if (!isKnownPavlovPlayer(name)) {
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Verification Denied")
-      .setDescription(`${hero("That name's not in our records, wanderer.")}\nCouldn't find a Pavlov courier named \`${name}\`. Enter your **exact** in-game username — you must have set foot in the Mojave first.`))], ephemeral: true });
-  }
-  // one identity per courier — reject if this Pavlov name is already claimed by someone else
-  const links = loadVerifyLinks();
-  const claimedBy = links[name.toLowerCase()];
-  if (claimedBy && claimedBy !== interaction.user.id) {
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Identity Already Claimed")
-      .setDescription(`${hero("Two couriers, one name? Not on Mr. House's Strip.")}\nThe Pavlov courier \`${name}\` is already verified to <@${claimedBy}>. If this is really you, contact an admin.`))], ephemeral: true });
-  }
-  const member = interaction.member;
-  const notes = [];
-  try { await member.setNickname(name.slice(0, 32)); notes.push("nickname set"); }
-  catch { notes.push("couldn't set nickname (bot role must be above yours)"); }
-  try { await member.roles.remove(VERIFY_UNVERIFIED_ROLE); } catch {}
-  try { await member.roles.add(VERIFY_VERIFIED_ROLE); notes.push("verified role granted"); }
-  catch { notes.push("couldn't change roles (check bot Manage Roles + role order)"); }
-  // persist the Pavlov-name -> Discord-id link so bans can DM this user later.
-  // Drop any previous name this user held so each Discord account maps to one name.
-  for (const k of Object.keys(links)) if (links[k] === member.id) delete links[k];
-  links[name.toLowerCase()] = member.id;
-  safeWrite(FILES.VERIFY_LINKS, links);
-  logger.info("Verify", `${member.user.tag} verified as Pavlov "${name}"`);
-  return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Welcome to the Strip — Verified")
-    .setDescription(`${hero("Identity confirmed. The Mojave welcomes you.")}\nLinked to Pavlov courier \`${name}\`. ${notes.join(" · ")}`))], ephemeral: true });
 }
 
 /* ================================================================
@@ -3305,13 +3216,12 @@ client.once("ready", async () => {
   try { await importModsaveBanlist(); } catch (e) { logger.warn("Bans", `modsave banlist import failed: ${e.message}`); }   // pull in-game-menu bans into the DB
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
-  ensureVerifyPanel();
   ensureMenuPanel();
   ensureWhitelistPanels();
   if (FACTION_ROLE_SYNC) {   // one full role→whitelist sweep on startup
     setTimeout(async () => {
       for (const f of ALL_FACTIONS) {
-        try { const r = await syncFactionFromRoles(f); if (r.ok) logger.info("FactionRoles", `${f}: ${r.applied} whitelisted / ${r.verified} verified of ${r.members}`); }
+        try { const r = await syncFactionFromRoles(f); if (r.ok) logger.info("FactionRoles", `${f}: ${r.applied} whitelisted / ${r.named} named of ${r.members}`); }
         catch (e) { logger.warn("FactionRoles", `${f} sync: ${e.message}`); }
       }
     }, 10_000);
@@ -3348,16 +3258,6 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   /* ── Verification button + modal ─────────────────────────── */
-  if (interaction.isButton() && interaction.customId === "verify_start") {
-    const modal = new ModalBuilder().setCustomId("verify_modal").setTitle("Verify your Pavlov account")
-      .addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId("verify_name").setLabel("Your exact Pavlov username")
-          .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64)));
-    return interaction.showModal(modal).catch(() => {});
-  }
-  if (interaction.isModalSubmit() && interaction.customId === "verify_modal") {
-    return handleVerifySubmit(interaction).catch(e => logger.warn("Verify", e.message));
-  }
   if (interaction.isButton() && interaction.customId === "menu_start") {
     const modal = new ModalBuilder().setCustomId("menu_modal").setTitle("Get RCON menu access")
       .addComponents(new ActionRowBuilder().addComponents(
@@ -3369,7 +3269,15 @@ client.on("interactionCreate", async (interaction) => {
     return handleMenuPanelSubmit(interaction).catch(e => logger.warn("MenuPanel", e.message));
   }
   if (interaction.isButton() && interaction.customId.startsWith("wl_claim:")) {
-    return handleWhitelistClaim(interaction, interaction.customId.slice("wl_claim:".length))
+    const faction = interaction.customId.slice("wl_claim:".length);
+    const modal = new ModalBuilder().setCustomId(`wl_modal:${faction}`).setTitle(`${faction} whitelist`.slice(0, 45))
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId("wl_name").setLabel("Your exact Pavlov in-game name")
+          .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64)));
+    return interaction.showModal(modal).catch(() => {});
+  }
+  if (interaction.isModalSubmit() && interaction.customId.startsWith("wl_modal:")) {
+    return handleWhitelistClaim(interaction, interaction.customId.slice("wl_modal:".length))
       .catch(e => logger.warn("Whitelist", e.message));
   }
 
@@ -4730,7 +4638,7 @@ client.on("interactionCreate", async (interaction) => {
         const lines = [];
         for (const f of factions) {
           const r = await syncFactionFromRoles(f);
-          lines.push(`**${f}:** ${r.ok ? `${r.applied} whitelisted / ${r.verified} verified of ${r.members} member(s)` : r.reason}`);
+          lines.push(`**${f}:** ${r.ok ? `${r.applied} whitelisted / ${r.named} named of ${r.members} member(s)` : r.reason}`);
         }
         return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER)
           .setTitle("Faction Role Sync").setDescription(lines.join("\n")).setTimestamp())] });
@@ -4762,8 +4670,6 @@ client.on("interactionCreate", async (interaction) => {
             { label: "Bar a Discord user",     value: "user_bl_add",    description: "Block a Discord user from ALL bot commands" },
             { label: "Un-bar a Discord user",  value: "user_bl_remove", description: "Restore a Discord user's command access" },
             { label: "List barred Discord users", value: "user_bl_list", description: "Show Discord users barred from commands" },
-            { label: "View verification links", value: "verify_list",  description: "Show Pavlov name -> Discord links" },
-            { label: "Clear a verification link", value: "verify_clear", description: "Free up a Pavlov name / re-verify a user" },
             { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs" },
             { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player" },
             { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list" },
@@ -4785,9 +4691,9 @@ client.on("interactionCreate", async (interaction) => {
         const choice = sel.values[0];
 
         // actions that need text input -> open a modal
-        if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove", "verify_clear", "wipe_money", "load_factions"].includes(choice)) {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user", verify_clear: "Clear a verification link", wipe_money: "Wipe ALL money", load_factions: "Restore faction whitelists" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", verify_clear: "Pavlov username", wipe_money: "Type WIPE to confirm", load_factions: "Type LOAD to confirm" };
+        if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove", "wipe_money", "load_factions"].includes(choice)) {
+          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user", wipe_money: "Wipe ALL money", load_factions: "Restore faction whitelists" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", wipe_money: "Type WIPE to confirm", load_factions: "Type LOAD to confirm" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -4846,11 +4752,6 @@ client.on("interactionCreate", async (interaction) => {
           else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `<@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
           else if (choice === "ignore_add")    { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
           else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `**${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
-          else if (choice === "verify_clear")  {
-            const links = loadVerifyLinks(); const key = val.toLowerCase(); const had = links[key];
-            if (had) { delete links[key]; safeWrite(FILES.VERIFY_LINKS, links); }
-            desc = had ? `Verification link for \`${val}\` (<@${had}>) cleared — the name is free and they can re-verify.` : `No verification link found for \`${val}\`.`;
-          }
           else                               { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
           const e = brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp());
           await logAction(e);
@@ -4874,7 +4775,6 @@ client.on("interactionCreate", async (interaction) => {
         let desc, color = NV.AMBER, audit = true;
         if (choice === "ignore_list")      { const n = ipBans.getUntracked(); desc = n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked."; audit = false; }
         else if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; desc = ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands."; audit = false; }
-        else if (choice === "verify_list")  { const lk = loadVerifyLinks(); const es = Object.entries(lk); desc = es.length ? es.map(([n, id]) => `• \`${n}\` → <@${id}>`).join("\n").slice(0, 4000) : "No verified couriers yet."; audit = false; }
         else if (choice === "clear_names") { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
         else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
         else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
@@ -5788,5 +5688,5 @@ module.exports = {
   // modsave sync
   syncAllModSave,
   // faction whitelists from discord roles
-  setFactionRankRole, loadFactionRoleMap, applyMemberFactionRanks, pavlovNameForDiscord,
+  setFactionRankRole, loadFactionRoleMap, applyMemberFactionRanks,
 };
