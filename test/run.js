@@ -124,6 +124,26 @@ const ok = (cond, msg) => {
   bot.seedKnownPlayers();
   ok(bot.getKnownPlayerChoices("seeded").some(c => c.value === "Seeded_Courier"), "seedKnownPlayers backfills from playtime");
 
+  console.log("Faction whitelists from Discord roles:");
+  {
+    bot.recordKnownPlayers(["RangerRick"]);                       // known player -> display casing
+    fs.writeFileSync(path.join(sandbox, "verify_links.json"), JSON.stringify({ "rangerrick": "disc1" }));
+    await bot.setFactionRankRole("NCR", "Private", "roleP", "guildNCR");
+    await bot.setFactionRankRole("NCR", "Ranger",  "roleR", "guildNCR");
+    const memberBoth = { id: "disc1", roles: { cache: new Set(["roleP", "roleR"]) } };
+    const res = bot.applyMemberFactionRanks(memberBoth, "NCR");
+    ok(res.ranks && res.ranks.includes("Private") && res.ranks.includes("Ranger"), "member holding TWO rank roles gets BOTH ranks");
+    ok((bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rangerrick"), "written into the Private rank file");
+    ok((bot.readFactionFile("ncrranger.txt")  || []).some(n => n.toLowerCase() === "rangerrick"), "written into the Ranger rank file");
+    ok((bot.readFactionFile("ncrspawn.txt")   || []).some(n => n.toLowerCase() === "rangerrick"), "added to the NCR membership file");
+    const memberOne = { id: "disc1", roles: { cache: new Set(["roleR"]) } };   // dropped the Private role
+    bot.applyMemberFactionRanks(memberOne, "NCR");
+    ok(!(bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rangerrick"), "losing a role removes that rank");
+    ok((bot.readFactionFile("ncrranger.txt")   || []).some(n => n.toLowerCase() === "rangerrick"), "the still-held rank remains");
+    const unverified = bot.applyMemberFactionRanks({ id: "nobody", roles: { cache: new Set(["roleP"]) } }, "NCR");
+    ok(unverified.skipped === "not verified", "unverified Discord user is skipped (no Pavlov name)");
+  }
+
   console.log("Context-aware autocomplete:");
   const mk = (cmd, opts = {}, sub = null) => ({ commandName: cmd, options: { getSubcommand: () => sub, getString: (n) => opts[n] ?? null } });
   ok(bot.commandPlayerCandidates(mk("kick")) === null, "kick → null (default online+known list)");

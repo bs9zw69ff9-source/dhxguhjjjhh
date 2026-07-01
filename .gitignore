@@ -30,6 +30,7 @@ user_unbarred.json
 verify_panel.json
 verify_links.json
 menu_panel.json
+faction_role_map.json
 autoban_patterns.json
 ip_registry.json
 ip_blacklist.json

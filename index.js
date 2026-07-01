@@ -19,6 +19,7 @@ const {
   ButtonStyle,
   ComponentType,
   StringSelectMenuBuilder,
+  RoleSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -142,6 +143,7 @@ const FILES = {
   VERIFY_PANEL:   "./verify_panel.json",
   VERIFY_LINKS:   "./verify_links.json",
   MENU_PANEL:     "./menu_panel.json",
+  FACTION_ROLE_MAP: "./faction_role_map.json",
 };
 
 const DEFAULTS = {
@@ -164,6 +166,7 @@ const DEFAULTS = {
   [FILES.VERIFY_PANEL]:   "{}",
   [FILES.VERIFY_LINKS]:   "{}",
   [FILES.MENU_PANEL]:     "{}",
+  [FILES.FACTION_ROLE_MAP]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -1096,6 +1099,16 @@ const FACTION_SPAWN_MAP = {
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
 
+/* Each faction has its own Discord guild; roles in that guild map to the faction's
+   ranks. Override any of these with FACTION_GUILD_<FACTION> env vars. */
+const FACTION_GUILDS = {
+  "NCR":                  process.env.FACTION_GUILD_NCR     || "1459164924721758353",
+  "Enclave":              process.env.FACTION_GUILD_ENCLAVE || "1520659346894360788",
+  "Brotherhood of Steel": process.env.FACTION_GUILD_BOS     || "1520624244378173613",
+  "Legion":               process.env.FACTION_GUILD_LEGION  || "1498786779648491670",
+  "Khans":                process.env.FACTION_GUILD_KHANS   || "1437981834519646280",
+};
+
 /* The "faction.txt" master roster the gamemode reads, plus any other plain
    FactionRoles files the bot never writes but the server still expects to
    exist. These are created empty if missing (never overwritten). */
@@ -1744,7 +1757,16 @@ function parseRcon(raw) {
 /* ================================================================
    DISCORD CLIENT & LOG CHANNEL
    ================================================================ */
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Faction-role sync needs the privileged GuildMembers intent (to read every member's
+// roles). It's OFF by default so the bot never crashes on login when the portal intent
+// isn't enabled. Turn it on with FACTION_ROLE_SYNC=on AND enable "Server Members Intent"
+// in the Discord Developer Portal.
+const FACTION_ROLE_SYNC = process.env.FACTION_ROLE_SYNC === "on";
+const client = new Client({
+  intents: FACTION_ROLE_SYNC
+    ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+    : [GatewayIntentBits.Guilds],
+});
 
 function logAction(embed) {
   if (!process.env.MOD_LOG_CHANNEL) return;
@@ -2268,6 +2290,163 @@ function loadFactionBackup() {
 }
 
 /* ================================================================
+   FACTION WHITELISTS FROM DISCORD ROLES (multi-guild)
+   ================================================================
+   Each faction lives in its own Discord guild. Roles there map to the faction's
+   ranks (configured via /setfactionroles). A member who holds several rank roles is
+   whitelisted into ALL of those ranks (not just one). Requires a verified Pavlov name
+   (the verify panel) to know who they are in-game, and FACTION_ROLE_SYNC=on (+ the
+   Server Members Intent) for the automatic/full sweeps. */
+const loadFactionRoleMap = () => safeRead(FILES.FACTION_ROLE_MAP, {});
+function setFactionGuild(faction, guildId) {
+  return update(FILES.FACTION_ROLE_MAP, {}, (m) => {
+    m[faction] = m[faction] || { guildId: null, ranks: {} };
+    if (guildId) m[faction].guildId = guildId;
+    if (!m[faction].ranks) m[faction].ranks = {};
+    return m;
+  });
+}
+function setFactionRankRole(faction, rank, roleId, guildId) {
+  return update(FILES.FACTION_ROLE_MAP, {}, (m) => {
+    m[faction] = m[faction] || { guildId: guildId || FACTION_GUILDS[faction] || null, ranks: {} };
+    if (guildId) m[faction].guildId = guildId;
+    if (!m[faction].ranks) m[faction].ranks = {};
+    if (roleId) m[faction].ranks[rank] = roleId; else delete m[faction].ranks[rank];
+    return m;
+  });
+}
+function factionForGuild(guildId) {
+  const map = loadFactionRoleMap();
+  return ALL_FACTIONS.find(f => (map[f]?.guildId || FACTION_GUILDS[f]) === guildId) || null;
+}
+// Reverse the verify links (pavlovNameLower -> discordId) and recover display casing.
+function pavlovNameForDiscord(discordId) {
+  const links = loadVerifyLinks();
+  const known = loadKnownPlayers();
+  for (const [nameLower, id] of Object.entries(links)) if (id === discordId) return known[nameLower]?.name || nameLower;
+  return null;
+}
+// Ensure a name is in the faction's spawn (membership) file. Returns true if present/added.
+function ensureFactionMember(faction, name) {
+  const spawn = SPAWN_FILE_MAP[faction];
+  const lines = readFactionFile(spawn);
+  if (lines === null) return false;                       // read error — never wipe
+  if (lines.some(l => l.toLowerCase() === name.toLowerCase())) return true;
+  lines.push(name);
+  return writeFactionFile(spawn, lines);
+}
+function removeFactionMemberEverywhere(faction, name) {
+  const spawn = SPAWN_FILE_MAP[faction];
+  const lines = readFactionFile(spawn);
+  if (lines) { const upd = lines.filter(l => l.toLowerCase() !== name.toLowerCase()); if (upd.length !== lines.length) writeFactionFile(spawn, upd); }
+  removePlayerFromAllRankFiles(faction, name);
+}
+// Sync ONE member's faction ranks from their Discord roles. Adds every mapped rank
+// whose role they hold (multiple ranks supported); removes mapped ranks they've lost.
+// If they hold no rank roles, they're removed from the faction entirely.
+function applyMemberFactionRanks(member, faction) {
+  const entry = loadFactionRoleMap()[faction];
+  if (!entry || !entry.ranks || !Object.keys(entry.ranks).length) return { skipped: "no role mapping" };
+  const name = pavlovNameForDiscord(member.id);
+  if (!name) return { skipped: "not verified" };          // no Pavlov name linked to this Discord user
+  const held = [];
+  for (const [rank, roleId] of Object.entries(entry.ranks)) {
+    if (roleId && member.roles?.cache?.has(roleId)) held.push(rank);
+  }
+  if (held.length) {
+    ensureFactionMember(faction, name);
+    for (const [rank, roleId] of Object.entries(entry.ranks)) {
+      if (!roleId) continue;
+      if (held.includes(rank)) addPlayerToRankFile(faction, name, rank);   // ALL held ranks
+      else                     removePlayerFromRankFile(faction, name, rank);
+    }
+    try { setFactionRank(faction, name, held[held.length - 1]); } catch {}  // track a primary rank
+    return { name, ranks: held };
+  }
+  // no rank roles anymore — drop them from this faction
+  removeFactionMemberEverywhere(faction, name);
+  return { name, ranks: [] };
+}
+// Full sweep of one faction's guild (needs GuildMembers intent).
+async function syncFactionFromRoles(faction) {
+  if (!FACTION_ROLE_SYNC) return { ok: false, reason: "FACTION_ROLE_SYNC not enabled" };
+  const entry   = loadFactionRoleMap()[faction];
+  const guildId = entry?.guildId || FACTION_GUILDS[faction];
+  if (!guildId) return { ok: false, reason: "no guild configured" };
+  if (!entry?.ranks || !Object.keys(entry.ranks).length) return { ok: false, reason: "no role mapping" };
+  let guild; try { guild = await client.guilds.fetch(guildId); } catch { return { ok: false, reason: "guild unreachable" }; }
+  let members; try { members = await guild.members.fetch(); } catch (e) { return { ok: false, reason: "member fetch failed (enable Server Members Intent)" }; }
+  let verified = 0, applied = 0;
+  for (const member of members.values()) {
+    const r = applyMemberFactionRanks(member, faction);
+    if (r.name) { verified++; if (r.ranks?.length) applied++; }
+  }
+  return { ok: true, faction, members: members.size, verified, applied };
+}
+
+/* ---------------- self-service whitelist panel (per faction guild) ----------------
+   A button in each faction's Discord channel. A verified member presses it and the
+   bot whitelists them into that faction at every rank their roles grant — reading
+   their roles straight off the interaction, so NO privileged intent is needed. */
+function setWhitelistChannel(faction, channelId, guildId) {
+  return update(FILES.FACTION_ROLE_MAP, {}, (m) => {
+    m[faction] = m[faction] || { guildId: guildId || FACTION_GUILDS[faction] || null, ranks: {} };
+    if (guildId) m[faction].guildId = guildId;
+    m[faction].panelChannel = channelId;
+    m[faction].panelMsgId   = null;                 // force a fresh panel in the new channel
+    if (!m[faction].ranks) m[faction].ranks = {};
+    return m;
+  });
+}
+function setWhitelistPanelMsg(faction, msgId) {
+  return update(FILES.FACTION_ROLE_MAP, {}, (m) => { if (m[faction]) m[faction].panelMsgId = msgId; return m; });
+}
+async function postWhitelistPanel(faction) {
+  const entry = loadFactionRoleMap()[faction];
+  if (!entry?.panelChannel) return false;
+  let ch; try { ch = await client.channels.fetch(entry.panelChannel); } catch { return false; }
+  if (!ch?.isTextBased()) return false;
+  if (entry.panelMsgId) { try { await ch.messages.fetch(entry.panelMsgId); return true; } catch {} }   // still there
+  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`${faction} — Whitelist`)
+    .setDescription(`${hero("Earn your place on the roster.")}\n**Verify first** (set your Pavlov name), then press **Get Whitelisted**. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.`));
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`wl_claim:${faction}`).setLabel("Get Whitelisted").setStyle(ButtonStyle.Success));
+  try { const m = await ch.send({ embeds: [embed], components: [row] }); await setWhitelistPanelMsg(faction, m.id); return true; }
+  catch (e) { logger.warn("Whitelist", `panel post failed for ${faction}: ${e.message}`); return false; }
+}
+async function ensureWhitelistPanels() {
+  for (const f of ALL_FACTIONS) { try { await postWhitelistPanel(f); } catch {} }
+}
+async function handleWhitelistClaim(interaction, faction) {
+  const cfg = getFactionRankConfig(faction);
+  if (!cfg) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
+  const entry = loadFactionRoleMap()[faction];
+  if (!entry?.ranks || !Object.keys(entry.ranks).length) {
+    return interaction.reply({ embeds: [warningEmbed("Not Configured", `No Discord roles are mapped to **${faction}** ranks yet. An admin needs to run \`/setfactionroles\` first.`)], ephemeral: true });
+  }
+  const name = pavlovNameForDiscord(interaction.user.id);
+  if (!name) {
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Verify First")
+      .setDescription("You need to verify your Pavlov in-game name before claiming a whitelist. Use the verification panel, then come back."))], ephemeral: true });
+  }
+  await interaction.deferReply({ ephemeral: true });
+  const r = applyMemberFactionRanks(interaction.member, faction);   // reads roles from the interaction
+  if (!r.ranks || !r.ranks.length) {
+    return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("No Rank Roles")
+      .setDescription(`You don't hold any Discord role mapped to a **${faction}** rank, so there's nothing to whitelist. Ask your faction leadership for a rank role.`))] });
+  }
+  logAction(clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Whitelist Self-Service")
+    .addFields(
+      { name: "Discord", value: `${interaction.user}`, inline: true },
+      { name: "In-game", value: `\`${name}\``,          inline: true },
+      { name: "Faction", value: faction,                inline: true },
+      { name: "Ranks",   value: r.ranks.join(", "),     inline: false },
+    )));
+  return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Whitelisted")
+    .setDescription(`Added \`${name}\` to **${faction}** at: ${r.ranks.map(x => `**${x}**`).join(", ")}. Hop in-game and pick your loadout.`))] });
+}
+
+/* ================================================================
    WARN SYSTEM
    ================================================================ */
 async function issueWarn(playerId, reason, moderator, server, interaction) {
@@ -2729,6 +2908,25 @@ setInterval(async () => {
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
+// Faction whitelists from Discord roles (only when the privileged intent is enabled).
+if (FACTION_ROLE_SYNC) {
+  client.on("guildMemberUpdate", (oldM, newM) => {
+    try {
+      const faction = factionForGuild(newM.guild.id);
+      if (!faction) return;
+      const entry = loadFactionRoleMap()[faction];
+      const mapped = new Set(Object.values(entry?.ranks || {}).filter(Boolean));
+      // only act if one of the MAPPED rank roles actually changed for this member
+      const changed = [...mapped].some(rid => oldM.roles.cache.has(rid) !== newM.roles.cache.has(rid));
+      if (changed) {
+        const r = applyMemberFactionRanks(newM, faction);
+        if (r.name) logger.info("FactionRoles", `${faction}: ${r.name} -> ${r.ranks?.length ? r.ranks.join(", ") : "removed"}`);
+      }
+    } catch (e) { logger.warn("FactionRoles", `member update: ${e.message}`); }
+  });
+  setInterval(() => { for (const f of ALL_FACTIONS) syncFactionFromRoles(f).catch(() => {}); }, 10 * 60 * 1000);
+}
+
 // Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure → Load.
 function autoBackupFactions() {
   const r = saveFactionBackup();
@@ -2890,6 +3088,15 @@ const commands = [
     .setDescription("Owner menu"),
   new SlashCommandBuilder().setName("clearallbans")
     .setDescription("Owner — Unban everyone (clears blacklist.txt on both servers)"),
+  new SlashCommandBuilder().setName("setfactionroles")
+    .setDescription("Owner — Map this server's Discord roles to a faction's ranks")
+    .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
+  new SlashCommandBuilder().setName("syncfactionroles")
+    .setDescription("Owner — Sync faction whitelists from Discord roles now")
+    .addStringOption(o => o.setName("faction").setDescription("Faction (blank = all)").setRequired(false).addChoices(...factionChoices)),
+  new SlashCommandBuilder().setName("setwhitelistchannel")
+    .setDescription("Owner — Post this faction's self-service whitelist panel in this channel")
+    .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -3096,6 +3303,15 @@ client.once("ready", async () => {
   setTimeout(rconHealthCheck, 5_000);
   ensureVerifyPanel();
   ensureMenuPanel();
+  ensureWhitelistPanels();
+  if (FACTION_ROLE_SYNC) {   // one full role→whitelist sweep on startup
+    setTimeout(async () => {
+      for (const f of ALL_FACTIONS) {
+        try { const r = await syncFactionFromRoles(f); if (r.ok) logger.info("FactionRoles", `${f}: ${r.applied} whitelisted / ${r.verified} verified of ${r.members}`); }
+        catch (e) { logger.warn("FactionRoles", `${f} sync: ${e.message}`); }
+      }
+    }, 10_000);
+  }
   // Wipe stale leaderboard/player-list messages from the previous run, then post fresh.
   try { await refreshLeaderboardChannels(); } catch (e) { logger.warn("Purge", `leaderboard refresh failed: ${e.message}`); }
 });
@@ -3147,6 +3363,10 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (interaction.isModalSubmit() && interaction.customId === "menu_modal") {
     return handleMenuPanelSubmit(interaction).catch(e => logger.warn("MenuPanel", e.message));
+  }
+  if (interaction.isButton() && interaction.customId.startsWith("wl_claim:")) {
+    return handleWhitelistClaim(interaction, interaction.customId.slice("wl_claim:".length))
+      .catch(e => logger.warn("Whitelist", e.message));
   }
 
   /* ── Autocomplete ─────────────────────────────────────── */
@@ -3319,6 +3539,9 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
+                "`/setfactionroles <faction>` — *Owner only* — map Discord roles → faction ranks (run in the faction's server)",
+                "`/setwhitelistchannel <faction>` — *Owner only* — post the faction's self-service whitelist panel here",
+                "`/syncfactionroles [faction]` — *Owner only* — sync whitelists from roles now (needs Server Members Intent)",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
@@ -4446,6 +4669,84 @@ client.on("interactionCreate", async (interaction) => {
          CONFIGURE — owner only: hidden control panel (dropdown).
          Non-owners never see the menu — just the missing-perms reply.
          ───────────────────────────────────────────────────── */
+      /* ─────────────────────────────────────────────────────
+         SETFACTIONROLES — map this guild's roles to a faction's ranks
+         ───────────────────────────────────────────────────── */
+      case "setfactionroles": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const faction = interaction.options.getString("faction");
+        const cfg = getFactionRankConfig(faction);
+        if (!cfg) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
+        if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], ephemeral: true });
+        await setFactionGuild(faction, interaction.guildId);   // bind this faction to the guild it's configured from
+
+        const render = () => {
+          const entry = loadFactionRoleMap()[faction] || { ranks: {} };
+          const lines = cfg.order.map(r => `**${r}** → ${entry.ranks?.[r] ? `<@&${entry.ranks[r]}>` : "*(unset)*"}`);
+          return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Faction Role Mapping — ${faction}`)
+            .setDescription(`Bound to **this** server. Pick a rank, then choose the role that grants it. A member who holds several rank roles gets **all** those ranks.\n\n${lines.join("\n")}`).setTimestamp());
+        };
+        const rankRow = () => new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder().setCustomId("sfr_rank").setPlaceholder("Choose a rank to map…")
+            .addOptions(cfg.order.slice(0, 25).map(r => ({ label: r, value: r }))));
+
+        await interaction.reply({ embeds: [render()], components: [rankRow()], ephemeral: true });
+        const msg = await interaction.fetchReply();
+        while (true) {
+          let sel;
+          try { sel = await msg.awaitMessageComponent({ time: 180_000, filter: i => i.user.id === interaction.user.id }); }
+          catch { try { await interaction.editReply({ components: [] }); } catch {} break; }
+          if (sel.customId === "sfr_rank") {
+            const rank = sel.values[0];
+            const roleRow = new ActionRowBuilder().addComponents(
+              new RoleSelectMenuBuilder().setCustomId(`sfr_role:${rank}`).setPlaceholder(`Role that grants ${rank}…`).setMinValues(0).setMaxValues(1));
+            await sel.update({ embeds: [render().setFooter({ text: `Pick the role for ${rank} (or clear it)` })], components: [roleRow] });
+          } else if (sel.customId.startsWith("sfr_role:")) {
+            const rank = sel.customId.slice("sfr_role:".length);
+            const roleId = sel.values[0] || null;
+            await setFactionRankRole(faction, rank, roleId, interaction.guildId);
+            await sel.update({ embeds: [render()], components: [rankRow()] });
+          }
+        }
+        return;
+      }
+
+      /* ─────────────────────────────────────────────────────
+         SYNCFACTIONROLES — apply role→rank whitelists now
+         ───────────────────────────────────────────────────── */
+      case "syncfactionroles": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        if (!FACTION_ROLE_SYNC) {
+          return interaction.reply({ embeds: [warningEmbed("Role Sync Disabled",
+            "Automatic role sync needs the privileged **Server Members Intent**.\n\n1. Enable it in the Discord Developer Portal → your bot → Bot → *Server Members Intent*.\n2. Set `FACTION_ROLE_SYNC=on` in `.env`.\n3. Restart the bot.\n\n(You can still map roles now with `/setfactionroles`.)")], ephemeral: true });
+        }
+        await interaction.deferReply({ ephemeral: true });
+        const one = interaction.options.getString("faction");
+        const factions = one ? [one] : ALL_FACTIONS;
+        const lines = [];
+        for (const f of factions) {
+          const r = await syncFactionFromRoles(f);
+          lines.push(`**${f}:** ${r.ok ? `${r.applied} whitelisted / ${r.verified} verified of ${r.members} member(s)` : r.reason}`);
+        }
+        return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER)
+          .setTitle("Faction Role Sync").setDescription(lines.join("\n")).setTimestamp())] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         SETWHITELISTCHANNEL — post the faction whitelist panel here
+         ───────────────────────────────────────────────────── */
+      case "setwhitelistchannel": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const faction = interaction.options.getString("faction");
+        if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
+        if (!interaction.channelId) return interaction.reply({ embeds: [errorEmbed("Run In A Channel", "Run this in the channel where the whitelist panel should live.")], ephemeral: true });
+        await setWhitelistChannel(faction, interaction.channelId, interaction.guildId);
+        await interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Whitelist Channel Set")
+          .setDescription(`The **${faction}** self-service whitelist panel now lives in <#${interaction.channelId}>. Members press **Get Whitelisted** to claim the ranks their roles grant.\n\n*Tip:* map roles to ranks with \`/setfactionroles ${faction}\` if you haven't yet.`).setTimestamp())], ephemeral: true });
+        await postWhitelistPanel(faction);
+        return;
+      }
+
       case "configure": {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
 
@@ -5482,4 +5783,6 @@ module.exports = {
   readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
   // modsave sync
   syncAllModSave,
+  // faction whitelists from discord roles
+  setFactionRankRole, loadFactionRoleMap, applyMemberFactionRanks, pavlovNameForDiscord,
 };
