@@ -142,6 +142,11 @@ const ok = (cond, msg) => {
     ok(viaNick.name === "NickCourier", "falls back to the member's display name when no explicit name is given");
     const noName = bot.applyMemberFactionRanks({ id: "z", roles: { cache: new Set(["roleP"]) } }, "NCR");
     ok(noName.skipped === "no name", "member with no resolvable name is skipped");
+    // raw interaction shape: roles is a plain array of id strings (not a .cache collection)
+    const raw = bot.applyMemberFactionRanks({ id: "raw", roles: ["roleP"] }, "NCR", "RawGuy");
+    ok(raw.ranks && raw.ranks.includes("Private"), "raw member.roles array is understood (role matched)");
+    ok((bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rawguy"), "raw-shape member added to the rank .txt");
+    ok((bot.readFactionFile("ncrspawn.txt")   || []).some(n => n.toLowerCase() === "rawguy"), "raw-shape member auto-added to the spawn file");
   }
 
   console.log("Context-aware autocomplete:");

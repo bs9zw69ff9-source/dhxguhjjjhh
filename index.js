@@ -2329,17 +2329,28 @@ function removeFactionMemberEverywhere(faction, name) {
 function applyMemberFactionRanks(member, faction, explicitName) {
   const entry = loadFactionRoleMap()[faction];
   if (!entry || !entry.ranks || !Object.keys(entry.ranks).length) return { skipped: "no role mapping" };
-  const name = (explicitName && String(explicitName).trim()) || member?.displayName || member?.nickname || member?.user?.username || null;
+  const name = (explicitName && String(explicitName).trim())
+    || member?.displayName || member?.nickname || member?.nick
+    || member?.user?.global_name || member?.user?.username || null;
   if (!name) return { skipped: "no name" };               // no in-game name to whitelist under
+  // Works whether member.roles is a GuildMemberRoleManager (.cache) or the raw
+  // interaction shape (a plain array of role-id strings).
+  const memberHasRole = (roleId) => {
+    const r = member?.roles;
+    if (!r) return false;
+    if (r.cache && typeof r.cache.has === "function") return r.cache.has(roleId);
+    if (Array.isArray(r)) return r.includes(roleId);
+    return false;
+  };
   const held = [];
   for (const [rank, roleId] of Object.entries(entry.ranks)) {
-    if (roleId && member.roles?.cache?.has(roleId)) held.push(rank);
+    if (roleId && memberHasRole(roleId)) held.push(rank);
   }
   if (held.length) {
-    ensureFactionMember(faction, name);
+    ensureFactionMember(faction, name);                    // auto-add to the spawn (membership) file
     for (const [rank, roleId] of Object.entries(entry.ranks)) {
       if (!roleId) continue;
-      if (held.includes(rank)) addPlayerToRankFile(faction, name, rank);   // ALL held ranks
+      if (held.includes(rank)) addPlayerToRankFile(faction, name, rank);   // add to EVERY held rank's .txt
       else                     removePlayerFromRankFile(faction, name, rank);
     }
     try { setFactionRank(faction, name, held[held.length - 1]); } catch {}  // track a primary rank
