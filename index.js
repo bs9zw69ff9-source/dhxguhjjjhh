@@ -2306,6 +2306,30 @@ function factionForGuild(guildId) {
   const map = loadFactionRoleMap();
   return ALL_FACTIONS.find(f => (map[f]?.guildId || FACTION_GUILDS[f]) === guildId) || null;
 }
+// A per-guild "faction leader" role, limited to /setfactionroles + /setwhitelistchannel.
+function setFactionAdminRole(faction, roleId, guildId) {
+  return update(FILES.FACTION_ROLE_MAP, {}, (m) => {
+    m[faction] = m[faction] || { guildId: guildId || FACTION_GUILDS[faction] || null, ranks: {} };
+    if (guildId) m[faction].guildId = guildId;
+    if (roleId) m[faction].adminRole = roleId; else delete m[faction].adminRole;
+    if (!m[faction].ranks) m[faction].ranks = {};
+    return m;
+  });
+}
+function memberHasRoleId(member, roleId) {
+  if (!roleId || !member) return false;
+  const r = member.roles;
+  if (r?.cache && typeof r.cache.has === "function") return r.cache.has(roleId);   // GuildMember
+  if (Array.isArray(r)) return r.includes(roleId);                                 // raw interaction member
+  return false;
+}
+function isFactionAdmin(member, faction) {
+  return memberHasRoleId(member, loadFactionRoleMap()[faction]?.adminRole);
+}
+// The bot owner OR someone holding this faction's configured leader role.
+function canManageFaction(interaction, faction) {
+  return isOwner(interaction.user.id) || isFactionAdmin(interaction.member, faction);
+}
 // Ensure a name is in the faction's spawn (membership) file. Returns true if present/added.
 function ensureFactionMember(faction, name) {
   const spawn = SPAWN_FILE_MAP[faction];
@@ -3012,17 +3036,19 @@ const commands = [
   new SlashCommandBuilder().setName("clearallbans")
     .setDescription("Owner — Unban everyone (clears blacklist.txt on both servers)"),
   new SlashCommandBuilder().setName("setfactionroles")
-    .setDescription("Owner — Map this server's Discord roles to a faction's ranks")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)   // hidden from non-admins; runtime check restricts to the bot owner
+    .setDescription("Owner / Faction Leader — Map this server's Discord roles to a faction's ranks")
+    .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
+  new SlashCommandBuilder().setName("setwhitelistchannel")
+    .setDescription("Owner / Faction Leader — Post this faction's self-service whitelist panel in this channel")
+    .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
+  new SlashCommandBuilder().setName("setfactionadmin")
+    .setDescription("Owner — Set this guild's Faction Leader role (may use /setfactionroles + /setwhitelistchannel)")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
   new SlashCommandBuilder().setName("syncfactionroles")
     .setDescription("Owner — Sync faction whitelists from Discord roles now")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption(o => o.setName("faction").setDescription("Faction (blank = all)").setRequired(false).addChoices(...factionChoices)),
-  new SlashCommandBuilder().setName("setwhitelistchannel")
-    .setDescription("Owner — Post this faction's self-service whitelist panel in this channel")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices)),
 
   /* ── FACTION ─────────────────────────────────────────── */
   new SlashCommandBuilder()
@@ -3462,8 +3488,9 @@ client.on("interactionCreate", async (interaction) => {
                 "`/inspect <id>` — *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
-                "`/setfactionroles <faction>` — *Owner only* — map Discord roles → faction ranks (run in the faction's server)",
-                "`/setwhitelistchannel <faction>` — *Owner only* — post the faction's self-service whitelist panel here",
+                "`/setfactionroles <faction>` — *Owner / Faction Leader* — map Discord roles → faction ranks (run in the faction's server)",
+                "`/setwhitelistchannel <faction>` — *Owner / Faction Leader* — post the faction's self-service whitelist panel here",
+                "`/setfactionadmin <faction>` — *Owner only* — set this guild's Faction Leader role (those 2 commands only)",
                 "`/syncfactionroles [faction]` — *Owner only* — sync whitelists from roles now (needs Server Members Intent)",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
@@ -4589,6 +4616,32 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       /* ─────────────────────────────────────────────────────
+         SETFACTIONADMIN — owner sets this guild's Faction Leader role
+         ───────────────────────────────────────────────────── */
+      case "setfactionadmin": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        const faction = interaction.options.getString("faction");
+        if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
+        if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], ephemeral: true });
+        await setFactionGuild(faction, interaction.guildId);
+        const cur = loadFactionRoleMap()[faction]?.adminRole;
+        const embed = () => brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Faction Leader Role — ${faction}`)
+          .setDescription(`Pick the role that may use \`/setfactionroles\` and \`/setwhitelistchannel\` for **${faction}** (nothing else). Choosing none clears it.\n\nCurrent: ${loadFactionRoleMap()[faction]?.adminRole ? `<@&${loadFactionRoleMap()[faction].adminRole}>` : "*(none)*"}`).setTimestamp());
+        const row = new ActionRowBuilder().addComponents(
+          new RoleSelectMenuBuilder().setCustomId("sfa_role").setPlaceholder("Faction Leader role…").setMinValues(0).setMaxValues(1));
+        await interaction.reply({ embeds: [embed()], components: [row], ephemeral: true });
+        const msg = await interaction.fetchReply();
+        let sel;
+        try { sel = await msg.awaitMessageComponent({ time: 120_000, filter: x => x.user.id === interaction.user.id && x.customId === "sfa_role" }); }
+        catch { try { await interaction.editReply({ components: [] }); } catch {} return; }
+        await setFactionAdminRole(faction, sel.values[0] || null, interaction.guildId);
+        return sel.update({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Faction Leader Role — ${faction}`)
+          .setDescription(sel.values[0]
+            ? `<@&${sel.values[0]}> can now use \`/setfactionroles\` and \`/setwhitelistchannel\` for **${faction}**.`
+            : `Cleared — only the owner can manage **${faction}** now.`).setTimestamp())], components: [] });
+      }
+
+      /* ─────────────────────────────────────────────────────
          CONFIGURE — owner only: hidden control panel (dropdown).
          Non-owners never see the menu — just the missing-perms reply.
          ───────────────────────────────────────────────────── */
@@ -4596,8 +4649,8 @@ client.on("interactionCreate", async (interaction) => {
          SETFACTIONROLES — map this guild's roles to a faction's ranks
          ───────────────────────────────────────────────────── */
       case "setfactionroles": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
         const faction = interaction.options.getString("faction");
+        if (!canManageFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Allowed", `Only the owner or the **${faction}** Faction Leader role can map roles. An owner sets that role with \`/setfactionadmin\`.`)], ephemeral: true });
         const cfg = getFactionRankConfig(faction);
         if (!cfg) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
         if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], ephemeral: true });
@@ -4669,8 +4722,8 @@ client.on("interactionCreate", async (interaction) => {
          SETWHITELISTCHANNEL — post the faction whitelist panel here
          ───────────────────────────────────────────────────── */
       case "setwhitelistchannel": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
         const faction = interaction.options.getString("faction");
+        if (!canManageFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Allowed", `Only the owner or the **${faction}** Faction Leader role can set the whitelist channel. An owner sets that role with \`/setfactionadmin\`.`)], ephemeral: true });
         if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
         if (!interaction.channelId) return interaction.reply({ embeds: [errorEmbed("Run In A Channel", "Run this in the channel where the whitelist panel should live.")], ephemeral: true });
         await setWhitelistChannel(faction, interaction.channelId, interaction.guildId);
@@ -5710,4 +5763,5 @@ module.exports = {
   syncAllModSave,
   // faction whitelists from discord roles
   setFactionRankRole, loadFactionRoleMap, applyMemberFactionRanks,
+  setFactionAdminRole, isFactionAdmin,
 };

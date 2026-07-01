@@ -147,6 +147,13 @@ const ok = (cond, msg) => {
     ok(raw.ranks && raw.ranks.includes("Private"), "raw member.roles array is understood (role matched)");
     ok((bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rawguy"), "raw-shape member added to the rank .txt");
     ok((bot.readFactionFile("ncrspawn.txt")   || []).some(n => n.toLowerCase() === "rawguy"), "raw-shape member auto-added to the spawn file");
+    // faction leader role
+    await bot.setFactionAdminRole("NCR", "leaderRole", "guildNCR");
+    ok(bot.isFactionAdmin({ roles: { cache: new Set(["leaderRole"]) } }, "NCR"), "faction leader role is recognized");
+    ok(bot.isFactionAdmin({ roles: ["leaderRole"] }, "NCR"), "faction leader role recognized on raw roles array");
+    ok(!bot.isFactionAdmin({ roles: { cache: new Set(["someoneelse"]) } }, "NCR"), "non-leader is not recognized");
+    await bot.setFactionAdminRole("NCR", null, "guildNCR");
+    ok(!bot.isFactionAdmin({ roles: { cache: new Set(["leaderRole"]) } }, "NCR"), "clearing the leader role revokes it");
   }
 
   console.log("Context-aware autocomplete:");
