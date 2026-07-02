@@ -142,6 +142,7 @@ const FILES = {
   USER_BLACKLIST: "./user_blacklist.json",
   USER_UNBARRED:  "./user_unbarred.json",
   MENU_PANEL:     "./menu_panel.json",
+  MENU_ROLES:     "./menu_roles.json",
   FACTION_ROLE_MAP: "./faction_role_map.json",
 };
 
@@ -163,6 +164,7 @@ const DEFAULTS = {
   [FILES.USER_BLACKLIST]: "[]",
   [FILES.USER_UNBARRED]:  "[]",
   [FILES.MENU_PANEL]:     "{}",
+  [FILES.MENU_ROLES]:     "{}",
   [FILES.FACTION_ROLE_MAP]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
@@ -565,17 +567,35 @@ const MENUS = [
 ];
 
 /* Self-service RCON-menu panel: a channel where staff enter their in-game name and
-   the bot grants the menu that matches their HIGHEST Discord role. */
+   the bot grants the menu that matches their HIGHEST Discord role. The role→menu
+   mapping is set with /setrconroles (stored config), falling back to these env/defaults. */
 const MENU_PANEL_CHANNEL  = process.env.MENU_PANEL_CHANNEL  || "1520598952670662677";
-const MENU_ROLE_HIGHSTAFF = process.env.MENU_ROLE_HIGHSTAFF || "1521827868756152450";
-const MENU_ROLE_STAFF     = process.env.MENU_ROLE_STAFF     || "1520598947180314836";
-const MENU_ROLE_FACTION   = process.env.MENU_ROLE_FACTION   || "1520598947129852082";
+const MENU_ROLE_DEFAULTS = {
+  highstaff: process.env.MENU_ROLE_HIGHSTAFF || "1521827868756152450",
+  staff:     process.env.MENU_ROLE_STAFF     || "1520598947180314836",
+  faction:   process.env.MENU_ROLE_FACTION   || "1520598947129852082",
+};
+// Effective mapping: stored /setrconroles config overrides the env defaults.
+function loadMenuRoles() {
+  const saved = safeRead(FILES.MENU_ROLES, {}) || {};
+  return {
+    highstaff: saved.highstaff || MENU_ROLE_DEFAULTS.highstaff,
+    staff:     saved.staff     || MENU_ROLE_DEFAULTS.staff,
+    faction:   saved.faction   || MENU_ROLE_DEFAULTS.faction,
+  };
+}
+function setMenuRole(menu, roleId) {
+  return update(FILES.MENU_ROLES, {}, (m) => { if (roleId) m[menu] = roleId; else delete m[menu]; return m; });
+}
 // Highest role wins, in this order.
-const MENU_ROLE_TIERS = [
-  { role: MENU_ROLE_HIGHSTAFF, menu: "highstaff" },
-  { role: MENU_ROLE_STAFF,     menu: "staff"     },
-  { role: MENU_ROLE_FACTION,   menu: "faction"   },
-];
+function menuRoleTiers() {
+  const r = loadMenuRoles();
+  return [
+    { role: r.highstaff, menu: "highstaff" },
+    { role: r.staff,     menu: "staff"     },
+    { role: r.faction,   menu: "faction"   },
+  ];
+}
 
 const BAN_REASONS = [
   { name: "RDM In The Strip",          value: "rdm_strip"   },
@@ -2821,9 +2841,8 @@ async function handleMenuPanelSubmit(interaction) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
       .setDescription("Enter your exact Pavlov in-game name."))], ephemeral: true });
   }
-  // Highest role wins.
-  const roles = interaction.member?.roles?.cache;
-  const tier  = MENU_ROLE_TIERS.find(t => t.role && roles?.has(t.role));
+  // Highest role wins (handles GuildMember .cache and raw role-array shapes).
+  const tier = menuRoleTiers().find(t => t.role && memberHasRoleId(interaction.member, t.role));
   if (!tier) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("No Menu Role")
       .setDescription("You don't hold a High Staff, Staff, or Faction RCON role, so there's no menu to grant. Ask an admin if this is wrong."))], ephemeral: true });
@@ -3114,6 +3133,12 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption(o => o.setName("faction").setDescription("Faction").setRequired(true).addChoices(...factionChoices))
     .addRoleOption(o => o.setName("role").setDescription("Faction Leader role (leave empty to clear)")),
+  new SlashCommandBuilder().setName("setrconroles")
+    .setDescription("Admin — Set the Discord roles that grant each RCON menu (self-service panel)")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addRoleOption(o => o.setName("high_staff_role").setDescription("Role that grants the High Staff menu"))
+    .addRoleOption(o => o.setName("staff_role").setDescription("Role that grants the Staff menu"))
+    .addRoleOption(o => o.setName("faction_role").setDescription("Role that grants the Faction menu")),
   new SlashCommandBuilder().setName("syncfactionroles")
     .setDescription("Owner — Sync faction whitelists from Discord roles now")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -3582,6 +3607,7 @@ client.on("interactionCreate", async (interaction) => {
                 "`/set<faction>roles` — *Owner / Faction Leader* — map Discord roles → ranks (a role option per rank; run in the faction's server)",
                 "`/setwhitelistchannel <faction>` — *Owner / Faction Leader* — post the faction's self-service whitelist panel here",
                 "`/setfactionadmin <faction> [role]` — *Owner only* — set this guild's Faction Leader role (those commands only)",
+                "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
                 "`/syncfactionroles [faction]` — *Owner only* — sync whitelists from roles now (needs Server Members Intent)",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
@@ -4724,6 +4750,28 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       /* ─────────────────────────────────────────────────────
+         SETRCONROLES — which Discord role grants each RCON menu
+         ───────────────────────────────────────────────────── */
+      case "setrconroles": {
+        const hs = interaction.options.getRole("high_staff_role");
+        const st = interaction.options.getRole("staff_role");
+        const fa = interaction.options.getRole("faction_role");
+        if (hs) await setMenuRole("highstaff", hs.id);
+        if (st) await setMenuRole("staff", st.id);
+        if (fa) await setMenuRole("faction", fa.id);
+        const m = loadMenuRoles();
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("RCON Menu Roles")
+          .setDescription((hs || st || fa) ? "Updated. Members who press **Get Menu** get the menu of their highest role below." : "Current mapping. Pass role options to change. Members get the menu of their **highest** role.")
+          .addFields(
+            { name: "High Staff", value: m.highstaff ? `<@&${m.highstaff}>` : "*(unset)*", inline: true },
+            { name: "Staff",       value: m.staff     ? `<@&${m.staff}>`     : "*(unset)*", inline: true },
+            { name: "Faction",     value: m.faction   ? `<@&${m.faction}>`   : "*(unset)*", inline: true },
+          ).setFooter({ text: "Priority: High Staff > Staff > Faction" }).setTimestamp());
+        await logAction(embed);
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      /* ─────────────────────────────────────────────────────
          SYNCFACTIONROLES — apply role→rank whitelists now
          ───────────────────────────────────────────────────── */
       case "syncfactionroles": {
@@ -5790,4 +5838,6 @@ module.exports = {
   // faction whitelists from discord roles
   setFactionRankRole, loadFactionRoleMap, applyMemberFactionRanks,
   setFactionAdminRole, isFactionAdmin,
+  // rcon menu roles
+  loadMenuRoles, setMenuRole,
 };

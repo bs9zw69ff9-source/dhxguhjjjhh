@@ -178,6 +178,13 @@ const ok = (cond, msg) => {
     const p2 = bot.applyMemberFactionRanks({ id: "p2", roles: ["khanProspect"] }, "Khans", "ProspectTwo");
     ok(p2.capped === "faction", "second member refused — faction size cap not exceeded");
     ok((bot.readFactionFile("khansspawn.txt") || []).length === 1, "Khans roster holds exactly the cap");
+    // RCON menu roles
+    await bot.setMenuRole("staff", "staffRole");
+    ok(bot.loadMenuRoles().staff === "staffRole", "setMenuRole stores the Staff role");
+    await bot.setMenuRole("highstaff", "hsRole");
+    ok(bot.loadMenuRoles().highstaff === "hsRole", "setMenuRole stores the High Staff role");
+    await bot.setMenuRole("staff", null);
+    ok(bot.loadMenuRoles().staff && bot.loadMenuRoles().staff !== "staffRole", "clearing a menu role falls back to the default");
   }
 
   console.log("Context-aware autocomplete:");
