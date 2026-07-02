@@ -2962,6 +2962,42 @@ function removeMenuGrant(playerId, server, menuValue) {
   saveMenuGrants(grants);
 }
 
+/* Re-grant recorded menus when a granted player REJOINS. The server drops a
+   player's live menu on disconnect, so without this a /givemenu (or self-service
+   claim) only lasted until they left. Fired from the connection log (onConnect);
+   waits a few seconds so the player shows up in RefreshList, then re-sends the
+   exact grant(s) on record — nothing is granted that an admin didn't grant. */
+const _recentRegrant = new Map();   // nameLower -> ts (don't re-grant more than once per 2 min)
+function scheduleMenuRegrant(name) {
+  const key = String(name ?? "").toLowerCase();
+  if (!key) return;
+  const grants = loadMenuGrants()[key];
+  if (!grants || !grants.length) return;
+  if (Date.now() - (_recentRegrant.get(key) ?? 0) < 120_000) return;
+  _recentRegrant.set(key, Date.now());
+  if (_recentRegrant.size > 500) { const cut = Date.now() - 600_000; for (const [k, t] of _recentRegrant) if (t < cut) _recentRegrant.delete(k); }
+  setTimeout(async () => {
+    try {
+      const target = await resolvePlayerId(name);   // GiveMenu targets the UniqueId
+      // collapse duplicate menus: one send per menu, to "both" if any record says both
+      const byMenu = new Map();
+      for (const g of grants) {
+        const cur = byMenu.get(g.menuValue);
+        const srv = (cur && cur.server !== g.server) || g.server === "both" ? "both" : g.server;
+        byMenu.set(g.menuValue, { menuId: g.menuId, server: cur ? "both" : srv });
+      }
+      for (const [menuValue, g] of byMenu) {
+        if (menuValue === "highstaff") {
+          await sendRconBoth(`AddMod ${target}`, g.server);
+          await sendRconBoth(`AddAccessManager ${target}`, g.server);
+        }
+        await sendRconBoth(`GiveMenu ${target} ${g.menuId}`, g.server);
+      }
+      logger.info("Menus", `Re-granted ${[...byMenu.keys()].join(" + ")} to ${name} on rejoin (${target})`);
+    } catch (e) { logger.warn("Menus", `menu re-grant failed for ${name}: ${e.message}`); }
+  }, 8_000);   // let the join settle so RefreshList lists them (live UniqueId resolves)
+}
+
 async function rconHealthCheck() {
   for (const srv of (hasServer2 ? ["server1", "server2"] : ["server1"])) {
     try {
@@ -3346,6 +3382,11 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   logger.info("IPBans", `Server labels: ${[...serverNameByLabel].map(([l, n]) => `${l}=${n}`).join(", ")}`);
   ipBans.init({
     logFiles: ipLogFiles,
+    // Fired on every LIVE join — re-grant recorded RCON menus (the server drops a
+    // player's menu on disconnect, so a rejoin needs the grant re-applied).
+    onConnect: async ({ name }) => {
+      try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
+    },
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) —
     // posts an accurate name · ID · IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
