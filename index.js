@@ -987,6 +987,14 @@ function atomicCopyPreservingMtime(dstAbs, contentBuf, mtimeMs) {
     return false;
   }
 }
+// True when copying `srcContent` over `dstAbs` would replace a positive balance with
+// nothing (empty or "0") — a money-losing clobber we must refuse.
+function wouldWipeBalance(srcContent, dstAbs) {
+  const s = Buffer.isBuffer(srcContent) ? srcContent.toString("utf8").trim() : String(srcContent).trim();
+  if (s !== "" && s !== "0") return false;                    // source has real content — fine to copy
+  let d; try { d = fs.readFileSync(dstAbs, "utf8").trim(); } catch { return false; }
+  return /^\d+$/.test(d) && Number(d) > 0;                    // destination is a positive integer balance — protect it
+}
 function syncAllModSave(bases = PAVLOV_BASES) {
   if (process.env.MODSAVE_SYNC === "off") return { synced: 0, installs: bases.length, off: true };
   if (!Array.isArray(bases) || bases.length < 2) return { synced: 0, installs: bases.length };
@@ -1010,6 +1018,10 @@ function syncAllModSave(bases = PAVLOV_BASES) {
       const dstAbs = path.join(base, MODSAVE_REL, rel);
       let dm = -1; try { dm = fs.statSync(dstAbs).mtimeMs; } catch {}
       if (dm >= mtime - 2000) continue;          // already as new (2s tolerance for fs precision) — skip
+      // MONEY GUARD: never overwrite a positive balance with an empty/0 file. A player
+      // hopping to a server that just made them a fresh 0-cap file must not wipe the
+      // caps they earned elsewhere. (Economy files are a single integer.)
+      if (wouldWipeBalance(content, dstAbs)) continue;
       if (atomicCopyPreservingMtime(dstAbs, content, mtime)) synced++;
     }
   }

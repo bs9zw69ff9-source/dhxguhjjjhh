@@ -100,6 +100,18 @@ const ok = (cond, msg) => {
     fs.writeFileSync(path.join(ia, sub, "AccessManager.cfg"), "player1");
     bot.syncAllModSave([ia, ib]);
     ok(!fs.existsSync(path.join(ib, sub, "AccessManager.cfg")), "AccessManager.cfg is never mirrored across installs");
+    // MONEY GUARD: a fresh 0-cap file with a newer mtime must NOT wipe a real balance
+    const balA = path.join(ia, sub, "player9.txt"), balB = path.join(ib, sub, "player9.txt");
+    fs.writeFileSync(balA, "1000"); fs.utimesSync(balA, new Date(1_000_000), new Date(1_000_000)); // older, real balance
+    fs.writeFileSync(balB, "0");    // newer, fresh 0 (would be "newest" and clobber A)
+    bot.syncAllModSave([ia, ib]);
+    ok(fs.readFileSync(balA, "utf8") === "1000", "sync refuses to overwrite a positive balance with 0");
+    // but a real (non-zero) newer balance still propagates (legit spend/earn)
+    const spA = path.join(ia, sub, "player10.txt"), spB = path.join(ib, sub, "player10.txt");
+    fs.writeFileSync(spA, "1000"); fs.utimesSync(spA, new Date(1_000_000), new Date(1_000_000));
+    fs.writeFileSync(spB, "250");  // newer, real value
+    bot.syncAllModSave([ia, ib]);
+    ok(fs.readFileSync(spA, "utf8") === "250", "a newer non-zero balance still syncs normally");
   }
 
   console.log("Player notes:");
