@@ -197,6 +197,14 @@ const ok = (cond, msg) => {
     ok(bot.loadMenuRoles().highstaff === "hsRole", "setMenuRole stores the High Staff role");
     await bot.setMenuRole("staff", null);
     ok(bot.loadMenuRoles().staff && bot.loadMenuRoles().staff !== "staffRole", "clearing a menu role falls back to the default");
+    // whitelist links — one active whitelist per Discord user
+    bot.applyMemberFactionRanks({ id: "wlu", roles: ["roleR"] }, "NCR", "WLUser");   // put WLUser on the NCR roster
+    await bot.setWhitelistLink("wlu", { name: "WLUser", faction: "NCR" });
+    ok(bot.loadWhitelistLinks()["wlu"].name === "WLUser", "whitelist link is recorded");
+    ok(bot.whitelistActive(bot.loadWhitelistLinks()["wlu"]) === true, "link is active while the name is on the roster");
+    ok(bot.whitelistActive({ name: "GhostName", faction: "NCR" }) === false, "link is inactive when the name isn't on the roster");
+    await bot.clearWhitelistLink("wlu");
+    ok(!bot.loadWhitelistLinks()["wlu"], "whitelist link clears");
   }
 
   console.log("Context-aware autocomplete:");

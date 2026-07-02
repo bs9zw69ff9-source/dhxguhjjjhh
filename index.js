@@ -144,6 +144,7 @@ const FILES = {
   MENU_PANEL:     "./menu_panel.json",
   MENU_ROLES:     "./menu_roles.json",
   FACTION_ROLE_MAP: "./faction_role_map.json",
+  WHITELIST_LINKS: "./whitelist_links.json",
 };
 
 const DEFAULTS = {
@@ -166,6 +167,7 @@ const DEFAULTS = {
   [FILES.MENU_PANEL]:     "{}",
   [FILES.MENU_ROLES]:     "{}",
   [FILES.FACTION_ROLE_MAP]: "{}",
+  [FILES.WHITELIST_LINKS]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -2496,7 +2498,7 @@ async function postWhitelistPanel(faction) {
   if (!ch?.isTextBased()) return false;
   if (entry.panelMsgId) { try { await ch.messages.fetch(entry.panelMsgId); return true; } catch {} }   // still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`${faction} — Whitelist`)
-    .setDescription(`${hero("Earn your place on the roster.")}\nPress **Get Whitelisted** and enter your **exact** Pavlov in-game name. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.`));
+    .setDescription(`${hero("Earn your place on the roster.")}\nPress **Get Whitelisted** and enter your **exact** Pavlov in-game name. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.\n\nOne whitelist per Discord account. Enter **your own name again** any time to remove your whitelist and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_claim:${faction}`).setLabel("Get Whitelisted").setStyle(ButtonStyle.Success));
   try { const m = await ch.send({ embeds: [embed], components: [row] }); await setWhitelistPanelMsg(faction, m.id); return true; }
@@ -2505,6 +2507,15 @@ async function postWhitelistPanel(faction) {
 async function ensureWhitelistPanels() {
   for (const f of ALL_FACTIONS) { try { await postWhitelistPanel(f); } catch {} }
 }
+/* Log linking a Discord user to the in-game name they whitelisted. One active
+   whitelist per Discord user — they can't whitelist a second/other name while
+   theirs is still on the roster; re-entering their own name removes it (toggle). */
+const loadWhitelistLinks = () => safeRead(FILES.WHITELIST_LINKS, {});
+function setWhitelistLink(discordId, data) { return update(FILES.WHITELIST_LINKS, {}, (m) => { m[discordId] = data; return m; }); }
+function clearWhitelistLink(discordId)     { return update(FILES.WHITELIST_LINKS, {}, (m) => { delete m[discordId]; return m; }); }
+// Their recorded whitelist is "active" only if that name is still on the faction roster.
+function whitelistActive(link) { return !!(link && link.name && link.faction && isInFactionFile(link.faction, link.name)); }
+
 async function handleWhitelistClaim(interaction, faction) {
   const cfg = getFactionRankConfig(faction);
   if (!cfg) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
@@ -2518,6 +2529,23 @@ async function handleWhitelistClaim(interaction, faction) {
       .setDescription("Enter your exact Pavlov in-game name."))], ephemeral: true });
   }
   await interaction.deferReply({ ephemeral: true });
+  // One whitelist per Discord user.
+  const link = loadWhitelistLinks()[interaction.user.id];
+  if (whitelistActive(link)) {
+    const sameName = name.toLowerCase() === link.name.toLowerCase();
+    if (sameName) {
+      // Re-entered their own name → remove their whitelist so they can redo it.
+      removeFactionMemberEverywhere(link.faction, link.name);
+      await clearWhitelistLink(interaction.user.id);
+      logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Whitelist Removed (self)")
+        .addFields({ name: "Discord", value: `${interaction.user}`, inline: true }, { name: "In-game", value: `\`${link.name}\``, inline: true }, { name: "Faction", value: link.faction, inline: true })));
+      return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Whitelist Removed")
+        .setDescription(`Removed \`${link.name}\` from **${link.faction}**. You can whitelist again now — press **Get Whitelisted** and enter the name you want.`))] });
+    }
+    // Different name → they already have a whitelist; block whitelisting someone else / a second name.
+    return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Already Whitelisted")
+      .setDescription(`You're already whitelisted as \`${link.name}\`${link.faction !== faction ? ` in **${link.faction}**` : ""}. Each Discord account can whitelist **one** name.\n\nTo change it, press **Get Whitelisted** and enter **${link.name}** to remove it first, then whitelist the new name.`))] });
+  }
   const r = applyMemberFactionRanks(interaction.member, faction, name);   // roles from the interaction, name from the modal
   if (r.capped === "faction") {
     return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Faction Full")
@@ -2530,6 +2558,8 @@ async function handleWhitelistClaim(interaction, faction) {
         ? `Every rank your roles grant is at its cap: ${r.skipped.map(x => `**${x}**`).join(", ")}. Ask an admin to raise the rank cap with \`/faction setrankcap\`.`
         : `You don't hold any Discord role mapped to a **${faction}** rank, so there's nothing to whitelist. Ask your faction leadership for a rank role.`))] });
   }
+  // Record the link — this Discord user now owns exactly this one whitelisted name.
+  await setWhitelistLink(interaction.user.id, { name, faction, ranks: r.ranks, at: Date.now() });
   const capNote = r.skipped && r.skipped.length ? `\n\n*Skipped (rank full):* ${r.skipped.map(x => `**${x}**`).join(", ")}` : "";
   logAction(clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Whitelist Self-Service")
     .addFields(
@@ -5852,4 +5882,6 @@ module.exports = {
   setFactionAdminRole, isFactionAdmin,
   // rcon menu roles
   loadMenuRoles, setMenuRole,
+  // whitelist links (one per discord user)
+  loadWhitelistLinks, setWhitelistLink, clearWhitelistLink, whitelistActive,
 };
