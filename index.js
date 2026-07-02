@@ -1753,7 +1753,10 @@ function kickEverywhere(name) {
    never hangs; the kick is fire-and-forget.
    Returns ipBans' enforcement summary plus the blacklist outcome:
    { ids, ips, alts, field, blacklist: { name, servers }, ok }. */
-async function banWithIp(playerId, server = "both") {
+// opts.permanent = true flags the account's EOS id for permanent evasion-catching.
+// Temp bans (default) only blacklist the name + flag IPs — never the EOS id, so a
+// returning player after their temp ban lifts isn't wrongly auto-banned.
+async function banWithIp(playerId, server = "both", opts = {}) {
   const name = sanitizeBanName(playerId);
   let bl = { name, servers: 0 };
   try { bl = blacklistAdd(name); }
@@ -1761,7 +1764,7 @@ async function banWithIp(playerId, server = "both") {
   logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
   kickEverywhere(name);                        // remove them immediately if they're online
   let enf;
-  try { enf = ipBans.blacklistPlayer(name); }
+  try { enf = ipBans.blacklistPlayer(name, { flagId: opts.permanent === true }); }
   catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
   return { ...enf, blacklist: bl, ok: bl.servers > 0 };
 }
@@ -2600,7 +2603,7 @@ async function issueWarn(playerId, reason, moderator, server, interaction) {
     escalated = { type: "tempban", label };
     writeModLog({ action: "auto-tempban", playerId, reason: escalation.label, duration: label });
   } else if (escalation && escalation.action === "permban") {
-    await banWithIp(playerId, server);
+    await banWithIp(playerId, server, { permanent: true });
     await upsertPermBan({ playerId, reason: `Auto-ban: ${escalation.label}`, moderator: "Auto-Escalation", server });
     escalated = { type: "permban" };
     writeModLog({ action: "auto-permban", playerId, reason: escalation.label });
@@ -3360,7 +3363,7 @@ client.once("ready", async () => {
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, ip, reason }) => {
-      const res = await banWithIp(name, "both");
+      const res = await banWithIp(name, "both", { permanent: true });
       const ok  = res?.ok;
       try { await upsertPermBan({ playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}`, moderator: "IP-Guard" }); } catch {}   // show in /banlist
       writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}${ip ? ` (${ip})` : ""}${ok ? "" : " [BLACKLIST WRITE FAILED]"}`, by: "IP-Guard" });
@@ -4315,7 +4318,7 @@ client.on("interactionCreate", async (interaction) => {
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
         await interaction.deferReply();                          // ← ADDED
-        const ipEnf = await banWithIp(playerId, server);
+        const ipEnf = await banWithIp(playerId, server, { permanent: true });
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
@@ -4912,7 +4915,7 @@ client.on("interactionCreate", async (interaction) => {
             const toBan = new Set();
             if (r.kind === "username" && r.value) toBan.add(r.value);
             for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) toBan.add(nm); }
-            for (const nm of toBan) { try { await banWithIp(nm, "both"); await upsertPermBan({ playerId: nm, reason: "Blacklisted via /configure", moderator: interaction.user.tag }); } catch {} }
+            for (const nm of toBan) { try { await banWithIp(nm, "both", { permanent: true }); await upsertPermBan({ playerId: nm, reason: "Blacklisted via /configure", moderator: interaction.user.tag }); } catch {} }
             color = NV.LEGION_RED;
             desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet — future connections will be caught.`);

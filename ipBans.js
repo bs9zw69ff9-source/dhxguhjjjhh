@@ -256,7 +256,8 @@ function altNamesForIps(ips, excludeIds = []) {
 /* ---------------- public: flag / unflag a player ---------------- */
 // Flags the player's username(s) AND confirmed IP(s). Any account that later
 // connects matching either is auto-banned. (No hex ids — Shack bans by name.)
-function blacklistPlayer(input) {
+function blacklistPlayer(input, opts = {}) {
+  const flagId = opts.flagId === true;              // EOS-id flagging is OPT-IN — permanent bans only
   const ids  = resolveIds(input);
   const cips = confirmedIpsForIds(ids);             // trustworthy same-line pairings
   // Flag confirmed IPs. If none are on record yet — the usual case when you ban a
@@ -275,16 +276,20 @@ function blacklistPlayer(input) {
   // auto-bans anyone connecting under that name forever, which false-positives on
   // temp bans, kicks, warn-escalations and re-used names ("banned for no reason").
   // Username blacklisting is an explicit, owner-only action (flagTarget).
-  // flag the player's EOS/unique id(s) — the strongest evader signal. Any account
-  // reconnecting with this id is auto-banned (the ban itself is still issued by name).
+  // pendingFlag lets the kick's confirmed IP get flagged too (IP enforcement) — always.
+  for (const id of ids) pendingFlag.set(id, Date.now());
+  // Flag the EOS/unique id(s) ONLY for permanent bans (flagId). Temp bans, warn
+  // escalations and in-game-detected bans must NOT permanently flag an account id —
+  // that's what was auto-banning innocent/returning players.
   let fId = false;
-  for (const id of ids) { pendingFlag.set(id, Date.now()); if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; } }
+  if (flagId) for (const id of ids) if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; }
   if (fId) saveFIds();
-  // banned by a raw token not in the registry: flag it as an IP, otherwise as an id.
+  // banned by a raw token not in the registry: flag it as an IP; only flag it as an
+  // EOS id when it actually LOOKS like one (long hex) — never turn a display name into an id.
   if (!ids.length) {
     const raw = String(input ?? "").trim();
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw) && !flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); }
-    else { const cid = cleanId(raw); if (cid && !skipId(raw) && !flaggedIds.has(cid)) { flaggedIds.add(cid); saveFIds(); } }
+    else if (flagId) { const cid = cleanId(raw); if (cid && /^[0-9a-f]{16,}$/i.test(cid) && !skipId(raw) && !flaggedIds.has(cid)) { flaggedIds.add(cid); saveFIds(); } }
   }
   return {
     ids, ips, alts: altNames,

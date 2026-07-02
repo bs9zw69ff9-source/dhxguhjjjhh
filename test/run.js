@@ -586,8 +586,10 @@ const ok = (cond, msg) => {
       "[2026.07.02-10.00.00:200][2]LogNet: Login request: ?Name=Evader2?pid=Evader2 userId: NULL:eos01 platform: NULL\n" +
       "[2026.07.02-10.00.30:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 20.20.20.20:1, UniqueId: NULL:eos01\n");
     await new Promise(r => setTimeout(r, 60));
-    ipBans.blacklistPlayer("Evader2");
-    ok(ipBans.getBlacklist().ids.includes("eos01"), "blacklistPlayer flags the player's EOS/account id");
+    ipBans.blacklistPlayer("Evader2");   // temp/default ban — must NOT flag the EOS id
+    ok(!ipBans.getBlacklist().ids.includes("eos01"), "default ban does NOT flag the EOS id (temp/kick-safe)");
+    ipBans.blacklistPlayer("Evader2", { flagId: true });   // permanent ban — flags the EOS id
+    ok(ipBans.getBlacklist().ids.includes("eos01"), "permanent ban (flagId) flags the player's EOS/account id");
     fs.appendFileSync(logEid,
       "[2026.07.02-10.05.00:000][4]LogNet: NotifyAcceptingConnection accepted from: 30.30.30.30:9\n" +
       "[2026.07.02-10.05.00:200][5]LogNet: Login request: ?Name=NewAlias?pid=NewAlias userId: NULL:eos01 platform: NULL\n");
