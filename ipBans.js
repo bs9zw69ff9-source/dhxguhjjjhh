@@ -52,7 +52,11 @@ const ACCEPT_RE = /(?:NotifyAcceptingConnection accepted from:|NotifyAcceptedCon
 // rigid same-line regex when Pavlov pads or reorders these fields between versions.
 const IP_FIELD_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3})/i;                    // the IP, anywhere on the line
 const UID_FIELD_RE = /UniqueId:\s*([^\s,]+)/i;                                      // disconnect-style id field
-const NAME_OPT_RE  = /[?&]Name=([^?&]+)/i;                                          // ?Name=Foo option
+// ?Name=Foo option. The value ends at the next URL option (?/&), at a following
+// "field: value" token (real Pavlov lines are `?Name=Bob userId: EOS:…` with no ?
+// terminator — a naive [^?&]+ would swallow the whole rest of the line), or at EOL.
+// Lazy + lookahead keeps names WITH spaces ("Butter Life") intact.
+const NAME_OPT_RE  = /[?&]Name=([^?&]+?)(?=[?&]|\s+(?:userId|userid|PlayerId|UniqueId|platform|pid)\s*[:=]|\s*$)/i;
 const UID_LOGIN_RE = /(?:userId|PlayerId|UniqueId|userid)\s*[:=]\s*([^\s,?&]+)/i;   // login-style id field
 // A confirmed pairing = a line with both an IP and a disconnect-style id.
 function extractClose(line) {
@@ -90,9 +94,20 @@ function loadJSON(p, fallback) {
   catch (err) {
     if (err.code === "ENOENT") {   // create the file with the fallback so it exists going forward
       try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(fallback === undefined ? {} : fallback, null, 2)); } catch {}
+    } else {
+      // Corrupt/truncated JSON (crash mid-write, disk hiccup): keep the evidence
+      // instead of silently overwriting it with fresh state on the next save.
+      const bak = `${p}.corrupt-${Date.now()}`;
+      try { fs.renameSync(p, bak); console.error(`[ipBans] ${path.basename(p)} was corrupt — moved to ${path.basename(bak)}, starting fresh`); } catch {}
     }
     return fallback;
   }
+}
+// Atomic save: temp file + rename, so a crash mid-write can never truncate state.
+function saveJSON(p, data) {
+  const tmp = `${p}.tmp.${process.pid}`;
+  try { fs.writeFileSync(tmp, JSON.stringify(data, null, 2)); fs.renameSync(tmp, p); }
+  catch (e) { try { fs.unlinkSync(tmp); } catch {} console.error(`[ipBans] save ${path.basename(p)}:`, e.message); }
 }
 
 /* ---------------- STATE ---------------- */
@@ -122,12 +137,12 @@ const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP y
 const pendingKill = {};           // per-file: { killer, killed } accumulated across a KillData block's lines
 let lastTs = 0, saveTimer = null, dirty = false;
 let cutoffTs = Number(loadJSON(CUTOFF_PATH, 0)) || 0;   // log lines at/older than this are ignored (post-wipe)
-function saveCutoff() { try { fs.writeFileSync(CUTOFF_PATH, JSON.stringify(cutoffTs)); } catch (e) { console.error("[ipBans] save cutoff:", e.message); } }
+function saveCutoff() { saveJSON(CUTOFF_PATH, cutoffTs); }
 
 /* ---------------- kill/death stats ---------------- */
 const kd = loadJSON(KD_PATH, {});   // { [nameLower]: { name, kills, deaths } }
 let kdDirty = false, kdTimer = null;
-function flushKD() { kdDirty = false; try { fs.writeFileSync(KD_PATH, JSON.stringify(kd, null, 2)); } catch (e) { console.error("[ipBans] save kd:", e.message); } }
+function flushKD() { kdDirty = false; saveJSON(KD_PATH, kd); }
 function scheduleKD() { kdDirty = true; if (kdTimer) return; kdTimer = setTimeout(() => { kdTimer = null; if (kdDirty) flushKD(); }, SAVE_THROTTLE_MS); }
 function bumpKD(name, field) {
   const k = norm(name); if (!k) return;
@@ -151,18 +166,23 @@ function topKD(limit = 30, minKills = 0) {
 }
 
 /* ---------------- persistence ---------------- */
-function flushRegistry() { dirty = false; try { fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2)); } catch (e) { console.error("[ipBans] save registry:", e.message); } }
+function flushRegistry() { dirty = false; saveJSON(REGISTRY_PATH, registry); }
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
-function saveFlagged()    { try { fs.writeFileSync(BLACKLIST_PATH, JSON.stringify([...flagged], null, 2)); } catch (e) { console.error("[ipBans] save blacklist:", e.message); } }
-function saveFNames()     { try { fs.writeFileSync(FNAMES_PATH, JSON.stringify([...flaggedNames], null, 2)); } catch (e) { console.error("[ipBans] save flagged names:", e.message); } }
-function saveFIds()       { try { fs.writeFileSync(FIDS_PATH, JSON.stringify([...flaggedIds], null, 2)); } catch (e) { console.error("[ipBans] save flagged ids:", e.message); } }
-function saveUntracked()  { try { fs.writeFileSync(UNTRACKED_PATH, JSON.stringify([...untrackedNames], null, 2)); } catch (e) { console.error("[ipBans] save untracked:", e.message); } }
+function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); }
+function saveFNames()     { saveJSON(FNAMES_PATH, [...flaggedNames]); }
+function saveFIds()       { saveJSON(FIDS_PATH, [...flaggedIds]); }
+function saveUntracked()  { saveJSON(UNTRACKED_PATH, [...untrackedNames]); }
 
 /* ---------------- lookups ---------------- */
 function resolveIds(input) {
   const key = norm(input);
   if (registry[input]) return [input];
-  const idHit = Object.keys(registry).find(id => norm(id) === key);
+  // registry keys are CLEANED ids — also try the cleaned form of the input, so
+  // prefixed tokens ("NULL:abc…", "EOS:abc…") still resolve to their entry.
+  const cid = cleanId(input);
+  if (cid && registry[cid]) return [cid];
+  const ckey = norm(cid);
+  const idHit = Object.keys(registry).find(id => norm(id) === key || (ckey && norm(id) === ckey));
   if (idHit) return [idHit];
   return Object.keys(registry).filter(id => norm(registry[id].name) === key);
 }
@@ -441,7 +461,12 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   }
   const valid = !skipId(rawId);
   const id    = valid ? cleanId(rawId) : null;
-  if (valid) record(rawId, name, ip, ts, false);   // join correlation = best-effort (tentative)
+  // Record the join IP into the registry ONLY when the correlation is unambiguous
+  // (exactly one pending connection). With concurrent joins the accept↔login pairing
+  // can cross over, and a mis-attributed IP poisons alt detection and — via the
+  // best-effort ban fallback — can get an INNOCENT player's IP flagged. The name and
+  // lastSeen still record either way; the confirmed IP arrives at their disconnect.
+  if (valid) record(rawId, name, confident ? ip : null, ts, false);
 
   if (!live) return;                               // startup backfill: don't feed/auto-ban old joins
 
@@ -493,12 +518,13 @@ function parseLine(line, server, key) {
     const md = line.match(KILLED_RE);
     const mb = line.match(KILLEDBY_RE);
     if (mk || md || mb) {
-      const pk = pendingKill[key] || (pendingKill[key] = {});
-      if (mk) pk.killer = mk[1];
+      let pk = pendingKill[key] || {};
+      if (mk) pk = { killer: mk[1] };                    // "Killer" starts a NEW record — drop any stale block
+      else if (md && pk.killed) pk = {};                 // second victim without a finalize — stale block, start fresh
       if (md) pk.killed = md[1];
-      if (mb) pk.killedBy = mb[1];
       // KilledBy is the last field of a kill record (single- or multi-line) — finalize.
-      if (mb) { recordKill(pendingKill[key]); pendingKill[key] = {}; }
+      if (mb) { pk.killedBy = mb[1]; recordKill(pk); pk = {}; }
+      pendingKill[key] = pk;
       return;
     }
   }
@@ -546,9 +572,15 @@ function parseLine(line, server, key) {
   }
 
   // 2) accept line — remember the IP for the upcoming login. Track DISTINCT pending
-  //    IPs so we can tell an unambiguous join (1) from concurrent joins (>1).
+  //    IPs so we can tell an unambiguous join (1) from concurrent joins (>1). Accepts
+  //    older than the correlation window are orphans (aborted connects, server-browser
+  //    pings) — drop them so they can't poison confidence or grow the set forever.
   const a = line.match(ACCEPT_RE);
-  if (a) { pendingIP[key] = a[1]; pendingTs[key] = ts; (pendingSet[key] || (pendingSet[key] = new Set())).add(a[1]); return; }
+  if (a) {
+    if (pendingSet[key] && ts - (pendingTs[key] ?? 0) > CORRELATE_WINDOW_MS) pendingSet[key].clear();
+    pendingIP[key] = a[1]; pendingTs[key] = ts; (pendingSet[key] || (pendingSet[key] = new Set())).add(a[1]);
+    return;
+  }
 
   // 3) login line — name + id, correlated with the most recent accept IP
   const lg = extractLogin(line);
@@ -582,10 +614,11 @@ function poll() {
     try {
       const fd = fs.openSync(f, "r");
       buf = Buffer.alloc(st.size - from);
-      fs.readSync(fd, buf, 0, buf.length, from);
+      const n = fs.readSync(fd, buf, 0, buf.length, from);   // may be short if the file shrank between stat and read
       fs.closeSync(fd);
+      buf = buf.subarray(0, n);
+      offsets[f] = from + n;             // advance by what we actually read, not the stale stat size
     } catch { continue; }
-    offsets[f] = st.size;
     const lines = ((leftover[f] || "") + buf.toString("utf8")).split(/\r?\n/);
     leftover[f] = lines.pop();          // last element is an incomplete line — buffer it
     const label = labelFor(f);

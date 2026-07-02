@@ -21,6 +21,7 @@ const {
   ComponentType,
   StringSelectMenuBuilder,
   RoleSelectMenuBuilder,
+  MessageFlags,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -1357,21 +1358,32 @@ function sanitizeMessage(raw) {
 /* ================================================================
    ROLE CHECKS
    ================================================================ */
+// Role test that survives a null member (DM invocation) and both member shapes:
+// a GuildMember (roles.cache collection) or the raw interaction payload (array).
+function _hasRole(member, roleId) {
+  if (!member || !roleId) return false;
+  const r = member.roles;
+  if (r?.cache && typeof r.cache.has === "function") return r.cache.has(roleId);
+  if (Array.isArray(r)) return r.includes(roleId);
+  return false;
+}
 function hasAdminRole(member) {
-  if (isOwner(member?.id)) return true;
+  if (isOwner(member?.id ?? member?.user?.id)) return true;
   const { adminRoleId } = loadRoles();
-  return !adminRoleId || member.roles.cache.has(adminRoleId);
+  if (!adminRoleId) return !!member;              // unrestricted only for real guild members, never DMs
+  return _hasRole(member, adminRoleId);
 }
 function hasModRole(member) {
-  if (isOwner(member?.id)) return true;
+  if (isOwner(member?.id ?? member?.user?.id)) return true;
   const { modRoleId, adminRoleId } = loadRoles();
-  if (adminRoleId && member?.roles?.cache?.has(adminRoleId)) return true;   // admins outrank mods
-  return !modRoleId || member.roles.cache.has(modRoleId);
+  if (_hasRole(member, adminRoleId)) return true;   // admins outrank mods
+  if (!modRoleId) return !!member;
+  return _hasRole(member, modRoleId);
 }
 function hasFactionLeaderRole(member) {
-  if (isOwner(member?.id)) return true;
+  if (isOwner(member?.id ?? member?.user?.id)) return true;
   const { factionLeaderRoleId } = loadRoles();
-  return factionLeaderRoleId && member.roles.cache.has(factionLeaderRoleId);
+  return _hasRole(member, factionLeaderRoleId);
 }
 
 /* ================================================================
@@ -1488,7 +1500,7 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
   const render = (p) => ({ embeds: [brand(buildEmbed(pages[p], p, total))], components: total > 1 ? [row(p)] : [] });
 
   if (interaction.deferred || interaction.replied) await interaction.editReply(render(page));
-  else await interaction.reply({ ...render(page), ephemeral });
+  else await interaction.reply({ ...render(page), ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}) });
   if (total <= 1) return;
 
   const msg = await interaction.fetchReply();
@@ -2188,7 +2200,12 @@ function getFactionMembers(faction) {
 function getModsavePath()            { return process.env.MODSAVE_PATH || null; }
 function getPlayerFilePath(playerId) {
   const base = getModsavePath();
-  return base ? path.join(base, `${sanitizeId(playerId)}.txt`) : null;
+  if (!base) return null;
+  // Ledger filenames must match what the GAME writes — names may contain spaces
+  // ("Butter Life.txt"). Strip only path separators / control chars, never spaces,
+  // else wages and adjustments land in a phantom "ButterLife.txt" file.
+  const fname = String(playerId ?? "").replace(/[\\/:*?"<>|\r\n\t]/g, "").trim().slice(0, 80);
+  return fname ? path.join(base, `${fname}.txt`) : null;
 }
 function readPlayerBalance(playerId) {
   const fp = getPlayerFilePath(playerId);
@@ -2521,17 +2538,17 @@ function whitelistActive(link) { return !!(link && link.name && link.faction && 
 
 async function handleWhitelistClaim(interaction, faction) {
   const cfg = getFactionRankConfig(faction);
-  if (!cfg) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
+  if (!cfg) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], flags: MessageFlags.Ephemeral });
   const entry = loadFactionRoleMap()[faction];
   if (!entry?.ranks || !Object.keys(entry.ranks).length) {
-    return interaction.reply({ embeds: [warningEmbed("Not Configured", `No Discord roles are mapped to **${faction}** ranks yet. An admin needs to run \`/setfactionroles\` first.`)], ephemeral: true });
+    return interaction.reply({ embeds: [warningEmbed("Not Configured", `No Discord roles are mapped to **${faction}** ranks yet. An admin needs to run \`/setfactionroles\` first.`)], flags: MessageFlags.Ephemeral });
   }
   const name = sanitizeMessage(interaction.fields.getTextInputValue("wl_name")).trim();
   if (!name) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Name Required")
-      .setDescription("Enter your exact Pavlov in-game name."))], ephemeral: true });
+      .setDescription("Enter your exact Pavlov in-game name."))], flags: MessageFlags.Ephemeral });
   }
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   // One whitelist per Discord user.
   const link = loadWhitelistLinks()[interaction.user.id];
   if (whitelistActive(link)) {
@@ -2640,7 +2657,15 @@ async function processExpiredBans() {
       // leave it on the list; retried next sweep
     }
   }
-  if (lifted.length) await removeBans(...lifted);   // serialized — preserves concurrent additions
+  // Remove only entries that are STILL expired at write time. Deleting by name alone
+  // would also delete a ban a mod re-issued for the same player while the awaits above
+  // were in flight — leaving them blacklisted with no /banlist record and no expiry.
+  if (lifted.length) {
+    const liftedSet = new Set(lifted.map(n => n.toLowerCase()));
+    await update(FILES.TEMPBAN, [], (bans) =>
+      bans.filter(b => !(liftedSet.has(String(b.playerId).toLowerCase()) && !b.permanent && b.expires && b.expires <= now))
+    ).then(() => { syncModsaveBanlist(); });
+  }
 }
 
 /* ================================================================
@@ -2884,16 +2909,16 @@ async function handleMenuPanelSubmit(interaction) {
   const name = sanitizeMessage(interaction.fields.getTextInputValue("menu_name")).trim();
   if (!name) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
-      .setDescription("Enter your exact Pavlov in-game name."))], ephemeral: true });
+      .setDescription("Enter your exact Pavlov in-game name."))], flags: MessageFlags.Ephemeral });
   }
   // Highest role wins (handles GuildMember .cache and raw role-array shapes).
   const tier = menuRoleTiers().find(t => t.role && memberHasRoleId(interaction.member, t.role));
   if (!tier) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("No Menu Role")
-      .setDescription("You don't hold a High Staff, Staff, or Faction RCON role, so there's no menu to grant. Ask an admin if this is wrong."))], ephemeral: true });
+      .setDescription("You don't hold a High Staff, Staff, or Faction RCON role, so there's no menu to grant. Ask an admin if this is wrong."))], flags: MessageFlags.Ephemeral });
   }
   const meta = MENUS.find(m => m.value === tier.menu);
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const target = await resolvePlayerId(name);   // GiveMenu targets the UniqueId
   if (tier.menu === "highstaff") {
     await sendRconBoth(`AddMod ${target}`, "both");
@@ -2938,7 +2963,7 @@ function removeMenuGrant(playerId, server, menuValue) {
 }
 
 async function rconHealthCheck() {
-  for (const srv of ["server1", "server2"]) {
+  for (const srv of (hasServer2 ? ["server1", "server2"] : ["server1"])) {
     try {
       const r = await sendRcon("RefreshList", srv, 3000, 1);
       const d = parseRcon(r);
@@ -2960,7 +2985,7 @@ setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(async () => {
   await refreshPlayerCache("server1");
-  await refreshPlayerCache("server2");
+  if (hasServer2) await refreshPlayerCache("server2");
   tickPlaytime();
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
@@ -3285,7 +3310,7 @@ const commands = [
 /* ================================================================
    READY
    ================================================================ */
-client.once("ready", async () => {
+client.once("clientReady", async () => {   // "ready" is deprecated in discord.js 14.22+
   logger.info("Bot", `${client.user.tag} online — v${BOT_VERSION}`);
   try {
     client.user.setPresence({
@@ -3383,7 +3408,7 @@ client.once("ready", async () => {
     },
   });
   refreshPlayerCache("server1");
-  refreshPlayerCache("server2");
+  if (hasServer2) refreshPlayerCache("server2");
   try { healTreeOwnership(); } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
   try { const r = syncAllModSave(); if (r.installs > 1 && !r.off) logger.info("Sync", `ModSave sync on startup — ${r.synced} file(s) propagated across ${r.installs} installs`); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); }
   try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }
@@ -3428,12 +3453,18 @@ client.on("interactionCreate", async (interaction) => {
   if (isBlacklisted(interaction.user.id) && !isOwner(interaction.user.id)) {
     if (interaction.isAutocomplete()) return interaction.respond([]).catch(() => {});
     if (interaction.isChatInputCommand()) {
-      return interaction.reply({ embeds: [blacklistedEmbed()], ephemeral: true }).catch(() => {});
+      return interaction.reply({ embeds: [blacklistedEmbed()], flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     return;
   }
 
-  /* ── Verification button + modal ─────────────────────────── */
+  /* ── Panel buttons + modals ─────────────────────────── */
+  // On failure, tell the user instead of leaving the modal stuck on "thinking…".
+  const modalFail = (tag) => (e) => {
+    logger.warn(tag, e.message);
+    const payload = { embeds: [errorEmbed("Something Went Wrong", "That didn't go through — try again in a moment.")], flags: MessageFlags.Ephemeral };
+    (interaction.deferred || interaction.replied ? interaction.followUp(payload) : interaction.reply(payload)).catch(() => {});
+  };
   if (interaction.isButton() && interaction.customId === "menu_start") {
     const modal = new ModalBuilder().setCustomId("menu_modal").setTitle("Get RCON menu access")
       .addComponents(new ActionRowBuilder().addComponents(
@@ -3442,7 +3473,7 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.showModal(modal).catch(() => {});
   }
   if (interaction.isModalSubmit() && interaction.customId === "menu_modal") {
-    return handleMenuPanelSubmit(interaction).catch(e => logger.warn("MenuPanel", e.message));
+    return handleMenuPanelSubmit(interaction).catch(modalFail("MenuPanel"));
   }
   if (interaction.isButton() && interaction.customId.startsWith("wl_claim:")) {
     const faction = interaction.customId.slice("wl_claim:".length);
@@ -3454,7 +3485,27 @@ client.on("interactionCreate", async (interaction) => {
   }
   if (interaction.isModalSubmit() && interaction.customId.startsWith("wl_modal:")) {
     return handleWhitelistClaim(interaction, interaction.customId.slice("wl_modal:".length))
-      .catch(e => logger.warn("Whitelist", e.message));
+      .catch(modalFail("Whitelist"));
+  }
+
+  // Any OTHER component belongs to a command's collector (paginator, confirm
+  // buttons, config dropdowns). If that collector expired, nothing will ever ack
+  // the click and Discord shows "This interaction failed". Fallback: after a grace
+  // period, silently acknowledge anything still un-acked. Live collectors ack
+  // within the window, making our deferUpdate a harmless no-op (swallowed reject).
+  if (interaction.isMessageComponent()) {
+    setTimeout(() => {
+      if (!interaction.replied && !interaction.deferred) interaction.deferUpdate().catch(() => {});
+    }, 2500);
+    return;
+  }
+  if (interaction.isModalSubmit()) {   // e.g. cfg_modal submitted after its 120s collector expired
+    setTimeout(() => {
+      if (!interaction.replied && !interaction.deferred) {
+        interaction.reply({ content: "This form expired — run the command again.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+    }, 2500);
+    return;
   }
 
   /* ── Autocomplete ─────────────────────────────────────── */
@@ -3525,6 +3576,12 @@ client.on("interactionCreate", async (interaction) => {
 
   if (!interaction.isChatInputCommand()) return;
 
+  // Guild-only: in a DM there's no member object, so every role check would be
+  // meaningless (and used to crash). Answer cleanly instead.
+  if (!interaction.inGuild()) {
+    return interaction.reply({ content: "Run commands in the server, not in DMs.", flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
+
   /* ── Permission routing ───────────────────────────────── */
   const PUBLIC         = ["help", "ping", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen", "kd"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
@@ -3535,19 +3592,19 @@ client.on("interactionCreate", async (interaction) => {
 
   if (!PUBLIC.includes(name)) {
     if (ADMIN_COMMANDS.includes(name) && !hasAdminRole(interaction.member)) {
-      return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+      return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
     if (FL_COMMANDS.includes(name) && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
-      return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], ephemeral: true });
+      return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
     if (MOD_COMMANDS.includes(name) && !hasModRole(interaction.member)) {
-      return interaction.reply({ embeds: [modOnlyEmbed()], ephemeral: true });
+      return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
   }
 
   if (!ADMIN_COMMANDS.includes(name) && !PUBLIC.includes(name) && !isOwner(interaction.user.id)) {
     if (!checkRateLimit(interaction.user.id, name, 4000)) {
-      return interaction.reply({ embeds: [rateLimitEmbed()], ephemeral: true });
+      return interaction.reply({ embeds: [rateLimitEmbed()], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -3556,8 +3613,8 @@ client.on("interactionCreate", async (interaction) => {
     // option per rank. Owner or that faction's leader; partial updates like /setroles.
     if (FACTION_CMD[name]) {
       const { faction, slugToRank } = FACTION_CMD[name];
-      if (!canManageFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Allowed", `Only the owner or the **${faction}** Faction Leader role can map roles. An owner sets that role with \`/setfactionadmin\`.`)], ephemeral: true });
-      if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], ephemeral: true });
+      if (!canManageFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Allowed", `Only the owner or the **${faction}** Faction Leader role can map roles. An owner sets that role with \`/setfactionadmin\`.`)], flags: MessageFlags.Ephemeral });
+      if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], flags: MessageFlags.Ephemeral });
       await setFactionGuild(faction, interaction.guildId);
       const cfg = getFactionRankConfig(faction);
       const changes = [];
@@ -3571,7 +3628,7 @@ client.on("interactionCreate", async (interaction) => {
         .setDescription((changes.length ? `Updated:\n${changes.join("\n")}\n\n` : "No roles passed — nothing changed. Fill in a role option per rank to set them.\n\n") + full.join("\n"))
         .setFooter({ text: "A member holding several rank roles gets all those ranks" }).setTimestamp());
       logAction(embed);
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     switch (name) {
@@ -3676,14 +3733,14 @@ client.on("interactionCreate", async (interaction) => {
           )
           .setFooter({ text: BOT_COPYRIGHT });
         brand(embed, { thumb: true });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
          PING
          ───────────────────────────────────────────────────── */
       case "ping": {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const start = Date.now();
         const [r1, r2] = await Promise.allSettled([
           sendRcon("RefreshList", "server1", 2000, 0),
@@ -3763,8 +3820,8 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "find": {
         const query = interaction.options.getString("name").toLowerCase();
-        await interaction.deferReply({ ephemeral: true });
-        await Promise.all([refreshPlayerCache("server1"), refreshPlayerCache("server2")]);
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await Promise.all(hasServer2 ? [refreshPlayerCache("server1"), refreshPlayerCache("server2")] : [refreshPlayerCache("server1")]);
         const matches = [];
         const seen    = new Set();
         for (const srv of ["server1", "server2"]) {
@@ -3805,7 +3862,7 @@ client.on("interactionCreate", async (interaction) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         const reason   = interaction.options.getString("reason") ?? "No reason provided";
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();                          // ← ADDED
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
         // Kick by the live UniqueId (what Pavlov RCON Kick needs), per targeted server.
@@ -3838,7 +3895,7 @@ client.on("interactionCreate", async (interaction) => {
          FLUSH — randomly kick one online player from a server
          ───────────────────────────────────────────────────── */
       case "flush": {
-        if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], ephemeral: true });
+        if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const server = interaction.options.getString("server");
         await interaction.deferReply();
         const servers = server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server];
@@ -3875,7 +3932,7 @@ client.on("interactionCreate", async (interaction) => {
         const reasonKey = interaction.options.getString("reason");
         const server    = interaction.options.getString("server") ?? "server1";
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();                         // ← ADDED
         const { count, escalated } = await issueWarn(playerId, reason, interaction.user.tag, server, interaction);
         const threshold = WARN_THRESHOLDS.find(t => t.count === count);
@@ -3918,14 +3975,14 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "warnings": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const all   = loadWarns()[playerId.toLowerCase()] ?? [];
         const count = all.length;
         if (!count) {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("No Warnings on Record")
               .setDescription(`\`${playerId}\` has a clean record — no warnings issued.`).setTimestamp()
-          ], ephemeral: true });
+          ], flags: MessageFlags.Ephemeral });
         }
         const next  = WARN_THRESHOLDS.find(t => t.count > count);
         const lines = all.map((w, i) => {
@@ -3938,7 +3995,7 @@ client.on("interactionCreate", async (interaction) => {
           new EmbedBuilder().setColor(count >= 5 ? NV.RUST_RED : NV.NCR_TAN)
             .setTitle(`Warning Record — ${playerId}`)
             .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`),
-          { perPage: 12, ephemeral: true });
+          { perPage: 12, flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3946,7 +4003,7 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "clearwarnings": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const key   = playerId.toLowerCase();
         let count = 0;
         await update(FILES.WARNS, {}, (warns) => {
@@ -3955,12 +4012,12 @@ client.on("interactionCreate", async (interaction) => {
           return warns;
         });
         if (!count) {
-          return interaction.reply({ embeds: [warningEmbed("No Warnings", `\`${playerId}\` has no warnings to clear.`)], ephemeral: true });
+          return interaction.reply({ embeds: [warningEmbed("No Warnings", `\`${playerId}\` has no warnings to clear.`)], flags: MessageFlags.Ephemeral });
         }
         writeModLog({ action: "clearwarnings", playerId, count, by: interaction.user.tag });
         const embed = successEmbed("Warnings Cleared", `**${count}** warning${count !== 1 ? "s" : ""} cleared for \`${playerId}\`.\n\n**Cleared by:** ${interaction.user}`);
         brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3969,11 +4026,11 @@ client.on("interactionCreate", async (interaction) => {
       case "delwarn": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const number   = interaction.options.getInteger("number");
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const { removed, remaining } = await removeWarningAt(playerId, number);
         if (!removed) {
           return interaction.reply({ embeds: [warningEmbed("No Such Warning",
-            `Warning **#${number}** does not exist for \`${playerId}\`.\n\nUse \`/warnings ${playerId}\` to see valid numbers.`)], ephemeral: true });
+            `Warning **#${number}** does not exist for \`${playerId}\`.\n\nUse \`/warnings ${playerId}\` to see valid numbers.`)], flags: MessageFlags.Ephemeral });
         }
         writeModLog({ action: "delwarn", playerId, reason: removed.reason, by: interaction.user.tag });
         const ts = Math.floor(removed.at / 1000);
@@ -3987,7 +4044,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Removed By",      value: `${interaction.user}`,                    inline: false },
           ).setFooter({ text: "Single warning removed — others renumbered" }).setTimestamp();
         brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3995,7 +4052,7 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "seen": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const key    = playerId.toLowerCase();
         const onS1   = playerCache.server1.some(n => n.toLowerCase() === key);
         const onS2   = playerCache.server2.some(n => n.toLowerCase() === key);
@@ -4016,7 +4073,7 @@ client.on("interactionCreate", async (interaction) => {
         const embed = new EmbedBuilder().setColor(color).setTitle(`Last Seen — ${playerId}`)
           .setDescription(`${DIVIDER}\n${desc}`)
           .setFooter({ text: "Presence sampled every 60s" }).setTimestamp();
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4025,28 +4082,28 @@ client.on("interactionCreate", async (interaction) => {
       case "note": {
         const sub      = interaction.options.getSubcommand();
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
 
         if (sub === "add") {
           const text  = interaction.options.getString("note").trim().slice(0, 500);
-          if (!text) return interaction.reply({ embeds: [errorEmbed("Empty Note", "The note cannot be empty.")], ephemeral: true });
+          if (!text) return interaction.reply({ embeds: [errorEmbed("Empty Note", "The note cannot be empty.")], flags: MessageFlags.Ephemeral });
           const count = await addPlayerNote(playerId, text, interaction.user.tag);
           writeModLog({ action: "note-add", playerId, reason: text, by: interaction.user.tag });
           const embed = successEmbed("Note Added", `Staff note added to \`${playerId}\` *(now ${count} note${count !== 1 ? "s" : ""})*.\n\n**Note:** ${text}\n**By:** ${interaction.user}`);
           brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (sub === "clear") {
           if (!hasAdminRole(interaction.member)) {
-            return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+            return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
           }
           const count = await clearPlayerNotes(playerId);
-          if (!count) return interaction.reply({ embeds: [warningEmbed("No Notes", `\`${playerId}\` has no staff notes to clear.`)], ephemeral: true });
+          if (!count) return interaction.reply({ embeds: [warningEmbed("No Notes", `\`${playerId}\` has no staff notes to clear.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "note-clear", playerId, count, by: interaction.user.tag });
           const embed = successEmbed("Notes Cleared", `**${count}** staff note${count !== 1 ? "s" : ""} deleted for \`${playerId}\`.\n\n**By:** ${interaction.user}`);
           brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         // sub === "list"
@@ -4055,7 +4112,7 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`No Staff Notes — ${playerId}`)
               .setDescription("This courier has no staff notes on record.\n\nUse `/note add` to record one.").setTimestamp()
-          ], ephemeral: true });
+          ], flags: MessageFlags.Ephemeral });
         }
         const lines = notes.map((n, i) => {
           const ts = Math.floor(n.at / 1000);
@@ -4065,7 +4122,7 @@ client.on("interactionCreate", async (interaction) => {
           new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Staff Notes — ${playerId}`)
             .setDescription(`**${notes.length}** note${notes.length !== 1 ? "s" : ""} on record\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Staff notes · internal only" }),
-          { perPage: 10, ephemeral: true });
+          { perPage: 10, flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4073,13 +4130,13 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "history": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const history = getPlayerHistory(playerId);
         if (!history.length) {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("No Mod History Found")
               .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
-          ], ephemeral: true });
+          ], flags: MessageFlags.Ephemeral });
         }
         const ICONS = { kick: "", warn: "", tempban: "", unban: "", permban: "", "auto-unban": "", "auto-tempban": "", "auto-permban": "", "auto-ipban": "", clearwarnings: "", delwarn: "", "note-add": "", "note-clear": "", "donator-add": "", "donator-remove": "", "wage-payout": "", givecaps: "", adjustcaps: "", "faction-add": "", "faction-remove": "", "faction-rank": "", "faction-transfer": "" };
         const lines = history.slice().reverse().map(e => {
@@ -4093,7 +4150,7 @@ client.on("interactionCreate", async (interaction) => {
             .setTitle(`Moderation History — ${playerId}`)
             .setDescription(`**${history.length}** total action${history.length !== 1 ? "s" : ""} on record *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log — full history retained" }).setTimestamp(),
-          { perPage: 12, ephemeral: true });
+          { perPage: 12, flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4111,7 +4168,7 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Activity — None")
               .setDescription(`No moderation actions on record for ${staff}.`).setTimestamp()
-          ], ephemeral: true });
+          ], flags: MessageFlags.Ephemeral });
         }
         // tally by action type
         const counts = {};
@@ -4128,7 +4185,7 @@ client.on("interactionCreate", async (interaction) => {
             .setTitle(`Staff Activity — ${staff.tag}`)
             .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log" }).setTimestamp(),
-          { perPage: 12, ephemeral: true });
+          { perPage: 12, flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4140,11 +4197,11 @@ client.on("interactionCreate", async (interaction) => {
         const server      = interaction.options.getString("server");
         const reasonKey   = interaction.options.getString("reason");
         const reason      = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const expires = easternNoonUTC(dateStr);                 // lifts at 12pm Eastern on that date
         if (!expires || expires <= Date.now()) {
           return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
-            `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)}\`). The ban lifts at **12pm Eastern** that day.`)], ephemeral: true });
+            `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)}\`). The ban lifts at **12pm Eastern** that day.`)], flags: MessageFlags.Ephemeral });
         }
         await interaction.deferReply();                          // ← ADDED
         const label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
@@ -4185,7 +4242,7 @@ client.on("interactionCreate", async (interaction) => {
       case "unban": {
         const playerId = sanitizeBanName(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();                          // ← ADDED
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await removeBans(playerId);
@@ -4213,7 +4270,7 @@ client.on("interactionCreate", async (interaction) => {
       case "checkban": {
         const playerId = sanitizeBanName(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const tb = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
@@ -4316,7 +4373,7 @@ client.on("interactionCreate", async (interaction) => {
         const reasonKey = interaction.options.getString("reason");
         const notes     = interaction.options.getString("notes") ?? null;
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();                          // ← ADDED
         const ipEnf = await banWithIp(playerId, server, { permanent: true });
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
@@ -4351,18 +4408,19 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "cleartempbans": {
         const bans = loadBans().filter(b => !b.permanent && b.expires);   // temp bans only — leave permanent bans in place
-        if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear", "No active temporary exiles to remove.")], ephemeral: true });
+        if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear", "No active temporary exiles to remove.")], flags: MessageFlags.Ephemeral });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("ctb_confirm").setLabel(`Clear all ${bans.length} temp ban${bans.length !== 1 ? "s" : ""}`).setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("ctb_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
         );
-        const msg = await interaction.reply({
+        await interaction.reply({
           embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm Mass Clearance")
             .setDescription(`> *"Are you sure? Every exile gets pardoned."*\n\n${DIVIDER}\n` +
               `This will lift **${bans.length}** exile${bans.length !== 1 ? "s" : ""} and unban all on both servers.\n\n` +
               bans.map(b => `·  \`${b.playerId}\`  —  *${b.reason}*`).join("\n").slice(0, 3500)), "Expires in 30 seconds")],
-          components: [row], ephemeral: true, fetchReply: true,
+          components: [row], flags: MessageFlags.Ephemeral,
         });
+        const msg = await interaction.fetchReply();
         try {
           const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
           if (btn.customId === "ctb_cancel") {
@@ -4391,8 +4449,8 @@ client.on("interactionCreate", async (interaction) => {
          CLEARALLBANS — owner only: Unban every banned player
          ───────────────────────────────────────────────────── */
       case "clearallbans": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
-        await interaction.deferReply({ ephemeral: true });
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         // gather every banned name: bot temp bans + blacklist.txt on both installs
         const names = [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()].map(s => String(s).trim()).filter(Boolean))];
         if (!names.length) {
@@ -4453,7 +4511,7 @@ client.on("interactionCreate", async (interaction) => {
                 { name: "Admin",          value: c.adminRoleId         ? `<@&${c.adminRoleId}>`         : "`not set`", inline: true },
                 { name: "Faction Leader", value: c.factionLeaderRoleId ? `<@&${c.factionLeaderRoleId}>` : "`not set`", inline: true },
               ).setFooter({ text: "Pass role options to /setroles to update" }).setTimestamp()
-          ], ephemeral: true });
+          ], flags: MessageFlags.Ephemeral });
         }
         const c = loadRoles();
         if (modRole)   c.modRoleId           = modRole.id;
@@ -4465,7 +4523,7 @@ client.on("interactionCreate", async (interaction) => {
           .setDescription(changes.join("\n"))
           .addFields({ name: "By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
         brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4473,7 +4531,7 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "acceptstaffapp": {
         const user = interaction.options.getUser("user");
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const dm = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
           .setTitle("Nuclear RP — Staff Application Accepted")
@@ -4537,7 +4595,7 @@ client.on("interactionCreate", async (interaction) => {
       case "denystaffapp": {
         const user   = interaction.options.getUser("user");
         const reason = interaction.options.getString("reason");
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const dm = new EmbedBuilder().setColor(NV.NCR_TAN)
           .setTitle("Nuclear RP — Staff Application Update")
@@ -4573,13 +4631,13 @@ client.on("interactionCreate", async (interaction) => {
         if (sub === "list") {
           const lines = readDonatorFile();
           if (lines === null) {
-            return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Could not read the donator file.\n\`${DONATOR_FILE}\``)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Could not read the donator file.\n\`${DONATOR_FILE}\``)], flags: MessageFlags.Ephemeral });
           }
           if (!lines.length) {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Donator List — Empty")
                 .setDescription("No players are in the donator file yet.\n\nUse `/donator add` to enrol someone.").setTimestamp()
-            ], ephemeral: true });
+            ], flags: MessageFlags.Ephemeral });
           }
           const out = lines.map((id, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${id}**`);
           return paginate(interaction, out, (pageLines) =>
@@ -4587,16 +4645,16 @@ client.on("interactionCreate", async (interaction) => {
               .setTitle(`Donators — ${lines.length}`)
               .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
               .setFooter({ text: DONATOR_FILE }),
-            { perPage: 20, ephemeral: true });
+            { perPage: 20, flags: MessageFlags.Ephemeral });
         }
 
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
 
         if (sub === "add") {
           const { ok, already } = addDonator(playerId);
-          if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], ephemeral: true });
-          if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], ephemeral: true });
+          if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], flags: MessageFlags.Ephemeral });
+          if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Donator Added")
             .setDescription(`> *"A generous soul joins the ranks of the Strip's patrons."*\n\n${DIVIDER}`)
@@ -4606,13 +4664,13 @@ client.on("interactionCreate", async (interaction) => {
               { name: "File",     value: `\`${DONATOR_FILE}\``,   inline: false },
             ).setFooter({ text: "Written to the donator file." }).setTimestamp();
           brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (sub === "remove") {
           const { ok, missing } = removeDonator(playerId);
-          if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], ephemeral: true });
-          if (missing) return interaction.reply({ embeds: [warningEmbed("Not a Donator", `\`${playerId}\` is not in the donator file.`)], ephemeral: true });
+          if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to the donator file.\n\`${DONATOR_FILE}\`\nCheck the path and file permissions.`)], flags: MessageFlags.Ephemeral });
+          if (missing) return interaction.reply({ embeds: [warningEmbed("Not a Donator", `\`${playerId}\` is not in the donator file.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "donator-remove", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Donator Removed")
             .setDescription(`${DIVIDER}`)
@@ -4621,7 +4679,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "Removed By", value: `${interaction.user}`, inline: true },
             ).setFooter({ text: "Removed from the donator file." }).setTimestamp();
           brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         break;
@@ -4634,10 +4692,10 @@ client.on("interactionCreate", async (interaction) => {
         const message = sanitizeMessage(interaction.options.getString("message"));
         const server  = interaction.options.getString("server");
         const rawTarget = interaction.options.getString("target");
-        if (!message.trim()) return interaction.reply({ embeds: [errorEmbed("Empty Message", "Cannot broadcast an empty message.")], ephemeral: true });
+        if (!message.trim()) return interaction.reply({ embeds: [errorEmbed("Empty Message", "Cannot broadcast an empty message.")], flags: MessageFlags.Ephemeral });
         const isAll  = !rawTarget || rawTarget.trim().toLowerCase() === "all";
         const target = isAll ? "All" : sanitizeId(rawTarget);
-        if (!target) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!target) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         const { s1, s2 } = await sendRconBoth(`Notify ${target} ${message}`, server);
         // Pavlov RCON has no broadcast verb on stock builds; Notify is build/mod-dependent.
@@ -4684,15 +4742,18 @@ client.on("interactionCreate", async (interaction) => {
         const menuValue = interaction.options.getString("menu");
         const menuMeta  = MENUS.find(m => m.value === menuValue);
         const menuId    = menuMeta?.menuId ?? menuValue;
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
+        // RCON+ targets the player's UniqueId, not their display name — resolve it
+        // (live online id → IP-tracker EOS id → the name as a last resort).
+        const target = await resolvePlayerId(playerId);
         if (menuValue === "highstaff") {
           // High Staff needs three distinct RCON commands — run each separately.
-          await sendRconBoth(`AddMod ${playerId}`, server);
-          await sendRconBoth(`AddAccessManager ${playerId}`, server);
-          await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
+          await sendRconBoth(`AddMod ${target}`, server);
+          await sendRconBoth(`AddAccessManager ${target}`, server);
+          await sendRconBoth(`GiveMenu ${target} ${menuId}`, server);
         } else {
-          await sendRconBoth(`GiveMenu ${playerId} ${menuId}`, server);
+          await sendRconBoth(`GiveMenu ${target} ${menuId}`, server);
         }
         addMenuGrant(playerId, server, menuValue, menuId, interaction.user.tag);
         const embed = new EmbedBuilder().setColor(NV.AMBER)
@@ -4717,15 +4778,16 @@ client.on("interactionCreate", async (interaction) => {
         // no menu choice, no bit code needed.
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         // If they were ever granted High Staff, also revoke Access Manager (RCON+).
         const wasHighStaff = (loadMenuGrants()[playerId.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
-        const applied = [`RemoveMenu ${playerId}`];
-        await sendRconBoth(`RemoveMenu ${playerId}`, server);          // clears the menu bit code
+        const target = await resolvePlayerId(playerId);                // RCON+ targets the UniqueId
+        const applied = [`RemoveMenu ${target}`];
+        await sendRconBoth(`RemoveMenu ${target}`, server);            // clears the menu bit code
         if (wasHighStaff) {
-          await sendRconBoth(`RemoveAccessManager ${playerId}`, server);
-          applied.push(`RemoveAccessManager ${playerId}`);
+          await sendRconBoth(`RemoveAccessManager ${target}`, server);
+          applied.push(`RemoveAccessManager ${target}`);
         }
         // Clear every menu grant record for this player on the affected server(s).
         for (const m of MENUS) {
@@ -4749,7 +4811,7 @@ client.on("interactionCreate", async (interaction) => {
          STRIPMENUALL — owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
       case "stripmenuall": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
 
         // ClearMenuAccess wipes every player's menu access; ClearAccessManagers wipes
@@ -4781,23 +4843,24 @@ client.on("interactionCreate", async (interaction) => {
          SETFACTIONADMIN — owner sets this guild's Faction Leader role
          ───────────────────────────────────────────────────── */
       case "setfactionadmin": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const faction = interaction.options.getString("faction");
-        if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
-        if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], ephemeral: true });
+        if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], flags: MessageFlags.Ephemeral });
+        if (!interaction.guildId) return interaction.reply({ embeds: [errorEmbed("Run In A Server", "Run this in the faction's Discord server so the bot can read its roles.")], flags: MessageFlags.Ephemeral });
         const role = interaction.options.getRole("role");
         await setFactionGuild(faction, interaction.guildId);
         await setFactionAdminRole(faction, role?.id || null, interaction.guildId);
         return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Faction Leader Role — ${faction}`)
           .setDescription(role
             ? `<@&${role.id}> can now use \`/${factionCmdName(faction)}\` and \`/setwhitelistchannel\` for **${faction}** — nothing else.`
-            : `Cleared — only the owner can manage **${faction}** now.`).setTimestamp())], ephemeral: true });
+            : `Cleared — only the owner can manage **${faction}** now.`).setTimestamp())], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
          SETRCONROLES — which Discord role grants each RCON menu
          ───────────────────────────────────────────────────── */
       case "setrconroles": {
+        if (!hasAdminRole(interaction.member) && !isOwner(interaction.user.id)) return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const hs = interaction.options.getRole("high_staff_role");
         const st = interaction.options.getRole("staff_role");
         const fa = interaction.options.getRole("faction_role");
@@ -4813,19 +4876,19 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Faction",     value: m.faction   ? `<@&${m.faction}>`   : "*(unset)*", inline: true },
           ).setFooter({ text: "Priority: High Staff > Staff > Faction" }).setTimestamp());
         await logAction(embed);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
          SYNCFACTIONROLES — apply role→rank whitelists now
          ───────────────────────────────────────────────────── */
       case "syncfactionroles": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         if (!FACTION_ROLE_SYNC) {
           return interaction.reply({ embeds: [warningEmbed("Role Sync Disabled",
-            "Automatic role sync needs the privileged **Server Members Intent**.\n\n1. Enable it in the Discord Developer Portal → your bot → Bot → *Server Members Intent*.\n2. Set `FACTION_ROLE_SYNC=on` in `.env`.\n3. Restart the bot.\n\n(You can still map roles now with `/setfactionroles`.)")], ephemeral: true });
+            "Automatic role sync needs the privileged **Server Members Intent**.\n\n1. Enable it in the Discord Developer Portal → your bot → Bot → *Server Members Intent*.\n2. Set `FACTION_ROLE_SYNC=on` in `.env`.\n3. Restart the bot.\n\n(You can still map roles now with `/setfactionroles`.)")], flags: MessageFlags.Ephemeral });
         }
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const one = interaction.options.getString("faction");
         const factions = one ? [one] : ALL_FACTIONS;
         const lines = [];
@@ -4842,18 +4905,18 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "setwhitelistchannel": {
         const faction = interaction.options.getString("faction");
-        if (!canManageFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Allowed", `Only the owner or the **${faction}** Faction Leader role can set the whitelist channel. An owner sets that role with \`/setfactionadmin\`.`)], ephemeral: true });
-        if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], ephemeral: true });
-        if (!interaction.channelId) return interaction.reply({ embeds: [errorEmbed("Run In A Channel", "Run this in the channel where the whitelist panel should live.")], ephemeral: true });
+        if (!canManageFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Allowed", `Only the owner or the **${faction}** Faction Leader role can set the whitelist channel. An owner sets that role with \`/setfactionadmin\`.`)], flags: MessageFlags.Ephemeral });
+        if (!getFactionRankConfig(faction)) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `No ranks configured for **${faction}**.`)], flags: MessageFlags.Ephemeral });
+        if (!interaction.channelId) return interaction.reply({ embeds: [errorEmbed("Run In A Channel", "Run this in the channel where the whitelist panel should live.")], flags: MessageFlags.Ephemeral });
         await setWhitelistChannel(faction, interaction.channelId, interaction.guildId);
         await interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Whitelist Channel Set")
-          .setDescription(`The **${faction}** self-service whitelist panel now lives in <#${interaction.channelId}>. Members press **Get Whitelisted** to claim the ranks their roles grant.\n\n*Tip:* map roles to ranks with \`/setfactionroles ${faction}\` if you haven't yet.`).setTimestamp())], ephemeral: true });
+          .setDescription(`The **${faction}** self-service whitelist panel now lives in <#${interaction.channelId}>. Members press **Get Whitelisted** to claim the ranks their roles grant.\n\n*Tip:* map roles to ranks with \`/setfactionroles ${faction}\` if you haven't yet.`).setTimestamp())], flags: MessageFlags.Ephemeral });
         await postWhitelistPanel(faction);
         return;
       }
 
       case "configure": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
 
         const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
           .addOptions(
@@ -4875,7 +4938,7 @@ client.on("interactionCreate", async (interaction) => {
             { label: "Wipe ALL money",          value: "wipe_money",    description: "Set every player's caps to 0 (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Configure — Hidden Commands"));
-        await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+        await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
         const msg = await interaction.fetchReply();
 
         let sel;
@@ -4905,10 +4968,10 @@ client.on("interactionCreate", async (interaction) => {
               .setTitle(`Alt Accounts — ${val}`)
               .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
               .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
-            return sub.reply({ embeds: [eAlt], ephemeral: true });
+            return sub.reply({ embeds: [eAlt], flags: MessageFlags.Ephemeral });
           }
           if (choice === "blacklist_ip") {
-            await sub.deferReply({ ephemeral: true });
+            await sub.deferReply({ flags: MessageFlags.Ephemeral });
             const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else a username
             // Ban (blacklist.txt + kick + IP-flag) the username itself and every on-record
             // account matching the target, so an in-game player is removed immediately.
@@ -4924,7 +4987,7 @@ client.on("interactionCreate", async (interaction) => {
             return sub.editReply({ embeds: [e1] });
           }
           if (choice === "wipe_money") {
-            await sub.deferReply({ ephemeral: true });
+            await sub.deferReply({ flags: MessageFlags.Ephemeral });
             if (val.toUpperCase() !== "WIPE") return sub.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped."))] });
             const r = wipeAllMoney();
             const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped")
@@ -4933,7 +4996,7 @@ client.on("interactionCreate", async (interaction) => {
             return sub.editReply({ embeds: [e] });
           }
           if (choice === "load_factions") {
-            await sub.deferReply({ ephemeral: true });
+            await sub.deferReply({ flags: MessageFlags.Ephemeral });
             if (val.toUpperCase() !== "LOAD") return sub.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored."))] });
             const r = loadFactionBackup();
             const e = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored")
@@ -4948,7 +5011,7 @@ client.on("interactionCreate", async (interaction) => {
           else                               { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
           const e = brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp());
           await logAction(e);
-          return sub.reply({ embeds: [e], ephemeral: true });
+          return sub.reply({ embeds: [e], flags: MessageFlags.Ephemeral });
         }
 
         // view the blacklist (IPs / usernames)
@@ -4986,7 +5049,7 @@ client.on("interactionCreate", async (interaction) => {
         /* ── setcap (admin only) ── */
         if (sub === "setcap") {
           if (!hasAdminRole(interaction.member)) {
-            return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+            return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
           }
           const faction = interaction.options.getString("faction");
           const cap     = interaction.options.getInteger("cap");
@@ -5003,13 +5066,13 @@ client.on("interactionCreate", async (interaction) => {
               { name: "Set By",        value: `${interaction.user}`,                                          inline: false },
             ).setFooter({ text: "Cap enforced on /faction add" }).setTimestamp();
           brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         /* ── setrankcap (admin only) ── */
         if (sub === "setrankcap") {
           if (!hasAdminRole(interaction.member)) {
-            return interaction.reply({ embeds: [adminOnlyEmbed()], ephemeral: true });
+            return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
           }
           const faction = interaction.options.getString("faction");
           const rank    = interaction.options.getString("rank");
@@ -5017,7 +5080,7 @@ client.on("interactionCreate", async (interaction) => {
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], ephemeral: true });
+              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
           }
           await setFactionRankCap(faction, rank, cap);
           writeModLog({ action: "faction-setrankcap", faction, rank, cap, by: interaction.user.tag });
@@ -5033,7 +5096,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "Set By",       value: `${interaction.user}`,                                                inline: false },
             ).setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" }).setTimestamp();
           brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         /* ── overview (public) ── */
@@ -5089,14 +5152,14 @@ client.on("interactionCreate", async (interaction) => {
           const faction  = interaction.options.getString("faction");
           const members  = getFactionMembers(faction);
           if (members === null) {
-            return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], flags: MessageFlags.Ephemeral });
           }
           if (!members.length) {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
                 .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
                 .setTimestamp()
-            ], ephemeral: true });
+            ], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
           const summary = getFactionRankOrder(faction).slice().reverse().map(r => {
@@ -5126,7 +5189,7 @@ client.on("interactionCreate", async (interaction) => {
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Audit Log`)
                 .setDescription("No faction changes recorded yet for this faction.")
                 .setTimestamp()
-            ], ephemeral: true });
+            ], flags: MessageFlags.Ephemeral });
           }
           const ACTION_ICONS = { "add": "", "remove": "", "rank": "", "transfer-in": "", "transfer-out": "" };
           const lines = allAudit.map(e => {
@@ -5139,44 +5202,44 @@ client.on("interactionCreate", async (interaction) => {
             new EmbedBuilder().setColor(NV.AMBER)
               .setTitle(`${faction} — Audit Log`)
               .setDescription(`**${allAudit.length}** total changes *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`),
-            { perPage: 15, ephemeral: true });
+            { perPage: 15, flags: MessageFlags.Ephemeral });
         }
 
         /* ── rank (Faction Leader ONLY) ── */
         if (sub === "rank") {
           if (!hasFactionLeaderRole(interaction.member)) {
-            return interaction.reply({ embeds: [factionLeaderStrictEmbed()], ephemeral: true });
+            return interaction.reply({ embeds: [factionLeaderStrictEmbed()], flags: MessageFlags.Ephemeral });
           }
           const playerId = sanitizeId(interaction.options.getString("playerid"));
           const faction  = interaction.options.getString("faction");
           const rank     = interaction.options.getString("rank");
           const removing = interaction.options.getBoolean("remove") === true;
-          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], ephemeral: true });
+              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
           }
           const spawn = SPAWN_FILE_MAP[faction];
           const lines = readFactionFile(spawn);
-          if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**.`)], ephemeral: true });
+          if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**.`)], flags: MessageFlags.Ephemeral });
           if (!lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not whitelisted in **${faction}**.\n\nUse \`/faction add\` first.`)], ephemeral: true });
+            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not whitelisted in **${faction}**.\n\nUse \`/faction add\` first.`)], flags: MessageFlags.Ephemeral });
           }
           const had = getPlayerRanks(faction, playerId);
           if (removing) {
             if (!had.includes(rank)) {
-              return interaction.reply({ embeds: [warningEmbed("Rank Not Held", `\`${playerId}\` doesn't hold **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ") || "none"}.`)], ephemeral: true });
+              return interaction.reply({ embeds: [warningEmbed("Rank Not Held", `\`${playerId}\` doesn't hold **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ") || "none"}.`)], flags: MessageFlags.Ephemeral });
             }
             removePlayerFromRankFile(faction, playerId, rank);
           } else {
             if (had.includes(rank)) {
-              return interaction.reply({ embeds: [warningEmbed("Already Holds Rank", `\`${playerId}\` already holds **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ")}.`)], ephemeral: true });
+              return interaction.reply({ embeds: [warningEmbed("Already Holds Rank", `\`${playerId}\` already holds **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ")}.`)], flags: MessageFlags.Ephemeral });
             }
             const room = rankHasRoom(faction, rank);   // a member can hold MULTIPLE ranks; cap is per rank file
             if (!room.ok) {
               return interaction.reply({ embeds: [errorEmbed("Rank Full",
-                `**${rank}** in **${faction}** is at its cap (**${room.count}/${room.cap}**).\n\nRaise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
+                `**${rank}** in **${faction}** is at its cap (**${room.count}/${room.cap}**).\n\nRaise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
             }
             addPlayerToRankFile(faction, playerId, rank);
           }
@@ -5202,56 +5265,60 @@ client.on("interactionCreate", async (interaction) => {
         /* ── transfer (Mod+) ── */
         if (sub === "transfer") {
           if (!hasModRole(interaction.member)) {
-            return interaction.reply({ embeds: [modOnlyEmbed()], ephemeral: true });
+            return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
           }
           const playerId    = sanitizeId(interaction.options.getString("playerid"));
           const fromFaction = interaction.options.getString("from_faction");
           const toFaction   = interaction.options.getString("to_faction");
           const rawRank     = interaction.options.getString("rank");
           const newRank     = rawRank ?? getFactionDefaultRank(toFaction);
-          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           if (fromFaction === toFaction) {
-            return interaction.reply({ embeds: [errorEmbed("Same Faction", "Source and destination factions must be different.")], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Same Faction", "Source and destination factions must be different.")], flags: MessageFlags.Ephemeral });
           }
           const toValidRanks = getFactionRankOrder(toFaction);
           if (!toValidRanks.includes(newRank)) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${newRank}** is not a valid rank for **${toFaction}**.\n\nValid ranks: ${toValidRanks.map(r => `**${r}**`).join(", ")}`)], ephemeral: true });
+              `**${newRank}** is not a valid rank for **${toFaction}**.\n\nValid ranks: ${toValidRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
           }
           const fromSpawn = SPAWN_FILE_MAP[fromFaction];
           const fromLines = readFactionFile(fromSpawn);
-          if (!fromLines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${fromFaction}**.`)], ephemeral: true });
+          if (!fromLines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${fromFaction}**.`)], flags: MessageFlags.Ephemeral });
           if (!fromLines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not whitelisted in **${fromFaction}**.`)], ephemeral: true });
+            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not whitelisted in **${fromFaction}**.`)], flags: MessageFlags.Ephemeral });
           }
           const toSpawn = SPAWN_FILE_MAP[toFaction];
           const toLines = readFactionFile(toSpawn);
-          if (toLines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${toFaction}**. Transfer aborted to protect the roster.`)], ephemeral: true });
+          if (toLines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${toFaction}**. Transfer aborted to protect the roster.`)], flags: MessageFlags.Ephemeral });
           const toCap   = getFactionCap(toFaction);
           if (toLines.length >= toCap) {
-            return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${toFaction}** is at capacity (**${toLines.length}/${toCap}** members).\n\nIncrease the cap with \`/faction setcap\` or remove a member first.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${toFaction}** is at capacity (**${toLines.length}/${toCap}** members).\n\nIncrease the cap with \`/faction setcap\` or remove a member first.`)], flags: MessageFlags.Ephemeral });
           }
           if (toLines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Already a Member", `\`${playerId}\` is already whitelisted in **${toFaction}**.`)], ephemeral: true });
+            return interaction.reply({ embeds: [warningEmbed("Already a Member", `\`${playerId}\` is already whitelisted in **${toFaction}**.`)], flags: MessageFlags.Ephemeral });
           }
           const toRoom = rankHasRoom(toFaction, newRank);
           if (!toRoom.ok) {
             return interaction.reply({ embeds: [errorEmbed("Rank Full",
-              `**${newRank}** in **${toFaction}** is at its cap (**${toRoom.count}/${toRoom.cap}**).\n\nChoose a different rank, or raise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
+              `**${newRank}** in **${toFaction}** is at its cap (**${toRoom.count}/${toRoom.cap}**).\n\nChoose a different rank, or raise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
           }
           const oldRank = getFactionRank(fromFaction, playerId);
           const updatedFrom = fromLines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
           if (!writeFactionFile(fromSpawn, updatedFrom)) {
-            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update \`${fromSpawn}\`. Check file permissions.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update \`${fromSpawn}\`. Check file permissions.`)], flags: MessageFlags.Ephemeral });
           }
           removePlayerFromAllRankFiles(fromFaction, playerId);
           await removeFactionRank(fromFaction, playerId);
-          toLines.push(playerId);
-          if (!writeFactionFile(toSpawn, toLines)) {
+          // Re-read the destination roster NOW: the await above yielded the event loop,
+          // and a concurrent /faction add or whitelist-panel claim landing in between
+          // would be silently clobbered if we wrote back the stale pre-await copy.
+          const toNow = readFactionFile(toSpawn) ?? toLines;
+          if (!toNow.some(l => l.toLowerCase() === playerId.toLowerCase())) toNow.push(playerId);
+          if (!writeFactionFile(toSpawn, toNow)) {
             writeFactionFile(fromSpawn, fromLines);   // fromLines still has the player once — restore original (no dup)
             addPlayerToRankFile(fromFaction, playerId, oldRank);
             await setFactionRank(fromFaction, playerId, oldRank);
-            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update \`${toSpawn}\`. Transfer rolled back.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update \`${toSpawn}\`. Transfer rolled back.`)], flags: MessageFlags.Ephemeral });
           }
           addPlayerToRankFile(toFaction, playerId, newRank);
           await setFactionRank(toFaction, playerId, newRank);
@@ -5264,7 +5331,7 @@ client.on("interactionCreate", async (interaction) => {
               { name: "Courier",       value: `\`${playerId}\``,                                          inline: true },
               { name: "From",           value: `**${fromFaction}**  *(${rankBadge(fromFaction, oldRank)})*`, inline: true },
               { name: "To",             value: `**${toFaction}**  *(${rankBadge(toFaction, newRank)})*`,   inline: true },
-              { name: "New Roster Size",value: `${toLines.length} / ${toCap}`,                            inline: true },
+              { name: "New Roster Size",value: `${toNow.length} / ${toCap}`,                              inline: true },
               { name: "Transferred By", value: `${interaction.user}`,                                     inline: true },
               { name: "Rank Files",     value: `Cleared from **${fromFaction}** rank files\nAdded to \`${getFactionRankConfig(toFaction)?.rankFiles[newRank] ?? "n/a"}\``, inline: false },
             ).setFooter({ text: "Both faction files updated · rank files updated on disk · audit logged" }).setTimestamp();
@@ -5279,40 +5346,40 @@ client.on("interactionCreate", async (interaction) => {
           const rawRank  = interaction.options.getString("rank");
           const rank     = rawRank ?? getFactionDefaultRank(faction);
           const spawn    = SPAWN_FILE_MAP[faction];
-          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], ephemeral: true });
-          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
+          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], ephemeral: true });
+              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
           }
           // One faction per courier — block if they're already in a different faction.
           const otherFactions = (getPlayerFactions(playerId) || []).filter(f => f !== faction);
           if (otherFactions.length) {
             return interaction.reply({ embeds: [errorEmbed("Already in a Faction",
-              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A courier can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], ephemeral: true });
+              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A courier can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], flags: MessageFlags.Ephemeral });
           }
           const lines = readFactionFile(spawn);
-          if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], ephemeral: true });
+          if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], flags: MessageFlags.Ephemeral });
           if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks — a member can hold several.`)], ephemeral: true });
+            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks — a member can hold several.`)], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
-            return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/faction setcap\` to increase the limit, or remove a member first.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/faction setcap\` to increase the limit, or remove a member first.`)], flags: MessageFlags.Ephemeral });
           }
           const addRoom = rankHasRoom(faction, rank);
           if (!addRoom.ok) {
             return interaction.reply({ embeds: [errorEmbed("Rank Full",
-              `**${rank}** in **${faction}** is at its cap (**${addRoom.count}/${addRoom.cap}**).\n\nAdd them at a different rank, or raise the cap with \`/faction setrankcap\`.`)], ephemeral: true });
+              `**${rank}** in **${faction}** is at its cap (**${addRoom.count}/${addRoom.cap}**).\n\nAdd them at a different rank, or raise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
           }
           lines.push(playerId);
           if (!writeFactionFile(spawn, lines)) {
-            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to \`${spawn}\`. Check file permissions.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to \`${spawn}\`. Check file permissions.`)], flags: MessageFlags.Ephemeral });
           }
           if (!addPlayerToRankFile(faction, playerId, rank)) {
             writeFactionFile(spawn, lines.filter(l => l.toLowerCase() !== playerId.toLowerCase()));
-            return interaction.reply({ embeds: [errorEmbed("Rank File Write Failed", `Could not write to rank file for **${rank}**. Check file permissions.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Rank File Write Failed", `Could not write to rank file for **${rank}**. Check file permissions.`)], flags: MessageFlags.Ephemeral });
           }
           await setFactionRank(faction, playerId, rank);
           writeFactionAudit({ action: "add", faction, playerId, rank, by: interaction.user.tag });
@@ -5337,18 +5404,18 @@ client.on("interactionCreate", async (interaction) => {
           const playerId = sanitizeId(interaction.options.getString("playerid"));
           const faction  = interaction.options.getString("faction");
           const spawn    = SPAWN_FILE_MAP[faction];
-          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], ephemeral: true });
-          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
+          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const lines = readFactionFile(spawn);
-          if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read \`${spawn}\`.`)], ephemeral: true });
+          if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read \`${spawn}\`.`)], flags: MessageFlags.Ephemeral });
           const idx = lines.findIndex(l => l.toLowerCase() === playerId.toLowerCase());
           if (idx === -1) {
-            return interaction.reply({ embeds: [warningEmbed("Not Whitelisted", `\`${playerId}\` is not in the **${faction}** spawn list.`)], ephemeral: true });
+            return interaction.reply({ embeds: [warningEmbed("Not Whitelisted", `\`${playerId}\` is not in the **${faction}** spawn list.`)], flags: MessageFlags.Ephemeral });
           }
           const oldRank = getFactionRank(faction, playerId);
           lines.splice(idx, 1);
           if (!writeFactionFile(spawn, lines)) {
-            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to \`${spawn}\`.`)], ephemeral: true });
+            return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to \`${spawn}\`.`)], flags: MessageFlags.Ephemeral });
           }
           removePlayerFromAllRankFiles(faction, playerId);
           await removeFactionRank(faction, playerId);
@@ -5377,7 +5444,7 @@ client.on("interactionCreate", async (interaction) => {
       case "manual": {
         const command = interaction.options.getString("command");
         const server  = interaction.options.getString("server");
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           if (server === "both") {
             // allSettled so one unreachable server doesn't fail the whole command
@@ -5421,12 +5488,13 @@ client.on("interactionCreate", async (interaction) => {
           new ButtonBuilder().setCustomId("rm_confirm").setLabel("Yes, rotate now").setStyle(ButtonStyle.Danger),
           new ButtonBuilder().setCustomId("rm_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
         );
-        const msg = await interaction.reply({
+        await interaction.reply({
           embeds: [warningEmbed("Confirm Map Rotation",
             `> *"The battle lines are shifting. You sure about this?"*\n\n${DIVIDER}\n\nThis will **end the current round** on **${serverLabel(server)}** for all online players.`
           ).setFooter({ text: "Expires in 30 seconds" })],
-          components: [row], ephemeral: true, fetchReply: true,
+          components: [row], flags: MessageFlags.Ephemeral,
         });
+        const msg = await interaction.fetchReply();
         try {
           const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
           if (btn.customId === "rm_cancel") return btn.update({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Rotation Cancelled").setDescription("Map rotation cancelled.").setTimestamp()], components: [] });
@@ -5451,14 +5519,14 @@ client.on("interactionCreate", async (interaction) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const tierKey  = interaction.options.getString("tier");
         const tier     = WAGE_TIERS[tierKey];
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        if (!tier)     return interaction.reply({ embeds: [errorEmbed("Invalid Tier", "Unknown payment tier.")], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (!tier)     return interaction.reply({ embeds: [errorEmbed("Invalid Tier", "Unknown payment tier.")], flags: MessageFlags.Ephemeral });
         const wages    = loadWages();
         const existing = wages.find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         if (!tier.weekly) {
           const current = readPlayerBalance(playerId) ?? 0;
           const newBal  = current + tier.amount;
-          if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", `Could not deposit **${tier.amount} caps** to \`${playerId}\`. Check \`MODSAVE_PATH\`.`)], ephemeral: true });
+          if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", `Could not deposit **${tier.amount} caps** to \`${playerId}\`. Check \`MODSAVE_PATH\`.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "givecaps", playerId, amount: tier.amount, reason: "Mercenary payment", by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Mercenary Payment Issued")
             .setDescription(`> *"Caps now. No strings attached."*\n\n${DIVIDER}`)
@@ -5473,7 +5541,7 @@ client.on("interactionCreate", async (interaction) => {
         }
         if (existing?.tier === tierKey) {
           const ts = Math.floor(existing.addedAt / 1000);
-          return interaction.reply({ embeds: [warningEmbed("Already on Payroll", `\`${playerId}\` is already enrolled as **${tier.label}** (+${tier.amount}/wk).\n**Enrolled:** <t:${ts}:F> by **${existing.addedBy}**\n\nUse \`/removewage\` first to change tier.`)], ephemeral: true });
+          return interaction.reply({ embeds: [warningEmbed("Already on Payroll", `\`${playerId}\` is already enrolled as **${tier.label}** (+${tier.amount}/wk).\n**Enrolled:** <t:${ts}:F> by **${existing.addedBy}**\n\nUse \`/removewage\` first to change tier.`)], flags: MessageFlags.Ephemeral });
         }
         if (existing) {
           const old = WAGE_TIERS[existing.tier];
@@ -5511,10 +5579,10 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "removewage": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const wages   = loadWages();
         const removed = wages.find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
-        if (!removed) return interaction.reply({ embeds: [warningEmbed("Not on Payroll", `\`${playerId}\` isn't enrolled.\nUse \`/wagelist\` to see who's on the books.`)], ephemeral: true });
+        if (!removed) return interaction.reply({ embeds: [warningEmbed("Not on Payroll", `\`${playerId}\` isn't enrolled.\nUse \`/wagelist\` to see who's on the books.`)], flags: MessageFlags.Ephemeral });
         saveWages(wages.filter(w => w.playerId.toLowerCase() !== playerId.toLowerCase()));
         const tier = WAGE_TIERS[removed.tier];
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Removed from Payroll").setDescription(`${DIVIDER}`)
@@ -5533,7 +5601,7 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "wagelist": {
         const wages = loadWages().filter(w => WAGE_TIERS[w.tier]?.weekly);
-        if (!wages.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Payroll — Empty").setDescription('> *"No couriers on the books yet."*\n\nUse `/addwage` to enrol someone.').setTimestamp()], ephemeral: true });
+        if (!wages.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Payroll — Empty").setDescription('> *"No couriers on the books yet."*\n\nUse `/addwage` to enrol someone.').setTimestamp()], flags: MessageFlags.Ephemeral });
         const totalPay = wages.reduce((s, w) => s + (WAGE_TIERS[w.tier]?.amount ?? 0), 0);
         const tierSummary = Object.entries(WAGE_TIERS).filter(([, t]) => t.weekly)
           .map(([k, t]) => { const n = wages.filter(w => w.tier === k).length; return n ? `${t.label}: **${n}**` : null; }).filter(Boolean).join("  ·  ");
@@ -5548,7 +5616,7 @@ client.on("interactionCreate", async (interaction) => {
           new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Payroll — The House's Ledger")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Wages disbursed automatically every 7 days" }).setTimestamp(),
-          { perPage: 12, ephemeral: true });
+          { perPage: 12, flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -5556,12 +5624,12 @@ client.on("interactionCreate", async (interaction) => {
          ───────────────────────────────────────────────────── */
       case "checkbalance": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const fp = getPlayerFilePath(playerId);
-        if (!fp) return interaction.reply({ embeds: [errorEmbed("Vault Offline", "`MODSAVE_PATH` not set in `.env`.")], ephemeral: true });
-        if (!fs.existsSync(fp)) return interaction.reply({ embeds: [warningEmbed("No Ledger Found", `\`${playerId}\` has no ledger yet.\nThey must join the server first, or be assigned a wage with \`/addwage\`.`)], ephemeral: true });
+        if (!fp) return interaction.reply({ embeds: [errorEmbed("Vault Offline", "`MODSAVE_PATH` not set in `.env`.")], flags: MessageFlags.Ephemeral });
+        if (!fs.existsSync(fp)) return interaction.reply({ embeds: [warningEmbed("No Ledger Found", `\`${playerId}\` has no ledger yet.\nThey must join the server first, or be assigned a wage with \`/addwage\`.`)], flags: MessageFlags.Ephemeral });
         const balance = readPlayerBalance(playerId);
-        if (balance === null) return interaction.reply({ embeds: [errorEmbed("Ledger Corrupted", `Could not parse ledger for \`${playerId}\`.\nPath: \`${fp}\``)], ephemeral: true });
+        if (balance === null) return interaction.reply({ embeds: [errorEmbed("Ledger Corrupted", `Could not parse ledger for \`${playerId}\`.\nPath: \`${fp}\``)], flags: MessageFlags.Ephemeral });
         const wage   = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier  = wage ? (WAGE_TIERS[wage.tier] ?? { label: wage.tier, amount: "?", weekly: true }) : null;
         const nextTs = wage?.lastPaidAt ? Math.floor((wage.lastPaidAt + WAGE_INTERVAL_MS) / 1000) : null;
@@ -5572,7 +5640,7 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Payroll", value: wTier ? `${wTier.label} (+${wTier.amount}/wk)` : "Not enrolled", inline: true },
           ).setFooter({ text: randomQuote("caps") }).setTimestamp();
         if (nextTs) embed.addFields({ name: "Next Payout", value: `<t:${nextTs}:R>`, inline: true });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -5582,10 +5650,10 @@ client.on("interactionCreate", async (interaction) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const amount   = interaction.options.getInteger("amount");
         const reason   = interaction.options.getString("reason") ?? "Cap gift";
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const current = readPlayerBalance(playerId) ?? 0;
         const newBal  = current + amount;
-        if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", "Check `MODSAVE_PATH`.")], ephemeral: true });
+        if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", "Check `MODSAVE_PATH`.")], flags: MessageFlags.Ephemeral });
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Caps Given").setDescription(`${DIVIDER}`)
           .addFields(
@@ -5606,20 +5674,20 @@ client.on("interactionCreate", async (interaction) => {
         const fromId = sanitizeId(interaction.options.getString("from_id"));
         const toId   = sanitizeId(interaction.options.getString("to_id"));
         const amount = interaction.options.getInteger("amount");
-        if (!fromId || !toId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
-        if (fromId.toLowerCase() === toId.toLowerCase()) return interaction.reply({ embeds: [errorEmbed("Invalid Transfer", "Cannot transfer caps to the same courier.")], ephemeral: true });
+        if (!fromId || !toId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (fromId.toLowerCase() === toId.toLowerCase()) return interaction.reply({ embeds: [errorEmbed("Invalid Transfer", "Cannot transfer caps to the same courier.")], flags: MessageFlags.Ephemeral });
         const fromBal = readPlayerBalance(fromId);
-        if (fromBal === null) return interaction.reply({ embeds: [errorEmbed("No Ledger", `\`${fromId}\` has no ledger file.`)], ephemeral: true });
-        if (fromBal < amount) return interaction.reply({ embeds: [errorEmbed("Insufficient Caps", `\`${fromId}\` only has **${fromBal.toLocaleString()} caps**.`)], ephemeral: true });
+        if (fromBal === null) return interaction.reply({ embeds: [errorEmbed("No Ledger", `\`${fromId}\` has no ledger file.`)], flags: MessageFlags.Ephemeral });
+        if (fromBal < amount) return interaction.reply({ embeds: [errorEmbed("Insufficient Caps", `\`${fromId}\` only has **${fromBal.toLocaleString()} caps**.`)], flags: MessageFlags.Ephemeral });
         const toBal = readPlayerBalance(toId) ?? 0;
         // Two separate ledger files — write sequentially and roll the debit
         // back if the credit fails, so caps can never vanish mid-transfer.
         if (!writePlayerBalance(fromId, fromBal - amount)) {
-          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not debit the sender. Check `MODSAVE_PATH`.")], ephemeral: true });
+          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not debit the sender. Check `MODSAVE_PATH`.")], flags: MessageFlags.Ephemeral });
         }
         if (!writePlayerBalance(toId, toBal + amount)) {
           writePlayerBalance(fromId, fromBal);   // refund — transfer aborted
-          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not credit the recipient — transfer rolled back, no caps moved.")], ephemeral: true });
+          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not credit the recipient — transfer rolled back, no caps moved.")], flags: MessageFlags.Ephemeral });
         }
         writeModLog({ action: "transfercaps", fromId, toId, amount, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Caps Transfer Complete").setDescription(`${DIVIDER}`)
@@ -5640,10 +5708,10 @@ client.on("interactionCreate", async (interaction) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         const amount   = interaction.options.getInteger("amount");
         const reason   = interaction.options.getString("reason") ?? "Manual adjustment";
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const current = readPlayerBalance(playerId) ?? 0;
         const newBal  = Math.max(0, current + amount);
-        if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Write Failed", "Check `MODSAVE_PATH`.")], ephemeral: true });
+        if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Write Failed", "Check `MODSAVE_PATH`.")], flags: MessageFlags.Ephemeral });
         writeModLog({ action: "adjustcaps", playerId, amount, reason, by: interaction.user.tag });
         const pos = amount >= 0;
         const embed = new EmbedBuilder().setColor(pos ? NV.IRRAD_GREEN : NV.RUST_RED)
@@ -5691,7 +5759,7 @@ client.on("interactionCreate", async (interaction) => {
 
       case "stats": {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const playtime = loadPlaytime();
         const minutes  = playtime[playerId] ?? null;
         const factions = getPlayerFactions(playerId);
@@ -5721,7 +5789,7 @@ client.on("interactionCreate", async (interaction) => {
         const embed = new EmbedBuilder().setColor(color)
           .setTitle(`Courier Dossier — ${playerId}`)
           .setDescription(
-            tb ? hero(`Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
+            tb ? hero(tb.permanent || !tb.expires ? "Permanently exiled from the Mojave." : `Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
             online ? hero("Currently active on the Strip.") :
             hero("Offline — last tracked playtime shown.")
           )
@@ -5740,8 +5808,9 @@ client.on("interactionCreate", async (interaction) => {
           embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} caps**${wTier ? `  ·  Payroll: ${wTier.label} (+${wTier.amount}/wk)` : "  ·  Not on payroll"}`, inline: false });
         }
         if (tb) {
-          const ts = Math.floor(tb.expires / 1000);
-          embed.addFields({ name: "Active Exile", value: `Temp ban — *${tb.reason}*  ·  expires <t:${ts}:R>`, inline: false });
+          embed.addFields({ name: "Active Exile", value: tb.permanent || !tb.expires
+            ? `Permanent ban — *${tb.reason}*`
+            : `Temp ban — *${tb.reason}*  ·  expires <t:${Math.floor(tb.expires / 1000)}:R>`, inline: false });
         }
         if (history.length) {
           embed.addFields({ name: "Mod Actions", value: `**${history.length}** total — use \`/history ${playerId}\` to view`, inline: false });
@@ -5755,9 +5824,9 @@ client.on("interactionCreate", async (interaction) => {
          INSPECT  (owner only — full dossier incl. IPs & alts)
          ───────────────────────────────────────────────────── */
       case "inspect": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], ephemeral: true });
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], ephemeral: true });
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const key = playerId.toLowerCase();
 
         // gather everything
@@ -5804,7 +5873,9 @@ client.on("interactionCreate", async (interaction) => {
 
         // ban status
         const banLines = [];
-        if (tb) banLines.push(`**Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
+        if (tb) banLines.push(tb.permanent || !tb.expires
+          ? `**Permanent ban** — *${tb.reason}* · by ${tb.moderator}`
+          : `**Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
         embed.addFields({ name: "Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "No active bans", inline: false });
 
         // IP intel
@@ -5824,15 +5895,19 @@ client.on("interactionCreate", async (interaction) => {
         if (known?.firstSeen) footerBits.push(`first seen ${new Date(known.firstSeen).toISOString().slice(0, 10)}`);
         if (known?.name && known.name !== playerId) footerBits.push(`display: ${known.name}`);
         brand(embed, { thumb: true, footer: { text: footerBits.join("  ·  ") || "Owner inspection" } });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
+      // Stale registration (command removed in a redeploy but still cached by
+      // Discord) — answer instead of leaving the user on "thinking…" forever.
+      default:
+        return interaction.reply({ embeds: [errorEmbed("Unknown Command", `\`/${name}\` isn't wired up in this build — the command list may still be refreshing. Try again in a minute.`)], flags: MessageFlags.Ephemeral }).catch(() => {});
     }
   } catch (err) {
     logger.error("Command", `/${interaction.commandName}: ${err.message}`, { stack: err.stack });
     const reply = {
       embeds: [errorEmbed("System Failure", `An internal error occurred processing \`/${interaction.commandName}\`.\n\n\`\`\`${err.message?.slice(0, 200) ?? "unknown"}\`\`\`\nCheck the server logs for the full stack trace.`)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     };
     try {
       if (interaction.deferred || interaction.replied) return interaction.editReply(reply);

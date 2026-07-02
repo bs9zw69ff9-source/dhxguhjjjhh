@@ -29,7 +29,7 @@ fs.writeFileSync(path.join(nm, "discord.js", "index.js"), `
 function chainable(){const p=new Proxy(function(){},{get(t,k){if(k==='toJSON')return()=>({});if(k==='then')return undefined;return()=>p;},apply(){return p;}});return p;}
 class Chain{constructor(){return chainable();}}
 const e=new Proxy({},{get:()=>1});
-module.exports={Client:Chain,GatewayIntentBits:e,PermissionFlagsBits:e,ActivityType:e,REST:Chain,Routes:e,SlashCommandBuilder:Chain,EmbedBuilder:Chain,ActionRowBuilder:Chain,ButtonBuilder:Chain,ButtonStyle:e,ComponentType:e};
+module.exports={Client:Chain,GatewayIntentBits:e,PermissionFlagsBits:e,MessageFlags:e,ActivityType:e,REST:Chain,Routes:e,SlashCommandBuilder:Chain,EmbedBuilder:Chain,ActionRowBuilder:Chain,ButtonBuilder:Chain,ButtonStyle:e,ComponentType:e};
 `);
 
 fs.copyFileSync(path.join(__dirname, "..", "index.js"), path.join(sandbox, "index.js"));
@@ -596,6 +596,17 @@ const ok = (cond, msg) => {
     await new Promise(r => setTimeout(r, 60));
     clearInterval(tEid);
     ok(autoEid && autoEid.name === "NewAlias", "same EOS id from a new IP/name is auto-banned");
+
+    // REAL Pavlov login format has NO "?" terminator after the name ("?Name=Bob userId: …").
+    // The name must stop at the next field, and names WITH spaces must survive intact.
+    const logNm = path.join(sandbox, "PavlovNM.log");
+    fs.writeFileSync(logNm,
+      "[2026.07.02-11.00.00:000][1]LogNet: Login request: ?Name=Butter Life userId: RedpointEOS:beef01 platform: NULL\n" +
+      "[2026.07.02-11.00.30:000][2]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 44.44.44.44:1, UniqueId: RedpointEOS:beef01\n");
+    clearInterval(ipBans.init({ logFiles: [logNm], pollMs: 9e8 }));
+    ok(ipBans.registry["beef01"]?.name === "Butter Life", "real-format login (no ? terminator) captures the exact name incl. spaces");
+    ok(ipBans.getIPsForPlayer("Butter Life").includes("44.44.44.44"), "that name resolves to its confirmed IP");
+    ok(ipBans.resolveIds("RedpointEOS:beef01").includes("beef01"), "resolveIds handles a prefixed (uncleaned) id token");
   }
 
   console.log("Faction rank caps:");
