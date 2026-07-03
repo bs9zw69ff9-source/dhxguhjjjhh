@@ -115,15 +115,15 @@ const ok = (cond, msg) => {
   }
 
   console.log("Last seen:");
-  bot.recordLastSeen(["Alice", "Bob"], 1000);
+  await bot.recordLastSeen(["Alice", "Bob"], 1000);
   ok(bot.getLastSeen("ALICE") === 1000, "case-insensitive lookup");
   ok(bot.getLastSeen("nobody") === null, "unknown -> null");
-  bot.recordLastSeen(["Alice"], 2000);
+  await bot.recordLastSeen(["Alice"], 2000);
   ok(bot.getLastSeen("alice") === 2000, "later sighting overwrites");
 
   console.log("Known-player registry:");
-  bot.recordKnownPlayers(["NCR_Private", "NCR_Sergeant", "Legion_Recruit"], 1000);
-  bot.recordKnownPlayers(["NCR_Private"], 5000); // already known -> updates lastSeen, no dupe
+  await bot.recordKnownPlayers(["NCR_Private", "NCR_Sergeant", "Legion_Recruit"], 1000);
+  await bot.recordKnownPlayers(["NCR_Private"], 5000); // already known -> updates lastSeen, no dupe
   ok(Object.keys(bot.loadKnownPlayers()).length === 3, "registry stores each player once (case-insensitive key)");
   ok(bot.loadKnownPlayers()["ncr_private"].name === "NCR_Private", "stores original display casing");
   const ncr = bot.getKnownPlayerChoices("ncr_");
@@ -134,7 +134,7 @@ const ok = (cond, msg) => {
   ok(excl.length === 1 && excl[0].value === "NCR_Sergeant", "exclude set drops already-listed names");
   // seed from existing data (playtime keys) — FactionRoles path won't exist here, that branch is skipped
   fs.writeFileSync(bot.FILES.PLAYTIME, JSON.stringify({ "Seeded_Courier": 42 }));
-  bot.seedKnownPlayers();
+  await bot.seedKnownPlayers();
   ok(bot.getKnownPlayerChoices("seeded").some(c => c.value === "Seeded_Courier"), "seedKnownPlayers backfills from playtime");
 
   console.log("Faction whitelists from Discord roles:");

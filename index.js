@@ -370,24 +370,19 @@ const saveWages         = (d) => safeWrite(FILES.WAGES,         d);
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
 const loadModLog        = () => safeRead(FILES.MODLOG,         []);
-const saveModLog        = (d) => safeWrite(FILES.MODLOG,        d);
 const loadFactionRanks  = () => safeRead(FILES.FACTION_RANKS,  {});
-const saveFactionRanks  = (d) => safeWrite(FILES.FACTION_RANKS, d);
 const loadFactionConfig = () => safeRead(FILES.FACTION_CONFIG, {});
-const saveFactionConfig = (d) => safeWrite(FILES.FACTION_CONFIG,d);
 const loadFactionAudit  = () => safeRead(FILES.FACTION_AUDIT,  []);
 // (writes go through the serialized writeFactionAudit() — no direct saver needed)
 const loadMenuGrants    = () => safeRead(FILES.MENU_GRANTS,    {});
-const saveMenuGrants    = (d) => safeWrite(FILES.MENU_GRANTS,   d);
 const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
-const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
 const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
-const saveKnownPlayers  = (d) => safeWrite(FILES.KNOWN,         d);
 
 /* ================================================================
    MOD LOG WRITER  (serialized)
    ================================================================ */
 function writeModLog(entry) {
+  _modLogIndexCache = null;   // invalidate the per-player index on every write
   return update(FILES.MODLOG, [], (log) => {
     log.push({ ...entry, at: Date.now() });
     if (log.length > 10_000) log.splice(0, log.length - 10_000);
@@ -395,9 +390,21 @@ function writeModLog(entry) {
   });
 }
 
+// Lazily-built per-player index over the mod log (up to 10k entries), rebuilt
+// after any write — turns the per-command full scan into an O(1) lookup.
+let _modLogIndexCache = null;
 function getPlayerHistory(playerId) {
-  const id = playerId.toLowerCase();
-  return loadModLog().filter(e => e.playerId?.toLowerCase() === id);
+  if (!_modLogIndexCache) {
+    const idx = new Map();
+    for (const e of loadModLog()) {
+      const k = e.playerId?.toLowerCase();
+      if (!k) continue;
+      if (!idx.has(k)) idx.set(k, []);
+      idx.get(k).push(e);
+    }
+    _modLogIndexCache = idx;
+  }
+  return _modLogIndexCache.get(playerId.toLowerCase()) ?? [];
 }
 
 /* ================================================================
@@ -409,11 +416,10 @@ function getPlayerHistory(playerId) {
    ================================================================ */
 function recordLastSeen(names, now = Date.now()) {
   if (!names || !names.length) return;
-  const seen = loadLastSeen();
-  for (const name of names) {
-    if (name) seen[String(name).toLowerCase()] = now;
-  }
-  saveLastSeen(seen);
+  return update(FILES.LASTSEEN, {}, (seen) => {
+    for (const name of names) if (name) seen[String(name).toLowerCase()] = now;
+    return seen;
+  });
 }
 function getLastSeen(playerId) {
   return loadLastSeen()[playerId.toLowerCase()] ?? null;
@@ -427,15 +433,18 @@ function getLastSeen(playerId) {
    Only writes when a brand-new name appears, to avoid churning the file. */
 function recordKnownPlayers(names, now = Date.now()) {
   if (!names || !names.length) return;
-  const known = loadKnownPlayers();
-  let added = false;
-  for (const name of names) {
-    if (!name) continue;
-    const key = String(name).toLowerCase();
-    if (known[key]) { known[key].lastSeen = now; }
-    else { known[key] = { name: String(name), firstSeen: now, lastSeen: now }; added = true; }
-  }
-  if (added) saveKnownPlayers(known);   // new player discovered → persist
+  // Serialized via update(): two overlapping cache refreshes can no longer clobber
+  // each other's newly-discovered players (the old load→save could, and the
+  // "only write when added" shortcut made the race window worse, not better).
+  return update(FILES.KNOWN, {}, (known) => {
+    for (const name of names) {
+      if (!name) continue;
+      const key = String(name).toLowerCase();
+      if (known[key]) { known[key].lastSeen = now; }
+      else { known[key] = { name: String(name), firstSeen: now, lastSeen: now }; }
+    }
+    return known;
+  });
 }
 
 /** Autocomplete choices from the known-player registry (substring match,
@@ -452,7 +461,7 @@ function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
 /** One-time backfill of the registry from data the bot already has on disk,
     so offline autocomplete works immediately (not just for players seen since
     deployment). Idempotent — recordKnownPlayers only writes new names. */
-function seedKnownPlayers() {
+async function seedKnownPlayers() {
   const names = new Set();
   for (const k of Object.keys(loadPlaytime())) names.add(k);                 // playtime keys (display-cased)
   for (const w of loadWages())     if (w.playerId)   names.add(w.playerId);  // payroll
@@ -465,7 +474,7 @@ function seedKnownPlayers() {
   } catch { /* faction dir not reachable from here — skip */ }
 
   const before = Object.keys(loadKnownPlayers()).length;
-  recordKnownPlayers([...names]);
+  await recordKnownPlayers([...names]);
   const total = Object.keys(loadKnownPlayers()).length;
   if (total > before) logger.info("Known", `Seeded ${total - before} player(s) from existing data (registry now ${total})`);
 }
@@ -1371,6 +1380,14 @@ function removeUserBlacklist(id) {
    ================================================================ */
 function md5(text) { return crypto.createHash("md5").update(text).digest("hex"); }
 
+function formatKD(playerId) {
+  let k = null;
+  try { k = ipBans.getKD(playerId); } catch {}
+  if (!k || !(k.kills + k.deaths)) return "*No record*";
+  const ratio = (k.deaths ? k.kills / k.deaths : k.kills).toFixed(2);
+  return `**${k.kills}** / **${k.deaths}**  ·  ${ratio}`;
+}
+
 function formatTimeLeft(expiresMs) {
   const diff = expiresMs - Date.now();
   if (diff <= 0) return "expired";
@@ -1994,12 +2011,13 @@ function getPlayerChoices(server, focused = "") {
    PLAYTIME TRACKING
    ================================================================ */
 function tickPlaytime() {
-  const online = new Set([...playerCache.server1, ...playerCache.server2]);
-  if (!online.size) return;
-  const pt = loadPlaytime();
-  for (const id of online) if (id) pt[id] = (pt[id] ?? 0) + 1;
-  savePlaytime(pt);
-  recordLastSeen([...online]);
+  const online = [...new Set([...playerCache.server1, ...playerCache.server2])].filter(Boolean);
+  if (!online.length) return;
+  update(FILES.PLAYTIME, {}, (pt) => {
+    for (const id of online) pt[id] = (pt[id] ?? 0) + 1;
+    return pt;
+  });
+  recordLastSeen(online);
 }
 
 /* ================================================================
@@ -2931,21 +2949,23 @@ async function handleMenuPanelSubmit(interaction) {
    MENU GRANT PERSISTENCE
    ================================================================ */
 function addMenuGrant(playerId, server, menuValue, menuId, grantedBy) {
-  const grants = loadMenuGrants();
-  const key    = playerId.toLowerCase();
-  if (!grants[key]) grants[key] = [];
-  grants[key] = grants[key].filter(g => !(g.menuValue === menuValue && g.server === server));
-  grants[key].push({ server, menuValue, menuId, grantedBy, at: Date.now() });
-  saveMenuGrants(grants);
+  const key = playerId.toLowerCase();
+  return update(FILES.MENU_GRANTS, {}, (grants) => {
+    if (!grants[key]) grants[key] = [];
+    grants[key] = grants[key].filter(g => !(g.menuValue === menuValue && g.server === server));
+    grants[key].push({ server, menuValue, menuId, grantedBy, at: Date.now() });
+    return grants;
+  });
 }
 
 function removeMenuGrant(playerId, server, menuValue) {
-  const grants = loadMenuGrants();
-  const key    = playerId.toLowerCase();
-  if (!grants[key]) return;
-  grants[key] = grants[key].filter(g => !(g.menuValue === menuValue && g.server === server));
-  if (!grants[key].length) delete grants[key];
-  saveMenuGrants(grants);
+  const key = playerId.toLowerCase();
+  return update(FILES.MENU_GRANTS, {}, (grants) => {
+    if (!grants[key]) return grants;
+    grants[key] = grants[key].filter(g => !(g.menuValue === menuValue && g.server === server));
+    if (!grants[key].length) delete grants[key];
+    return grants;
+  });
 }
 
 /* Re-grant recorded menus when a granted player REJOINS. The server drops a
@@ -2998,8 +3018,11 @@ async function rconHealthCheck() {
 }
 
 /* ================================================================
-   INTERVALS
+   INTERVALS  — started from startIntervals(), which runs only when the
+   bot is launched directly (require.main). Tests require() this file and
+   must not spin live timers in their sandbox.
    ================================================================ */
+function startIntervals() {
 setInterval(processExpiredBans,      60_000);
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
@@ -3012,31 +3035,10 @@ setInterval(async () => {
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
-// Faction whitelists from Discord roles (only when the privileged intent is enabled).
 if (FACTION_ROLE_SYNC) {
-  (factionClient ?? client).on("guildMemberUpdate", (oldM, newM) => {
-    try {
-      const faction = factionForGuild(newM.guild.id);
-      if (!faction) return;
-      const entry = loadFactionRoleMap()[faction];
-      const mapped = new Set(Object.values(entry?.ranks || {}).filter(Boolean));
-      // only act if one of the MAPPED rank roles actually changed for this member
-      const changed = [...mapped].some(rid => oldM.roles.cache.has(rid) !== newM.roles.cache.has(rid));
-      if (changed) {
-        const r = applyMemberFactionRanks(newM, faction);
-        if (r.name) logger.info("FactionRoles", `${faction}: ${r.name} -> ${r.ranks?.length ? r.ranks.join(", ") : "removed"}`);
-      }
-    } catch (e) { logger.warn("FactionRoles", `member update: ${e.message}`); }
-  });
   setInterval(() => { for (const f of ALL_FACTIONS) syncFactionFromRoles(f).catch(() => {}); }, 10 * 60 * 1000);
 }
 
-// Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure → Load.
-function autoBackupFactions() {
-  const r = saveFactionBackup();
-  if (r.ok) logger.info("Backup", `Auto-saved faction whitelists — ${r.count} file(s)`);
-  else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
-}
 setInterval(autoBackupFactions, 24 * 60 * 60 * 1000);
 setInterval(async () => {        // capture any in-game-menu bans, then rebuild the file from the DB
   try { await importModsaveBanlist(); } catch {}
@@ -3057,6 +3059,32 @@ setTimeout(() => {
   const due = loadWages().filter(w => WAGE_TIERS[w.tier]?.weekly && (!w.lastPaidAt || Date.now() - w.lastPaidAt >= WAGE_INTERVAL_MS * 0.9));
   if (due.length) { logger.info("Wages", `${due.length} overdue payout(s), processing in 15s...`); setTimeout(processWagePayout, 15_000); }
 }, 5_000);
+}
+
+// Faction whitelists from Discord roles (only when the privileged intent is enabled).
+if (FACTION_ROLE_SYNC) {
+  (factionClient ?? client).on("guildMemberUpdate", (oldM, newM) => {
+    try {
+      const faction = factionForGuild(newM.guild.id);
+      if (!faction) return;
+      const entry = loadFactionRoleMap()[faction];
+      const mapped = new Set(Object.values(entry?.ranks || {}).filter(Boolean));
+      // only act if one of the MAPPED rank roles actually changed for this member
+      const changed = [...mapped].some(rid => oldM.roles.cache.has(rid) !== newM.roles.cache.has(rid));
+      if (changed) {
+        const r = applyMemberFactionRanks(newM, faction);
+        if (r.name) logger.info("FactionRoles", `${faction}: ${r.name} -> ${r.ranks?.length ? r.ranks.join(", ") : "removed"}`);
+      }
+    } catch (e) { logger.warn("FactionRoles", `member update: ${e.message}`); }
+  });
+}
+
+// Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure → Load.
+function autoBackupFactions() {
+  const r = saveFactionBackup();
+  if (r.ok) logger.info("Backup", `Auto-saved faction whitelists — ${r.count} file(s)`);
+  else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
+}
 
 /* ================================================================
    SLASH COMMAND DEFINITIONS
@@ -3416,12 +3444,16 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
 /* ================================================================
    GRACEFUL SHUTDOWN
    ================================================================ */
-function shutdown(signal) {
-  logger.info("Bot", `${signal} received — shutting down`);
+async function shutdown(signal) {
+  logger.info("Bot", `${signal} received — draining write queues…`);
+  // _queues holds the tail promise of every per-file write chain; waiting on them
+  // means pm2 restarts can't kill an in-flight atomic write mid-rename.
+  try { await Promise.allSettled([..._queues.values()]); } catch {}
+  logger.info("Bot", "Queues drained — exiting.");
   process.exit(0);
 }
-process.on("SIGINT",  () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT",  () => { shutdown("SIGINT").catch(() => process.exit(1)); });
+process.on("SIGTERM", () => { shutdown("SIGTERM").catch(() => process.exit(1)); });
 process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, { stack: err.stack }));
 process.on("unhandledRejection", r   => logger.error("Unhandled", String(r)));
 
@@ -5428,7 +5460,7 @@ async function onInteraction(interaction) {
             { name: "Playtime",      value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*No record*", inline: true },
             { name: "Last Seen",     value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
             { name: "Donator",       value: donator ? "Yes" : "No",                                       inline: true },
-            { name: "K / D",         value: (() => { let k; try { k = ipBans.getKD(playerId); } catch { k = null; } return k && (k.kills + k.deaths) ? `**${k.kills}** / **${k.deaths}**  ·  ${(k.deaths ? k.kills / k.deaths : k.kills).toFixed(2)}` : "*No record*"; })(), inline: true },
+            { name: "K / D",         value: formatKD(playerId),                                                 inline: true },
             { name: "Faction Ranks", value: fStr,                                                               inline: false },
           );
 
@@ -5495,6 +5527,7 @@ if (factionClient) {
 // module (e.g. from tests) the helpers are exported instead, so unit tests
 // can exercise the pure logic without opening a Discord connection.
 if (require.main === module) {
+  startIntervals();
   client.login(process.env.DISCORD_TOKEN);
   if (factionClient) factionClient.login(process.env.FACTION_BOT_TOKEN).catch(e => logger.error("FactionBot", `login failed: ${e.message}`));
 }
