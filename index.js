@@ -1814,6 +1814,68 @@ const client = new Client({
     : [GatewayIntentBits.Guilds],
 });
 
+/* ================================================================
+   PLAIN-TEXT OUTPUT  (no embeds anywhere)
+   ================================================================
+   Every reply/log/DM in this codebase is still BUILT as an EmbedBuilder (that
+   keeps ~250 call sites untouched), but at send time it is rendered to plain
+   markdown text and the embed is dropped. One conversion layer covers all
+   interaction replies (patched per interaction), channel logs, panels,
+   leaderboards, DMs, and the webhook feed. */
+function embedToText(e) {
+  let d; try { d = typeof e?.toJSON === "function" ? e.toJSON() : e; } catch { d = e; }
+  if (!d || typeof d !== "object") return "";
+  const parts = [];
+  if (d.author?.name)  parts.push(`__${d.author.name}__`);
+  if (d.title)         parts.push(`**${d.title}**`);
+  if (d.description)   parts.push(String(d.description));
+  for (const f of d.fields ?? []) {
+    const name = String(f.name ?? "").trim();
+    const val  = String(f.value ?? "").trim();
+    if (!name && !val) continue;
+    parts.push(val.includes("\n") ? `**${name}**\n${val}` : `**${name}:** ${val}`);
+  }
+  if (d.footer?.text)  parts.push(`-# ${d.footer.text}`);   // Discord small-text markdown
+  return parts.filter(Boolean).join("\n");
+}
+// payload {content?, embeds?, ...} -> { first: payload-without-embeds, extra: [overflow strings] }
+// Messages cap at 2000 chars (embeds allowed ~6000), so long output splits by line.
+function textifyChunks(payload) {
+  const text = [payload.content, ...(payload.embeds ?? []).map(embedToText)].filter(Boolean).join("\n\n");
+  const chunks = [];
+  let cur = "";
+  for (let line of String(text).split("\n")) {
+    while (line.length > 1900) { chunks.push(line.slice(0, 1900)); line = line.slice(1900); }
+    if (cur && cur.length + 1 + line.length > 1900) { chunks.push(cur); cur = line; }
+    else cur = cur ? `${cur}\n${line}` : line;
+  }
+  if (cur) chunks.push(cur);
+  const { embeds, ...rest } = payload;
+  return { first: { ...rest, content: chunks[0] || "​" }, extra: chunks.slice(1) };
+}
+// One-message form for channel sends / edits / DMs (overflow truncated with a marker).
+function textify(payload) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.embeds) || !payload.embeds.length) return payload;
+  const { first, extra } = textifyChunks(payload);
+  if (extra.length) first.content = `${first.content.slice(0, 1980)}\n-# (truncated)`;
+  return first;
+}
+// Patch an interaction's output methods so ANY embed payload goes out as text.
+// Overflow beyond 2000 chars continues in follow-up messages.
+function patchInteractionOutput(interaction) {
+  for (const m of ["reply", "editReply", "followUp", "update"]) {
+    const orig = typeof interaction[m] === "function" ? interaction[m].bind(interaction) : null;
+    if (!orig) continue;
+    interaction[m] = async (payload, ...args) => {
+      if (!payload || typeof payload !== "object" || !Array.isArray(payload.embeds) || !payload.embeds.length) return orig(payload, ...args);
+      const { first, extra } = textifyChunks(payload);
+      const res = await orig(first, ...args);
+      for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch {} }
+      return res;
+    };
+  }
+}
+
 function logAction(embed) {
   if (!process.env.MOD_LOG_CHANNEL) return;
   // Fire-and-forget: never block a command's reply on a log post. Several
@@ -1821,13 +1883,13 @@ function logAction(embed) {
   // awaited the channel fetch+send, a slow post could blow the 3s ack window and
   // make Discord show "this application did not respond".
   client.channels.fetch(process.env.MOD_LOG_CHANNEL)
-    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
+    .then(ch => ch?.isTextBased() && ch.send(textify({ embeds: [embed] })))
     .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
 }
 // Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set (no-op otherwise).
 function postFeed(embed) {
   if (!feedHook) return;
-  feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
+  feedHook.send(textify({ embeds: [embed] })).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
@@ -1836,7 +1898,7 @@ function logBan(embed) {
   if (!channelId) return logAction(embed);
   // fire-and-forget (see logAction)
   client.channels.fetch(channelId)
-    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
+    .then(ch => ch?.isTextBased() && ch.send(textify({ embeds: [embed] })))
     .catch(err => logger.warn("Log", `Failed to post ban log: ${err.message}`));
 }
 
@@ -1860,7 +1922,7 @@ async function dmPunishmentNotice(discordUser, { action, color, playerId, reason
     ),
     { thumb: true, footer: { text: "You received this because a moderator linked your Discord account to this action." } });
   try {
-    await discordUser.send({ embeds: [embed] });
+    await discordUser.send(textify({ embeds: [embed] }));
     return true;
   } catch (err) {
     logger.warn("DM", `Could not DM ${discordUser.id}: ${err.message}`);
@@ -1882,7 +1944,7 @@ function dmStatusField(sent, discordUser) {
 
 /** Send a single branded embed as a DM. Returns true (sent) or false (failed). */
 async function dmEmbed(discordUser, embed) {
-  try { await discordUser.send({ embeds: [brand(embed)] }); return true; }
+  try { await discordUser.send(textify({ embeds: [brand(embed)] })); return true; }
   catch (err) { logger.warn("DM", `Could not DM ${discordUser.id}: ${err.message}`); return false; }
 }
 
@@ -2521,7 +2583,7 @@ async function postWhitelistPanel(faction) {
     .setDescription(`${hero("Earn your place on the roster.")}\nPress **Get Whitelisted** and enter your **exact** Pavlov in-game name. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.\n\nOne whitelist per Discord account. Enter **your own name again** any time to remove your whitelist and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_claim:${faction}`).setLabel("Get Whitelisted").setStyle(ButtonStyle.Success));
-  try { const m = await ch.send({ embeds: [embed], components: [row] }); await setWhitelistPanelMsg(faction, m.id); return true; }
+  try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); await setWhitelistPanelMsg(faction, m.id); return true; }
   catch (e) { logger.warn("Whitelist", `panel post failed for ${faction}: ${e.message}`); return false; }
 }
 async function ensureWhitelistPanels() {
@@ -2757,10 +2819,10 @@ async function postLeaderboard() {
   try { channel = await client.channels.fetch(channelId); } catch { return; }
   const embed = buildLeaderboardEmbed();
   if (lastLeaderboardMsgId) {
-    try { const m = await channel.messages.fetch(lastLeaderboardMsgId); await m.edit({ embeds: [embed] }); return; }
+    try { const m = await channel.messages.fetch(lastLeaderboardMsgId); await m.edit(textify({ embeds: [embed] })); return; }
     catch { lastLeaderboardMsgId = null; }
   }
-  try { const m = await channel.send({ embeds: [embed] }); lastLeaderboardMsgId = m.id; } catch {}
+  try { const m = await channel.send(textify({ embeds: [embed] })); lastLeaderboardMsgId = m.id; } catch {}
 }
 
 /* ================================================================
@@ -2797,10 +2859,10 @@ async function postPlaytimeLeaderboard() {
   try { channel = await client.channels.fetch(PLAYTIME_LB_CHANNEL); } catch { return; }
   const embed = buildPlaytimeLeaderboardEmbed();
   if (lastPlaytimeLbMsgId) {
-    try { const m = await channel.messages.fetch(lastPlaytimeLbMsgId); await m.edit({ embeds: [embed] }); return; }
+    try { const m = await channel.messages.fetch(lastPlaytimeLbMsgId); await m.edit(textify({ embeds: [embed] })); return; }
     catch { lastPlaytimeLbMsgId = null; }
   }
-  try { const m = await channel.send({ embeds: [embed] }); lastPlaytimeLbMsgId = m.id; } catch {}
+  try { const m = await channel.send(textify({ embeds: [embed] })); lastPlaytimeLbMsgId = m.id; } catch {}
 }
 
 /* Live player list — edits its own message in a channel every 30s. */
@@ -2829,10 +2891,10 @@ async function postPlayerList() {
   try { await refreshPlayerCache("server1"); if (hasServer2) await refreshPlayerCache("server2"); } catch {}
   const embed = buildPlayerListEmbed();
   if (lastPlayerListMsgId) {
-    try { const m = await channel.messages.fetch(lastPlayerListMsgId); await m.edit({ embeds: [embed] }); return; }
+    try { const m = await channel.messages.fetch(lastPlayerListMsgId); await m.edit(textify({ embeds: [embed] })); return; }
     catch { lastPlayerListMsgId = null; }
   }
-  try { const m = await channel.send({ embeds: [embed] }); lastPlayerListMsgId = m.id; } catch {}
+  try { const m = await channel.send(textify({ embeds: [embed] })); lastPlayerListMsgId = m.id; } catch {}
 }
 
 // Delete every message in a channel — used on startup so stale leaderboard/player-list
@@ -2901,7 +2963,7 @@ async function ensureMenuPanel() {
     .setDescription(`${hero("Tools for those the NCR trusts.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("menu_start").setLabel("Get Menu").setStyle(ButtonStyle.Success));
-  try { const m = await ch.send({ embeds: [embed], components: [row] }); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
+  try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
   catch (e) { logger.warn("MenuPanel", `panel post failed: ${e.message}`); }
 }
 
@@ -3488,6 +3550,11 @@ process.on("unhandledRejection", r   => logger.error("Unhandled", String(r)));
    INTERACTIONS
    ================================================================ */
 client.on("interactionCreate", async (interaction) => {
+
+  // No-embeds mode: render every embed payload to plain text at send time.
+  // Registered before any collector, so component/modal interactions from
+  // awaitMessageComponent / awaitModalSubmit flows are patched too.
+  try { patchInteractionOutput(interaction); } catch {}
 
   /* ── Blacklist gate — barred users get nothing, on every interaction.
         Owners are immune and can never be blacklisted. ── */
