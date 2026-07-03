@@ -1772,17 +1772,24 @@ const client = new Client({
 function embedToText(e) {
   let d; try { d = typeof e?.toJSON === "function" ? e.toJSON() : e; } catch { d = e; }
   if (!d || typeof d !== "object") return "";
+  // Strip embed-era decoration that reads as clutter in a plain message: divider /
+  // rule lines (▓▒░, ·--·, ───, ====, ▔▔▔ …) and stacked blank lines. Code-fence
+  // lines (```) are kept even though they're all-symbol. The author header
+  // ("MOJAVE AUTHORITY" branding) is dropped entirely.
+  const decor = /^[\s>*_`~|·▓▒░─━▔═▬⎯=—–-]+$/;
+  const tidy  = (s) => String(s).split("\n")
+    .filter(l => l.trim().startsWith("```") || !decor.test(l))
+    .join("\n").replace(/\n{2,}/g, "\n").trim();
   const parts = [];
-  if (d.author?.name)  parts.push(`__${d.author.name}__`);
-  if (d.title)         parts.push(`**${d.title}**`);
-  if (d.description)   parts.push(String(d.description));
+  if (d.title) parts.push(`### ${d.title}`);               // real Discord heading
+  if (d.description) { const t = tidy(d.description); if (t) parts.push(t); }
   for (const f of d.fields ?? []) {
     const name = String(f.name ?? "").trim();
-    const val  = String(f.value ?? "").trim();
+    const val  = tidy(f.value ?? "");
     if (!name && !val) continue;
     parts.push(val.includes("\n") ? `**${name}**\n${val}` : `**${name}:** ${val}`);
   }
-  if (d.footer?.text)  parts.push(`-# ${d.footer.text}`);   // Discord small-text markdown
+  if (d.footer?.text) parts.push(`-# ${d.footer.text}`);   // Discord small-text markdown
   return parts.filter(Boolean).join("\n");
 }
 // payload {content?, embeds?, ...} -> { first: payload-without-embeds, extra: [overflow strings] }
@@ -1823,7 +1830,8 @@ function patchInteractionOutput(interaction) {
       if (!hasEmbeds && !payload.content) return orig(payload, ...args);   // component-only edits etc.
       let first = payload, extra = [];
       if (hasEmbeds) ({ first, extra } = textifyChunks(payload)); else first = { ...payload };
-      if (m !== "update" && !String(first.content ?? "").startsWith(mention)) first.content = `${mention} ${first.content ?? ""}`;
+      // Mention on its OWN line — "### Heading" only renders at line start.
+      if (m !== "update" && !String(first.content ?? "").startsWith(mention)) first.content = `${mention}\n${first.content ?? ""}`;
       const res = await orig(first, ...args);
       for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch {} }
       return res;
