@@ -1897,7 +1897,8 @@ function logAction(embed) {
 // Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set (no-op otherwise).
 function postFeed(embed) {
   if (!feedHook) return;
-  feedHook.send(textify({ embeds: [embed] })).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
+  // Webhook feed keeps REAL embeds (everything else in the bot is plain text).
+  feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
