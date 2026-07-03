@@ -114,12 +114,6 @@ const ok = (cond, msg) => {
     ok(fs.readFileSync(spA, "utf8") === "250", "a newer non-zero balance still syncs normally");
   }
 
-  console.log("Player notes:");
-  ok(await bot.addPlayerNote("P1", "a", "m") === 1, "first note -> 1");
-  ok(await bot.addPlayerNote("p1", "b", "m") === 2, "case-insensitive key -> 2");
-  ok(bot.getPlayerNotes("P1").length === 2, "reads back 2 notes");
-  ok(await bot.clearPlayerNotes("p1") === 2 && bot.getPlayerNotes("p1").length === 0, "clear empties");
-
   console.log("Last seen:");
   bot.recordLastSeen(["Alice", "Bob"], 1000);
   ok(bot.getLastSeen("ALICE") === 1000, "case-insensitive lookup");
@@ -228,17 +222,6 @@ const ok = (cond, msg) => {
   ok(lb[0].playerId === "Bravo" && lb[1].playerId === "Alpha", "sorted by minutes desc");
   ok(!lb.some(e => e.playerId === "Charlie"), "zero-playtime players excluded");
   ok(lb.length === 3, "top-N excludes the zero entry (3 of 4)");
-
-  console.log("Warning removal:");
-  fs.writeFileSync(bot.FILES.WARNS, JSON.stringify({ p1: [
-    { reason: "a", by: "m", at: 1 }, { reason: "b", by: "m", at: 2 }, { reason: "c", by: "m", at: 3 } ] }));
-  let r = await bot.removeWarningAt("P1", 2);
-  ok(r.removed.reason === "b" && r.remaining === 2, "removes #2, 2 remain");
-  ok((await bot.removeWarningAt("p1", 99)).removed === null, "out-of-range -> nothing");
-  r = await bot.removeWarningAt("p1", 1);
-  ok(r.removed.reason === "a" && r.remaining === 1, "remove #1 -> 1 remains");
-  await bot.removeWarningAt("p1", 1);
-  ok(JSON.parse(fs.readFileSync(bot.FILES.WARNS, "utf8")).p1 === undefined, "empty key deleted");
 
   console.log("Donators:");
   ok(!fs.existsSync(bot.DONATOR_FILE) && bot.readDonatorFile().length === 0, "missing file reads empty");

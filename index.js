@@ -137,15 +137,12 @@ const FILES = {
   ROLES:          "./roles.json",
   WAGES:          "./wages.json",
   PLAYTIME:       "./playtime.json",
-  NOTES:          "./hardban_notes.json",
-  WARNS:          "./warnings.json",
   MODLOG:         "./modlog.json",
   FACTION_RANKS:  "./faction_ranks.json",
   FACTION_CONFIG: "./faction_config.json",
   FACTION_AUDIT:  "./faction_audit.json",
   FACTION_BACKUP: "./faction_backup.json",
   MENU_GRANTS:    "./menu_grants.json",
-  PLAYER_NOTES:   "./player_notes.json",
   LASTSEEN:       "./lastseen.json",
   KNOWN:          "./known_players.json",
   USER_BLACKLIST: "./user_blacklist.json",
@@ -160,15 +157,12 @@ const DEFAULTS = {
   [FILES.TEMPBAN]:        "[]",
   [FILES.WAGES]:          "[]",
   [FILES.PLAYTIME]:       "{}",
-  [FILES.NOTES]:          "{}",
-  [FILES.WARNS]:          "{}",
   [FILES.MODLOG]:         "[]",
   [FILES.FACTION_RANKS]:  "{}",
   [FILES.FACTION_CONFIG]: "{}",
   [FILES.FACTION_AUDIT]:  "[]",
   [FILES.FACTION_BACKUP]: "{}",
   [FILES.MENU_GRANTS]:    "{}",
-  [FILES.PLAYER_NOTES]:   "{}",
   [FILES.LASTSEEN]:       "{}",
   [FILES.KNOWN]:          "{}",
   [FILES.USER_BLACKLIST]: "[]",
@@ -375,10 +369,6 @@ const loadWages         = () => safeRead(FILES.WAGES,          []);
 const saveWages         = (d) => safeWrite(FILES.WAGES,         d);
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
-const loadNotes         = () => safeRead(FILES.NOTES,          {});
-const saveNotes         = (d) => safeWrite(FILES.NOTES,         d);
-const loadWarns         = () => safeRead(FILES.WARNS,          {});
-/* warnings are mutated via the serialized update() (issueWarn / delwarn / clearwarnings) */
 const loadModLog        = () => safeRead(FILES.MODLOG,         []);
 const saveModLog        = (d) => safeWrite(FILES.MODLOG,        d);
 const loadFactionRanks  = () => safeRead(FILES.FACTION_RANKS,  {});
@@ -389,8 +379,6 @@ const loadFactionAudit  = () => safeRead(FILES.FACTION_AUDIT,  []);
 // (writes go through the serialized writeFactionAudit() — no direct saver needed)
 const loadMenuGrants    = () => safeRead(FILES.MENU_GRANTS,    {});
 const saveMenuGrants    = (d) => safeWrite(FILES.MENU_GRANTS,   d);
-const loadPlayerNotes   = () => safeRead(FILES.PLAYER_NOTES,   {});
-const savePlayerNotes   = (d) => safeWrite(FILES.PLAYER_NOTES,  d);
 const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
 const saveLastSeen      = (d) => safeWrite(FILES.LASTSEEN,      d);
 const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
@@ -415,31 +403,6 @@ function getPlayerHistory(playerId) {
 /* ================================================================
    PLAYER NOTES  (freeform staff notes on ANY courier — serialized)
    ================================================================ */
-function getPlayerNotes(playerId) {
-  return loadPlayerNotes()[playerId.toLowerCase()] ?? [];
-}
-async function addPlayerNote(playerId, text, by) {
-  const key = playerId.toLowerCase();
-  let count = 0;
-  await update(FILES.PLAYER_NOTES, {}, (notes) => {
-    if (!notes[key]) notes[key] = [];
-    notes[key].push({ text, by, at: Date.now() });
-    if (notes[key].length > 100) notes[key].splice(0, notes[key].length - 100);
-    count = notes[key].length;
-    return notes;
-  });
-  return count;
-}
-async function clearPlayerNotes(playerId) {
-  const key = playerId.toLowerCase();
-  let count = 0;
-  await update(FILES.PLAYER_NOTES, {}, (notes) => {
-    count = notes[key]?.length ?? 0;
-    delete notes[key];
-    return notes;
-  });
-  return count;
-}
 
 /* ================================================================
    LAST-SEEN TRACKING  (updated from the player-cache refresh loop)
@@ -521,9 +484,6 @@ function commandPlayerCandidates(interaction) {
 
   if (cmd === "unban" || cmd === "checkban")
                               return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAllCached()])];  // temp-banned + blacklist.txt (cached for autocomplete)
-  if (cmd === "warnings" || cmd === "clearwarnings" || cmd === "delwarn")
-                              return Object.keys(loadWarns()).map(disp);                               // has warnings
-  if (cmd === "history")      return [...new Set(loadModLog().map(e => e.playerId).filter(Boolean))];  // has mod history
   if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
   if (cmd === "removewage")   return loadWages().map(w => w.playerId);                                 // on payroll
   if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
@@ -538,22 +498,6 @@ function commandPlayerCandidates(interaction) {
   return null;   // default: online + known players
 }
 
-/* ================================================================
-   WARNING REMOVAL  (delete a single warning by 1-based index)
-   ================================================================ */
-async function removeWarningAt(playerId, index1Based) {
-  const key = playerId.toLowerCase();
-  let removed = null, remaining = 0;
-  await update(FILES.WARNS, {}, (warns) => {
-    const list = warns[key];
-    if (!list || index1Based < 1 || index1Based > list.length) return warns;
-    removed = list.splice(index1Based - 1, 1)[0];
-    if (!list.length) delete warns[key];
-    else remaining = list.length;
-    return warns;
-  });
-  return { removed, remaining };
-}
 
 /* ================================================================
    FACTION AUDIT WRITER  (serialized)
@@ -637,11 +581,6 @@ const BAN_DURATIONS = {
 };
 
 /* Warn auto-escalation thresholds */
-const WARN_THRESHOLDS = [
-  { count: 3, action: "tempban", duration: "1d",  label: "1-day ban (3 warnings)"    },
-  { count: 5, action: "tempban", duration: "1w",  label: "1-week ban (5 warnings)"   },
-  { count: 7, action: "permban", duration: null,  label: "Permanent ban (7 warnings)" },
-];
 
 const WAGE_TIERS = {
   low_rank:  { label: "Low Rank",  amount: 400,  weekly: true  },
@@ -2671,42 +2610,6 @@ async function handleWhitelistClaim(interaction, faction) {
     .setDescription(`Added \`${name}\` to **${faction}** at: ${r.ranks.map(x => `**${x}**`).join(", ")}. Hop in-game and pick your loadout.${capNote}`))] });
 }
 
-/* ================================================================
-   WARN SYSTEM
-   ================================================================ */
-async function issueWarn(playerId, reason, moderator, server, interaction) {
-  const key = playerId.toLowerCase();
-  let count = 0;
-  await update(FILES.WARNS, {}, (warns) => {
-    if (!warns[key]) warns[key] = [];
-    warns[key].push({ reason, by: moderator, at: Date.now() });
-    count = warns[key].length;
-    return warns;
-  });
-
-  writeModLog({ action: "warn", playerId, reason, by: moderator, count });
-
-  // escalate only AT a threshold (3/5/7), not on every warning past it — otherwise
-  // a 4th/6th warning would re-ban and reset the timer, contradicting the embed.
-  const escalation = WARN_THRESHOLDS.find(t => t.count === count);
-  let escalated = null;
-
-  if (escalation && escalation.action === "tempban") {
-    const { ms, label } = BAN_DURATIONS[escalation.duration];
-    const expires        = Date.now() + ms;
-    await banWithIp(playerId, server);
-    await upsertTempBan({ playerId, reason: `Auto-ban: ${escalation.label}`, expires, durationLabel: label, moderator: "Auto-Escalation", server });
-    escalated = { type: "tempban", label };
-    writeModLog({ action: "auto-tempban", playerId, reason: escalation.label, duration: label });
-  } else if (escalation && escalation.action === "permban") {
-    await banWithIp(playerId, server, { permanent: true });
-    await upsertPermBan({ playerId, reason: `Auto-ban: ${escalation.label}`, moderator: "Auto-Escalation", server });
-    escalated = { type: "permban" };
-    writeModLog({ action: "auto-permban", playerId, reason: escalation.label });
-  }
-
-  return { count, escalated };
-}
 
 /* ================================================================
    TEMP BAN EXPIRY
@@ -3205,40 +3108,9 @@ const commands = [
   new SlashCommandBuilder().setName("flush")
     .setDescription("Randomly kick one online player from a server")
     .addStringOption(serverOption),
-  new SlashCommandBuilder().setName("warn")
-    .setDescription("Issue a warning to a courier — auto-escalates to bans at thresholds")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason for warning").setRequired(true).addChoices(...BAN_REASONS))
-    .addStringOption(serverOption)
-    .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
-  new SlashCommandBuilder().setName("warnings")
-    .setDescription("Check a courier's warning history")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder().setName("clearwarnings")
-    .setDescription("Admin — Clear all warnings for a courier")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder().setName("delwarn")
-    .setDescription("Mod — Remove a single warning by its number (see /warnings)")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("number").setDescription("Warning number to remove (from /warnings)").setRequired(true).setMinValue(1)),
   new SlashCommandBuilder().setName("seen")
     .setDescription("Show when a courier was last seen online")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder().setName("note")
-    .setDescription("Staff notes on a courier")
-    .addSubcommand(s => s.setName("add")
-      .setDescription("Mod — Add a staff note to a courier")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("note").setDescription("Note text").setRequired(true)))
-    .addSubcommand(s => s.setName("list")
-      .setDescription("Mod — View staff notes on a courier")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("clear")
-      .setDescription("Admin — Delete all staff notes on a courier")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))),
-  new SlashCommandBuilder().setName("history")
-    .setDescription("View full moderation history for a courier")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("staffactivity")
     .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
@@ -3323,58 +3195,9 @@ const commands = [
     .addRoleOption(o => o.setName("high_staff_role").setDescription("Role that grants the High Staff menu"))
     .addRoleOption(o => o.setName("staff_role").setDescription("Role that grants the Staff menu"))
     .addRoleOption(o => o.setName("faction_role").setDescription("Role that grants the Faction menu")),
-  new SlashCommandBuilder().setName("syncfactionroles")
-    .setDescription("Owner — Sync faction whitelists from Discord roles now")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(o => o.setName("faction").setDescription("Faction (blank = all)").setRequired(false).addChoices(...factionChoices)),
-
-  /* ── FACTION ─────────────────────────────────────────── */
-  new SlashCommandBuilder()
-    .setName("faction")
-    .setDescription("Manage faction whitelists, ranks, and rosters")
-    .addSubcommand(s => s.setName("add")
-      .setDescription("Add a player to a faction whitelist")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("rank").setDescription("Starting rank (faction-specific, default is lowest rank)").setAutocomplete(true)))
-    .addSubcommand(s => s.setName("remove")
-      .setDescription("Remove a player from a faction whitelist")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("rank")
-      .setDescription("Faction Leader — Add or remove a rank for a member (a member can hold several)")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to add (faction-specific)").setRequired(true).setAutocomplete(true))
-      .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
-    .addSubcommand(s => s.setName("transfer")
-      .setDescription("Mod — Transfer a player from one faction to another")
-      .addStringOption(o => o.setName("from_faction").setDescription("Current faction").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("to_faction").setDescription("Destination faction").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the current faction first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank in new faction (default: lowest rank)").setAutocomplete(true)))
-    .addSubcommand(s => s.setName("list")
-      .setDescription("List all members of a faction with their ranks")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
-    .addSubcommand(s => s.setName("audit")
-      .setDescription("View recent add/remove/rank changes for a faction")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
-    .addSubcommand(s => s.setName("setcap")
-      .setDescription("Admin — Set the maximum member cap for a faction")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addIntegerOption(o => o.setName("cap").setDescription("Maximum number of members (1–500)").setRequired(true).setMinValue(1).setMaxValue(500)))
-    .addSubcommand(s => s.setName("setrankcap")
-      .setDescription("Admin — Set the per-rank member cap within a faction")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to cap (faction-specific)").setRequired(true).setAutocomplete(true))
-      .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500))),
-
   new SlashCommandBuilder().setName("manual")
     .setDescription("Admin — Send a raw RCON command")
     .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true))
-    .addStringOption(serverOption),
-  new SlashCommandBuilder().setName("rotatemap")
-    .setDescription("Admin — Rotate the map (confirmation required)")
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("addwage")
     .setDescription("Enrol a courier in payroll or issue a one-time mercenary payment")
@@ -3398,11 +3221,6 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName("amount").setDescription("Caps to give").setRequired(true).setMinValue(1).setMaxValue(10000))
     .addStringOption(o => o.setName("reason").setDescription("Reason (shown in logs)")),
-  new SlashCommandBuilder().setName("transfercaps")
-    .setDescription("Admin — Move caps between two courier ledgers")
-    .addStringOption(o => o.setName("from_id").setDescription("Courier to deduct from").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("to_id").setDescription("Courier to credit").setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Number of caps to transfer").setRequired(true).setMinValue(1)),
   new SlashCommandBuilder().setName("adjustcaps")
     .setDescription("Admin — Manually add or subtract caps from a courier's ledger")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
@@ -3411,9 +3229,6 @@ const commands = [
   new SlashCommandBuilder().setName("stats")
     .setDescription("Courier dossier: playtime, factions, balance, and mod history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder().setName("inspect")
-    .setDescription("Owner — Full dossier on a courier (everything, incl. IPs & alts)")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("kd")
     .setDescription("Kill/death stats — a courier's K/D, or the leaderboard")
     .addStringOption(o => o.setName("playerid").setDescription("Courier (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
@@ -3705,10 +3520,10 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen", "kd"];
-  const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
+  const PUBLIC         = ["help", "ping", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "seen", "kd"];
+  const MOD_COMMANDS   = ["kick", "tempban", "unban", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
+  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
 
   const name = interaction.commandName;
 
@@ -3789,18 +3604,14 @@ client.on("interactionCreate", async (interaction) => {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction audit`" },
+              value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist` `/seen`\n`/faction list` `/faction audit`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
                 "`/flush <server>` — Randomly kick one online player",
-                "`/warn <id> <reason> <server>` — Issue warning *(auto-bans at 3/5/7)*",
-                "`/delwarn <id> <number>` — Remove a single warning",
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
                 "`/unban <id> <server>` — Lift exile",
                 "`/announce <msg> <server> <target>` — RCON Notify a player or All",
-                "`/history <id>` — View mod action history",
-                "`/note add|list <id>` — Staff notes on a courier",
                 "`/givecaps <id> <amount> [reason]` — Give caps to a courier",
                 "`/faction transfer <id> <from> <to> [rank]` — Move player between factions",
               ].join("\n") },
@@ -3817,21 +3628,17 @@ client.on("interactionCreate", async (interaction) => {
             { name: "Admin",
               value: [
                 "`/permban <id> <server> <reason>` — Permanent ban",
-                "`/clearwarnings <id>` — Wipe all warnings for a courier",
-                "`/note clear <id>` — Delete all staff notes for a courier",
                 "`/cleartempbans` `/setroles`",
                 "`/staffactivity <staff>` — All mod actions by a staff member",
-                "`/givemenu` `/stripmenu` `/transfercaps` `/adjustcaps`",
-                "`/rotatemap` `/manual`",
+                "`/givemenu` `/stripmenu` `/adjustcaps`",
+                "`/manual`",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
-                "`/inspect <id>` — *Owner only* — full dossier (everything, incl. IPs & alts)",
                 "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
                 "`/set<faction>roles` — *Owner / Faction Leader* — map Discord roles → ranks (a role option per rank; run in the faction's server)",
                 "`/setwhitelistchannel <faction>` — *Owner / Faction Leader* — post the faction's self-service whitelist panel here",
                 "`/setfactionadmin <faction> [role]` — *Owner only* — set this guild's Faction Leader role (those commands only)",
                 "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
-                "`/syncfactionroles [faction]` — *Owner only* — sync whitelists from roles now (needs Server Members Intent)",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
                 "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
@@ -3846,9 +3653,8 @@ client.on("interactionCreate", async (interaction) => {
                 "Leaderboards refreshed every **30s**",
                 "Wages disbursed every **7 days**",
                 "RCON health check every **5 min**",
-                `Warn thresholds: **3** → 1d ban  ·  **5** → 1w ban  ·  **7** → permban`,
                 "Rank changes update both the rank registry and the rank-specific spawn files automatically",
-                "`/kick` `/warn` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
+                "`/kick` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
                 "Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
               ].join("\n") },
           )
@@ -3966,13 +3772,11 @@ client.on("interactionCreate", async (interaction) => {
         }
         const lines = matches.map((m) => {
           const srvStr = m.servers.map(s => s === "server1" ? "S1" : "S2").join("+");
-          const warn   = loadWarns()[m.name.toLowerCase()]?.length ?? 0;
-          return `\`[${srvStr}]\`  **${m.name}**${warn ? `  ·  ${warn} warn${warn !== 1 ? "s" : ""}` : ""}`;
+          return `\`[${srvStr}]\`  **${m.name}**`;
         });
         return interaction.editReply({ embeds: [
           brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Search Results — "${query}"`)
-            .setDescription(`${hero(`**${matches.length}** match${matches.length !== 1 ? "es" : ""} found.`)}\n${lines.join("\n")}`),
-            { footer: { text: `= warnings on record` } })
+            .setDescription(`${hero(`**${matches.length}** match${matches.length !== 1 ? "es" : ""} found.`)}\n${lines.join("\n")}`))
         ]});
       }
 
@@ -4048,125 +3852,18 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          WARN  ← deferReply added
          ───────────────────────────────────────────────────── */
-      case "warn": {
-        const playerId  = sanitizeId(interaction.options.getString("playerid"));
-        const reasonKey = interaction.options.getString("reason");
-        const server    = interaction.options.getString("server") ?? "server1";
-        const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        await interaction.deferReply();                         // ← ADDED
-        const { count, escalated } = await issueWarn(playerId, reason, interaction.user.tag, server, interaction);
-        const threshold = WARN_THRESHOLDS.find(t => t.count === count);
-        const embed = new EmbedBuilder()
-          .setColor(escalated ? NV.RUST_RED : NV.NCR_TAN)
-          .setTitle(escalated ? "Warning Issued — Auto-Ban Triggered" : "Warning Issued")
-          .setDescription(`> *${randomQuote("warn")}*\n\n${DIVIDER}`)
-          .addFields(
-            { name: "Courier",   value: `\`${playerId}\``,     inline: true },
-            { name: "Warning #", value: `**${count}**`,        inline: true },
-            { name: "By",        value: `${interaction.user}`, inline: true },
-            { name: "Offense",   value: reason,                inline: false },
-          );
-        if (escalated?.type === "tempban") {
-          embed.addFields({ name: "Auto-Escalation", value: `Threshold reached — courier automatically **temp-banned** for **${escalated.label}**.`, inline: false });
-        } else if (escalated?.type === "permban") {
-          embed.addFields({ name: "Auto-Escalation", value: "Threshold reached — courier automatically **permanently banned**.", inline: false });
-        } else if (threshold) {
-          embed.addFields({ name: "Threshold Reached", value: `Next escalation: **${threshold.label}**`, inline: false });
-        } else {
-          const next = WARN_THRESHOLDS.find(t => t.count > count);
-          if (next) embed.addFields({ name: "Progress", value: `${count}/${next.count} warnings — next: **${next.label}**`, inline: false });
-        }
-        embed.setFooter({ text: `Total warnings: ${count}` }).setTimestamp();
-        const wExtra = [{ name: "Warning #", value: `**${count}**`, inline: true }];
-        if (escalated?.type === "tempban") wExtra.push({ name: "Escalation", value: `Auto temp-ban: **${escalated.label}**`, inline: false });
-        else if (escalated?.type === "permban") wExtra.push({ name: "Escalation", value: "Auto **permanent ban**", inline: false });
-        const wTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
-        const wDm = await dmPunishmentNotice(wTarget, {
-          action: "Warning", color: escalated ? NV.RUST_RED : NV.NCR_TAN, playerId, reason, fields: wExtra,
-        });
-        const wDmField = dmStatusField(wDm, wTarget);
-        if (wDmField) embed.addFields(wDmField);
-        brand(embed); await logAction(embed);
-        return interaction.editReply({ embeds: [embed] });      // ← CHANGED
-      }
 
       /* ─────────────────────────────────────────────────────
          WARNINGS
          ───────────────────────────────────────────────────── */
-      case "warnings": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const all   = loadWarns()[playerId.toLowerCase()] ?? [];
-        const count = all.length;
-        if (!count) {
-          return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("No Warnings on Record")
-              .setDescription(`\`${playerId}\` has a clean record — no warnings issued.`).setTimestamp()
-          ], flags: MessageFlags.Ephemeral });
-        }
-        const next  = WARN_THRESHOLDS.find(t => t.count > count);
-        const lines = all.map((w, i) => {
-          const ts = Math.floor(w.at / 1000);
-          return `\`${String(i + 1).padStart(2, "0")}\`  **${w.reason}**  ·  by *${w.by}*  ·  <t:${ts}:R>`;
-        });
-        const header = `**${count}** warning${count !== 1 ? "s" : ""} on record\n` +
-          (next ? `Next escalation at **${next.count}** warnings: *${next.label}*` : "**Maximum threshold exceeded — perm ban eligible**");
-        return paginate(interaction, lines, (pageLines) =>
-          new EmbedBuilder().setColor(count >= 5 ? NV.RUST_RED : NV.NCR_TAN)
-            .setTitle(`Warning Record — ${playerId}`)
-            .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`),
-          { perPage: 12, flags: MessageFlags.Ephemeral });
-      }
 
       /* ─────────────────────────────────────────────────────
          CLEARWARNINGS
          ───────────────────────────────────────────────────── */
-      case "clearwarnings": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const key   = playerId.toLowerCase();
-        let count = 0;
-        await update(FILES.WARNS, {}, (warns) => {
-          count = warns[key]?.length ?? 0;
-          if (count) delete warns[key];
-          return warns;
-        });
-        if (!count) {
-          return interaction.reply({ embeds: [warningEmbed("No Warnings", `\`${playerId}\` has no warnings to clear.`)], flags: MessageFlags.Ephemeral });
-        }
-        writeModLog({ action: "clearwarnings", playerId, count, by: interaction.user.tag });
-        const embed = successEmbed("Warnings Cleared", `**${count}** warning${count !== 1 ? "s" : ""} cleared for \`${playerId}\`.\n\n**Cleared by:** ${interaction.user}`);
-        brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      }
 
       /* ─────────────────────────────────────────────────────
          DELWARN  (remove one warning by number)
          ───────────────────────────────────────────────────── */
-      case "delwarn": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        const number   = interaction.options.getInteger("number");
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const { removed, remaining } = await removeWarningAt(playerId, number);
-        if (!removed) {
-          return interaction.reply({ embeds: [warningEmbed("No Such Warning",
-            `Warning **#${number}** does not exist for \`${playerId}\`.\n\nUse \`/warnings ${playerId}\` to see valid numbers.`)], flags: MessageFlags.Ephemeral });
-        }
-        writeModLog({ action: "delwarn", playerId, reason: removed.reason, by: interaction.user.tag });
-        const ts = Math.floor(removed.at / 1000);
-        const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Warning Removed")
-          .setDescription(`${DIVIDER}`)
-          .addFields(
-            { name: "Courier",        value: `\`${playerId}\``,                       inline: true },
-            { name: "Removed #",       value: `**${number}**`,                          inline: true },
-            { name: "Remaining",       value: `**${remaining}** warning${remaining !== 1 ? "s" : ""}`, inline: true },
-            { name: "Was",             value: `*${removed.reason}*  ·  by *${removed.by}*  ·  <t:${ts}:R>`, inline: false },
-            { name: "Removed By",      value: `${interaction.user}`,                    inline: false },
-          ).setFooter({ text: "Single warning removed — others renumbered" }).setTimestamp();
-        brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      }
 
       /* ─────────────────────────────────────────────────────
          SEEN  (last time a courier was online)
@@ -4200,79 +3897,10 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          NOTE  (freeform staff notes on any courier)
          ───────────────────────────────────────────────────── */
-      case "note": {
-        const sub      = interaction.options.getSubcommand();
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-
-        if (sub === "add") {
-          const text  = interaction.options.getString("note").trim().slice(0, 500);
-          if (!text) return interaction.reply({ embeds: [errorEmbed("Empty Note", "The note cannot be empty.")], flags: MessageFlags.Ephemeral });
-          const count = await addPlayerNote(playerId, text, interaction.user.tag);
-          writeModLog({ action: "note-add", playerId, reason: text, by: interaction.user.tag });
-          const embed = successEmbed("Note Added", `Staff note added to \`${playerId}\` *(now ${count} note${count !== 1 ? "s" : ""})*.\n\n**Note:** ${text}\n**By:** ${interaction.user}`);
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        }
-
-        if (sub === "clear") {
-          if (!hasAdminRole(interaction.member)) {
-            return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
-          }
-          const count = await clearPlayerNotes(playerId);
-          if (!count) return interaction.reply({ embeds: [warningEmbed("No Notes", `\`${playerId}\` has no staff notes to clear.`)], flags: MessageFlags.Ephemeral });
-          writeModLog({ action: "note-clear", playerId, count, by: interaction.user.tag });
-          const embed = successEmbed("Notes Cleared", `**${count}** staff note${count !== 1 ? "s" : ""} deleted for \`${playerId}\`.\n\n**By:** ${interaction.user}`);
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        }
-
-        // sub === "list"
-        const notes = getPlayerNotes(playerId);
-        if (!notes.length) {
-          return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`No Staff Notes — ${playerId}`)
-              .setDescription("This courier has no staff notes on record.\n\nUse `/note add` to record one.").setTimestamp()
-          ], flags: MessageFlags.Ephemeral });
-        }
-        const lines = notes.map((n, i) => {
-          const ts = Math.floor(n.at / 1000);
-          return `\`${String(i + 1).padStart(2, "0")}\`  ${n.text}  ·  *${n.by}*  ·  <t:${ts}:R>`;
-        });
-        return paginate(interaction, lines, (pageLines) =>
-          new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Staff Notes — ${playerId}`)
-            .setDescription(`**${notes.length}** note${notes.length !== 1 ? "s" : ""} on record\n\n${DIVIDER}\n${pageLines.join("\n")}`)
-            .setFooter({ text: "Staff notes · internal only" }),
-          { perPage: 10, flags: MessageFlags.Ephemeral });
-      }
 
       /* ─────────────────────────────────────────────────────
          HISTORY
          ───────────────────────────────────────────────────── */
-      case "history": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const history = getPlayerHistory(playerId);
-        if (!history.length) {
-          return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("No Mod History Found")
-              .setDescription(`\`${playerId}\` has no moderation history on record.`).setTimestamp()
-          ], flags: MessageFlags.Ephemeral });
-        }
-        const ICONS = { kick: "", warn: "", tempban: "", unban: "", permban: "", "auto-unban": "", "auto-tempban": "", "auto-permban": "", "auto-ipban": "", clearwarnings: "", delwarn: "", "note-add": "", "note-clear": "", "donator-add": "", "donator-remove": "", "wage-payout": "", givecaps: "", adjustcaps: "", "faction-add": "", "faction-remove": "", "faction-rank": "", "faction-transfer": "" };
-        const lines = history.slice().reverse().map(e => {
-          const ts     = Math.floor(e.at / 1000);
-          const icon   = ICONS[e.action] ?? "";
-          const detail = e.reason ? ` — *${e.reason}*` : e.amount ? ` — *${e.amount > 0 ? "+" : ""}${e.amount} caps*` : e.faction ? ` — *${e.faction}*` : "";
-          return `${icon}  \`${e.action}\`${detail}  ·  by **${e.by ?? "System"}**  ·  <t:${ts}:R>`;
-        });
-        return paginate(interaction, lines, (pageLines) =>
-          new EmbedBuilder().setColor(NV.AMBER)
-            .setTitle(`Moderation History — ${playerId}`)
-            .setDescription(`**${history.length}** total action${history.length !== 1 ? "s" : ""} on record *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
-            .setFooter({ text: "Mod log — full history retained" }).setTimestamp(),
-          { perPage: 12, flags: MessageFlags.Ephemeral });
-      }
 
       /* ─────────────────────────────────────────────────────
          STAFFACTIVITY — all mod actions taken BY a staff member
@@ -4959,23 +4587,6 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          SYNCFACTIONROLES — apply role→rank whitelists now
          ───────────────────────────────────────────────────── */
-      case "syncfactionroles": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
-        if (!FACTION_ROLE_SYNC) {
-          return interaction.reply({ embeds: [warningEmbed("Role Sync Disabled",
-            "Automatic role sync needs the privileged **Server Members Intent**.\n\n1. Enable it in the Discord Developer Portal → your bot → Bot → *Server Members Intent*.\n2. Set `FACTION_ROLE_SYNC=on` in `.env`.\n3. Restart the bot.\n\n(You can still map roles now with `/setfactionroles`.)")], flags: MessageFlags.Ephemeral });
-        }
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const one = interaction.options.getString("faction");
-        const factions = one ? [one] : ALL_FACTIONS;
-        const lines = [];
-        for (const f of factions) {
-          const r = await syncFactionFromRoles(f);
-          lines.push(`**${f}:** ${r.ok ? `${r.applied} whitelisted / ${r.named} named of ${r.members} member(s)` : r.reason}`);
-        }
-        return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER)
-          .setTitle("Faction Role Sync").setDescription(lines.join("\n")).setTimestamp())] });
-      }
 
       /* ─────────────────────────────────────────────────────
          SETWHITELISTCHANNEL — post the faction whitelist panel here
@@ -5511,35 +5122,6 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          ROTATEMAP
          ───────────────────────────────────────────────────── */
-      case "rotatemap": {
-        const server = interaction.options.getString("server");
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("rm_confirm").setLabel("Yes, rotate now").setStyle(ButtonStyle.Danger),
-          new ButtonBuilder().setCustomId("rm_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
-        );
-        await interaction.reply({
-          embeds: [warningEmbed("Confirm Map Rotation",
-            `> *"The battle lines are shifting. You sure about this?"*\n\n${DIVIDER}\n\nThis will **end the current round** on **${serverLabel(server)}** for all online players.`
-          ).setFooter({ text: "Expires in 30 seconds" })],
-          components: [row], flags: MessageFlags.Ephemeral,
-        });
-        const msg = await interaction.fetchReply();
-        try {
-          const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
-          if (btn.customId === "rm_cancel") return btn.update({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Rotation Cancelled").setDescription("Map rotation cancelled.").setTimestamp()], components: [] });
-          await btn.deferUpdate();
-          await sendRconBoth("Rotatemap", server);
-          writeModLog({ action: "rotatemap", server, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Map Rotation Initiated")
-            .setDescription(`> *"Find new ground, soldier."*\n\n${DIVIDER}`)
-            .addFields({ name: "Server", value: `${serverLabel(server)}`, inline: true }, { name: "By", value: `${interaction.user}`, inline: true })
-            .setTimestamp();
-          brand(embed); await logAction(embed);
-          return btn.editReply({ embeds: [embed], components: [] });
-        } catch {
-          return interaction.editReply({ embeds: [warningEmbed("Timed Out", "Confirmation expired. No changes made.")], components: [] });
-        }
-      }
 
       /* ─────────────────────────────────────────────────────
          ADDWAGE
@@ -5699,36 +5281,6 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          TRANSFERCAPS
          ───────────────────────────────────────────────────── */
-      case "transfercaps": {
-        const fromId = sanitizeId(interaction.options.getString("from_id"));
-        const toId   = sanitizeId(interaction.options.getString("to_id"));
-        const amount = interaction.options.getInteger("amount");
-        if (!fromId || !toId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        if (fromId.toLowerCase() === toId.toLowerCase()) return interaction.reply({ embeds: [errorEmbed("Invalid Transfer", "Cannot transfer caps to the same courier.")], flags: MessageFlags.Ephemeral });
-        const fromBal = readPlayerBalance(fromId);
-        if (fromBal === null) return interaction.reply({ embeds: [errorEmbed("No Ledger", `\`${fromId}\` has no ledger file.`)], flags: MessageFlags.Ephemeral });
-        if (fromBal < amount) return interaction.reply({ embeds: [errorEmbed("Insufficient Caps", `\`${fromId}\` only has **${fromBal.toLocaleString()} caps**.`)], flags: MessageFlags.Ephemeral });
-        const toBal = readPlayerBalance(toId) ?? 0;
-        // Two separate ledger files — write sequentially and roll the debit
-        // back if the credit fails, so caps can never vanish mid-transfer.
-        if (!writePlayerBalance(fromId, fromBal - amount)) {
-          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not debit the sender. Check `MODSAVE_PATH`.")], flags: MessageFlags.Ephemeral });
-        }
-        if (!writePlayerBalance(toId, toBal + amount)) {
-          writePlayerBalance(fromId, fromBal);   // refund — transfer aborted
-          return interaction.reply({ embeds: [errorEmbed("Write Failed", "Could not credit the recipient — transfer rolled back, no caps moved.")], flags: MessageFlags.Ephemeral });
-        }
-        writeModLog({ action: "transfercaps", fromId, toId, amount, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Caps Transfer Complete").setDescription(`${DIVIDER}`)
-          .addFields(
-            { name: "From",  value: `\`${fromId}\`\n**${(fromBal - amount).toLocaleString()} caps** remaining`, inline: true },
-            { name: "To",    value: `\`${toId}\`\n**${(toBal + amount).toLocaleString()} caps** balance`,       inline: true },
-            { name: "Amount",value: `**${amount.toLocaleString()} caps**`,                                       inline: true },
-            { name: "By",    value: `${interaction.user}`,                                                       inline: false },
-          ).setFooter({ text: randomQuote("caps") }).setTimestamp();
-        brand(embed); await logAction(embed);
-        return interaction.reply({ embeds: [embed] });
-      }
 
       /* ─────────────────────────────────────────────────────
          ADJUSTCAPS
@@ -5798,10 +5350,8 @@ client.on("interactionCreate", async (interaction) => {
         const balance  = readPlayerBalance(playerId);
         const wage     = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
-        const warns    = loadWarns()[playerId.toLowerCase()] ?? [];
         const tb       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const history  = getPlayerHistory(playerId);
-        const notes    = getPlayerNotes(playerId);
         const lastSeen = getLastSeen(playerId);
         const donator  = isDonator(playerId);
 
@@ -5825,9 +5375,7 @@ client.on("interactionCreate", async (interaction) => {
           .addFields(
             { name: "Status",        value: statusStr,                                                          inline: true },
             { name: "Playtime",      value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*No record*", inline: true },
-            { name: "Warnings",      value: warns.length ? `**${warns.length}** on record` : "Clean record",    inline: true },
             { name: "Last Seen",     value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
-            { name: "Staff Notes",   value: notes.length ? `**${notes.length}** — use \`/note list ${playerId}\`` : "*None*", inline: true },
             { name: "Donator",       value: donator ? "Yes" : "No",                                       inline: true },
             { name: "K / D",         value: (() => { let k; try { k = ipBans.getKD(playerId); } catch { k = null; } return k && (k.kills + k.deaths) ? `**${k.kills}** / **${k.deaths}**  ·  ${(k.deaths ? k.kills / k.deaths : k.kills).toFixed(2)}` : "*No record*"; })(), inline: true },
             { name: "Faction Ranks", value: fStr,                                                               inline: false },
@@ -5842,7 +5390,7 @@ client.on("interactionCreate", async (interaction) => {
             : `Temp ban — *${tb.reason}*  ·  expires <t:${Math.floor(tb.expires / 1000)}:R>`, inline: false });
         }
         if (history.length) {
-          embed.addFields({ name: "Mod Actions", value: `**${history.length}** total — use \`/history ${playerId}\` to view`, inline: false });
+          embed.addFields({ name: "Mod Actions", value: `**${history.length}** on record`, inline: false });
         }
 
         brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });
@@ -5852,80 +5400,6 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          INSPECT  (owner only — full dossier incl. IPs & alts)
          ───────────────────────────────────────────────────── */
-      case "inspect": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const key = playerId.toLowerCase();
-
-        // gather everything
-        const minutes  = loadPlaytime()[playerId] ?? null;
-        const factions = getPlayerFactions(playerId);
-        const onS1     = playerCache.server1.some(n => n.toLowerCase() === key);
-        const onS2     = playerCache.server2.some(n => n.toLowerCase() === key);
-        const online   = onS1 || onS2;
-        const balance  = readPlayerBalance(playerId);
-        const wage     = loadWages().find(w => w.playerId.toLowerCase() === key);
-        const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
-        const warns    = loadWarns()[key] ?? [];
-        const tb       = loadBans().find(b => b.playerId.toLowerCase() === key);
-        const history  = getPlayerHistory(playerId);
-        const notes    = getPlayerNotes(playerId);
-        const lastSeen = getLastSeen(playerId);
-        const donator  = isDonator(playerId);
-        const known    = loadKnownPlayers()[key];
-        // IP intel (owner-only) — CONFIRMED IPs only (same-line log pairings, not live correlation)
-        let ips = [], alts = [], flagged = [];
-        try { ips = ipBans.getConfirmedIPsForPlayer(playerId); alts = ipBans.getAltNamesOf(playerId); flagged = ips.filter(ip => ipBans.blacklist.includes(ip)); } catch {}
-
-        const fStr = factions === null ? "Folder unreadable"
-          : !factions.length ? "*None*"
-          : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))}  **${f}** *(${getFactionRank(f, playerId)})*`).join("\n");
-        const statusStr = !online ? "Offline" : [onS1 && "S1", onS2 && "S2"].filter(Boolean).join(" + ");
-        const color = flagged.length ? NV.LEGION_RED : tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
-
-        const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`Full Dossier — ${playerId}`)
-          .setDescription(hero("Everything on record. Owner eyes only."))
-          .addFields(
-            { name: "Status",     value: statusStr,                                                              inline: true },
-            { name: "Playtime",   value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*None*",          inline: true },
-            { name: "Last Seen",  value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*Never*", inline: true },
-            { name: "Balance",    value: balance !== null ? `**${balance.toLocaleString()}** caps` : "*No ledger*", inline: true },
-            { name: "Payroll",    value: wTier ? `${wTier.label} (+${wTier.amount}/wk)` : "",                    inline: true },
-            { name: "Donator",    value: donator ? "" : "",                                                    inline: true },
-            { name: "Warnings",   value: `**${warns.length}**`,                                                   inline: true },
-            { name: "Mod Actions", value: `**${history.length}**`,                                                inline: true },
-            { name: "Staff Notes", value: `**${notes.length}**`,                                                  inline: true },
-            { name: "Factions & Ranks", value: fStr, inline: false },
-          );
-
-        // ban status
-        const banLines = [];
-        if (tb) banLines.push(tb.permanent || !tb.expires
-          ? `**Permanent ban** — *${tb.reason}* · by ${tb.moderator}`
-          : `**Temp ban** — *${tb.reason}* · expires <t:${Math.floor(tb.expires / 1000)}:R> · by ${tb.moderator}`);
-        embed.addFields({ name: "Ban Status", value: banLines.length ? banLines.join("\n").slice(0, 1024) : "No active bans", inline: false });
-
-        // IP intel
-        embed.addFields(
-          { name: `Confirmed IPs (${ips.length})`, value: (ips.length ? ips.map(ip => `\`${ip}\`${ipBans.blacklist.includes(ip) ? " " : ""}`).join("  ·  ") : "*none confirmed yet*").slice(0, 1024), inline: false },
-          { name: `Alt Accounts (${alts.length})`, value: (alts.length ? alts.map(a => `\`${a}\``).join("  ·  ") : "*none*").slice(0, 1024), inline: false },
-        );
-        if (flagged.length) embed.addFields({ name: "IP Flag", value: `**${flagged.length}** of their IP(s) are blacklisted — connecting accounts are auto-banned.`, inline: false });
-
-        // recent staff notes (inline, since owner)
-        if (notes.length) {
-          const recent = notes.slice(-5).map((n, i) => `\`${i + 1}.\` ${n.text} — *${n.by}*`).join("\n");
-          embed.addFields({ name: "Latest Notes", value: recent.slice(0, 1024), inline: false });
-        }
-
-        const footerBits = [];
-        if (known?.firstSeen) footerBits.push(`first seen ${new Date(known.firstSeen).toISOString().slice(0, 10)}`);
-        if (known?.name && known.name !== playerId) footerBits.push(`display: ${known.name}`);
-        brand(embed, { thumb: true, footer: { text: footerBits.join("  ·  ") || "Owner inspection" } });
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      }
 
       // Stale registration (command removed in a redeploy but still cached by
       // Discord) — answer instead of leaving the user on "thinking…" forever.
@@ -5958,7 +5432,6 @@ if (require.main === module) {
 module.exports = {
   FILES,
   // player notes
-  getPlayerNotes, addPlayerNote, clearPlayerNotes,
   // last seen
   recordLastSeen, getLastSeen,
   // known-player registry
@@ -5969,7 +5442,6 @@ module.exports = {
   // leaderboards
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
-  removeWarningAt,
   // bans (serialized)
   loadBans, upsertTempBan, upsertPermBan, removeBans,
   // donators
