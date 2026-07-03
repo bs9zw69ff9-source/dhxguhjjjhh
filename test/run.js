@@ -29,7 +29,7 @@ fs.writeFileSync(path.join(nm, "discord.js", "index.js"), `
 function chainable(){const p=new Proxy(function(){},{get(t,k){if(k==='toJSON')return()=>({});if(k==='then')return undefined;return()=>p;},apply(){return p;}});return p;}
 class Chain{constructor(){return chainable();}}
 const e=new Proxy({},{get:()=>1});
-module.exports={Client:Chain,GatewayIntentBits:e,PermissionFlagsBits:e,MessageFlags:e,ActivityType:e,REST:Chain,Routes:e,SlashCommandBuilder:Chain,EmbedBuilder:Chain,ActionRowBuilder:Chain,ButtonBuilder:Chain,ButtonStyle:e,ComponentType:e};
+module.exports={Client:Chain,GatewayIntentBits:e,PermissionFlagsBits:e,MessageFlags:e,ActivityType:e,REST:Chain,Routes:e,SlashCommandBuilder:Chain,EmbedBuilder:Chain,ActionRowBuilder:Chain,ButtonBuilder:Chain,ButtonStyle:e,ComponentType:e,disableValidators:()=>{}};
 `);
 
 fs.copyFileSync(path.join(__dirname, "..", "index.js"), path.join(sandbox, "index.js"));

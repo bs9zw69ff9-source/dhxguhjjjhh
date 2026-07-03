@@ -26,7 +26,15 @@ const {
   TextInputBuilder,
   TextInputStyle,
   WebhookClient,
+  disableValidators,
 } = require("discord.js");
+
+// Embeds are only text carriers now (rendered to plain content at send time), so
+// Discord's embed limits (1024/field, 4096/description) must not throw at BUILD
+// time — /help died exactly that way when its Admin field outgrew 1024 chars.
+// The real 2000-char message cap is enforced by textifyChunks instead. The only
+// true embeds left (webhook feed) keep their values well under API limits.
+try { disableValidators(); } catch {}
 
 /* ── Live connection feed ────────────────────────────────────────────
    Posts a fresh message for every player join (name · ID · IP). Paste a
