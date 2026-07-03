@@ -3248,7 +3248,6 @@ const commands = [
     .setDescription("Check if a courier is currently exiled")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
-  new SlashCommandBuilder().setName("banlist").setDescription("View all active exiles").addStringOption(serverOption),
   new SlashCommandBuilder().setName("permban")
     .setDescription("Admin — Permanently exile a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
@@ -3348,8 +3347,6 @@ const commands = [
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a faction with their ranks")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
-    .addSubcommand(s => s.setName("overview")
-      .setDescription("Show all factions with member counts and officers at a glance"))
     .addSubcommand(s => s.setName("audit")
       .setDescription("View recent add/remove/rank changes for a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
@@ -3699,7 +3696,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "serverinfo", "find", "banlist", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen", "kd"];
+  const PUBLIC         = ["help", "ping", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "warnings", "seen", "kd"];
   const MOD_COMMANDS   = ["kick", "warn", "tempban", "unban", "announce", "givecaps", "history", "delwarn", "note"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "clearwarnings", "setroles", "givemenu", "stripmenu", "manual", "rotatemap", "transfercaps", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
@@ -3783,7 +3780,7 @@ client.on("interactionCreate", async (interaction) => {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction overview` `/faction audit`" },
+              value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist` `/warnings` `/seen`\n`/faction list` `/faction audit`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
@@ -3804,7 +3801,6 @@ client.on("interactionCreate", async (interaction) => {
                 "`/faction remove <id> <faction>` — Remove from whitelist",
                 "`/faction rank <id> <faction> <rank>` — Set member rank *(FL only)*",
                 "`/faction list <faction>` — Roster with ranks (pages)",
-                "`/faction overview` — All factions at a glance",
                 "`/faction audit <faction>` — Add/remove/rank change log (pages)",
                 "`/addwage <id> <tier>` — Enrol in payroll or issue mercenary pay",
                 "`/removewage <id>` — Remove from payroll",
@@ -4436,50 +4432,6 @@ client.on("interactionCreate", async (interaction) => {
       /* ─────────────────────────────────────────────────────
          BANLIST
          ───────────────────────────────────────────────────── */
-      case "banlist": {
-        logger.info("Banlist", `requested by ${interaction.user.tag}`);   // proves the live build is this code
-        await interaction.deferReply();
-        // Read the bot's own ban JSON (always readable) — not blacklist.txt. No RCON,
-        // no pagination/awaitMessageComponent — a single reply that cannot hang.
-        const all  = loadBans();
-        const temp = all.filter(b => !b.permanent && b.expires);
-        const perm = all.filter(b => b.permanent || !b.expires);
-        if (!all.length) {
-          return interaction.editReply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Registry Clear")
-              .setDescription('> *"The Mojave is peaceful — for now."*\n\nNo bans on record.'))
-          ]});
-        }
-        const lines = [
-          ...temp.map(b => `\`${b.playerId}\`  —  expires <t:${Math.floor(b.expires / 1000)}:R>  ·  *${b.reason}*`),
-          ...perm.map(b => `\`${b.playerId}\`  ·  *Permanent*${b.reason ? `  ·  ${b.reason}` : ""}`),
-        ];
-        const total = lines.length;
-        const header = `> *"The Strip keeps its records."*\n\n${DIVIDER}\n**${total}** active exile${total !== 1 ? "s" : ""}  ·  ${temp.length} temp  ·  ${perm.length} permanent`;
-        // Show ALL bans across multiple embeds (no pagination buttons). 18 lines/embed;
-        // group embeds into messages under Discord's 6000-char and 10-embed limits, then
-        // send the first via editReply and any overflow as follow-up messages.
-        const PER = 18;
-        const chunks = [];
-        for (let i = 0; i < lines.length; i += PER) chunks.push(lines.slice(i, i + PER));
-        const embeds = chunks.map((c, i) => clinical(new EmbedBuilder().setColor(CLIN.red)
-          .setTitle(i === 0 ? "Exile Registry" : `Exile Registry (${i + 1})`)
-          .setDescription(((i === 0 ? `${header}\n${DIVIDER}\n` : "") + c.join("\n")).slice(0, 4000)),
-          `${total} exile${total !== 1 ? "s" : ""} active`));
-        // pack embeds into messages: ≤10 embeds and ≤5500 chars each (safe under the 6000 limit)
-        const messages = [];
-        let cur = [], curLen = 0;
-        for (const e of embeds) {
-          const len = (e.data.description?.length || 0) + (e.data.title?.length || 0) + (e.data.footer?.text?.length || 0) + 50;
-          if (cur.length && (cur.length >= 10 || curLen + len > 5500)) { messages.push(cur); cur = []; curLen = 0; }
-          cur.push(e); curLen += len;
-        }
-        if (cur.length) messages.push(cur);
-        await interaction.editReply({ embeds: messages[0] });
-        for (let i = 1; i < messages.length; i++) await interaction.followUp({ embeds: messages[i] });
-        return;
-      }
-
       /* ─────────────────────────────────────────────────────
          PERMBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
@@ -5213,54 +5165,6 @@ client.on("interactionCreate", async (interaction) => {
             ).setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        }
-
-        /* ── overview (public) ── */
-        if (sub === "overview") {
-          const fields = [];
-          for (const faction of ALL_FACTIONS) {
-            const members = getFactionMembers(faction);
-            if (members === null) {
-              fields.push({ name: `${faction}`, value: "Spawn file unreadable", inline: true });
-              continue;
-            }
-            const cap    = getFactionCap(faction);
-            const total  = members.length;
-            const cfg    = getFactionRankConfig(faction);
-            const topRanks = cfg ? cfg.order.slice(-2) : [];
-            const topStr   = members
-              .filter(m => topRanks.includes(m.rank))
-              .slice(0, 3)
-              .map(m => `${getFactionRankBadge(faction, m.rank)}  ${m.playerId}`)
-              .join("\n") || "*No senior members*";
-            const barFull = Math.round((total / cap) * 10);
-            const bar     = "█".repeat(Math.min(barFull, 10)) + "░".repeat(Math.max(10 - barFull, 0));
-            const rankCaps = getFactionRankCaps(faction);
-            const cappedStr = Object.keys(rankCaps).length
-              ? "\n" + (cfg ? cfg.order : Object.keys(rankCaps))
-                  .filter(r => rankCaps[r] > 0)
-                  .map(r => {
-                    const c = countFactionRank(faction, r);
-                    return `${getFactionRankBadge(faction, r)} ${c}/${rankCaps[r]}${c > rankCaps[r] ? "" : ""}`;
-                  }).join("  ·  ")
-              : "";
-            fields.push({
-              name:  `${faction}`,
-              value: `\`${bar}\`  **${total}/${cap}**\n${topStr}${cappedStr}`,
-              inline: true,
-            });
-          }
-          const rankSummary = ALL_FACTIONS.map(f => {
-            const cfg = getFactionRankConfig(f);
-            return cfg ? `**${f}:** ${cfg.order.map(r => `${cfg.badges[r]}${r}`).join(" → ")}` : null;
-          }).filter(Boolean).join("\n");
-          const embed = new EmbedBuilder().setColor(NV.GOLD)
-            .setTitle("Faction Overview — Mojave Authority")
-            .setDescription(`> *${randomQuote("faction")}*\n\n${DIVIDER}`)
-            .addFields(...fields)
-            .addFields({ name: "Rank Ladders", value: rankSummary, inline: false })
-            .setTimestamp();
-          return interaction.reply({ embeds: [embed] });
         }
 
         /* ── list (public, paginated) ── */
