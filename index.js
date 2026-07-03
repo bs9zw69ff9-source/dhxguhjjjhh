@@ -1838,7 +1838,7 @@ function logAction(embed) {
   // awaited the channel fetch+send, a slow post could blow the 3s ack window and
   // make Discord show "this application did not respond".
   client.channels.fetch(process.env.MOD_LOG_CHANNEL)
-    .then(ch => ch?.isTextBased() && ch.send(textify({ embeds: [embed] })))
+    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
     .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
 }
 // Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set (no-op otherwise).
@@ -1854,7 +1854,7 @@ function logBan(embed) {
   if (!channelId) return logAction(embed);
   // fire-and-forget (see logAction)
   client.channels.fetch(channelId)
-    .then(ch => ch?.isTextBased() && ch.send(textify({ embeds: [embed] })))
+    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
     .catch(err => logger.warn("Log", `Failed to post ban log: ${err.message}`));
 }
 
@@ -2522,7 +2522,7 @@ async function postWhitelistPanel(faction) {
     .setDescription(`${hero("Earn your place on the roster.")}\nPress **Get Whitelisted** and enter your **exact** Pavlov in-game name. The bot adds you to **${faction}** at every rank your Discord roles grant — hold several rank roles and you get them all.\n\nOne whitelist per Discord account. Enter **your own name again** any time to remove your whitelist and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`wl_claim:${faction}`).setLabel("Get Whitelisted").setStyle(ButtonStyle.Success));
-  try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); await setWhitelistPanelMsg(faction, m.id); return true; }
+  try { const m = await ch.send({ embeds: [embed], components: [row] }); await setWhitelistPanelMsg(faction, m.id); return true; }
   catch (e) { logger.warn("Whitelist", `panel post failed for ${faction}: ${e.message}`); return false; }
 }
 async function ensureWhitelistPanels() {
@@ -2722,10 +2722,10 @@ async function postLeaderboard() {
   try { channel = await client.channels.fetch(channelId); } catch { return; }
   const embed = buildLeaderboardEmbed();
   if (lastLeaderboardMsgId) {
-    try { const m = await channel.messages.fetch(lastLeaderboardMsgId); await m.edit(textify({ embeds: [embed] })); return; }
+    try { const m = await channel.messages.fetch(lastLeaderboardMsgId); await m.edit({ embeds: [embed] }); return; }
     catch { lastLeaderboardMsgId = null; }
   }
-  try { const m = await channel.send(textify({ embeds: [embed] })); lastLeaderboardMsgId = m.id; } catch {}
+  try { const m = await channel.send({ embeds: [embed] }); lastLeaderboardMsgId = m.id; } catch {}
 }
 
 /* ================================================================
@@ -2762,10 +2762,10 @@ async function postPlaytimeLeaderboard() {
   try { channel = await client.channels.fetch(PLAYTIME_LB_CHANNEL); } catch { return; }
   const embed = buildPlaytimeLeaderboardEmbed();
   if (lastPlaytimeLbMsgId) {
-    try { const m = await channel.messages.fetch(lastPlaytimeLbMsgId); await m.edit(textify({ embeds: [embed] })); return; }
+    try { const m = await channel.messages.fetch(lastPlaytimeLbMsgId); await m.edit({ embeds: [embed] }); return; }
     catch { lastPlaytimeLbMsgId = null; }
   }
-  try { const m = await channel.send(textify({ embeds: [embed] })); lastPlaytimeLbMsgId = m.id; } catch {}
+  try { const m = await channel.send({ embeds: [embed] }); lastPlaytimeLbMsgId = m.id; } catch {}
 }
 
 /* Live player list — edits its own message in a channel every 30s. */
@@ -2794,10 +2794,10 @@ async function postPlayerList() {
   try { await refreshPlayerCache("server1"); if (hasServer2) await refreshPlayerCache("server2"); } catch {}
   const embed = buildPlayerListEmbed();
   if (lastPlayerListMsgId) {
-    try { const m = await channel.messages.fetch(lastPlayerListMsgId); await m.edit(textify({ embeds: [embed] })); return; }
+    try { const m = await channel.messages.fetch(lastPlayerListMsgId); await m.edit({ embeds: [embed] }); return; }
     catch { lastPlayerListMsgId = null; }
   }
-  try { const m = await channel.send(textify({ embeds: [embed] })); lastPlayerListMsgId = m.id; } catch {}
+  try { const m = await channel.send({ embeds: [embed] }); lastPlayerListMsgId = m.id; } catch {}
 }
 
 // Delete every message in a channel — used on startup so stale leaderboard/player-list
