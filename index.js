@@ -2411,6 +2411,14 @@ function isFactionAdmin(member, faction) {
 function canManageFaction(interaction, faction) {
   return isOwner(interaction.user.id) || isFactionAdmin(interaction.member, faction);
 }
+// Roster ops on a SPECIFIC faction: owner and main-guild mod/FL roles always pass;
+// a per-guild Faction Leader passes only for THEIR OWN faction (their leader role
+// id is guild-scoped, so it cannot be held in any other guild).
+function canActOnFaction(interaction, faction) {
+  if (isOwner(interaction.user.id)) return true;
+  if (hasModRole(interaction.member) || hasFactionLeaderRole(interaction.member)) return true;
+  return isFactionAdmin(interaction.member, faction);
+}
 // Ensure a name is in the faction's spawn (membership) file. Returns true if present/added.
 function ensureFactionMember(faction, name) {
   const spawn = SPAWN_FILE_MAP[faction];
@@ -4891,7 +4899,7 @@ async function onInteraction(interaction) {
 
         /* ── rank (Faction Leader ONLY) ── */
         if (sub === "rank") {
-          if (!hasFactionLeaderRole(interaction.member)) {
+          if (!canActOnFaction(interaction, interaction.options.getString("faction"))) {
             return interaction.reply({ embeds: [factionLeaderStrictEmbed()], flags: MessageFlags.Ephemeral });
           }
           const playerId = sanitizeId(interaction.options.getString("playerid"));
@@ -5031,6 +5039,7 @@ async function onInteraction(interaction) {
           const rank     = rawRank ?? getFactionDefaultRank(faction);
           const spawn    = SPAWN_FILE_MAP[faction];
           if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
+          if (!canActOnFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Your Faction", `You can only manage **${factionForGuild(interaction.guildId) ?? "your own"}** rosters from this server.`)], flags: MessageFlags.Ephemeral });
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
@@ -5089,6 +5098,7 @@ async function onInteraction(interaction) {
           const faction  = interaction.options.getString("faction");
           const spawn    = SPAWN_FILE_MAP[faction];
           if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
+          if (!canActOnFaction(interaction, faction)) return interaction.reply({ embeds: [errorEmbed("Not Your Faction", `You can only manage **${factionForGuild(interaction.guildId) ?? "your own"}** rosters from this server.`)], flags: MessageFlags.Ephemeral });
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const lines = readFactionFile(spawn);
           if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read \`${spawn}\`.`)], flags: MessageFlags.Ephemeral });
