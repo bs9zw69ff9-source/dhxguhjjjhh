@@ -1753,6 +1753,22 @@ const client = new Client({
     : [GatewayIntentBits.Guilds],
 });
 
+/* ── Second bot: faction commands ─────────────────────────────────
+   Set FACTION_BOT_TOKEN + FACTION_CLIENT_ID in .env to run a dedicated faction
+   bot (own Discord application, invited to each faction's guild). It registers
+   ONLY the faction commands (/faction, /set<faction>roles, /setwhitelistchannel,
+   /setfactionadmin) and posts/handles the self-serve whitelist panels; the main
+   bot keeps everything else. Runs in THIS process, sharing all state — no file
+   races. Leave the env vars unset and everything stays on the main bot. */
+const FACTION_BOT = !!(process.env.FACTION_BOT_TOKEN && process.env.FACTION_CLIENT_ID);
+const factionClient = FACTION_BOT ? new Client({
+  intents: FACTION_ROLE_SYNC
+    ? [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+    : [GatewayIntentBits.Guilds],
+}) : null;
+// The client that lives in the faction guilds (falls back to the main bot).
+const fclient = () => (factionClient && factionClient.isReady() ? factionClient : client);
+
 /* ================================================================
    PLAIN-TEXT OUTPUT  (no embeds anywhere)
    ================================================================
@@ -2484,7 +2500,7 @@ async function syncFactionFromRoles(faction) {
   const guildId = entry?.guildId || FACTION_GUILDS[faction];
   if (!guildId) return { ok: false, reason: "no guild configured" };
   if (!entry?.ranks || !Object.keys(entry.ranks).length) return { ok: false, reason: "no role mapping" };
-  let guild; try { guild = await client.guilds.fetch(guildId); } catch { return { ok: false, reason: "guild unreachable" }; }
+  let guild; try { guild = await fclient().guilds.fetch(guildId); } catch { return { ok: false, reason: "guild unreachable" }; }
   let members; try { members = await guild.members.fetch(); } catch (e) { return { ok: false, reason: "member fetch failed (enable Server Members Intent)" }; }
   let named = 0, applied = 0;
   for (const member of members.values()) {
@@ -2515,7 +2531,7 @@ function setWhitelistPanelMsg(faction, msgId) {
 async function postWhitelistPanel(faction) {
   const entry = loadFactionRoleMap()[faction];
   if (!entry?.panelChannel) return false;
-  let ch; try { ch = await client.channels.fetch(entry.panelChannel); } catch { return false; }
+  let ch; try { ch = await fclient().channels.fetch(entry.panelChannel); } catch { return false; }
   if (!ch?.isTextBased()) return false;
   if (entry.panelMsgId) { try { await ch.messages.fetch(entry.panelMsgId); return true; } catch {} }   // still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle(`${faction} — Whitelist`)
@@ -2993,7 +3009,7 @@ setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
 // Faction whitelists from Discord roles (only when the privileged intent is enabled).
 if (FACTION_ROLE_SYNC) {
-  client.on("guildMemberUpdate", (oldM, newM) => {
+  (factionClient ?? client).on("guildMemberUpdate", (oldM, newM) => {
     try {
       const faction = factionForGuild(newM.guild.id);
       if (!faction) return;
@@ -3258,6 +3274,11 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Courier (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
 ].map(c => c.toJSON());
 
+// Partition: faction commands live on the faction bot when it's configured.
+const FACTION_COMMAND_NAMES = new Set(["faction", "setwhitelistchannel", "setfactionadmin", ...Object.keys(FACTION_CMD)]);
+const mainCommands    = FACTION_BOT ? commands.filter(c => !FACTION_COMMAND_NAMES.has(c.name)) : commands;
+const factionCommands = commands.filter(c => FACTION_COMMAND_NAMES.has(c.name));
+
 /* ================================================================
    READY
    ================================================================ */
@@ -3273,7 +3294,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   }
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
   try {
-    const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+    const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: mainCommands });
     logger.info("Bot", `${result.length} slash commands registered`);
   } catch (err) {
     logger.error("Bot", `Command registration failed: ${err.message}`);
@@ -3374,7 +3395,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
   ensureMenuPanel();
-  ensureWhitelistPanels();
+  if (!FACTION_BOT) ensureWhitelistPanels();
   if (FACTION_ROLE_SYNC) {   // one full role→whitelist sweep on startup
     setTimeout(async () => {
       for (const f of ALL_FACTIONS) {
@@ -3402,7 +3423,7 @@ process.on("unhandledRejection", r   => logger.error("Unhandled", String(r)));
 /* ================================================================
    INTERACTIONS
    ================================================================ */
-client.on("interactionCreate", async (interaction) => {
+async function onInteraction(interaction) {
 
   // No-embeds mode: render every embed payload to plain text at send time.
   // Registered before any collector, so component/modal interactions from
@@ -3555,7 +3576,11 @@ client.on("interactionCreate", async (interaction) => {
     if (ADMIN_COMMANDS.includes(name) && !hasAdminRole(interaction.member)) {
       return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
-    if (FL_COMMANDS.includes(name) && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
+    // In a faction guild, that guild's configured Faction Leader role also passes
+    // (the main-guild mod/FL role ids don't exist over there).
+    const guildFaction = factionForGuild(interaction.guildId);
+    if (FL_COMMANDS.includes(name) && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)
+        && !(guildFaction && isFactionAdmin(interaction.member, guildFaction))) {
       return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
     if (MOD_COMMANDS.includes(name) && !hasModRole(interaction.member)) {
@@ -5436,7 +5461,25 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply(reply);
     } catch {}
   }
-});
+}
+client.on("interactionCreate", onInteraction);
+if (factionClient) factionClient.on("interactionCreate", onInteraction);
+
+/* Faction bot startup: register its command set + own the whitelist panels. */
+if (factionClient) {
+  factionClient.once("clientReady", async () => {
+    logger.info("FactionBot", `${factionClient.user.tag} online (faction commands)`);
+    try {
+      factionClient.user.setPresence({ activities: [{ name: "faction rosters  ·  /faction", type: ActivityType.Watching }], status: "online" });
+    } catch {}
+    try {
+      const frest = new REST({ version: "10" }).setToken(process.env.FACTION_BOT_TOKEN);
+      const r = await frest.put(Routes.applicationCommands(process.env.FACTION_CLIENT_ID), { body: factionCommands });
+      logger.info("FactionBot", `${r.length} faction commands registered`);
+    } catch (err) { logger.error("FactionBot", `command registration failed: ${err.message}`); }
+    ensureWhitelistPanels();
+  });
+}
 
 /* ================================================================
    STARTUP
@@ -5446,6 +5489,7 @@ client.on("interactionCreate", async (interaction) => {
 // can exercise the pure logic without opening a Discord connection.
 if (require.main === module) {
   client.login(process.env.DISCORD_TOKEN);
+  if (factionClient) factionClient.login(process.env.FACTION_BOT_TOKEN).catch(e => logger.error("FactionBot", `login failed: ${e.message}`));
 }
 
 module.exports = {
