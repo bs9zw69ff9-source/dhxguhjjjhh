@@ -1689,21 +1689,13 @@ function preserveBalanceAcrossKick(name) {
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
    delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
 function kickEverywhere(name) {
-  const clean = sanitizeId(name);              // fallback token if we can't resolve a live id
-  if (!clean) return;
+  // Kick by USERNAME — this gamemode matches players by name, not hex/EOS id.
+  const target = sanitizeId(name);
+  if (!target) return;
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  // Pavlov's RCON Kick targets the player's UniqueId, not their display name — so we
-  // look the name up in each server's live player list and kick by that id. Without
-  // this the auto-ban kick (and any name-based kick) silently does nothing.
-  (async () => {
-    const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
-    for (const srv of servers) {
-      let target = clean;
-      try { const id = await resolveOnlineId(name, srv); if (id) target = id; } catch {}
-      try { await sendRcon(`Kick ${target}`, srv, 2500, 1); logger.info("Bans", `Kick ${target} on ${srv} (was "${name}")`); }
-      catch (err) { logger.warn("Bans", `Kick ${target} on ${srv} failed: ${err.message}`); }
-    }
-  })().catch(() => {});
+  Promise.resolve(sendRconBoth(`Kick ${target}`, "both"))
+    .then(r => logger.info("Bans", `Kick ${target} -> s1=${r.ok1 ? "ok" : "fail"} s2=${r.ok2 ? "ok" : "fail"}`))
+    .catch(err => logger.warn("Bans", `Kick ${target} failed: ${err.message}`));
 }
 
 /* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
@@ -1937,23 +1929,6 @@ async function getOnlinePlayers(server) {
     name: String(p.Username ?? p.username ?? p.PlayerName ?? p.name ?? p.Name ?? "").trim(),
     id:   String(p.UniqueId ?? p.uniqueId ?? p.UniqueID ?? p.Id ?? p.id ?? "").trim(),
   })).filter(p => p.name || p.id);
-}
-
-/** Resolve a display name to the live UniqueId on a server (case-insensitive), or null. */
-async function resolveOnlineId(name, server) {
-  const key = String(name).toLowerCase();
-  const hit = (await getOnlinePlayers(server)).find(p => p.name.toLowerCase() === key);
-  return hit?.id || null;
-}
-
-/** Best UniqueId for a name: live online id (either server) → EOS id from the IP
-    tracker → the sanitized name as a last resort. Used for GiveMenu/Kick targeting. */
-async function resolvePlayerId(name) {
-  for (const srv of (hasServer2 ? ["server1", "server2"] : ["server1"])) {
-    try { const id = await resolveOnlineId(name, srv); if (id) return id; } catch {}
-  }
-  try { const r = ipBans.getRecord(name); if (r?.id) return r.id; } catch {}
-  return sanitizeId(name);
 }
 
 /** Update the cached player list for one server from a parsed payload. */
@@ -2909,7 +2884,7 @@ async function handleMenuPanelSubmit(interaction) {
   }
   const meta = MENUS.find(m => m.value === tier.menu);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const target = await resolvePlayerId(name);   // GiveMenu targets the UniqueId
+  const target = sanitizeId(name);              // menus target the USERNAME on this gamemode
   if (tier.menu === "highstaff") {
     await sendRconBoth(`AddMod ${target}`, "both");
     await sendRconBoth(`AddAccessManager ${target}`, "both");
@@ -2968,7 +2943,7 @@ function scheduleMenuRegrant(name) {
   if (_recentRegrant.size > 500) { const cut = Date.now() - 600_000; for (const [k, t] of _recentRegrant) if (t < cut) _recentRegrant.delete(k); }
   setTimeout(async () => {
     try {
-      const target = await resolvePlayerId(name);   // GiveMenu targets the UniqueId
+      const target = sanitizeId(name);              // menus target the USERNAME on this gamemode
       // collapse duplicate menus: one send per menu, to "both" if any record says both
       const byMenu = new Map();
       for (const g of grants) {
@@ -3839,12 +3814,7 @@ client.on("interactionCreate", async (interaction) => {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();                          // ← ADDED
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
-        // Kick by the live UniqueId (what Pavlov RCON Kick needs), per targeted server.
-        for (const srv of (server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server])) {
-          let target = playerId;
-          try { const id = await resolveOnlineId(playerId, srv); if (id) target = id; } catch {}
-          try { await sendRcon(`Kick ${target}`, srv, 2500, 1); } catch {}
-        }
+        await sendRconBoth(`Kick ${playerId}`, server);          // kick by USERNAME (gamemode matches names)
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
           .setDescription(`> *${randomQuote("kick")}*\n\n${DIVIDER}`)
@@ -3881,7 +3851,7 @@ client.on("interactionCreate", async (interaction) => {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", "No players are currently online on the selected server.")] });
         }
         const pick   = pool[Math.floor(Math.random() * pool.length)];
-        const target = pick.id || sanitizeId(pick.name);
+        const target = sanitizeId(pick.name);        // kick by USERNAME
         preserveBalanceAcrossKick(pick.name);                   // don't let the kick wipe their caps
         let kicked = false;
         try { await sendRcon(`Kick ${target}`, pick.srv, 2500, 1); kicked = true; } catch {}
@@ -4500,7 +4470,7 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply();
         // RCON+ targets the player's UniqueId, not their display name — resolve it
         // (live online id → IP-tracker EOS id → the name as a last resort).
-        const target = await resolvePlayerId(playerId);
+        const target = sanitizeId(playerId);          // USERNAME, not EOS id
         if (menuValue === "highstaff") {
           // High Staff needs three distinct RCON commands — run each separately.
           await sendRconBoth(`AddMod ${target}`, server);
@@ -4536,7 +4506,7 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferReply();
         // If they were ever granted High Staff, also revoke Access Manager (RCON+).
         const wasHighStaff = (loadMenuGrants()[playerId.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
-        const target = await resolvePlayerId(playerId);                // RCON+ targets the UniqueId
+        const target = sanitizeId(playerId);          // USERNAME, not EOS id
         const applied = [`RemoveMenu ${target}`];
         await sendRconBoth(`RemoveMenu ${target}`, server);            // clears the menu bit code
         if (wasHighStaff) {
