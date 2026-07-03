@@ -1860,15 +1860,23 @@ function textify(payload) {
   if (extra.length) first.content = `${first.content.slice(0, 1980)}\n-# (truncated)`;
   return first;
 }
-// Patch an interaction's output methods so ANY embed payload goes out as text.
-// Overflow beyond 2000 chars continues in follow-up messages.
+// Patch an interaction's output methods so ANY embed payload goes out as text,
+// ADDRESSED TO THE USER (leading @mention — the reply tag). Overflow beyond the
+// 2000-char message cap continues in follow-up messages. `update` (in-place
+// component edits like page flips) is converted but not re-mentioned.
 function patchInteractionOutput(interaction) {
+  const mention = `<@${interaction.user.id}>`;
   for (const m of ["reply", "editReply", "followUp", "update"]) {
     const orig = typeof interaction[m] === "function" ? interaction[m].bind(interaction) : null;
     if (!orig) continue;
     interaction[m] = async (payload, ...args) => {
-      if (!payload || typeof payload !== "object" || !Array.isArray(payload.embeds) || !payload.embeds.length) return orig(payload, ...args);
-      const { first, extra } = textifyChunks(payload);
+      if (typeof payload === "string") payload = { content: payload };
+      if (!payload || typeof payload !== "object") return orig(payload, ...args);
+      const hasEmbeds = Array.isArray(payload.embeds) && payload.embeds.length;
+      if (!hasEmbeds && !payload.content) return orig(payload, ...args);   // component-only edits etc.
+      let first = payload, extra = [];
+      if (hasEmbeds) ({ first, extra } = textifyChunks(payload)); else first = { ...payload };
+      if (m !== "update" && !String(first.content ?? "").startsWith(mention)) first.content = `${mention} ${first.content ?? ""}`;
       const res = await orig(first, ...args);
       for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch {} }
       return res;
