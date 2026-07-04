@@ -1494,18 +1494,41 @@ function clampEmbed(embed) {
   return embed;
 }
 
-/** Premium segmented progress/meter bar, e.g. ▰▰▰▰▰▱▱▱▱▱▱▱ */
+/** Fine-grained progress bar — smooth 1/8-cell fill, e.g. ██████▍░░░░░ */
+const _BAR_FRAC = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 function bar(value, max, width = 12) {
   const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
-  const filled = Math.round(ratio * width);
-  return "▰".repeat(filled) + "▱".repeat(Math.max(0, width - filled));
+  const units = ratio * width;
+  const full  = Math.floor(units);
+  const frac  = _BAR_FRAC[Math.round((units - full) * 8)] || "";
+  const used  = full + (frac ? 1 : 0);
+  return "█".repeat(full) + frac + "░".repeat(Math.max(0, width - used));
 }
-/** Labeled meter: `▰▰▰▰▱▱▱▱  n/max (p%)` — for dashboards and rosters. */
+/** Labeled meter: `██████▍░░░░░  n/max (p%)` — for dashboards and rosters. */
 function meter(value, max, width = 12) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   return `\`${bar(value, max, width)}\`  **${value}/${max}** *(${pct}%)*`;
 }
 const pip = (ok) => (ok ? GLYPH.up : GLYPH.down);
+
+/* ---- ANSI terminal readouts (high-tech HUD look) ----
+   Discord renders ```ansi code blocks with real colors on desktop and clean
+   monospace on mobile — either way the columns line up. */
+const ANSI = {
+  reset: "[0m", bold: "[1m", under: "[4m",
+  gray: "[30m", red: "[31m", green: "[32m", yellow: "[33m",
+  blue: "[34m", pink: "[35m", cyan: "[36m", white: "[37m",
+};
+const ansi = (color, text) => `${ANSI[color] ?? ""}${text}${ANSI.reset}`;
+function ansiBlock(lines) { return "```ansi\n" + (Array.isArray(lines) ? lines.join("\n") : lines) + "\n```"; }
+// A tidy fixed-width cell (truncates with a middle ellipsis feel).
+const cell = (v, w) => { const s = String(v); return s.length > w ? s.slice(0, w - 1) + "…" : s.padEnd(w); };
+// ASCII data bar for inside ANSI blocks (block glyphs don't color there).
+function abar(value, max, width = 10) {
+  const r = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  const f = Math.round(r * width);
+  return "|".repeat(f) + ".".repeat(Math.max(0, width - f));
+}
 
 /* A blockquote-styled hero line used at the top of feature embeds. */
 function hero(quoteText) { return `> *${quoteText}*`; }
@@ -2549,21 +2572,33 @@ async function serverSnapshot(srv) {
     };
   } catch { return { up: false, players: 0, max: 24, map: "-", mode: "-", name: serverLabel(srv) }; }
 }
+/* One aligned status row inside an ANSI HUD block. Colors on desktop, clean
+   monospace columns on mobile. */
+function hudRow(s) {
+  const dot   = s.up ? ansi("green", "●") : ansi("red", "○");
+  const label = ansi("bold", cell(s.name, 16));
+  const state = s.up ? ansi("green", cell("ONLINE", 8)) : ansi("gray", cell("OFFLINE", 8));
+  if (!s.up) return ` ${dot} ${label} ${state} ${ansi("gray", "--/--  " + ".".repeat(10))}`;
+  const count = cell(`${s.players}/${s.max}`, 6);
+  const load  = s.players / s.max;
+  const barCol = load >= 0.85 ? "red" : load >= 0.5 ? "yellow" : "green";
+  const meterC = ansi(barCol, abar(s.players, s.max, 10));
+  return ` ${dot} ${label} ${state} ${count} ${meterC}\n     ${ansi("cyan", cell(s.map, 20))} ${ansi("gray", s.mode)}`;
+}
 function buildDashboardEmbed(snaps) {
-  const anyUp = snaps.some(s => s.up);
+  const anyUp  = snaps.some(s => s.up);
   const totalP = snaps.reduce((a, s) => a + (s.up ? s.players : 0), 0);
-  const embed = new EmbedBuilder().setColor(anyUp ? NV.IRRAD_GREEN : NV.RUST_RED)
-    .setTitle("Live Server Status");
-  embed.setDescription(`> ${anyUp ? "*Securitron network active across the Mojave.*" : "*All nodes dark — the Strip is silent.*"}\n-# gateway ${Math.max(0, client.ws.ping)}ms  ${GLYPH.dot}  ${totalP} online  ${GLYPH.dot}  refreshes every ${Math.round(DASHBOARD_INTERVAL_MS / 1000)}s`);
-  for (const s of snaps) {
-    embed.addFields({
-      name: `${pip(s.up)}  ${s.name}`,
-      value: s.up
-        ? `${meter(s.players, s.max, 14)}\n${GLYPH.info} **${s.map}**  ${GLYPH.dot}  ${s.mode}`
-        : "*Unreachable*",
-      inline: false,
-    });
-  }
+  const gw     = Math.max(0, client.ws.ping);
+  const header = [
+    ansi("bold", `${BRAND_NAME.toUpperCase()}  ·  LIVE NETWORK STATUS`),
+    ansi("gray", `gateway ${gw}ms   ${totalP} online   refresh ${Math.round(DASHBOARD_INTERVAL_MS / 1000)}s`),
+    ansi("gray", "─".repeat(40)),
+  ];
+  const body = snaps.map(hudRow);
+  const embed = new EmbedBuilder()
+    .setColor(anyUp ? NV.IRRAD_GREEN : NV.RUST_RED)
+    .setTitle("Live Server Status")
+    .setDescription(ansiBlock([...header, ...body]));
   return brand(embed);
 }
 async function dashboardSnapshots() {
@@ -3407,18 +3442,25 @@ async function onInteraction(interaction) {
         const wsPing = Math.max(0, client.ws.ping);
         const nodes = hasServer2 ? 3 : 2;
         const online = 1 + (s1ok ? 1 : 0) + (hasServer2 && s2ok ? 1 : 0);
+        const stat = (ok) => ok ? ansi("green", "● UP  ") : ansi("red", "○ DOWN");
+        const rttCol = rtt < 250 ? "green" : rtt < 700 ? "yellow" : "red";
+        const wsCol  = wsPing < 150 ? "green" : wsPing < 400 ? "yellow" : "red";
+        const lines = [
+          ansi("bold", "SYSTEM DIAGNOSTICS"),
+          ansi("gray", "─".repeat(34)),
+          ` ${ansi("bold", cell("GATEWAY", 10))} ${ansi("green", "● UP  ")}  ${ansi(wsCol, wsPing + "ms")}`,
+          ` ${ansi("bold", cell("SERVER 1", 10))} ${stat(s1ok)}`,
+          ...(hasServer2 ? [` ${ansi("bold", cell("SERVER 2", 10))} ${stat(s2ok)}`] : []),
+          ansi("gray", "─".repeat(34)),
+          ` ${ansi("gray", cell("nodes", 10))} ${ansi("cyan", abar(online, nodes, 10))} ${online}/${nodes}`,
+          ` ${ansi("gray", cell("rtt", 10))} ${ansi(rttCol, rtt + "ms")}`,
+          ` ${ansi("gray", cell("uptime", 10))} ${formatUptime(Date.now() - BOT_START_MS)}`,
+          ` ${ansi("gray", cell("cached", 10))} ${playerCache.server1.length}${hasServer2 ? ` + ${playerCache.server2.length}` : ""} players`,
+          ` ${ansi("gray", cell("bans", 10))} ${loadBans().length} active`,
+        ];
         const embed = new EmbedBuilder().setColor(color)
           .setTitle("System Status")
-          .setDescription(`> *${headline}*\n\n\`${bar(online, nodes, 12)}\`  **${online}/${nodes}** nodes online`)
-          .addFields(
-            { name: "Bot",       value: `${pip(true)} Online\n-# gateway ${wsPing}ms`,                       inline: true },
-            { name: "Server 1",  value: s1ok ? `${pip(true)} Reachable` : `${pip(false)} Unreachable`,       inline: true },
-            ...(hasServer2 ? [{ name: "Server 2", value: s2ok ? `${pip(true)} Reachable` : `${pip(false)} Unreachable`, inline: true }] : []),
-            { name: "RTT",       value: `\`${bar(1000 - Math.min(rtt, 1000), 1000, 10)}\`\n-# ${rtt}ms`,     inline: true },
-            { name: "Uptime",    value: formatUptime(Date.now() - BOT_START_MS),                             inline: true },
-            { name: "Cached",    value: `${playerCache.server1.length}${hasServer2 ? ` + ${playerCache.server2.length}` : ""} players`, inline: true },
-            { name: "Open Bans", value: `${loadBans().length} active`,                                       inline: true },
-          );
+          .setDescription(`${hero(headline)}\n${ansiBlock(lines)}`);
         brand(embed, { thumb: true });
         return interaction.editReply({ embeds: [embed] });
       }
@@ -3451,15 +3493,21 @@ async function onInteraction(interaction) {
         const infos   = await Promise.all(servers.map(fetchInfo));
         const embeds  = infos.map((info, i) => {
           const srv = servers[i];
+          const maxN = Number(info.maxPlayers) || info.players || 1;
+          const load = info.players / maxN;
+          const barCol = load >= 0.85 ? "red" : load >= 0.5 ? "yellow" : "green";
+          const lines = [
+            ansi("bold", cell(info.serverName, 30)),
+            ansi("gray", "─".repeat(32)),
+            ` ${ansi("gray", cell("STATUS", 9))} ${info.ok ? ansi("green", "● ONLINE") : ansi("red", "○ OFFLINE")}`,
+            ` ${ansi("gray", cell("MAP", 9))} ${ansi("cyan", info.mapLabel)}`,
+            ` ${ansi("gray", cell("MODE", 9))} ${info.gameMode}`,
+            ` ${ansi("gray", cell("PLAYERS", 9))} ${ansi(barCol, abar(info.players, maxN, 12))} ${info.players}/${info.maxPlayers}`,
+          ];
           const e = new EmbedBuilder()
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
-            .setTitle(`${info.serverName}`)
-            .setDescription(`${pip(info.ok)}  ${info.ok ? "Online" : "Offline"}  ·  \`${bar(info.players, Number(info.maxPlayers) || info.players || 1, 10)}\``)
-            .addFields(
-              { name: "Map",     value: info.mapLabel,                          inline: true },
-              { name: "Mode",    value: info.gameMode,                          inline: true },
-              { name: "Players", value: `${info.players} / ${info.maxPlayers}`, inline: true },
-            );
+            .setTitle(info.serverName)
+            .setDescription(ansiBlock(lines));
           return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
         return interaction.editReply({ embeds });
