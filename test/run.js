@@ -562,6 +562,26 @@ const ok = (cond, msg) => {
   ok(bot.bar(0, 0, 6) === "░░░░░░", "bar handles max=0 safely");
   ok(bot.bar(99, 10, 4) === "████", "bar clamps over-full to width");
 
+  console.log("Command wiring (defs <-> handlers):");
+  {
+    // Read the real source and strip comments so a commented-out `case`
+    // (e.g. a dangling /* that swallowed a handler) does NOT count as wired.
+    const src = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+    const noComments = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")   // block comments
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1"); // line comments (keep :// in urls)
+    // Top-level commands only: `new SlashCommandBuilder().setName("x")`
+    // (subcommands/options use their own builders, so they won't match).
+    const defined = new Set([...src.matchAll(/new SlashCommandBuilder\(\)\s*\.setName\(["']([a-z0-9_-]+)["']\)/gi)]
+      .map(m => m[1].toLowerCase()));
+    const handled = new Set([...noComments.matchAll(/case\s+["']([a-z0-9_-]+)["']\s*:/gi)]
+      .map(m => m[1].toLowerCase()));
+    // Every top-level slash command must have a reachable handler case.
+    const missing = [...defined].filter(c => !handled.has(c));
+    ok(missing.length === 0, `every command has a live handler${missing.length ? " (missing: " + missing.join(", ") + ")" : ""}`);
+    ok(handled.has("configure"), "configure handler is not commented out");
+  }
+
   console.log("Serialized temp-ban writes:");
   await bot.upsertTempBan({ playerId: "Banned1", reason: "x", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
   await bot.upsertTempBan({ playerId: "banned1", reason: "y", expires: Date.now() + 1e6, durationLabel: "2d", moderator: "m", server: "both" });
