@@ -403,7 +403,12 @@ function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
   const q = query.toLowerCase();
   return Object.values(loadKnownPlayers())
     .filter(p => !exclude.has(p.name.toLowerCase()) && (!q || p.name.toLowerCase().includes(q)))
-    .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))
+    .sort((a, b) => {
+      // names that START with the query beat mid-string matches, then most recent first
+      const ap = q && a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bp = q && b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      return ap - bp || (b.lastSeen ?? 0) - (a.lastSeen ?? 0);
+    })
     .slice(0, limit)
     .map(p => ({ name: p.name, value: p.name }));
 }
@@ -552,6 +557,8 @@ const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "152059895078
 /* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
 const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1520598950787158106";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
+const DASHBOARD_CHANNEL       = process.env.DASHBOARD_CHANNEL || "";
+const DASHBOARD_INTERVAL_MS   = 30 * 1000;
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 
 // ---- faction-specific rank system ----
@@ -1352,32 +1359,98 @@ function splitPages(lines, perPage) {
 }
 
 // ---- interactive paginator ----
-async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemeral = false, idleMs = 120_000 } = {}) {
-  const pages = splitPages(lines, perPage);
-  const total = pages.length;
-  let page = 0;
-  const row = (p) => new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("pg_prev").setLabel("Prev").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
-    new ButtonBuilder().setCustomId("pg_ind").setLabel(`Page ${p + 1} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-    new ButtonBuilder().setCustomId("pg_next").setLabel("Next").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
+// Reusable confirm/cancel dialog. Returns true if confirmed, false otherwise
+// (cancel, timeout, or a non-owner clicking). Only the invoker can answer.
+async function confirmDialog(interaction, { title, body, confirmLabel = "Confirm", danger = true, idleMs = 30_000 } = {}) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("cd_yes").setLabel(confirmLabel).setStyle(danger ? ButtonStyle.Danger : ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("cd_no").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
   );
-  const render = (p) => ({ embeds: [brand(buildEmbed(pages[p], p, total))], components: total > 1 ? [row(p)] : [] });
+  const embed = brand(new EmbedBuilder().setColor(danger ? NV.RUST_RED : NV.AMBER).setTitle(title)
+    .setDescription(`${body}\n\n-# This prompt expires in ${Math.round(idleMs / 1000)}s.`));
+  const payload = { embeds: [embed], components: [row], keepEmbeds: true, flags: MessageFlags.Ephemeral };
+  if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
+  else await interaction.reply(payload);
+  const msg = await interaction.fetchReply();
+  let btn;
+  try { btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: idleMs, filter: i => i.user.id === interaction.user.id }); }
+  catch { try { await interaction.editReply({ components: [] }); } catch {} return false; }
+  const yes = btn.customId === "cd_yes";
+  await btn.update({ embeds: [brand(new EmbedBuilder().setColor(yes ? NV.IRRAD_GREEN : NV.DEAD_GREY)
+    .setTitle(yes ? "Confirmed" : "Cancelled").setDescription(yes ? "Proceeding…" : "No changes made."))], components: [], keepEmbeds: true }).catch(() => {});
+  return yes;
+}
 
-  if (interaction.deferred || interaction.replied) await interaction.editReply(render(page));
-  else await interaction.reply({ ...render(page), ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}) });
-  if (total <= 1) return;
+async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemeral = false, idleMs = 120_000 } = {}) {
+  let filter = "";
+  let page   = 0;
+  const pagesOf = () => {
+    const active = filter ? lines.filter(l => l.toLowerCase().includes(filter.toLowerCase())) : lines;
+    const pages  = splitPages(active.length ? active : [filter ? `*No entries match \`${filter}\`.*` : "*Nothing here.*"], perPage);
+    return pages;
+  };
+  const controls = (p, total) => {
+    const rows = [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("pg_first").setLabel("<<").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+      new ButtonBuilder().setCustomId("pg_prev").setLabel("< Prev").setStyle(ButtonStyle.Primary).setDisabled(p === 0),
+      new ButtonBuilder().setCustomId("pg_ind").setLabel(`${p + 1} / ${total}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+      new ButtonBuilder().setCustomId("pg_next").setLabel("Next >").setStyle(ButtonStyle.Primary).setDisabled(p >= total - 1),
+      new ButtonBuilder().setCustomId("pg_last").setLabel(">>").setStyle(ButtonStyle.Secondary).setDisabled(p >= total - 1),
+    )];
+    const extras = [new ButtonBuilder().setCustomId("pg_search")
+      .setLabel(filter ? `Search: "${filter}" (tap to clear)` : "Search")
+      .setStyle(filter ? ButtonStyle.Success : ButtonStyle.Secondary)];
+    const row2 = new ActionRowBuilder().addComponents(...extras);
+    rows.push(row2);
+    if (total >= 4) {
+      rows.push(new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder().setCustomId("pg_jump").setPlaceholder("Jump to page…")
+          .addOptions(Array.from({ length: Math.min(total, 25) }, (_, i) => ({ label: `Page ${i + 1} of ${total}`, value: String(i) })))));
+    }
+    return rows;
+  };
+  const render = () => {
+    const pages = pagesOf();
+    const total = pages.length;
+    if (page >= total) page = total - 1;
+    return { embeds: [brand(buildEmbed(pages[page], page, total))], components: (total > 1 || filter) ? controls(page, total) : [], keepEmbeds: true };
+  };
+
+  if (interaction.deferred || interaction.replied) await interaction.editReply(render());
+  else await interaction.reply({ ...render(), ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}) });
+  if (pagesOf().length <= 1 && !lines.some(l => true)) return;
+  if (pagesOf().length <= 1) { /* still keep the Search control alive when it could matter */ }
 
   const msg = await interaction.fetchReply();
   for (;;) {
-    let btn;
+    let sel;
     try {
-      btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: idleMs, filter: i => i.user.id === interaction.user.id });
+      sel = await msg.awaitMessageComponent({ time: idleMs, filter: i => i.user.id === interaction.user.id });
     } catch {
       try { await interaction.editReply({ components: [] }); } catch {}
       return;
     }
-    page = btn.customId === "pg_prev" ? Math.max(0, page - 1) : Math.min(total - 1, page + 1);
-    await btn.update(render(page));
+    const total = pagesOf().length;
+    if (sel.customId === "pg_first")      { page = 0; await sel.update(render()); }
+    else if (sel.customId === "pg_prev")  { page = Math.max(0, page - 1); await sel.update(render()); }
+    else if (sel.customId === "pg_next")  { page = Math.min(total - 1, page + 1); await sel.update(render()); }
+    else if (sel.customId === "pg_last")  { page = total - 1; await sel.update(render()); }
+    else if (sel.customId === "pg_jump")  { page = Number(sel.values[0]) || 0; await sel.update(render()); }
+    else if (sel.customId === "pg_search") {
+      if (filter) { filter = ""; page = 0; await sel.update(render()); continue; }   // active filter: tap clears
+      const modal = new ModalBuilder().setCustomId("pg_search_modal").setTitle("Search this list")
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("pg_q").setLabel("Show only lines containing…")
+            .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(50)));
+      await sel.showModal(modal).catch(() => {});
+      let sub;
+      try { sub = await sel.awaitModalSubmit({ time: 60_000, filter: i => i.user.id === interaction.user.id && i.customId === "pg_search_modal" }); }
+      catch { continue; }
+      filter = sanitizeMessage(sub.fields.getTextInputValue("pg_q")).trim();
+      page = 0;
+      await sub.deferUpdate().catch(() => {});
+      try { await interaction.editReply(render()); } catch {}
+    }
   }
 }
 
@@ -1722,6 +1795,7 @@ function patchInteractionOutput(interaction) {
     interaction[m] = async (payload, ...args) => {
       if (typeof payload === "string") payload = { content: payload };
       if (!payload || typeof payload !== "object") return orig(payload, ...args);
+      if (payload.keepEmbeds) { const { keepEmbeds, ...rest } = payload; return orig(rest, ...args); }   // premium UI surfaces keep real embeds
       const hasEmbeds = Array.isArray(payload.embeds) && payload.embeds.length;
       if (!hasEmbeds && !payload.content) return orig(payload, ...args);   // component-only edits etc.
       let first = payload, extra = [];
@@ -2458,14 +2532,70 @@ async function purgeChannel(channelId) {
 
 // Clear all leaderboard/player-list channels, then post fresh single messages.
 async function refreshLeaderboardChannels() {
-  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, PLAYTIME_LB_CHANNEL, PLAYERLIST_CHANNEL].filter(Boolean))];
+  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, PLAYTIME_LB_CHANNEL, PLAYERLIST_CHANNEL, DASHBOARD_CHANNEL].filter(Boolean))];
   for (const ch of channels) {
     try { const n = await purgeChannel(ch); if (n) logger.info("Purge", `Cleared ${n} old message(s) from channel ${ch}`); }
     catch (e) { logger.warn("Purge", `Could not purge ${ch}: ${e.message}`); }
   }
   // reset tracked ids (channel is now empty) so the next post creates a fresh message
-  lastLeaderboardMsgId = null; lastPlaytimeLbMsgId = null; lastPlayerListMsgId = null;
-  postLeaderboard(); postPlaytimeLeaderboard(); postPlayerList();
+  lastLeaderboardMsgId = null; lastPlaytimeLbMsgId = null; lastPlayerListMsgId = null; lastDashboardMsgId = null;
+  postLeaderboard(); postPlaytimeLeaderboard(); postPlayerList(); if (DASHBOARD_CHANNEL) postDashboard();
+}
+
+// Live server-status dashboard: one self-refreshing embed with per-server
+// health, player-count progress bars, map/mode, and gateway ping.
+async function serverSnapshot(srv) {
+  try {
+    const [list, info] = await Promise.all([
+      sendRcon("RefreshList", srv, 2500, 0),
+      sendRcon("ServerInfo",  srv, 2500, 0),
+    ]);
+    const ld = parseRcon(list), id = parseRcon(info);
+    const players = (ld?.PlayerList ?? []).length;
+    const max = Number(id?.ServerInfo?.MaxPlayers ?? id?.MaxPlayers ?? 24) || 24;
+    return {
+      up: !!ld?.Successful,
+      players, max,
+      map:  id?.ServerInfo?.MapLabel ?? id?.MapLabel ?? id?.ServerInfo?.MapName ?? "unknown",
+      mode: id?.ServerInfo?.GameMode ?? id?.GameMode ?? "unknown",
+      name: id?.ServerInfo?.ServerName ?? id?.ServerName ?? serverLabel(srv),
+    };
+  } catch { return { up: false, players: 0, max: 24, map: "-", mode: "-", name: serverLabel(srv) }; }
+}
+function buildDashboardEmbed(snaps) {
+  const anyUp = snaps.some(s => s.up);
+  const embed = new EmbedBuilder().setColor(anyUp ? NV.IRRAD_GREEN : NV.RUST_RED)
+    .setTitle("Mojave Authority - Live Status").setTimestamp();
+  let desc = `Gateway \`${Math.max(0, client.ws.ping)}ms\`  ,  updates every ${Math.round(DASHBOARD_INTERVAL_MS / 1000)}s
+`;
+  for (const s of snaps) {
+    const meter = bar(s.players, s.max, 14);
+    desc += `
+${pip(s.up)} **${s.name}**
+`;
+    desc += s.up
+      ? `\`${meter}\` **${s.players}/${s.max}**
+Map **${s.map}**  ,  Mode **${s.mode}**
+`
+      : `*Unreachable*
+`;
+  }
+  return brand(embed.setDescription(desc));
+}
+async function dashboardSnapshots() {
+  const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
+  return Promise.all(servers.map(serverSnapshot));
+}
+let lastDashboardMsgId = null;
+async function postDashboard() {
+  if (!DASHBOARD_CHANNEL) return;
+  let channel; try { channel = await client.channels.fetch(DASHBOARD_CHANNEL); } catch { return; }
+  const embed = buildDashboardEmbed(await dashboardSnapshots());
+  if (lastDashboardMsgId) {
+    try { const m = await channel.messages.fetch(lastDashboardMsgId); await m.edit({ embeds: [embed] }); return; }
+    catch { lastDashboardMsgId = null; }
+  }
+  try { const m = await channel.send({ embeds: [embed] }); lastDashboardMsgId = m.id; } catch {}
 }
 
 /* Find the Discord user to DM for a Pavlov username, by matching the guild member
@@ -2643,6 +2773,7 @@ setInterval(processExpiredBans,      60_000);
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
+if (DASHBOARD_CHANNEL) setInterval(postDashboard, DASHBOARD_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(async () => {
   await refreshPlayerCache("server1");
@@ -2697,6 +2828,7 @@ const ALL_RANK_NAMES = [...new Set(
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
   new SlashCommandBuilder().setName("ping").setDescription("Bot and server health check with uptime"),
+  new SlashCommandBuilder().setName("dashboard").setDescription("Live server status dashboard (auto-refreshes for 5 min)"),
   new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count").addStringOption(serverOption),
   new SlashCommandBuilder().setName("find")
     .setDescription("Search for a player by partial name across both servers")
@@ -3140,7 +3272,7 @@ async function onInteraction(interaction) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "seen", "kd"];
+  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "seen", "kd"];
   const MOD_COMMANDS   = ["kick", "tempban", "unban", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
@@ -3202,7 +3334,7 @@ async function onInteraction(interaction) {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist` `/seen`\n`/faction list` `/faction audit`" },
+              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist` `/seen`\n`/faction list` `/faction audit`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
@@ -3261,6 +3393,17 @@ async function onInteraction(interaction) {
       /* ─────────────────────────────────────────────────────
          PING
          ───────────────────────────────────────────────────── */
+      case "dashboard": {
+        await interaction.deferReply();
+        const until = Date.now() + 5 * 60 * 1000;   // live-refresh for 5 minutes, then freeze
+        for (;;) {
+          await interaction.editReply({ embeds: [buildDashboardEmbed(await dashboardSnapshots())], keepEmbeds: true });
+          if (Date.now() >= until) break;
+          await new Promise(r => setTimeout(r, DASHBOARD_INTERVAL_MS));
+        }
+        return;
+      }
+
       case "ping": {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const start = Date.now();
@@ -3704,42 +3847,24 @@ async function onInteraction(interaction) {
          CLEARTEMPBANS
          ───────────────────────────────────────────────────── */
       case "cleartempbans": {
-        const bans = loadBans().filter(b => !b.permanent && b.expires);   // temp bans only - leave permanent bans in place
+        const bans = loadBans().filter(b => !b.permanent && b.expires);   // temp bans only, leave permanent bans in place
         if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear", "No active temporary exiles to remove.")], flags: MessageFlags.Ephemeral });
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("ctb_confirm").setLabel(`Clear all ${bans.length} temp ban${bans.length !== 1 ? "s" : ""}`).setStyle(ButtonStyle.Danger),
-          new ButtonBuilder().setCustomId("ctb_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
-        );
-        await interaction.reply({
-          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm Mass Clearance")
-            .setDescription(`> *"Are you sure? Every exile gets pardoned."*\n\n${DIVIDER}\n` +
-              `This will lift **${bans.length}** exile${bans.length !== 1 ? "s" : ""} and unban all on both servers.\n\n` +
-              bans.map(b => `·  \`${b.playerId}\`  —  *${b.reason}*`).join("\n").slice(0, 3500)), "Expires in 30 seconds")],
-          components: [row], flags: MessageFlags.Ephemeral,
+        const preview = bans.map(b => `- \`${b.playerId}\` - *${b.reason}*`).join("\n").slice(0, 3500);
+        const go = await confirmDialog(interaction, {
+          title: "Clear all temporary bans?",
+          body: `This lifts **${bans.length}** temp exile${bans.length !== 1 ? "s" : ""} and unbans on both servers.\n\n${preview}`,
+          confirmLabel: `Clear ${bans.length}`,
         });
-        const msg = await interaction.fetchReply();
-        try {
-          const btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id });
-          if (btn.customId === "ctb_cancel") {
-            return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Stand Down").setDescription("Clearance cancelled — all exiles remain active."))], components: [] });
-          }
-          await btn.deferUpdate();
-          const ok = [], fail = [];
-          for (const ban of bans) {
-            try { unbanEverywhere(ban.playerId); ok.push(ban.playerId); }   // blacklist.txt (both installs) + IP flags
-            catch { fail.push(ban.playerId); }
-          }
-          await removeBans(...ok);   // drop only those actually lifted; keep failures & any concurrent additions
-          writeModLog({ action: "cleartempbans", count: ok.length, by: interaction.user.tag });
-          const lines = [...ok.map(id => `\`${id}\``), ...fail.map(id => `\`${id}\`  — failed, kept on record`)];
-          const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Temp Bans Cleared")
-            .setDescription(`> *"Clean slate."*\n\n${DIVIDER}\n**${ok.length}** released${fail.length ? `  ·  **${fail.length}** failed` : ""}\n\n${lines.join("\n")}`.slice(0, 4000))
-            .addFields({ name: "By", value: `${interaction.user}`, inline: false }));
-          await logBan(embed);
-          return btn.editReply({ embeds: [embed], components: [] });
-        } catch {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Timed Out").setDescription("Confirmation expired. No changes made."))], components: [] });
-        }
+        if (!go) return;
+        const ok = [], fail = [];
+        for (const ban of bans) { try { unbanEverywhere(ban.playerId); ok.push(ban.playerId); } catch { fail.push(ban.playerId); } }
+        await removeBans(...ok);
+        writeModLog({ action: "cleartempbans", count: ok.length, by: interaction.user.tag });
+        const lines = [...ok.map(id => `\`${id}\``), ...fail.map(id => `\`${id}\` - failed, kept`)];
+        await logBan(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Temp Bans Cleared")
+          .setDescription(`**${ok.length}** released${fail.length ? `, **${fail.length}** failed` : ""}\n\n${lines.join("\n")}`.slice(0, 4000))
+          .addFields({ name: "By", value: `${interaction.user}`, inline: false })));
+        return interaction.editReply({ embeds: [successEmbed("Temp Bans Cleared", `Released **${ok.length}**${fail.length ? `, **${fail.length}** failed` : ""}.`)], components: [], keepEmbeds: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3754,41 +3879,21 @@ async function onInteraction(interaction) {
           return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The wasteland is at peace.")}\nNothing to clear — no bans on record.`))] });
         }
 
-        // confirmation gate (irreversible)
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("cab_confirm").setLabel(`Unban all ${names.length}`).setStyle(ButtonStyle.Danger),
-          new ButtonBuilder().setCustomId("cab_cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
-        );
-        const preview = names.slice(0, 30).map(n => `·  \`${n}\``).join("\n") + (names.length > 30 ? `\n…and ${names.length - 30} more` : "");
-        const msg = await interaction.editReply({
-          embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Confirm — Pardon the Whole Mojave")
-            .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\n` +
-              `Removes **${names.length}** courier(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`.slice(0, 4000)), "Expires in 30 seconds")],
-          components: [row],
+        const preview = names.slice(0, 30).map(n => `- \`${n}\``).join("\n") + (names.length > 30 ? `\n...and ${names.length - 30} more` : "");
+        const go = await confirmDialog(interaction, {
+          title: "Unban EVERYONE?",
+          body: `Removes **${names.length}** courier(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`,
+          confirmLabel: `Unban all ${names.length}`,
         });
-        let btn;
-        try { btn = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: 30_000, filter: i => i.user.id === interaction.user.id }); }
-        catch { return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Timed Out").setDescription("Confirmation expired. No bans were lifted."))], components: [] }); }
-        if (btn.customId === "cab_cancel") {
-          return btn.update({ embeds: [clinical(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Stand Down").setDescription("Cancelled — all bans remain in place."))], components: [] });
-        }
-        await btn.deferUpdate();
-
+        if (!go) return;
         let ok = 0, failed = 0;
-        for (const n of names) {
-          try { unbanEverywhere(n); ok++; }   // remove from blacklist.txt (both installs) + lift IP flags
-          catch (e) { failed++; logger.warn("ClearAllBans", `Unban ${n} failed: ${e.message}`); }
-        }
-        await removeBans(...names);   // clear the bot's temp-ban records
+        for (const n of names) { try { unbanEverywhere(n); ok++; } catch (e) { failed++; logger.warn("ClearAllBans", `Unban ${n} failed: ${e.message}`); } }
+        await removeBans(...names);
         writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("All Exiles Pardoned")
-          .setDescription(`> *"A clean slate for the whole Mojave."*\n\n${DIVIDER}\nRemoved **${names.length}** courier(s) from blacklist.txt on both servers and lifted their IP/username flags.`)
-          .addFields(
-            { name: "Unbanned", value: `**${ok}**${failed ? `  ·  ${failed} failed` : ""}`, inline: true },
-            { name: "By",       value: `${interaction.user}`, inline: true },
-          ));
-        await logBan(embed);
-        return btn.editReply({ embeds: [embed], components: [] });
+        await logBan(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("All Exiles Pardoned")
+          .setDescription(`Removed **${names.length}** from blacklist.txt on both servers and lifted their flags.`)
+          .addFields({ name: "Unbanned", value: `**${ok}**${failed ? `, ${failed} failed` : ""}`, inline: true }, { name: "By", value: `${interaction.user}`, inline: true })));
+        return interaction.editReply({ embeds: [successEmbed("All Exiles Pardoned", `Unbanned **${ok}**${failed ? `, **${failed}** failed` : ""}.`)], components: [], keepEmbeds: true });
       }
 
       /* ─────────────────────────────────────────────────────
