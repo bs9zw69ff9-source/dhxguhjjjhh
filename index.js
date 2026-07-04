@@ -1455,20 +1455,24 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
 }
 
 // ---- embed builders ----
-const DIVIDER = "▓▒░▒▓▒░▒▓▒░▒▓▒░▒▓▒░▒▓▒░▒▓";
-const RULE    = "·--·--·--·--·--·--·--·--·--·--·";
-const BRAND_NAME = "MOJAVE AUTHORITY";
+const DIVIDER = "────────────────────────────";
+const RULE    = "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌";
+const BRAND_NAME = "Mojave Authority";
+// One tasteful, monochrome glyph set — status accents on titles, no cartoon emoji.
+const GLYPH = { ok: "✓", bad: "✕", warn: "⚠", deny: "⊘", info: "▸", dot: "•", up: "●", down: "○", caps: "◈", rank: "◆" };
 
 // ---- visual system  (consistent branding across every embed) ----
 function brandIcon() { try { return client.user?.displayAvatarURL?.({ size: 128 }) ?? null; } catch { return null; } }
 
 /** Stamp an embed with the bot's identity: author header (+ avatar),
-    timestamp, and optional thumbnail / footer. One look, everywhere. */
+    timestamp, thumbnail, and a subtle version footer unless one is set. */
 function brand(embed, { thumb = false, footer } = {}) {
   const icon = brandIcon();
   embed.setAuthor(icon ? { name: BRAND_NAME, iconURL: icon } : { name: BRAND_NAME });
   if (thumb && icon) embed.setThumbnail(icon);
-  if (footer) embed.setFooter(typeof footer === "string" ? { text: footer } : footer);
+  const f = footer ? (typeof footer === "string" ? { text: footer } : footer) : { text: `${BRAND_NAME} · ${BUILD_ID}` };
+  if (icon && !f.iconURL) f.iconURL = icon;
+  embed.setFooter(f);
   embed.setTimestamp();
   clampEmbed(embed);
   return embed;
@@ -1490,16 +1494,21 @@ function clampEmbed(embed) {
   return embed;
 }
 
-/** Unicode progress/meter bar, e.g. ███████░░░░░ */
+/** Premium segmented progress/meter bar, e.g. ▰▰▰▰▰▱▱▱▱▱▱▱ */
 function bar(value, max, width = 12) {
   const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
   const filled = Math.round(ratio * width);
-  return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
+  return "▰".repeat(filled) + "▱".repeat(Math.max(0, width - filled));
 }
-const pip = (ok) => (ok ? "[OK]" : "[!!]");
+/** Labeled meter: `▰▰▰▰▱▱▱▱  n/max (p%)` — for dashboards and rosters. */
+function meter(value, max, width = 12) {
+  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+  return `\`${bar(value, max, width)}\`  **${value}/${max}** *(${pct}%)*`;
+}
+const pip = (ok) => (ok ? GLYPH.up : GLYPH.down);
 
 /* A blockquote-styled hero line used at the top of feature embeds. */
-function hero(quoteText) { return `> *${quoteText}*\n${RULE}`; }
+function hero(quoteText) { return `> *${quoteText}*`; }
 
 /* Ban / IP embeds: stamp them with the full Mojave Authority branding (author
    header, avatar, timestamp) + an optional footer — same look as everything else. */
@@ -1508,71 +1517,45 @@ function clinical(embed, footer) {
 }
 
 // ---- embed builders ----
-function successEmbed(title, description, quoteCategory = "system") {
-  return brand(new EmbedBuilder().setColor(NV.AMBER)
-    .setTitle(`${title}`)
-    .setDescription(`${description}`),
-    { footer: { text: randomQuote(quoteCategory) } });
+function successEmbed(title, description) {
+  return brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN)
+    .setTitle(`${GLYPH.ok}  ${title}`)
+    .setDescription(String(description)));
 }
 function errorEmbed(title, description) {
   return brand(new EmbedBuilder().setColor(NV.RUST_RED)
-    .setTitle(`${title}`)
-    .setDescription(`${description}`),
-    { footer: { text: "Securitron network active · incident logged" } });
+    .setTitle(`${GLYPH.bad}  ${title}`)
+    .setDescription(String(description)),
+    { footer: { text: "Incident logged · Securitron network active" } });
 }
 function warningEmbed(title, description) {
-  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle(`${title}`)
-    .setDescription(`${description}`));
+  return brand(new EmbedBuilder().setColor(NV.AMBER)
+    .setTitle(`${GLYPH.warn}  ${title}`)
+    .setDescription(String(description)));
 }
-function adminOnlyEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.DEEP_BLACK)
-    .setTitle("Access Denied — Mr. House's Domain")
-    .setDescription('> *"I didn\'t survive two centuries to be overruled by the uninvited."*\n\nThis command is restricted to **Administrators** only.'),
-    { footer: { text: "Unauthorized access attempt logged" } });
+/* Shared "you can't run this" card — one look for every access gate. */
+function deniedEmbed(title, description, footer = "Unauthorized access attempt logged") {
+  return brand(new EmbedBuilder().setColor(NV.LEGION_RED)
+    .setTitle(`${GLYPH.deny}  ${title}`)
+    .setDescription(String(description)),
+    { footer: { text: footer } });
 }
-function ownerOnlyEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.DEEP_BLACK)
-    .setTitle("Owner Eyes Only")
-    .setDescription('> *"Some files even Mr. House keeps to himself."*\n\nThis command is restricted to the **bot owner**.'),
-    { footer: { text: "Unauthorized access attempt logged" } });
-}
-function modOnlyEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-    .setTitle("Clearance Required")
-    .setDescription('> *"You don\'t have the credentials for this, friend."*\n\nThis command requires the **Moderator** role.'),
-    { footer: { text: "Access restricted · civilian status confirmed" } });
-}
+function adminOnlyEmbed()  { return deniedEmbed("Administrators Only", "This command is restricted to **Administrators**."); }
+function ownerOnlyEmbed()  { return deniedEmbed("Owner Only", "This command is restricted to the **bot owner**."); }
+function modOnlyEmbed()    { return deniedEmbed("Moderators Only", "This command requires the **Moderator** role.", "Access restricted"); }
+function factionLeaderOnlyEmbed()   { return deniedEmbed("Faction Leaders Only", "Requires the **Faction Leader** role (or Moderator).", "Access restricted"); }
+function factionLeaderStrictEmbed() { return deniedEmbed("Faction Leaders Only", "Rank changes require the **Faction Leader** role specifically.", "Access restricted"); }
 function blacklistedEmbed(entry) {
   const reason = entry?.reason ? `\n\n**Reason:** ${entry.reason}` : "";
-  return brand(new EmbedBuilder().setColor(NV.LEGION_RED)
-    .setTitle("Blacklisted — Access Revoked")
-    .setDescription(`> *"You're persona non grata around here. The Securitrons won't lift a finger for you."*\n\nYou have been **blacklisted** from using this bot. All commands are unavailable to you.${reason}`),
-    { footer: { text: "Contact an administrator if you believe this is a mistake" } });
-}
-function factionLeaderOnlyEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle("Faction Authority Required")
-    .setDescription('> *"Only faction leaders pull strings around here, stranger."*\n\nRequires the **Faction Leader** role (or Moderator).'),
-    { footer: { text: "Faction access not authorized" } });
-}
-function factionLeaderStrictEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle("Faction Leader Authority Required")
-    .setDescription('> *"Rank assignments are the sole domain of faction leadership."*\n\nThis action requires the **Faction Leader** role specifically.'),
-    { footer: { text: "Rank authority not authorized" } });
+  return deniedEmbed("Access Revoked", `You've been **blacklisted** from this bot — every command is unavailable to you.${reason}`,
+    "Contact an administrator if you believe this is a mistake");
 }
 function emptyIdEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.NCR_TAN)
-    .setTitle("No Courier ID Provided")
-    .setDescription("A valid **Courier ID** or username is required.\n\n*Start typing in the player field — autocomplete surfaces anyone currently online.*"),
-    { footer: { text: "Tip: manual IDs are accepted if the player is offline" } });
+  return warningEmbed("Courier ID Required",
+    "Enter a valid **Courier ID** or username.\n-# Start typing in the player field — autocomplete surfaces anyone online, and manual IDs work for offline players.");
 }
 function rateLimitEmbed() {
-  return brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-    .setTitle("Slow Down, Courier")
-    .setDescription("You're issuing commands too quickly. Wait a moment and try again."),
-    { footer: { text: "Rate limit active" } });
+  return warningEmbed("Slow Down", "You're issuing commands too quickly — wait a moment and try again.");
 }
 
 // ---- rcon ----
@@ -2568,23 +2551,20 @@ async function serverSnapshot(srv) {
 }
 function buildDashboardEmbed(snaps) {
   const anyUp = snaps.some(s => s.up);
+  const totalP = snaps.reduce((a, s) => a + (s.up ? s.players : 0), 0);
   const embed = new EmbedBuilder().setColor(anyUp ? NV.IRRAD_GREEN : NV.RUST_RED)
-    .setTitle("Mojave Authority - Live Status").setTimestamp();
-  let desc = `Gateway \`${Math.max(0, client.ws.ping)}ms\`  ,  updates every ${Math.round(DASHBOARD_INTERVAL_MS / 1000)}s
-`;
+    .setTitle("Live Server Status");
+  embed.setDescription(`> ${anyUp ? "*Securitron network active across the Mojave.*" : "*All nodes dark — the Strip is silent.*"}\n-# gateway ${Math.max(0, client.ws.ping)}ms  ${GLYPH.dot}  ${totalP} online  ${GLYPH.dot}  refreshes every ${Math.round(DASHBOARD_INTERVAL_MS / 1000)}s`);
   for (const s of snaps) {
-    const meter = bar(s.players, s.max, 14);
-    desc += `
-${pip(s.up)} **${s.name}**
-`;
-    desc += s.up
-      ? `\`${meter}\` **${s.players}/${s.max}**
-Map **${s.map}**  ,  Mode **${s.mode}**
-`
-      : `*Unreachable*
-`;
+    embed.addFields({
+      name: `${pip(s.up)}  ${s.name}`,
+      value: s.up
+        ? `${meter(s.players, s.max, 14)}\n${GLYPH.info} **${s.map}**  ${GLYPH.dot}  ${s.mode}`
+        : "*Unreachable*",
+      inline: false,
+    });
   }
-  return brand(embed.setDescription(desc));
+  return brand(embed);
 }
 async function dashboardSnapshots() {
   const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
@@ -3330,11 +3310,12 @@ async function onInteraction(interaction) {
         }).join("\n");
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle("Mojave Authority — Command Roster")
+          .setTitle("Command Roster")
           .setDescription(
-            `> *"War. War never changes. But the rules of the Strip — those we enforce."*\n\n${DIVIDER}\n` +
-            `**Your Access:** ${badge}\nMod: ${mStr}  ·  Admin: ${aStr}  ·  Faction: ${fStr}\n${DIVIDER}\n\n` +
-            `*Autocomplete works in all Courier ID and Rank fields — faction ranks are filtered per faction.*`
+            `> *War never changes — but the rules of the Strip, those we enforce.*\n\n` +
+            `### ${GLYPH.rank}  Your Access\n${badge}\n` +
+            `-# Mod ${mStr}  ${GLYPH.dot}  Admin ${aStr}  ${GLYPH.dot}  Faction ${fStr}\n` +
+            `-# Autocomplete works in every Courier ID and Rank field.`
           )
           .addFields(
             { name: "Public",
@@ -3424,21 +3405,21 @@ async function onInteraction(interaction) {
           : okCount === 1 ? "Partial connectivity — one server unreachable."
           : "Both servers unreachable — check RCON config.";
         const wsPing = Math.max(0, client.ws.ping);
-        const health = `${pip(true)}${pip(s1ok)}${pip(s2ok)}`;
+        const nodes = hasServer2 ? 3 : 2;
+        const online = 1 + (s1ok ? 1 : 0) + (hasServer2 && s2ok ? 1 : 0);
         const embed = new EmbedBuilder().setColor(color)
           .setTitle("System Status")
-          .setDescription(`${hero(headline)}\n${health}  ·  **${okCount + 1}/3** nodes online`)
+          .setDescription(`> *${headline}*\n\n\`${bar(online, nodes, 12)}\`  **${online}/${nodes}** nodes online`)
           .addFields(
-            { name: "Bot",        value: `${pip(true)}  Online\n\`gateway ${wsPing}ms\``,                    inline: true },
-            { name: "Server 1",   value: s1ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
-            { name: "Server 2",   value: s2ok ? `${pip(true)}  Reachable` : `${pip(false)}  Unreachable`,    inline: true },
-            { name: "RTT",        value: `\`${bar(Math.min(rtt, 1000), 1000, 10)}\`\n\`${rtt}ms\``,           inline: true },
-            { name: "Uptime",     value: `\`${formatUptime(Date.now() - BOT_START_MS)}\``,                    inline: true },
-            { name: "Cached",     value: `S1 \`${playerCache.server1.length}\` · S2 \`${playerCache.server2.length}\``, inline: true },
-            { name: "Mod Log",    value: `\`${loadModLog().length}\` entries`,                                inline: true },
-            { name: "Open Bans",  value: `\`${loadBans().length}\` active`,                                  inline: true },
+            { name: "Bot",       value: `${pip(true)} Online\n-# gateway ${wsPing}ms`,                       inline: true },
+            { name: "Server 1",  value: s1ok ? `${pip(true)} Reachable` : `${pip(false)} Unreachable`,       inline: true },
+            ...(hasServer2 ? [{ name: "Server 2", value: s2ok ? `${pip(true)} Reachable` : `${pip(false)} Unreachable`, inline: true }] : []),
+            { name: "RTT",       value: `\`${bar(1000 - Math.min(rtt, 1000), 1000, 10)}\`\n-# ${rtt}ms`,     inline: true },
+            { name: "Uptime",    value: formatUptime(Date.now() - BOT_START_MS),                             inline: true },
+            { name: "Cached",    value: `${playerCache.server1.length}${hasServer2 ? ` + ${playerCache.server2.length}` : ""} players`, inline: true },
+            { name: "Open Bans", value: `${loadBans().length} active`,                                       inline: true },
           );
-        brand(embed, { thumb: true, footer: { text: BOT_COPYRIGHT } });
+        brand(embed, { thumb: true });
         return interaction.editReply({ embeds: [embed] });
       }
 
