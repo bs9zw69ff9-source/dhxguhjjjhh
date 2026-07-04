@@ -48,14 +48,10 @@ const TS_RE     = /^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3}
 const ACCEPT_RE = /(?:NotifyAcceptingConnection accepted from:|NotifyAcceptedConnection:.*?RemoteAddr:|AddClientConnection:.*?RemoteAddr:)\s*((?:\d{1,3}\.){3}\d{1,3})/;
 // Order-independent field extractors. Any line carrying BOTH a RemoteAddr IP and a
 // UniqueId is a confirmed IP<->id pairing (no matter the field order); any Login/Join
-// request line yields the player name + id. This is far more tolerant than a single
-// rigid same-line regex when Pavlov pads or reorders these fields between versions.
 const IP_FIELD_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3})/i;                    // the IP, anywhere on the line
 const UID_FIELD_RE = /UniqueId:\s*([^\s,]+)/i;                                      // disconnect-style id field
 // ?Name=Foo option. The value ends at the next URL option (?/&), at a following
 // "field: value" token (real Pavlov lines are `?Name=Bob userId: EOS:…` with no ?
-// terminator — a naive [^?&]+ would swallow the whole rest of the line), or at EOL.
-// Lazy + lookahead keeps names WITH spaces ("Butter Life") intact.
 const NAME_OPT_RE  = /[?&]Name=([^?&]+?)(?=[?&]|\s+(?:userId|userid|PlayerId|UniqueId|platform|pid)\s*[:=]|\s*$)/i;
 const UID_LOGIN_RE = /(?:userId|PlayerId|UniqueId|userid)\s*[:=]\s*([^\s,?&]+)/i;   // login-style id field
 // A confirmed pairing = a line with both an IP and a disconnect-style id.
@@ -74,7 +70,7 @@ function extractLogin(line) {
 const BAN_RE    = /Rcon:\s*BanPlayer\s+(\S+)/i;
 const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;
 // Kill/death stats (requires bVerboseLogging=true in Game.ini). Pavlov logs a
-// KillData record — either as a single JSON line or split across lines. Match each
+// KillData record - either as a single JSON line or split across lines. Match each
 // field anywhere, case-insensitively.
 const KILLER_RE   = /"Killer":\s*"([^"]*)"/i;
 const KILLED_RE   = /"Killed":\s*"([^"]*)"/i;
@@ -121,7 +117,7 @@ const untrackedIds   = new Set();   // runtime: ids resolved to belong to an unt
 
 let onAutoBan = async () => {};
 let onConnect = async () => {};   // best-effort join (tentative IP)
-let onConfirm = async () => {};   // confirmed IPid pairing (same-line disconnect) — accurate IP
+let onConfirm = async () => {};   // confirmed IPid pairing (same-line disconnect) - accurate IP
 let live      = false;            // false during the startup backfill (suppress feed + auto-ban)
 let watchList = [];               // resolved log files (active + rotated backups)
 
@@ -131,9 +127,9 @@ const pendingIP   = {};           // per-file: IP from the latest accept line, a
 const pendingTs   = {};           // per-file: log-timestamp of that accept line
 const pendingSet  = {};           // per-file: distinct IPs accepted since the last login (size 1 = unambiguous)
 const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
-const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe — collapse a disconnect's multiple close lines)
+const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe - collapse a disconnect's multiple close lines)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
-const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet — flag it when the kick confirms one)
+const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet - flag it when the kick confirms one)
 const pendingKill = {};           // per-file: { killer, killed } accumulated across a KillData block's lines
 let lastTs = 0, saveTimer = null, dirty = false;
 let cutoffTs = Number(loadJSON(CUTOFF_PATH, 0)) || 0;   // log lines at/older than this are ignored (post-wipe)
@@ -177,7 +173,7 @@ function saveUntracked()  { saveJSON(UNTRACKED_PATH, [...untrackedNames]); }
 function resolveIds(input) {
   const key = norm(input);
   if (registry[input]) return [input];
-  // registry keys are CLEANED ids — also try the cleaned form of the input, so
+  // registry keys are CLEANED ids - also try the cleaned form of the input, so
   // prefixed tokens ("NULL:abc…", "EOS:abc…") still resolve to their entry.
   const cid = cleanId(input);
   if (cid && registry[cid]) return [cid];
@@ -186,12 +182,12 @@ function resolveIds(input) {
   if (idHit) return [idHit];
   return Object.keys(registry).filter(id => norm(registry[id].name) === key);
 }
-function ipsForIds(ids) {           // all IPs ever seen (incl. best-effort join correlation) — for display
+function ipsForIds(ids) {           // all IPs ever seen (incl. best-effort join correlation) - for display
   const set = new Set();
   for (const id of ids) for (const ip of (registry[id]?.ips || [])) set.add(ip);
   return [...set];
 }
-function confirmedIpsForIds(ids) { // only same-line (disconnect) IPid pairings — trustworthy, for alts/enforcement
+function confirmedIpsForIds(ids) { // only same-line (disconnect) IPid pairings - trustworthy, for alts/enforcement
   const set = new Set();
   for (const id of ids) for (const ip of (registry[id]?.cips || [])) set.add(ip);
   return [...set];
@@ -241,12 +237,12 @@ function getRecord(input) {
 }
 
 /* ---------------- record an observation ---------------- */
-// sure = true when the IP and id came from the SAME log line (disconnect) — a
+// sure = true when the IP and id came from the SAME log line (disconnect) - a
 // trustworthy pairing. false = best-effort join-time correlation (display only).
 function record(id, name, ip, ts, sure) {
   if (skipId(id)) return;
   id = cleanId(id);
-  if (untrackedIds.has(id)) return;                // ignore-listed player — never track
+  if (untrackedIds.has(id)) return;                // ignore-listed player - never track
   const fresh = !registry[id];
   const e = registry[id] || { name: null, ips: [], cips: [], firstSeen: ts || Date.now(), lastSeen: 0 };
   if (!e.cips) e.cips = [];                         // migrate older registry entries
@@ -275,15 +271,13 @@ function altNamesForIps(ips, excludeIds = []) {
 
 /* ---------------- public: flag / unflag a player ---------------- */
 // Flags the player's username(s) AND confirmed IP(s). Any account that later
-// connects matching either is auto-banned. (No hex ids — Shack bans by name.)
+// connects matching either is auto-banned. (No hex ids - Shack bans by name.)
 function blacklistPlayer(input, opts = {}) {
-  const flagId = opts.flagId === true;              // EOS-id flagging is OPT-IN — permanent bans only
+  const flagId = opts.flagId === true;              // EOS-id flagging is OPT-IN - permanent bans only
   const ids  = resolveIds(input);
   const cips = confirmedIpsForIds(ids);             // trustworthy same-line pairings
-  // Flag confirmed IPs. If none are on record yet — the usual case when you ban a
-  // player who is still ONLINE (logged in, not yet disconnected) — fall back to their
-  // best-effort (join-correlated) IPs so the ban actually enforces instead of flagging
-  // nothing. pendingFlag (below) still upgrades to the confirmed IP on their next close.
+  // Flag confirmed IPs. If none are on record yet - the usual case when you ban a
+  // player who is still ONLINE (logged in, not yet disconnected) - fall back to their
   const bestEffort = cips.length === 0;
   const ips  = bestEffort ? ipsForIds(ids) : cips;
   const altNames = altNamesForIps(ips, ids);
@@ -293,19 +287,15 @@ function blacklistPlayer(input, opts = {}) {
   console.log(`[ipBans] blacklistPlayer "${input}" -> ${ids.length} id(s), flagged ${ips.length} IP(s)${bestEffort && ips.length ? " (best-effort, no confirmed yet)" : ""}, ${flagged.size} total flagged`);
   // remember the player so the IP the kick confirms is flagged too (if none yet).
   // NOTE: we deliberately do NOT auto-flag the username here. A flagged username
-  // auto-bans anyone connecting under that name forever, which false-positives on
-  // temp bans, kicks, warn-escalations and re-used names ("banned for no reason").
-  // Username blacklisting is an explicit, owner-only action (flagTarget).
-  // pendingFlag lets the kick's confirmed IP get flagged too (IP enforcement) — always.
   for (const id of ids) pendingFlag.set(id, Date.now());
   // Flag the EOS/unique id(s) ONLY for permanent bans (flagId). Temp bans, warn
-  // escalations and in-game-detected bans must NOT permanently flag an account id —
+  // escalations and in-game-detected bans must NOT permanently flag an account id -
   // that's what was auto-banning innocent/returning players.
   let fId = false;
   if (flagId) for (const id of ids) if (!flaggedIds.has(id)) { flaggedIds.add(id); fId = true; }
   if (fId) saveFIds();
   // banned by a raw token not in the registry: flag it as an IP; only flag it as an
-  // EOS id when it actually LOOKS like one (long hex) — never turn a display name into an id.
+  // EOS id when it actually LOOKS like one (long hex) - never turn a display name into an id.
   if (!ids.length) {
     const raw = String(input ?? "").trim();
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(raw) && !flagged.has(raw)) { flagged.add(raw); added++; saveFlagged(); }
@@ -412,7 +402,7 @@ function clearIp(ip) {
 }
 // Wipe the whole IP registry AND all flags (full reset). Untracked list is kept.
 // Also set a cutoff at the latest log time so the next restart's backfill won't
-// rebuild what we just wiped — only connections AFTER the wipe are tracked again.
+// rebuild what we just wiped - only connections AFTER the wipe are tracked again.
 function clearAll() {
   const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size + flaggedIds.size;
   for (const k of Object.keys(registry)) delete registry[k];
@@ -455,24 +445,21 @@ function parseTs(line) {
 
 async function handleJoin(name, rawId, ip, ts, server, confident) {
   if (/localhost-/i.test(rawId || "")) return;     // server self-connection
-  if (name && untrackedNames.has(norm(name))) {    // ignore-listed username — don't track at all
+  if (name && untrackedNames.has(norm(name))) {    // ignore-listed username - don't track at all
     if (!skipId(rawId)) untrackedIds.add(cleanId(rawId));   // also skip their disconnect lines
     return;
   }
   const valid = !skipId(rawId);
   const id    = valid ? cleanId(rawId) : null;
   // Record the join IP into the registry ONLY when the correlation is unambiguous
-  // (exactly one pending connection). With concurrent joins the accept↔login pairing
-  // can cross over, and a mis-attributed IP poisons alt detection and — via the
-  // best-effort ban fallback — can get an INNOCENT player's IP flagged. The name and
-  // lastSeen still record either way; the confirmed IP arrives at their disconnect.
+  // (exactly one pending connection). With concurrent joins the accept<->login pairing
   if (valid) record(rawId, name, confident ? ip : null, ts, false);
 
   if (!live) return;                               // startup backfill: don't feed/auto-ban old joins
 
   const display = (name && name !== "<null>") ? name : (id || "unknown");
 
-  // connection feed — once per join (Pavlov logs an INVALID pre-auth line + the authed one)
+  // connection feed - once per join (Pavlov logs an INVALID pre-auth line + the authed one)
   const key  = norm(display);
   if (Date.now() - (recentJoin.get(key) ?? 0) >= JOIN_DEBOUNCE_MS) {
     recentJoin.set(key, Date.now());
@@ -482,10 +469,6 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
 
   // auto-ban if this join matches a flagged username or IP.
   //  • username comes straight from the login line -> reliable, ban on sight.
-  //  • IP: ban on sight if any of this id's CONFIRMED IPs (same-line disconnect
-  //    pairings — trustworthy) is flagged, OR the current join IP is flagged when
-  //    the correlation is unambiguous. A returning ban-evader is caught the moment
-  //    they log in instead of only when they next disconnect.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
     const knownFlagged = (registry[id]?.cips || []).some(x => flagged.has(x));
     const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
@@ -509,38 +492,32 @@ function parseLine(line, server, key) {
   // backfill can't rebuild the data you just cleared.
   if (cutoffTs && ts && ts < cutoffTs) return;
 
-  // Kill/death stats — only live (backfill would re-count old kills on restart).
+  // Kill/death stats - only live (backfill would re-count old kills on restart).
   // Handles BOTH a single-line JSON record ({"Killer":..,"Killed":..,"KilledBy":..})
-  // and a multi-line block (one field per line, finalized by KilledBy). Match every
-  // field present on the line, then finalize once we have a victim + the KilledBy.
   if (live) {
     const mk = line.match(KILLER_RE);
     const md = line.match(KILLED_RE);
     const mb = line.match(KILLEDBY_RE);
     if (mk || md || mb) {
       let pk = pendingKill[key] || {};
-      if (mk) pk = { killer: mk[1] };                    // "Killer" starts a NEW record — drop any stale block
-      else if (md && pk.killed) pk = {};                 // second victim without a finalize — stale block, start fresh
+      if (mk) pk = { killer: mk[1] };                    // "Killer" starts a NEW record - drop any stale block
+      else if (md && pk.killed) pk = {};                 // second victim without a finalize - stale block, start fresh
       if (md) pk.killed = md[1];
-      // KilledBy is the last field of a kill record (single- or multi-line) — finalize.
+      // KilledBy is the last field of a kill record (single- or multi-line) - finalize.
       if (mb) { pk.killedBy = mb[1]; recordKill(pk); pk = {}; }
       pendingKill[key] = pk;
       return;
     }
   }
 
-  // 1) disconnect line — IP + real id on the SAME line (most reliable; no live gate needed)
+  // 1) disconnect line - IP + real id on the SAME line (most reliable; no live gate needed)
   const c = extractClose(line);
   if (c && !skipId(c.id)) {
     const id = cleanId(c.id), ip = c.ip;
-    const nm = line.match(NAME_OPT_RE);         // some close lines also carry ?Name= — attach it if so
+    const nm = line.match(NAME_OPT_RE);         // some close lines also carry ?Name= - attach it if so
     record(c.id, nm ? nm[1].trim() : null, ip, ts, true);   // confirmed same-line pairing
     // count one completed connection per disconnect (a disconnect emits several
-    // close lines a few ms apart — collapse them by LOG time so backfill counts too).
-    // Count one completed connection per disconnect, using a PERSISTED per-id
-    // high-water-mark so a restart's log re-read can't re-count old disconnects
-    // (lastCountedTs lives on the registry entry, which is saved to disk). The
-    // >5000ms gap still collapses the several close lines of a single disconnect.
+    // close lines a few ms apart - collapse them by LOG time so backfill counts too).
     const e = registry[id];
     if (e && (ts - (e.lastCountedTs ?? -Infinity)) > 5000) {
       e.lastCountedTs = ts;
@@ -551,7 +528,7 @@ function parseLine(line, server, key) {
       scheduleSave();
     }
     // fire the feed on the CONFIRMED IP (accurate), deduped per id per disconnect.
-    // Only when we actually know who this is (a login captured a name) — skip
+    // Only when we actually know who this is (a login captured a name) - skip
     // anonymous/partial connections so the feed isn't full of "unknown".
     if (live && registry[id]?.name && !untrackedIds.has(id) && Date.now() - (recentConfirm.get(id) ?? 0) >= CONFIRM_DEBOUNCE_MS) {
       recentConfirm.set(id, Date.now());
@@ -571,10 +548,8 @@ function parseLine(line, server, key) {
     return;
   }
 
-  // 2) accept line — remember the IP for the upcoming login. Track DISTINCT pending
+  // 2) accept line - remember the IP for the upcoming login. Track DISTINCT pending
   //    IPs so we can tell an unambiguous join (1) from concurrent joins (>1). Accepts
-  //    older than the correlation window are orphans (aborted connects, server-browser
-  //    pings) — drop them so they can't poison confidence or grow the set forever.
   const a = line.match(ACCEPT_RE);
   if (a) {
     if (pendingSet[key] && ts - (pendingTs[key] ?? 0) > CORRELATE_WINDOW_MS) pendingSet[key].clear();
@@ -582,7 +557,7 @@ function parseLine(line, server, key) {
     return;
   }
 
-  // 3) login line — name + id, correlated with the most recent accept IP
+  // 3) login line - name + id, correlated with the most recent accept IP
   const lg = extractLogin(line);
   if (lg) {
     const within    = ts - (pendingTs[key] ?? 0) <= CORRELATE_WINDOW_MS;
@@ -594,7 +569,7 @@ function parseLine(line, server, key) {
     return;
   }
 
-  // 4) ban/unban from ANY admin tool — flag/clear that player's IPs (live only)
+  // 4) ban/unban from ANY admin tool - flag/clear that player's IPs (live only)
   if (!live) return;
   const b = line.match(BAN_RE);
   if (b) { const r = blacklistPlayer(b[1]); if (r.ips.length) console.log(`[ipBans] ban detected "${b[1]}" — flagged ${r.ips.length} IP(s)${r.alts.length ? `, alts: ${r.alts.join(", ")}` : ""}`); return; }
@@ -620,7 +595,7 @@ function poll() {
       offsets[f] = from + n;             // advance by what we actually read, not the stale stat size
     } catch { continue; }
     const lines = ((leftover[f] || "") + buf.toString("utf8")).split(/\r?\n/);
-    leftover[f] = lines.pop();          // last element is an incomplete line — buffer it
+    leftover[f] = lines.pop();          // last element is an incomplete line - buffer it
     const label = labelFor(f);
     for (const l of lines) if (l) parseLine(l, label, f);
   }
@@ -648,7 +623,7 @@ function listDirs(p) {
   catch { return []; }
 }
 // Find active Pavlov.log(s) by probing the fixed tail under a few likely roots
-// (≤2 wildcard levels — no full-filesystem walk). Newest first, capped.
+// (≤2 wildcard levels - no full-filesystem walk). Newest first, capped.
 function discoverLogs(roots) {
   if (!roots) {
     roots = [...listDirs("/home"), "/root", "/opt", "/srv"];
@@ -703,7 +678,7 @@ function init(opts = {}) {
   const backups = watchList.filter(f => !files.includes(f));
   if (backups.length) console.log(`[ipBans] also backfilling ${backups.length} rotated log(s): ${backups.map(b => path.basename(b)).join(", ")}`);
 
-  // untrackedIds isn't persisted — rebuild it from the loaded registry so ignore-listed
+  // untrackedIds isn't persisted - rebuild it from the loaded registry so ignore-listed
   // players stay ignored across restarts (disconnect lines carry no name to re-match on).
   for (const [id, e] of Object.entries(registry)) {
     if (e && untrackedNames.has(norm(e.name))) { untrackedIds.add(id); delete registry[id]; }
@@ -714,7 +689,7 @@ function init(opts = {}) {
 
   // Linkage health: how many accounts have a NAME and a CONFIRMED IP. If ids are
   // known but none are fully linked, the log format isn't pairing IPs to accounts
-  // (so account bans can't flag IPs) — surface it loudly with the fix pointer.
+  // (so account bans can't flag IPs) - surface it loudly with the fix pointer.
   const all   = Object.keys(registry);
   const named = all.filter(id => registry[id].name).length;
   const cipd  = all.filter(id => (registry[id].cips || []).length).length;
@@ -731,7 +706,7 @@ module.exports = {
   unblacklistPlayer,
   resolveIds,
   ipsForIds,
-  getIPsForPlayer:          (input) => ipsForIds(resolveIds(input)),            // all (incl. tentative) — display
+  getIPsForPlayer:          (input) => ipsForIds(resolveIds(input)),            // all (incl. tentative) - display
   getConfirmedIPsForPlayer: (input) => confirmedIpsForIds(resolveIds(input)),   // only same-line confirmed pairings
   getAltsOf:                (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   getAltNamesOf:            (input) => altNamesForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
