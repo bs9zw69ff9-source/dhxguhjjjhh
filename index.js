@@ -1678,13 +1678,21 @@ function preserveBalanceAcrossKick(name) {
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
    delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
 function kickEverywhere(name) {
-  // Kick by USERNAME - this gamemode matches players by name, not hex/EOS id.
-  const target = sanitizeId(name);
-  if (!target) return;
+  const clean = sanitizeId(name);              // fallback token if we can't resolve a live id
+  if (!clean) return;
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  Promise.resolve(sendRconBoth(`Kick ${target}`, "both"))
-    .then(r => logger.info("Bans", `Kick ${target} -> s1=${r.ok1 ? "ok" : "fail"} s2=${r.ok2 ? "ok" : "fail"}`))
-    .catch(err => logger.warn("Bans", `Kick ${target} failed: ${err.message}`));
+  // Pavlov's RCON Kick targets the player's UniqueId, not their display name — so we
+  // look the name up in each server's live player list and kick by that id. Without
+  // this the auto-ban kick (and any name-based kick) silently does nothing.
+  (async () => {
+    const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
+    for (const srv of servers) {
+      let target = clean;
+      try { const id = await resolveOnlineId(name, srv); if (id) target = id; } catch {}
+      try { await sendRcon(`Kick ${target}`, srv, 2500, 1); logger.info("Bans", `Kick ${target} on ${srv} (was "${name}")`); }
+      catch (err) { logger.warn("Bans", `Kick ${target} on ${srv} failed: ${err.message}`); }
+    }
+  })().catch(() => {});
 }
 
 /* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
@@ -1889,6 +1897,15 @@ async function getOnlinePlayers(server) {
     name: String(p.Username ?? p.username ?? p.PlayerName ?? p.name ?? p.Name ?? "").trim(),
     id:   String(p.UniqueId ?? p.uniqueId ?? p.UniqueID ?? p.Id ?? p.id ?? "").trim(),
   })).filter(p => p.name || p.id);
+}
+
+/** Look up an online player's UniqueId by (case-insensitive) name on one server.
+    RCON Kick/Ban target the UniqueId, not the display name — resolve it here so a
+    name-based kick actually lands. Returns null if they aren't currently online. */
+async function resolveOnlineId(name, server) {
+  const key = String(name).toLowerCase();
+  const hit = (await getOnlinePlayers(server)).find(p => p.name.toLowerCase() === key);
+  return hit?.id || null;
 }
 
 /** Update the cached player list for one server from a parsed payload. */
@@ -3536,7 +3553,13 @@ async function onInteraction(interaction) {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
-        await sendRconBoth(`Kick ${playerId}`, server);          // kick by USERNAME (gamemode matches names)
+        // RCON Kick targets the live UniqueId, not the display name — resolve it per
+        // server (fall back to the typed name if they aren't currently online).
+        for (const srv of (server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server])) {
+          let target = playerId;
+          try { const id = await resolveOnlineId(playerId, srv); if (id) target = id; } catch {}
+          try { await sendRcon(`Kick ${target}`, srv, 2500, 1); } catch {}
+        }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
           .setDescription(`> *${randomQuote("kick")}*\n\n${DIVIDER}`)
@@ -3573,7 +3596,7 @@ async function onInteraction(interaction) {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", "No players are currently online on the selected server.")] });
         }
         const pick   = pool[Math.floor(Math.random() * pool.length)];
-        const target = sanitizeId(pick.name);        // kick by USERNAME
+        const target = pick.id || sanitizeId(pick.name);  // kick by live UniqueId (name fallback)
         preserveBalanceAcrossKick(pick.name);                   // don't let the kick wipe their caps
         let kicked = false;
         try { await sendRcon(`Kick ${target}`, pick.srv, 2500, 1); kicked = true; } catch {}
