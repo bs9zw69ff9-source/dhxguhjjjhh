@@ -137,69 +137,13 @@ const ok = (cond, msg) => {
   await bot.seedKnownPlayers();
   ok(bot.getKnownPlayerChoices("seeded").some(c => c.value === "Seeded_Courier"), "seedKnownPlayers backfills from playtime");
 
-  console.log("Faction whitelists from Discord roles:");
-  {
-    await bot.setFactionRankRole("NCR", "Private", "roleP", "guildNCR");
-    await bot.setFactionRankRole("NCR", "Ranger",  "roleR", "guildNCR");
-    const memberBoth = { id: "disc1", roles: { cache: new Set(["roleP", "roleR"]) } };
-    const res = bot.applyMemberFactionRanks(memberBoth, "NCR", "RangerRick");   // name supplied (modal)
-    ok(res.ranks && res.ranks.includes("Private") && res.ranks.includes("Ranger"), "member holding TWO rank roles gets BOTH ranks");
-    ok((bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rangerrick"), "written into the Private rank file");
-    ok((bot.readFactionFile("ncrranger.txt")  || []).some(n => n.toLowerCase() === "rangerrick"), "written into the Ranger rank file");
-    ok((bot.readFactionFile("ncrspawn.txt")   || []).some(n => n.toLowerCase() === "rangerrick"), "added to the NCR membership file");
-    const memberOne = { id: "disc1", roles: { cache: new Set(["roleR"]) } };   // dropped the Private role
-    bot.applyMemberFactionRanks(memberOne, "NCR", "RangerRick");
-    ok(!(bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rangerrick"), "losing a role removes that rank");
-    ok((bot.readFactionFile("ncrranger.txt")   || []).some(n => n.toLowerCase() === "rangerrick"), "the still-held rank remains");
-    const viaNick = bot.applyMemberFactionRanks({ id: "y", displayName: "NickCourier", roles: { cache: new Set(["roleR"]) } }, "NCR");
-    ok(viaNick.name === "NickCourier", "falls back to the member's display name when no explicit name is given");
-    const noName = bot.applyMemberFactionRanks({ id: "z", roles: { cache: new Set(["roleP"]) } }, "NCR");
-    ok(noName.skipped === "no name", "member with no resolvable name is skipped");
-    // raw interaction shape: roles is a plain array of id strings (not a .cache collection)
-    const raw = bot.applyMemberFactionRanks({ id: "raw", roles: ["roleP"] }, "NCR", "RawGuy");
-    ok(raw.ranks && raw.ranks.includes("Private"), "raw member.roles array is understood (role matched)");
-    ok((bot.readFactionFile("ncrprivate.txt") || []).some(n => n.toLowerCase() === "rawguy"), "raw-shape member added to the rank .txt");
-    ok((bot.readFactionFile("ncrspawn.txt")   || []).some(n => n.toLowerCase() === "rawguy"), "raw-shape member auto-added to the spawn file");
-    // faction leader role
-    await bot.setFactionAdminRole("NCR", "leaderRole", "guildNCR");
-    ok(bot.isFactionAdmin({ roles: { cache: new Set(["leaderRole"]) } }, "NCR"), "faction leader role is recognized");
-    ok(bot.isFactionAdmin({ roles: ["leaderRole"] }, "NCR"), "faction leader role recognized on raw roles array");
-    ok(!bot.isFactionAdmin({ roles: { cache: new Set(["someoneelse"]) } }, "NCR"), "non-leader is not recognized");
-    await bot.setFactionAdminRole("NCR", null, "guildNCR");
-    ok(!bot.isFactionAdmin({ roles: { cache: new Set(["leaderRole"]) } }, "NCR"), "clearing the leader role revokes it");
-    // rank cap — role-based whitelisting can't exceed a rank cap
-    await bot.setFactionRankRole("Brotherhood of Steel", "Knight", "bosKnight", "guildBOS");
-    await bot.setFactionRankCap("Brotherhood of Steel", "Knight", 1);
-    const k1 = bot.applyMemberFactionRanks({ id: "k1", roles: ["bosKnight"] }, "Brotherhood of Steel", "KnightOne");
-    ok(k1.ranks.includes("Knight"), "first member fills the Knight rank (cap 1)");
-    const k2 = bot.applyMemberFactionRanks({ id: "k2", roles: ["bosKnight"] }, "Brotherhood of Steel", "KnightTwo");
-    ok(!k2.ranks.includes("Knight") && (k2.skipped || []).includes("Knight"), "second member is refused — rank cap not exceeded");
-    ok((bot.readFactionFile("bosknight.txt") || []).length === 1, "Knight rank file holds exactly the cap");
-    ok(!(bot.readFactionFile("bosspawn.txt") || []).some(n => n.toLowerCase() === "knighttwo"), "refused member not added to the faction either");
-    // faction size cap — role-based whitelisting can't exceed the faction cap
-    await bot.setFactionRankRole("Khans", "Prospect", "khanProspect", "guildKHAN");
-    await bot.setFactionCap("Khans", 1);
-    const p1 = bot.applyMemberFactionRanks({ id: "p1", roles: ["khanProspect"] }, "Khans", "ProspectOne");
-    ok(p1.ranks.includes("Prospect"), "first member joins Khans (cap 1)");
-    const p2 = bot.applyMemberFactionRanks({ id: "p2", roles: ["khanProspect"] }, "Khans", "ProspectTwo");
-    ok(p2.capped === "faction", "second member refused — faction size cap not exceeded");
-    ok((bot.readFactionFile("khansspawn.txt") || []).length === 1, "Khans roster holds exactly the cap");
-    // RCON menu roles
-    await bot.setMenuRole("staff", "staffRole");
-    ok(bot.loadMenuRoles().staff === "staffRole", "setMenuRole stores the Staff role");
-    await bot.setMenuRole("highstaff", "hsRole");
-    ok(bot.loadMenuRoles().highstaff === "hsRole", "setMenuRole stores the High Staff role");
-    await bot.setMenuRole("staff", null);
-    ok(bot.loadMenuRoles().staff && bot.loadMenuRoles().staff !== "staffRole", "clearing a menu role falls back to the default");
-    // whitelist links — one active whitelist per Discord user
-    bot.applyMemberFactionRanks({ id: "wlu", roles: ["roleR"] }, "NCR", "WLUser");   // put WLUser on the NCR roster
-    await bot.setWhitelistLink("wlu", { name: "WLUser", faction: "NCR" });
-    ok(bot.loadWhitelistLinks()["wlu"].name === "WLUser", "whitelist link is recorded");
-    ok(bot.whitelistActive(bot.loadWhitelistLinks()["wlu"]) === true, "link is active while the name is on the roster");
-    ok(bot.whitelistActive({ name: "GhostName", faction: "NCR" }) === false, "link is inactive when the name isn't on the roster");
-    await bot.clearWhitelistLink("wlu");
-    ok(!bot.loadWhitelistLinks()["wlu"], "whitelist link clears");
-  }
+  console.log("RCON menu roles:");
+  await bot.setMenuRole("staff", "staffRole");
+  ok(bot.loadMenuRoles().staff === "staffRole", "setMenuRole stores the Staff role");
+  await bot.setMenuRole("highstaff", "hsRole");
+  ok(bot.loadMenuRoles().highstaff === "hsRole", "setMenuRole stores the High Staff role");
+  await bot.setMenuRole("staff", null);
+  ok(bot.loadMenuRoles().staff && bot.loadMenuRoles().staff !== "staffRole", "clearing a menu role falls back to the default");
 
   console.log("Context-aware autocomplete:");
   const mk = (cmd, opts = {}, sub = null) => ({ commandName: cmd, options: { getSubcommand: () => sub, getString: (n) => opts[n] ?? null } });
