@@ -149,6 +149,7 @@ const FILES = {
   USER_UNBARRED:  "./user_unbarred.json",
   MENU_PANEL:     "./menu_panel.json",
   MENU_ROLES:     "./menu_roles.json",
+  MENU_LINKS:     "./menu_links.json",
   FACTION_ROLE_MAP: "./faction_role_map.json",
   WHITELIST_LINKS: "./whitelist_links.json",
 };
@@ -169,6 +170,7 @@ const DEFAULTS = {
   [FILES.USER_UNBARRED]:  "[]",
   [FILES.MENU_PANEL]:     "{}",
   [FILES.MENU_ROLES]:     "{}",
+  [FILES.MENU_LINKS]:     "{}",
   [FILES.FACTION_ROLE_MAP]: "{}",
   [FILES.WHITELIST_LINKS]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
@@ -2902,18 +2904,47 @@ async function ensureMenuPanel() {
   const saved = safeRead(FILES.MENU_PANEL, {});
   if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("RCON Menu Access")
-    .setDescription(`${hero("Tools for those the NCR trusts.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.`));
+    .setDescription(`${hero("Tools for those the NCR trusts.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("menu_start").setLabel("Get Menu").setStyle(ButtonStyle.Success));
   try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
   catch (e) { logger.warn("MenuPanel", `panel post failed: ${e.message}`); }
 }
 
+/* Log linking a Discord user to the RCON name they claimed a menu for. One active
+   menu per Discord user — they can't claim a second/other name while their grant is
+   on record; re-entering their own name removes it (toggle), same as whitelists. */
+const loadMenuLinks = () => safeRead(FILES.MENU_LINKS, {});
+function setMenuLink(discordId, data) { return update(FILES.MENU_LINKS, {}, (m) => { m[discordId] = data; return m; }); }
+function clearMenuLink(discordId)     { return update(FILES.MENU_LINKS, {}, (m) => { delete m[discordId]; return m; }); }
+// Active only while their name still holds a recorded grant (an admin /stripmenu frees them).
+function menuLinkActive(link) { return !!(link && link.name && (loadMenuGrants()[String(link.name).toLowerCase()] || []).length); }
+
 async function handleMenuPanelSubmit(interaction) {
   const name = sanitizeMessage(interaction.fields.getTextInputValue("menu_name")).trim();
   if (!name) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
       .setDescription("Enter your exact Pavlov in-game name."))], flags: MessageFlags.Ephemeral });
+  }
+  // One RCON name per Discord user.
+  const link = loadMenuLinks()[interaction.user.id];
+  if (menuLinkActive(link)) {
+    if (name.toLowerCase() === link.name.toLowerCase()) {
+      // Re-entered their own name → strip their menu so they can redo it.
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const t = sanitizeId(link.name);
+      const hadHS = (loadMenuGrants()[link.name.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
+      await sendRconBoth(`RemoveMenu ${t}`, "both");
+      if (hadHS) await sendRconBoth(`RemoveAccessManager ${t}`, "both");
+      for (const m of MENUS) for (const srv of ["server1", "server2", "both"]) await removeMenuGrant(link.name, srv, m.value);
+      await clearMenuLink(interaction.user.id);
+      logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Removed (self)")
+        .addFields({ name: "Discord", value: `${interaction.user}`, inline: true }, { name: "In-game", value: `\`${link.name}\``, inline: true })));
+      return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Menu Removed")
+        .setDescription(`Removed the menu from \`${link.name}\`. Press **Get Menu** again to re-claim.`))] });
+    }
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Already Claimed")
+      .setDescription(`You already hold a menu as \`${link.name}\`. One RCON name per Discord account.\n\nTo change it, press **Get Menu** and enter **${link.name}** to remove it first.`))], flags: MessageFlags.Ephemeral });
   }
   // Highest role wins (handles GuildMember .cache and raw role-array shapes).
   const tier = menuRoleTiers().find(t => t.role && memberHasRoleId(interaction.member, t.role));
@@ -2931,7 +2962,8 @@ async function handleMenuPanelSubmit(interaction) {
   } else {
     await sendRconBoth(`GiveMenu ${target} ${meta.menuId}`, "both");
   }
-  addMenuGrant(name, "both", tier.menu, meta.menuId, `self-service:${interaction.user.tag}`);
+  await addMenuGrant(name, "both", tier.menu, meta.menuId, `self-service:${interaction.user.tag}`);
+  await setMenuLink(interaction.user.id, { name, menu: tier.menu, at: Date.now() });   // Discord user ↔ RCON name
   logger.info("MenuPanel", `${interaction.user.tag} self-granted ${meta.name} to "${name}" (${target})`);
   const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Menu Granted")
     .setDescription(`Granted the **${meta.name}** menu to \`${name}\` on both servers. Open your in-game menu to use it.${tier.menu === "highstaff" ? "\nAlso granted Mod + Access Manager." : ""}`));
@@ -3398,6 +3430,15 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, ip, reason }) => {
+      // A TEMP-banned player bouncing off the blacklist still shows up in the log as
+      // a join attempt from their flagged IP/EOS id. Their temp ban already covers
+      // them — do NOT escalate it into a permanent ban (this was silently converting
+      // every temp ban whose holder tried to reconnect).
+      const existing = loadBans().find(b => _sameId(b.playerId, name));
+      if (existing && !existing.permanent && existing.expires && existing.expires > Date.now()) {
+        logger.info("IPGuard", `${name} tried to join while temp-banned — blocked, no escalation`);
+        return;
+      }
       const res = await banWithIp(name, "both", { permanent: true });
       const ok  = res?.ok;
       try { await upsertPermBan({ playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}`, moderator: "IP-Guard" }); } catch {}   // show in /banlist
@@ -4101,7 +4142,9 @@ async function onInteraction(interaction) {
         const playerId = sanitizeBanName(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const tb = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        // Prefer an active TEMP entry if the registry ever holds duplicates for a name.
+        const _entries = loadBans().filter(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        const tb = _entries.find(b => !b.permanent && b.expires) ?? _entries[0];
         if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
