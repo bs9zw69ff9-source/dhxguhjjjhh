@@ -1470,6 +1470,23 @@ function brand(embed, { thumb = false, footer } = {}) {
   if (thumb && icon) embed.setThumbnail(icon);
   if (footer) embed.setFooter(typeof footer === "string" ? { text: footer } : footer);
   embed.setTimestamp();
+  clampEmbed(embed);
+  return embed;
+}
+// Keep any embed inside Discord's hard API limits so a long field can never
+// reject the whole message (title 256, desc 4096, field name 256/value 1024).
+function clampEmbed(embed) {
+  try {
+    const d = embed.data;
+    if (d.title) embed.setTitle(String(d.title).slice(0, 256));
+    if (d.description) embed.setDescription(String(d.description).slice(0, 4096));
+    if (Array.isArray(d.fields)) {
+      for (const f of d.fields) {
+        if (f.name  && f.name.length  > 256)  f.name  = f.name.slice(0, 253)  + "…";
+        if (f.value && f.value.length > 1024) f.value = f.value.slice(0, 1021) + "…";
+      }
+    }
+  } catch {}
   return embed;
 }
 
@@ -1780,30 +1797,17 @@ function textifyChunks(payload) {
   return { first: { ...rest, content: chunks[0] || "​" }, extra: chunks.slice(1) };
 }
 // One-message form for channel sends / edits / DMs (overflow truncated with a marker).
+// Embeds everywhere. textify() and patchInteractionOutput() are now pass-throughs:
+// the strip-a-keepEmbeds-flag is all that's left so premium-UI payloads keep working.
 function textify(payload) {
-  if (!payload || typeof payload !== "object" || !Array.isArray(payload.embeds) || !payload.embeds.length) return payload;
-  const { first, extra } = textifyChunks(payload);
-  if (extra.length) first.content = `${first.content.slice(0, 1980)}\n-# (truncated)`;
-  return first;
+  if (payload && typeof payload === "object" && payload.keepEmbeds) { const { keepEmbeds, ...rest } = payload; return rest; }
+  return payload;
 }
-// Patch an interaction's output methods so ANY embed payload goes out as text.
-// Interaction responses are already native replies (Discord shows the
 function patchInteractionOutput(interaction) {
   for (const m of ["reply", "editReply", "followUp", "update"]) {
     const orig = typeof interaction[m] === "function" ? interaction[m].bind(interaction) : null;
     if (!orig) continue;
-    interaction[m] = async (payload, ...args) => {
-      if (typeof payload === "string") payload = { content: payload };
-      if (!payload || typeof payload !== "object") return orig(payload, ...args);
-      if (payload.keepEmbeds) { const { keepEmbeds, ...rest } = payload; return orig(rest, ...args); }   // premium UI surfaces keep real embeds
-      const hasEmbeds = Array.isArray(payload.embeds) && payload.embeds.length;
-      if (!hasEmbeds && !payload.content) return orig(payload, ...args);   // component-only edits etc.
-      let first = payload, extra = [];
-      if (hasEmbeds) ({ first, extra } = textifyChunks(payload)); else first = { ...payload };
-      const res = await orig(first, ...args);
-      for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch {} }
-      return res;
-    };
+    interaction[m] = (payload, ...args) => orig(textify(payload), ...args);
   }
 }
 
