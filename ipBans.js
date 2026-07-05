@@ -31,6 +31,7 @@ const FIDS_PATH      = path.join(__dirname, "ip_flagged_ids.json");    // flagge
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const CUTOFF_PATH    = path.join(__dirname, "ip_cutoff.json");      // ignore log lines older than this (set by "wipe all IP data")
 const KD_PATH        = path.join(__dirname, "kd.json");            // per-player kills/deaths
+const KILLLOG_PATH   = path.join(__dirname, "kill_log.json");      // per-killer victim tallies (for faction kill counts)
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 
@@ -145,12 +146,37 @@ function bumpKD(name, field) {
   const e = kd[k] || { name, kills: 0, deaths: 0 };
   e.name = name; e[field] = (e[field] || 0) + 1; kd[k] = e; scheduleKD();
 }
+// Per-killer victim tallies: { [killerLower]: { [victimLower]: { name, count } } }.
+// Lets /stats show how many times a player has killed each individual — which the
+// bot then rolls up per faction by cross-referencing the faction spawn files.
+const killLog = loadJSON(KILLLOG_PATH, {});
+let killLogDirty = false, killLogTimer = null;
+function flushKillLog() { killLogDirty = false; saveJSON(KILLLOG_PATH, killLog); }
+function scheduleKillLog() { killLogDirty = true; if (killLogTimer) return; killLogTimer = setTimeout(() => { killLogTimer = null; if (killLogDirty) flushKillLog(); }, SAVE_THROTTLE_MS); }
+function bumpKill(killer, victim) {
+  const k = norm(killer), v = norm(victim);
+  if (!k || !v) return;
+  const bucket = killLog[k] || (killLog[k] = {});
+  const e = bucket[v] || { name: victim, count: 0 };
+  e.name = victim; e.count += 1; bucket[v] = e;   // keep the freshest spelling of the victim's name
+  scheduleKillLog();
+}
+// Every distinct player `killer` has killed, most-killed first: [{ name, count }].
+function getKills(killer) {
+  const bucket = killLog[norm(killer)];
+  if (!bucket) return [];
+  return Object.values(bucket).map(e => ({ name: e.name, count: e.count })).sort((a, b) => b.count - a.count);
+}
+
 // Record one KillData block. Killed always gets a death; killer gets a kill unless
 // it's a suicide/self-death (killer === killed) or there's no real killer.
 function recordKill(pk) {
   if (!pk || !pk.killed) return;
   bumpKD(pk.killed, "deaths");
-  if (pk.killer && norm(pk.killer) !== norm(pk.killed)) bumpKD(pk.killer, "kills");
+  if (pk.killer && norm(pk.killer) !== norm(pk.killed)) {
+    bumpKD(pk.killer, "kills");
+    bumpKill(pk.killer, pk.killed);
+  }
 }
 function getKD(name) { const e = kd[norm(name)]; return e ? { ...e } : { name: String(name), kills: 0, deaths: 0 }; }
 function topKD(limit = 30, minKills = 0) {
@@ -601,6 +627,7 @@ function poll() {
   }
   if (dirty) flushRegistry();
   if (kdDirty) flushKD();
+  if (killLogDirty) flushKillLog();
   pruneDebounceMaps();
 }
 
@@ -713,6 +740,7 @@ module.exports = {
   getRecord,
   getKD,
   topKD,
+  getKills,
   addUntracked,
   removeUntracked,
   getUntracked,

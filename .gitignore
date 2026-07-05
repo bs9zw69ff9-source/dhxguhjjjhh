@@ -42,6 +42,7 @@ ip_cutoff.json
 .DS_Store
 *.swp
 kd.json
+kill_log.json
 
 # Pre-write faction/donator file snapshots (safety net — created at runtime)
 faction_file_bak/

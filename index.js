@@ -2095,6 +2095,54 @@ function getPlayerFactions(playerId) {
   return result;
 }
 
+/* Read every faction spawn (membership) file once and build a reverse index:
+   lowercased member name -> [faction names]. Used to roll a player's per-victim
+   kills up into per-faction totals without re-reading the files for each victim.
+   Returns null if the FactionRoles folder can't be read. */
+function buildFactionMembershipIndex() {
+  let files;
+  try { files = fs.readdirSync(FACTION_ROLES_PATH).filter(f => f.endsWith("spawn.txt")); }
+  catch { return null; }
+  const index = new Map();
+  for (const file of files) {
+    const key  = path.basename(file, ".txt");
+    const name = FACTION_SPAWN_MAP[key] ?? key;
+    const lines = readFactionFile(file);
+    if (!lines) continue;
+    for (const l of lines) {
+      const memberId = l.toLowerCase();
+      if (!memberId) continue;
+      const arr = index.get(memberId) || [];
+      if (!arr.includes(name)) arr.push(name);
+      index.set(memberId, arr);
+    }
+  }
+  return index;
+}
+
+/* Roll a killer's per-victim tally up into per-faction kill counts. Returns
+   { [faction]: { total, members: [{ name, count }] } }, members sorted most-killed
+   first. A victim in two factions counts toward each. Killers' own faction is not
+   excluded — the tally reflects exactly who they killed. */
+function factionKillBreakdown(killerId) {
+  const membership = buildFactionMembershipIndex();
+  if (!membership) return null;
+  let victims = [];
+  try { victims = ipBans.getKills(killerId); } catch { victims = []; }
+  const out = {};
+  for (const v of victims) {
+    const factions = membership.get(v.name.toLowerCase());
+    if (!factions) continue;                              // victim isn't in any faction
+    for (const f of factions) {
+      const bucket = out[f] || (out[f] = { total: 0, members: [] });
+      bucket.total += v.count;
+      bucket.members.push({ name: v.name, count: v.count });
+    }
+  }
+  for (const f of Object.keys(out)) out[f].members.sort((a, b) => b.count - a.count);
+  return out;
+}
+
 function addPlayerToRankFile(faction, playerId, rank) {
   const cfg = getFactionRankConfig(faction);
   if (!cfg) return true;
@@ -5089,6 +5137,27 @@ async function onInteraction(interaction) {
         }
         if (history.length) {
           embed.addFields({ name: "Mod Actions", value: `**${history.length}** on record`, inline: false });
+        }
+
+        // Faction kills — how many times this player has killed members of each
+        // faction, cross-referenced from the live kill log against the spawn files.
+        const fkills = factionKillBreakdown(playerId);
+        if (fkills && Object.keys(fkills).length) {
+          const ordered = Object.entries(fkills).sort((a, b) => b[1].total - a[1].total);
+          const grand   = ordered.reduce((a, [, d]) => a + d.total, 0);
+          embed.addFields({
+            name: `Faction Kills — ${grand} total`,
+            value: ordered.map(([f, d]) => `${GLYPH.rank} **${f}** — ${d.total} kill${d.total !== 1 ? "s" : ""}`).join("\n"),
+            inline: false,
+          });
+          const MEMBERS_SHOWN = 12;
+          for (const [faction, data] of ordered) {
+            const shown = data.members.slice(0, MEMBERS_SHOWN);
+            const lines = shown.map(m => `${GLYPH.dot} ${m.name} — **${m.count}**`);
+            const more  = data.members.length - shown.length;
+            if (more > 0) lines.push(`*…and ${more} more*`);
+            embed.addFields({ name: `${faction} (${data.total})`, value: lines.join("\n"), inline: true });
+          }
         }
 
         brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });

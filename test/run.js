@@ -503,6 +503,24 @@ const ok = (cond, msg) => {
     ok(ipBans.getKD("Solo").kills === 1, "single-line JSON KillData credits the kill");
     ok(ipBans.getKD("Target").deaths === 1, "single-line JSON KillData credits the death");
 
+    // Per-victim kill matrix (drives /stats faction kill counts)
+    const logKM = path.join(sandbox, "PavlovKM.log");
+    fs.writeFileSync(logKM, "");
+    const tKM = ipBans.init({ logFiles: [logKM], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logKM,
+      '[2026.07.02-10.00.00:000][1]LogStats: KillData: {"Killer": "Hunter", "Killed": "NCR_Bob", "KilledBy": "AK"}\n' +
+      '[2026.07.02-10.00.01:000][2]LogStats: KillData: {"Killer": "Hunter", "Killed": "NCR_Bob", "KilledBy": "AK"}\n' +
+      '[2026.07.02-10.00.02:000][3]LogStats: KillData: {"Killer": "Hunter", "Killed": "Legion_Cae", "KilledBy": "Knife"}\n' +
+      '[2026.07.02-10.00.03:000][4]LogStats: KillData: {"Killer": "Hunter", "Killed": "Hunter", "KilledBy": "None"}\n');   // suicide - not a kill
+    await new Promise(r => setTimeout(r, 80));
+    clearInterval(tKM);
+    const hk = ipBans.getKills("Hunter");
+    ok(hk.length === 2, "getKills lists each distinct victim once");
+    ok(hk[0].name === "NCR_Bob" && hk[0].count === 2, "most-killed victim first, with the right tally");
+    ok(hk.some(v => v.name === "Legion_Cae" && v.count === 1), "second victim tracked with its count");
+    ok(!hk.some(v => v.name.toLowerCase() === "hunter"), "suicide is not counted as a kill on the victim matrix");
+    ok(ipBans.getKills("NeverKilled").length === 0, "unknown killer -> empty list");
+
     // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
     const logEid = path.join(sandbox, "PavlovEID.log");
     fs.writeFileSync(logEid, "");
