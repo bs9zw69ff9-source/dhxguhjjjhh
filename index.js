@@ -2471,7 +2471,8 @@ function buildLeaderboardData() {
 }
 
 function rankLabel(i) {
-  return i === 0 ? "" : i === 1 ? "" : i === 2 ? "" : `\`#${String(i + 1).padStart(2)}\``;
+  // Top three get the ◆ badge; everyone else a plain aligned number.
+  return `\`${i < 3 ? "◆" : "#"}${String(i + 1).padStart(2)}\``;
 }
 
 function buildLeaderboardEmbed() {
@@ -3051,6 +3052,9 @@ const commands = [
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
     .addSubcommand(s => s.setName("audit")
       .setDescription("View recent add/remove/rank changes for a faction")
+      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
+    .addSubcommand(s => s.setName("playtime")
+      .setDescription("Whitelisted members' playtime, highest to lowest")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
     .addSubcommand(s => s.setName("setcap")
       .setDescription("Admin — Set the maximum member cap for a faction")
@@ -4605,6 +4609,41 @@ async function onInteraction(interaction) {
               .setTitle(`${faction} — Roster`)
               .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
               .setFooter({ text: SPAWN_FILE_MAP[faction] }),
+            { perPage: 20 });
+        }
+
+        /* ── playtime (public, paginated) — roster ranked by time served ── */
+        if (sub === "playtime") {
+          const faction = interaction.options.getString("faction");
+          const members = getFactionMembers(faction);
+          if (members === null) {
+            return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], flags: MessageFlags.Ephemeral });
+          }
+          if (!members.length) {
+            return interaction.reply({ embeds: [
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
+                .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
+                .setTimestamp()
+            ], flags: MessageFlags.Ephemeral });
+          }
+          // Playtime keys are display-cased names — match members case-insensitively.
+          const byName = new Map(Object.entries(loadPlaytime()).map(([n, m]) => [n.toLowerCase(), Number(m) || 0]));
+          const ranked = members
+            .map(m => ({ ...m, minutes: byName.get(m.playerId.toLowerCase()) ?? null }))
+            .sort((a, b) => (b.minutes ?? -1) - (a.minutes ?? -1));
+          const top   = ranked[0]?.minutes || 1;
+          const total = ranked.reduce((s, m) => s + (m.minutes ?? 0), 0);
+          const lines = ranked.map((m, i) => {
+            const time  = m.minutes !== null ? formatPlaytime(m.minutes) : "*No record*";
+            const meter = m.minutes !== null && i < 5 ? `  \`${bar(m.minutes, top, 8)}\`` : "";
+            return `${rankLabel(i)}  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  ${time}${meter}`;
+          });
+          const header = `**${members.length}** member${members.length !== 1 ? "s" : ""}  ·  **${formatPlaytime(total)}** combined`;
+          return paginate(interaction, lines, (pageLines) =>
+            new EmbedBuilder().setColor(NV.GOLD)
+              .setTitle(`${faction} — Playtime`)
+              .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+              .setFooter({ text: "Playtime sampled every 60s while online" }),
             { perPage: 20 });
         }
 
