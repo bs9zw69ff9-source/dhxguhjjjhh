@@ -473,12 +473,12 @@ function writeFactionAudit(entry) {
 }
 
 // ---- constants ----
-const STAFF_MENU_ID = "0011110000000000101000000000000 10101101000000";
+const STAFF_MENU_ID = "0011110000000000101000000000010 11101101000001";
 const MENUS = [
   { name: "Staff",      value: "staff",     menuId: STAFF_MENU_ID },
   // High Staff uses the SAME bit code as Staff, but the grant also runs AddMod + AddAccessManager.
   { name: "High Staff", value: "highstaff", menuId: STAFF_MENU_ID },
-  { name: "Faction",    value: "faction",   menuId: "0000000000000000000000000000010 00110000000001" },
+  { name: "Faction",    value: "faction",   menuId: "0000010000000000000000000000010 00100001000000" },
 ];
 
 /* Self-service RCON-menu panel: a channel where staff enter their in-game name and
