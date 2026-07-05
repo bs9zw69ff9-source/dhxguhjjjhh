@@ -2537,9 +2537,16 @@ async function postPlaytimeLeaderboard() {
 /* Live player list — edits its own message in a channel every 30s. */
 const hasServer2 = !!process.env.RCON_HOST_2;
 function buildPlayerListEmbed() {
+  // Read the faction spawn files once so we can tag each connected player with
+  // their faction. Players not in any faction are shown exactly as before.
+  const membership = buildFactionMembershipIndex();
+  const factionTag = (name) => {
+    const facs = membership?.get(name.toLowerCase());
+    return facs && facs.length ? `  —  ${facs.join(" / ")}` : "";
+  };
   const fmt = (arr) => {
     if (!arr.length) return "*Empty*";
-    let out = arr.map(n => `• ${n}`).join("\n");
+    let out = arr.map(n => `• ${n}${factionTag(n)}`).join("\n");
     if (out.length > 1024) out = out.slice(0, 1000).replace(/\n[^\n]*$/, "") + "\n…";
     return out;
   };
