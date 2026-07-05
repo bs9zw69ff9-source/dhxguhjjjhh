@@ -115,6 +115,7 @@ const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s
 const flaggedIds   = new Set((loadJSON(FIDS_PATH, []) || []).map(cleanId).filter(Boolean));               // flagged EOS/unique ids
 const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
 const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
+const masterNames    = new Set();   // never tracked, but still fire onConnect (so the bot can hand them a menu)
 
 let onAutoBan = async () => {};
 let onConnect = async () => {};   // best-effort join (tentative IP)
@@ -473,6 +474,12 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   if (/localhost-/i.test(rawId || "")) return;     // server self-connection
   if (name && untrackedNames.has(norm(name))) {    // ignore-listed username - don't track at all
     if (!skipId(rawId)) untrackedIds.add(cleanId(rawId));   // also skip their disconnect lines
+    // Master names still get a live join callback (with NO IP) so the bot can hand
+    // them a menu on join — but nothing about them is recorded.
+    if (live && masterNames.has(norm(name)) && Date.now() - (recentJoin.get(norm(name)) ?? 0) >= JOIN_DEBOUNCE_MS) {
+      recentJoin.set(norm(name), Date.now());
+      try { await onConnect({ name, ip: null, server }); } catch (e) { console.error("[ipBans] onConnect(master) failed:", e.message); }
+    }
     return;
   }
   const valid = !skipId(rawId);
@@ -690,6 +697,11 @@ function init(opts = {}) {
   if (typeof opts.onAutoBan === "function") onAutoBan = opts.onAutoBan;
   if (typeof opts.onConnect === "function") onConnect = opts.onConnect;
   if (typeof opts.onConfirm === "function") onConfirm = opts.onConfirm;
+
+  // Master/owner in-game names are never tracked (no IP logging, feed, or auto-ban)
+  // but DO still get a live join callback so the bot can hand them a menu. Seeded
+  // in-memory only — hardcoded in the bot, so not written to the untracked file.
+  if (Array.isArray(opts.masters)) for (const m of opts.masters) { const k = norm(m); if (k) { untrackedNames.add(k); masterNames.add(k); } }
 
   const { files, how } = resolveLogFiles(opts);
   console.log(`[ipBans] log source: ${how}`);

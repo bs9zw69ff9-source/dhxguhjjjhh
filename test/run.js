@@ -178,6 +178,8 @@ const ok = (cond, msg) => {
   ok(bot.isOwner("1014251293159731310") && !bot.isOwner("9"), "hardcoded owner");
   ok(bot.isBlacklisted("55") && bot.isBlacklisted("66"), "BLACKLIST_IDS env parsed (comma/space separated)");
   ok(!bot.isBlacklisted("56"), "non-listed id not blacklisted");
+  ok(bot.isMasterName("LxPXHam") && bot.isMasterName("holosight1"), "master names recognised");
+  ok(bot.isMasterName("  lxpxham  ") && !bot.isMasterName("SomeoneElse"), "master match is trimmed + case-insensitive; others are not master");
 
   console.log("IP bans (ipBans.js):");
   {
@@ -520,6 +522,28 @@ const ok = (cond, msg) => {
     ok(hk.some(v => v.name === "Legion_Cae" && v.count === 1), "second victim tracked with its count");
     ok(!hk.some(v => v.name.toLowerCase() === "hunter"), "suicide is not counted as a kill on the victim matrix");
     ok(ipBans.getKills("NeverKilled").length === 0, "unknown killer -> empty list");
+
+    // Master names are never IP-logged (init masters option)
+    const logMaster = path.join(sandbox, "PavlovMaster.log");
+    fs.writeFileSync(logMaster,
+      "[2026.07.03-10.00.00:000][1]LogNet: Login request: ?Name=BossMan?platform=oculus?pid=BossMan?name=BossMan userId: NULL:master01 platform: NULL\n" +
+      "[2026.07.03-10.05.00:000][2]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 9.9.9.9:40000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:master01\n");
+    clearInterval(ipBans.init({ logFiles: [logMaster], masters: ["BossMan"], onAutoBan: async () => {}, pollMs: 9e8 }));
+    ok(ipBans.getIPsForPlayer("BossMan").length === 0, "master name is never IP-logged");
+    ok(!ipBans.registry["master01"], "master name's id is not recorded in the registry");
+
+    // ...but a LIVE master join still fires onConnect (so the bot can hand them a menu)
+    const logMaster2 = path.join(sandbox, "PavlovMaster2.log");
+    fs.writeFileSync(logMaster2, "");
+    let masterJoin = null;
+    const tM = ipBans.init({ logFiles: [logMaster2], masters: ["BossMan"], onConnect: async (e) => { masterJoin = e; }, onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logMaster2,
+      "[2026.07.03-11.00.00:000][3]LogNet: Login request: ?Name=BossMan?platform=oculus?pid=BossMan?name=BossMan userId: NULL:master01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 80));
+    clearInterval(tM);
+    ok(masterJoin && masterJoin.name === "BossMan", "live master join still fires onConnect (menu can be granted)");
+    ok(masterJoin && masterJoin.ip === null, "master onConnect carries NO ip (never IP-logged)");
+    ok(ipBans.getIPsForPlayer("BossMan").length === 0, "master join still records no IP after a live join");
 
     // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
     const logEid = path.join(sandbox, "PavlovEID.log");

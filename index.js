@@ -61,6 +61,12 @@ const OWNER_IDS = new Set([
 ]);
 function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 
+/* Master in-game names — the people who run the servers. They are never banned,
+   never IP-logged, and are handed a menu automatically on every join. Matched by
+   USERNAME (case-insensitive), since that's what RCON and the logs give us. */
+const MASTER_NAMES = new Set(["lxpxham", "holosight1"]);
+function isMasterName(name) { return MASTER_NAMES.has(String(name ?? "").trim().toLowerCase()); }
+
 /* Roles granted when a staff application is accepted (see /acceptstaffapp). */
 const STAFF_ROLE_IDS = ["1517243775175622808", "1498172888224628776"];
 /* Channel where accepted-staff welcome announcements are posted. */
@@ -1706,6 +1712,11 @@ function kickEverywhere(name) {
 // returning player after their temp ban lifts isn't wrongly auto-banned.
 async function banWithIp(playerId, server = "both", opts = {}) {
   const name = sanitizeBanName(playerId);
+  // Master names are never banned — no matter which path asks (command or auto-ban).
+  if (isMasterName(name)) {
+    logger.warn("Bans", `Refused to ban master name "${name}"`);
+    return { ids: [], ips: [], alts: [], field: null, blacklist: { name, servers: 0 }, ok: false, master: true };
+  }
   let bl = { name, servers: 0 };
   try { bl = blacklistAdd(name); }
   catch (err) { logger.error("Bans", `blacklist add failed for "${name}": ${err.message}`); }
@@ -2796,6 +2807,24 @@ function removeMenuGrant(playerId, server, menuValue) {
    waits a few seconds so the player shows up in RefreshList, then re-sends the
    exact grant(s) on record — nothing is granted that an admin didn't grant. */
 const _recentRegrant = new Map();   // nameLower -> ts (don't re-grant more than once per 2 min)
+
+/* Master names get a menu handed to them automatically on join — GiveMenu with NO
+   bit code (the server grants its default menu). Debounced like the re-grant path so
+   a reconnect flurry doesn't spam RCON. */
+function grantMasterMenu(name) {
+  const key = String(name ?? "").toLowerCase();
+  if (!key) return;
+  if (Date.now() - (_recentRegrant.get(key) ?? 0) < 120_000) return;
+  _recentRegrant.set(key, Date.now());
+  setTimeout(async () => {
+    try {
+      const target = sanitizeId(name);              // menus target the USERNAME on this gamemode
+      await sendRconBoth(`GiveMenu ${target}`, "both");
+      logger.info("Menus", `Granted master menu to ${name} on join (${target})`);
+    } catch (e) { logger.warn("Menus", `master menu grant failed for ${name}: ${e.message}`); }
+  }, 8_000);   // let the join settle so RefreshList lists them
+}
+
 function scheduleMenuRegrant(name) {
   const key = String(name ?? "").toLowerCase();
   if (!key) return;
@@ -3114,9 +3143,12 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   logger.info("IPBans", `Server labels: ${[...serverNameByLabel].map(([l, n]) => `${l}=${n}`).join(", ")}`);
   ipBans.init({
     logFiles: ipLogFiles,
+    masters: [...MASTER_NAMES],   // never IP-logged / fed / auto-banned
     // Fired on every LIVE join - re-grant recorded RCON menus (the server drops a
     // player's menu on disconnect, so a rejoin needs the grant re-applied).
     onConnect: async ({ name }) => {
+      // Master names get a menu handed to them on every join (no bit code).
+      if (isMasterName(name)) { try { grantMasterMenu(name); } catch (e) { logger.warn("Menus", `master menu failed: ${e.message}`); } return; }
       try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
     },
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) -
@@ -3161,6 +3193,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, ip, reason }) => {
+      if (isMasterName(name)) { logger.info("IPGuard", `Skipped auto-ban for master name ${name}`); return; }
       // A TEMP-banned player bouncing off the blacklist still shows up in the log as
       // a join attempt from their flagged IP/EOS id. Their temp ban already covers
       const existing = loadBans().find(b => _sameId(b.playerId, name));
@@ -3766,6 +3799,7 @@ async function onInteraction(interaction) {
         const reasonKey   = interaction.options.getString("reason");
         const reason      = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be banned.`)], flags: MessageFlags.Ephemeral });
         const expires = easternNoonUTC(dateStr);                 // lifts at 12pm Eastern on that date
         if (!expires || expires <= Date.now()) {
           return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
@@ -3900,6 +3934,7 @@ async function onInteraction(interaction) {
         const notes     = interaction.options.getString("notes") ?? null;
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be banned.`)], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         const ipEnf = await banWithIp(playerId, server, { permanent: true });
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
@@ -5238,7 +5273,7 @@ module.exports = {
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
-  isOwner, isBlacklisted,
+  isOwner, isBlacklisted, isMasterName,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
