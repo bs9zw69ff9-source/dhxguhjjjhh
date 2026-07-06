@@ -497,6 +497,9 @@ const MENU_ROLE_DEFAULTS = {
   staff:     process.env.MENU_ROLE_STAFF     || "1520598947180314836",
   faction:   process.env.MENU_ROLE_FACTION   || "1520598947129852082",
 };
+/* RCON blacklist role — anyone holding it is barred from the self-serve menu
+   panel, even if they also hold a menu role. */
+const RCON_BLACKLIST_ROLE_ID = process.env.MENU_ROLE_BLACKLIST || "1520598947129852078";
 // Effective mapping: stored /setrconroles config overrides the env defaults.
 function loadMenuRoles() {
   const saved = safeRead(FILES.MENU_ROLES, {}) || {};
@@ -2743,6 +2746,12 @@ function clearMenuLink(discordId)     { return update(FILES.MENU_LINKS, {}, (m) 
 function menuLinkActive(link) { return !!(link && link.name && (loadMenuGrants()[String(link.name).toLowerCase()] || []).length); }
 
 async function handleMenuPanelSubmit(interaction) {
+  // RCON blacklist role — self-serve is entirely off for these members.
+  if (memberHasRoleId(interaction.member, RCON_BLACKLIST_ROLE_ID)) {
+    logger.info("MenuPanel", `${interaction.user.tag} blocked by RCON blacklist role`);
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
+      .setDescription("Your self-serve RCON menu access has been revoked. Contact an admin if you believe this is a mistake."))], flags: MessageFlags.Ephemeral });
+  }
   const name = sanitizeMessage(interaction.fields.getTextInputValue("menu_name")).trim();
   if (!name) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
