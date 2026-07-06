@@ -100,6 +100,7 @@ function validateConfig() {
   ];
   const optional = [
     "RCON_HOST_2", "RCON_PORT_2", "RCON_PASSWORD_2",
+    "RCON_HOST_3", "RCON_PORT_3", "RCON_PASSWORD_3",
     "MODSAVE_PATH", "MOD_LOG_CHANNEL", "BAN_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
     "PLAYTIME_LB_CHANNEL", "PLAYERLIST_CHANNEL", "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
   ];
@@ -1339,7 +1340,7 @@ function formatUptime(ms) {
 }
 
 function serverLabel(server) {
-  return server === "server2" ? "Server 2" : server === "both" ? "Both Servers" : "Server 1";
+  return server === "server2" ? "Server 2" : server === "server3" ? "Server 3" : server === "both" ? "All Servers" : "Server 1";
 }
 function serverEmoji() { return ""; }   // emoji-free; servers shown via serverLabel()
 
@@ -1572,9 +1573,17 @@ function rateLimitEmbed() {
 }
 
 // ---- rcon ----
+// Servers come online by setting RCON_HOST_N (+ port/password). Everything that
+// fans out over "all servers" iterates ACTIVE_SERVERS so adding a server is just env.
+const hasServer2 = !!process.env.RCON_HOST_2;
+const hasServer3 = !!process.env.RCON_HOST_3;
+const ACTIVE_SERVERS = ["server1", ...(hasServer2 ? ["server2"] : []), ...(hasServer3 ? ["server3"] : [])];
 function getServerConfig(server) {
   if (server === "server2") return {
     host: process.env.RCON_HOST_2, port: Number(process.env.RCON_PORT_2), password: process.env.RCON_PASSWORD_2,
+  };
+  if (server === "server3") return {
+    host: process.env.RCON_HOST_3, port: Number(process.env.RCON_PORT_3), password: process.env.RCON_PASSWORD_3,
   };
   return {
     host: process.env.RCON_HOST_1, port: Number(process.env.RCON_PORT_1), password: process.env.RCON_PASSWORD_1,
@@ -1641,19 +1650,22 @@ async function sendRconBoth(command, server) {
   // server can't make a slash command spin for ~10s ("infinite load"). allSettled:
   // a failure on one server must not abort/mask the command on the other.
   const T = 2500, R = 1;
-  if (server === "both") {
-    const [r1, r2] = await Promise.allSettled([sendRcon(command, "server1", T, R), sendRcon(command, "server2", T, R)]);
-    if (r1.status === "rejected") logger.warn("RCON", `[server1] "${command}" failed: ${r1.reason?.message || r1.reason}`);
-    if (r2.status === "rejected") logger.warn("RCON", `[server2] "${command}" failed: ${r2.reason?.message || r2.reason}`);
-    return {
-      s1: r1.status === "fulfilled" ? r1.value : null,
-      s2: r2.status === "fulfilled" ? r2.value : null,
-      ok1: r1.status === "fulfilled",
-      ok2: r2.status === "fulfilled",
-    };
+  if (server === "both") {   // "both" = every active server (2 or 3 of them)
+    const results = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon(command, s, T, R)));
+    const out = { s1: null, s2: null, s3: null, ok1: false, ok2: false, ok3: false };
+    ACTIVE_SERVERS.forEach((s, i) => {
+      const n = s.replace("server", "");
+      if (results[i].status === "fulfilled") { out[`s${n}`] = results[i].value; out[`ok${n}`] = true; }
+      else logger.warn("RCON", `[${s}] "${command}" failed: ${results[i].reason?.message || results[i].reason}`);
+    });
+    return out;
   }
-  try { const v = await sendRcon(command, server, T, R); return { s1: v, s2: null, ok1: true, ok2: false }; }
-  catch (err) { logger.warn("RCON", `[${server}] "${command}" failed: ${err.message}`); return { s1: null, s2: null, ok1: false, ok2: false }; }
+  try {
+    const v = await sendRcon(command, server, T, R);
+    const n = String(server).replace("server", "");
+    return { s1: null, s2: null, s3: null, ok1: false, ok2: false, ok3: false, [`s${n}`]: v, [`ok${n}`]: true };
+  }
+  catch (err) { logger.warn("RCON", `[${server}] "${command}" failed: ${err.message}`); return { s1: null, s2: null, s3: null, ok1: false, ok2: false, ok3: false }; }
 }
 
 /* Pavlov's economy mod can wipe a player's saved caps when they're force-kicked
@@ -1691,8 +1703,7 @@ function kickEverywhere(name) {
   // look the name up in each server's live player list and kick by that id. Without
   // this the auto-ban kick (and any name-based kick) silently does nothing.
   (async () => {
-    const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
-    for (const srv of servers) {
+    for (const srv of ACTIVE_SERVERS) {
       let target = clean;
       try { const id = await resolveOnlineId(name, srv); if (id) target = id; } catch {}
       try { await sendRcon(`Kick ${target}`, srv, 2500, 1); logger.info("Bans", `Kick ${target} on ${srv} (was "${name}")`); }
@@ -1887,9 +1898,18 @@ async function dmEmbed(discordUser, embed) {
 
 // ---- player cache ----
 const playerCache = {
-  server1: [], server2: [],
-  lastUpdated: { server1: 0, server2: 0 },
+  server1: [], server2: [], server3: [],
+  lastUpdated: { server1: 0, server2: 0, server3: 0 },
 };
+/** Every online name across all active servers (deduped, case preserved). */
+function allCachedPlayers() {
+  return [...new Set(ACTIVE_SERVERS.flatMap(s => playerCache[s]))].filter(Boolean);
+}
+/** Which active servers a name is currently on, e.g. ["Server 1", "Server 3"]. */
+function onlineServersOf(name) {
+  const key = String(name ?? "").toLowerCase();
+  return ACTIVE_SERVERS.filter(s => playerCache[s].some(n => n.toLowerCase() === key)).map(serverLabel);
+}
 const CACHE_TTL_MS = 90_000;
 
 /** Pull trimmed, non-empty player names out of a parsed RefreshList payload. */
@@ -1941,7 +1961,7 @@ async function refreshPlayerCache(server = "server1") {
 
 function getPlayerChoices(server, focused = "") {
   const now     = Date.now();
-  const servers = (!server || server === "both") ? ["server1", "server2"] : [server];
+  const servers = (!server || server === "both") ? ACTIVE_SERVERS : [server];
   const seen    = new Set();
   const choices = [];
   // 1) currently-online players first
@@ -1967,7 +1987,7 @@ function getPlayerChoices(server, focused = "") {
 
 // ---- playtime tracking ----
 function tickPlaytime() {
-  const online = [...new Set([...playerCache.server1, ...playerCache.server2])].filter(Boolean);
+  const online = allCachedPlayers();
   if (!online.length) return;
   update(FILES.PLAYTIME, {}, (pt) => {
     for (const id of online) pt[id] = (pt[id] ?? 0) + 1;
@@ -2547,7 +2567,6 @@ async function postPlaytimeLeaderboard() {
 }
 
 /* Live player list — edits its own message in a channel every 30s. */
-const hasServer2 = !!process.env.RCON_HOST_2;
 function buildPlayerListEmbed() {
   // Read the faction spawn files once so we can tag each connected player with
   // their faction. Players not in any faction are shown exactly as before.
@@ -2562,13 +2581,13 @@ function buildPlayerListEmbed() {
     if (out.length > 1024) out = out.slice(0, 1000).replace(/\n[^\n]*$/, "") + "\n…";
     return out;
   };
-  const s1 = [...playerCache.server1].sort((a, b) => a.localeCompare(b));
-  const s2 = [...playerCache.server2].sort((a, b) => a.localeCompare(b));
-  const total = new Set([...s1, ...s2].map(n => n.toLowerCase())).size;
+  const total = allCachedPlayers().length;
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Live Player List")
-    .setDescription(hero(`**${total}** courier${total !== 1 ? "s" : ""} roaming the Mojave right now.`))
-    .addFields({ name: `Server 1 (${s1.length})`, value: fmt(s1), inline: true });
-  if (hasServer2) embed.addFields({ name: `Server 2 (${s2.length})`, value: fmt(s2), inline: true });
+    .setDescription(hero(`**${total}** courier${total !== 1 ? "s" : ""} roaming the Mojave right now.`));
+  for (const srv of ACTIVE_SERVERS) {
+    const list = [...playerCache[srv]].sort((a, b) => a.localeCompare(b));
+    embed.addFields({ name: `${serverLabel(srv)} (${list.length})`, value: fmt(list), inline: true });
+  }
   return brand(embed.setFooter({ text: "Updates every 30s" }).setTimestamp());
 }
 let lastPlayerListMsgId = null;
@@ -2576,7 +2595,7 @@ async function postPlayerList() {
   if (!PLAYERLIST_CHANNEL) return;
   let channel;
   try { channel = await client.channels.fetch(PLAYERLIST_CHANNEL); } catch { return; }
-  try { await refreshPlayerCache("server1"); if (hasServer2) await refreshPlayerCache("server2"); } catch {}
+  try { for (const srv of ACTIVE_SERVERS) await refreshPlayerCache(srv); } catch {}
   const embed = buildPlayerListEmbed();
   if (lastPlayerListMsgId) {
     try { const m = await channel.messages.fetch(lastPlayerListMsgId); await m.edit({ embeds: [embed] }); return; }
@@ -2667,8 +2686,7 @@ function buildDashboardEmbed(snaps) {
   return brand(embed);
 }
 async function dashboardSnapshots() {
-  const servers = hasServer2 ? ["server1", "server2"] : ["server1"];
-  return Promise.all(servers.map(serverSnapshot));
+  return Promise.all(ACTIVE_SERVERS.map(serverSnapshot));
 }
 let lastDashboardMsgId = null;
 async function postDashboard() {
@@ -2740,7 +2758,7 @@ async function handleMenuPanelSubmit(interaction) {
       const hadHS = (loadMenuGrants()[link.name.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
       await sendRconBoth(`RemoveMenu ${t}`, "both");
       if (hadHS) await sendRconBoth(`RemoveAccessManager ${t}`, "both");
-      for (const m of MENUS) for (const srv of ["server1", "server2", "both"]) await removeMenuGrant(link.name, srv, m.value);
+      for (const m of MENUS) for (const srv of [...ACTIVE_SERVERS, "both"]) await removeMenuGrant(link.name, srv, m.value);
       await clearMenuLink(interaction.user.id);
       logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Removed (self)")
         .addFields({ name: "Discord", value: `${interaction.user}`, inline: true }, { name: "In-game", value: `\`${link.name}\``, inline: true })));
@@ -2868,7 +2886,7 @@ function scheduleMenuRegrant(name) {
 }
 
 async function rconHealthCheck() {
-  for (const srv of (hasServer2 ? ["server1", "server2"] : ["server1"])) {
+  for (const srv of ACTIVE_SERVERS) {
     try {
       const r = await sendRcon("RefreshList", srv, 3000, 1);
       const d = parseRcon(r);
@@ -2891,6 +2909,7 @@ setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(async () => {
   await refreshPlayerCache("server1");
   if (hasServer2) await refreshPlayerCache("server2");
+  if (hasServer3) await refreshPlayerCache("server3");
   tickPlaytime();
 }, 60_000);
 setInterval(processWagePayout, WAGE_INTERVAL_MS);
@@ -2928,7 +2947,7 @@ function autoBackupFactions() {
 // ---- slash command definitions ----
 function serverOption(o) {
   return o.setName("server").setDescription("Which server to target").setRequired(true)
-    .addChoices({ name: "Server 1", value: "server1" }, { name: "Server 2", value: "server2" }, { name: "Both", value: "both" });
+    .addChoices({ name: "Server 1", value: "server1" }, { name: "Server 2", value: "server2" }, { name: "Server 3", value: "server3" }, { name: "All", value: "both" });
 }
 
 const factionChoices = ALL_FACTIONS.map(f => ({ name: f, value: f }));
@@ -3237,6 +3256,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   });
   refreshPlayerCache("server1");
   if (hasServer2) refreshPlayerCache("server2");
+  if (hasServer3) refreshPlayerCache("server3");
   try { healTreeOwnership(); } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
   try { const r = syncAllModSave(); if (r.installs > 1 && !r.off) logger.info("Sync", `ModSave sync on startup — ${r.synced} file(s) propagated across ${r.installs} installs`); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); }
   try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }
@@ -3528,33 +3548,28 @@ async function onInteraction(interaction) {
       case "ping": {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const start = Date.now();
-        const [r1, r2] = await Promise.allSettled([
-          sendRcon("RefreshList", "server1", 2000, 0),
-          sendRcon("RefreshList", "server2", 2000, 0),
-        ]);
-        const rtt  = Date.now() - start;
-        const s1ok = r1.status === "fulfilled" && parseRcon(r1.value)?.Successful;
-        const s2ok = r2.status === "fulfilled" && parseRcon(r2.value)?.Successful;
-        const okCount = (s1ok ? 1 : 0) + (s2ok ? 1 : 0);
-        const color = okCount === 2 ? NV.IRRAD_GREEN : okCount === 1 ? NV.AMBER : NV.RUST_RED;
-        const headline = okCount === 2 ? "All systems nominal — Securitron network active."
-          : okCount === 1 ? "Partial connectivity — one server unreachable."
-          : "Both servers unreachable — check RCON config.";
+        const pings = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon("RefreshList", s, 2000, 0)));
+        const rtt   = Date.now() - start;
+        const okBy  = ACTIVE_SERVERS.map((s, i) => pings[i].status === "fulfilled" && !!parseRcon(pings[i].value)?.Successful);
+        const okCount = okBy.filter(Boolean).length;
+        const color = okCount === ACTIVE_SERVERS.length ? NV.IRRAD_GREEN : okCount > 0 ? NV.AMBER : NV.RUST_RED;
+        const headline = okCount === ACTIVE_SERVERS.length ? "All systems nominal — Securitron network active."
+          : okCount > 0 ? "Partial connectivity — a server is unreachable."
+          : "All servers unreachable — check RCON config.";
         const wsPing = Math.max(0, client.ws.ping);
-        const nodes = hasServer2 ? 3 : 2;
-        const online = 1 + (s1ok ? 1 : 0) + (hasServer2 && s2ok ? 1 : 0);
+        const nodes = ACTIVE_SERVERS.length + 1;      // servers + the bot gateway
+        const online = 1 + okCount;
         const stat = (ok) => ok ? `${GLYPH.up} up` : `${GLYPH.down} down`;
         const lines = [
           "SYSTEM DIAGNOSTICS",
           "──────────────────────────",
           `${cell("gateway", 9)} ${GLYPH.up} up  ${wsPing}ms`,
-          `${cell("server 1", 9)} ${stat(s1ok)}`,
-          ...(hasServer2 ? [`${cell("server 2", 9)} ${stat(s2ok)}`] : []),
+          ...ACTIVE_SERVERS.map((s, i) => `${cell(`server ${i + 1}`, 9)} ${stat(okBy[i])}`),
           "──────────────────────────",
           `${cell("nodes", 9)} ${bar(online, nodes, 8)} ${online}/${nodes}`,
           `${cell("rtt", 9)} ${rtt}ms`,
           `${cell("uptime", 9)} ${formatUptime(Date.now() - BOT_START_MS)}`,
-          `${cell("cached", 9)} ${playerCache.server1.length}${hasServer2 ? `+${playerCache.server2.length}` : ""} players`,
+          `${cell("cached", 9)} ${ACTIVE_SERVERS.map(s => playerCache[s].length).join("+")} players`,
           `${cell("bans", 9)} ${loadBans().length} active`,
         ];
         const embed = new EmbedBuilder().setColor(color)
@@ -3588,7 +3603,7 @@ async function onInteraction(interaction) {
             };
           } catch { return { ok: false, players: 0, mapLabel: "*Unreachable*", gameMode: "*Unreachable*", serverName: serverLabel(srv), maxPlayers: "?" }; }
         };
-        const servers = server === "both" ? ["server1", "server2"] : [server];
+        const servers = server === "both" ? ACTIVE_SERVERS : [server];
         const infos   = await Promise.all(servers.map(fetchInfo));
         const embeds  = infos.map((info, i) => {
           const srv = servers[i];
@@ -3614,10 +3629,10 @@ async function onInteraction(interaction) {
       case "find": {
         const query = interaction.options.getString("name").toLowerCase();
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        await Promise.all(hasServer2 ? [refreshPlayerCache("server1"), refreshPlayerCache("server2")] : [refreshPlayerCache("server1")]);
+        await Promise.all(ACTIVE_SERVERS.map(refreshPlayerCache));
         const matches = [];
         const seen    = new Set();
-        for (const srv of ["server1", "server2"]) {
+        for (const srv of ACTIVE_SERVERS) {
           for (const name of playerCache[srv]) {
             if (!name.toLowerCase().includes(query)) continue;
             const key = name.toLowerCase();
@@ -3637,7 +3652,7 @@ async function onInteraction(interaction) {
           ]});
         }
         const lines = matches.map((m) => {
-          const srvStr = m.servers.map(s => s === "server1" ? "S1" : "S2").join("+");
+          const srvStr = m.servers.map(s => "S" + s.replace("server", "")).join("+");
           return `\`[${srvStr}]\`  **${m.name}**`;
         });
         return interaction.editReply({ embeds: [
@@ -3658,7 +3673,7 @@ async function onInteraction(interaction) {
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
         // RCON Kick targets the live UniqueId, not the display name — resolve it per
         // server (fall back to the typed name if they aren't currently online).
-        for (const srv of (server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server])) {
+        for (const srv of (server === "both" ? ACTIVE_SERVERS : [server])) {
           let target = playerId;
           try { const id = await resolveOnlineId(playerId, srv); if (id) target = id; } catch {}
           try { await sendRcon(`Kick ${target}`, srv, 2500, 1); } catch {}
@@ -3690,7 +3705,7 @@ async function onInteraction(interaction) {
         if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const server = interaction.options.getString("server");
         await interaction.deferReply();
-        const servers = server === "both" ? (hasServer2 ? ["server1", "server2"] : ["server1"]) : [server];
+        const servers = server === "both" ? ACTIVE_SERVERS : [server];
         const pool = [];
         for (const srv of servers) {
           try { for (const p of await getOnlinePlayers(srv)) if (p.name) pool.push({ ...p, srv }); } catch {}
@@ -3747,11 +3762,12 @@ async function onInteraction(interaction) {
         const key    = playerId.toLowerCase();
         const onS1   = playerCache.server1.some(n => n.toLowerCase() === key);
         const onS2   = playerCache.server2.some(n => n.toLowerCase() === key);
-        const online = onS1 || onS2;
+        const onS3   = playerCache.server3.some(n => n.toLowerCase() === key);
+        const online = onS1 || onS2 || onS3;
         const last   = getLastSeen(playerId);
         let color, desc;
         if (online) {
-          const where = [onS1 && "Server 1", onS2 && "Server 2"].filter(Boolean).join("  +  ");
+          const where = [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join("  +  ");
           color = NV.IRRAD_GREEN;
           desc  = `**Online right now** on ${where}.`;
         } else if (last) {
@@ -4335,7 +4351,7 @@ async function onInteraction(interaction) {
         }
         // Clear every menu grant record for this player on the affected server(s).
         for (const m of MENUS) {
-          if (server === "both") { removeMenuGrant(playerId, "server1", m.value); removeMenuGrant(playerId, "server2", m.value); }
+          if (server === "both") { for (const srv of ACTIVE_SERVERS) removeMenuGrant(playerId, srv, m.value); }
           removeMenuGrant(playerId, server, m.value);
         }
         const embed = brand(new EmbedBuilder().setColor(NV.NCR_TAN)
@@ -4368,6 +4384,7 @@ async function onInteraction(interaction) {
         for (const pid of holders) for (const m of MENUS) {
           removeMenuGrant(pid, "server1", m.value);
           removeMenuGrant(pid, "server2", m.value);
+          removeMenuGrant(pid, "server3", m.value);
           removeMenuGrant(pid, "both", m.value);
         }
 
@@ -4932,16 +4949,15 @@ async function onInteraction(interaction) {
         try {
           if (server === "both") {
             // allSettled so one unreachable server doesn't fail the whole command
-            const [s1, s2] = await Promise.allSettled([sendRcon(command, "server1"), sendRcon(command, "server2")]);
+            const results = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon(command, s)));
             const fmt = (r) => r.status === "fulfilled" ? ((r.value.trim() || "no response").slice(0, 900)) : `unreachable: ${r.reason?.message || r.reason}`;
             writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
             return interaction.editReply({ embeds: [
-              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — Both Servers").setDescription(`${DIVIDER}`)
+              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — All Servers").setDescription(`${DIVIDER}`)
                 .addFields(
-                  { name: "Signal",             value: `\`\`\`${command}\`\`\``,           inline: false },
-                  { name: "Server 1 Response",  value: `\`\`\`${fmt(s1)}\`\`\``,           inline: false },
-                  { name: "Server 2 Response",  value: `\`\`\`${fmt(s2)}\`\`\``,           inline: false },
-                  { name: "By",                  value: `${interaction.user}`,             inline: false },
+                  { name: "Signal", value: `\`\`\`${command}\`\`\``, inline: false },
+                  ...ACTIVE_SERVERS.map((s, i) => ({ name: `${serverLabel(s)} Response`, value: `\`\`\`${fmt(results[i])}\`\`\``, inline: false })),
+                  { name: "By", value: `${interaction.user}`, inline: false },
                 ).setTimestamp()
             ]});
           }
@@ -5190,7 +5206,8 @@ async function onInteraction(interaction) {
         const factions = getPlayerFactions(playerId);
         const onS1     = playerCache.server1.some(n => n.toLowerCase() === playerId.toLowerCase());
         const onS2     = playerCache.server2.some(n => n.toLowerCase() === playerId.toLowerCase());
-        const online   = onS1 || onS2;
+        const onS3     = playerCache.server3.some(n => n.toLowerCase() === playerId.toLowerCase());
+        const online   = onS1 || onS2 || onS3;
         const balance  = readPlayerBalance(playerId);
         const wage     = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
@@ -5206,7 +5223,7 @@ async function onInteraction(interaction) {
               return `${getFactionRankBadge(f, rank)}  **${f}** *(${rank})*`;
             }).join("\n");
 
-        const statusStr = !online ? "Offline" : [onS1 && "Server 1", onS2 && "Server 2"].filter(Boolean).join("  +  ");
+        const statusStr = !online ? "Offline" : [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join("  +  ");
         const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
 
         const embed = new EmbedBuilder().setColor(color)
