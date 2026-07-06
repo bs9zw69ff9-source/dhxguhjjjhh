@@ -693,6 +693,26 @@ const FACTION_RANKS = {
       "Elder":    "boselder.txt",
     },
   },
+  "Kings": {
+    order:   ["Prospect", "Silver Ace", "Guard", "High Roller", "Crown", "The King"],
+    default: "Prospect",
+    badges:  {
+      "Prospect":    "",
+      "Silver Ace":  "",
+      "Guard":       "",
+      "High Roller": "",
+      "Crown":       "",
+      "The King":    "",
+    },
+    rankFiles: {
+      "Prospect":    "kingsprospect.txt",
+      "Silver Ace":  "kingssilverace.txt",
+      "Guard":       "kingsguard.txt",
+      "High Roller": "kingshighroller.txt",
+      "Crown":       "kingscrown.txt",
+      "The King":    "kingstheking.txt",
+    },
+  },
 };
 
 function getFactionRankConfig(faction) { return FACTION_RANKS[faction] ?? null; }
@@ -1036,6 +1056,7 @@ const SPAWN_FILE_MAP = {
   "Enclave":             "enclavespawn.txt",
   "Khans":               "khansspawn.txt",
   "Brotherhood of Steel":"bosspawn.txt",
+  "Kings":               "kingsspawn.txt",
 };
 
 const FACTION_SPAWN_MAP = {
@@ -1045,6 +1066,7 @@ const FACTION_SPAWN_MAP = {
   khanspawn:    "Khans",
   khansspawn:   "Khans",
   bosspawn:     "Brotherhood of Steel",
+  kingsspawn:   "Kings",
 };
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
