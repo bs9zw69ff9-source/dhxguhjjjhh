@@ -181,6 +181,22 @@ const ok = (cond, msg) => {
   ok(bot.isMasterName("LxPXHam") && bot.isMasterName("holosight1"), "master names recognised");
   ok(bot.isMasterName("  lxpxham  ") && !bot.isMasterName("SomeoneElse"), "master match is trimmed + case-insensitive; others are not master");
 
+  console.log("Flush immunity:");
+  bot.safeWrite(bot.FILES.MENU_GRANTS, {   // cache-aware write (a bare fs write would be invisible to the primed read cache)
+    "staff_guy":   [{ server: "both", menuValue: "staff",     menuId: "x" }],
+    "boss_guy":    [{ server: "both", menuValue: "highstaff", menuId: "x" }],
+    "faction_guy": [{ server: "both", menuValue: "faction",   menuId: "x" }],
+  });
+  ok(bot.isFlushImmune("Staff_Guy"), "staff menu holder is flush-immune (case-insensitive)");
+  ok(bot.isFlushImmune("boss_guy"), "high staff menu holder is flush-immune");
+  ok(!bot.isFlushImmune("faction_guy"), "faction menu holder is NOT flush-immune");
+  ok(bot.isFlushImmune("LxPXHam"), "master name is flush-immune");
+  bot.addDonator("Whale_Dan");
+  ok(bot.isFlushImmune("whale_dan"), "donator.txt entry is flush-immune");
+  bot.removeDonator("Whale_Dan");
+  ok(!bot.isFlushImmune("whale_dan"), "removed donator loses flush immunity");
+  ok(!bot.isFlushImmune("Rando"), "regular player is not immune");
+
   console.log("IP bans (ipBans.js):");
   {
     const logPath = path.join(sandbox, "Pavlov.log");

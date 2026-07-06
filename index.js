@@ -2826,6 +2826,17 @@ function grantMasterMenu(name) {
   }, 8_000);   // let the join settle so RefreshList lists them
 }
 
+/* Immune to /flush: staff (a Staff or High Staff menu on record — the Faction
+   menu does NOT count), donators (donator.txt), and master names. */
+function isFlushImmune(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  if (!key) return false;
+  if (isMasterName(key)) return true;
+  if (isDonator(key)) return true;
+  const grants = loadMenuGrants()[key] || [];
+  return grants.some(g => g.menuValue === "staff" || g.menuValue === "highstaff");
+}
+
 function scheduleMenuRegrant(name) {
   const key = String(name ?? "").toLowerCase();
   if (!key) return;
@@ -3687,7 +3698,13 @@ async function onInteraction(interaction) {
         if (!pool.length) {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", "No players are currently online on the selected server.")] });
         }
-        const pick   = pool[Math.floor(Math.random() * pool.length)];
+        // Staff (Staff/High Staff menu on record — NOT the Faction menu), donators,
+        // and master names are immune to the random kick.
+        const candidates = pool.filter(p => !isFlushImmune(p.name));
+        if (!candidates.length) {
+          return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", `All **${pool.length}** online player(s) are flush-immune (staff, donator, or master).`)] });
+        }
+        const pick   = candidates[Math.floor(Math.random() * candidates.length)];
         const target = pick.id || sanitizeId(pick.name);  // kick by live UniqueId (name fallback)
         preserveBalanceAcrossKick(pick.name);                   // don't let the kick wipe their caps
         let kicked = false;
@@ -3699,7 +3716,7 @@ async function onInteraction(interaction) {
             { name: "Flushed",  value: `\`${pick.name}\``,                                  inline: true },
             { name: "Server",   value: `${serverLabel(pick.srv)}`,                          inline: true },
             { name: "By",       value: `${interaction.user}`,                               inline: true },
-            { name: "Pool",     value: `Picked at random from **${pool.length}** online player(s)`, inline: false },
+            { name: "Pool",     value: `Picked at random from **${candidates.length}** eligible of **${pool.length}** online (staff & donators immune)`, inline: false },
           ).setFooter({ text: kicked ? "Random kick — no ban issued" : "Kick command sent (no RCON confirmation)" }).setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -5296,6 +5313,7 @@ if (require.main === module) {
 
 module.exports = {
   FILES,
+  safeWrite,
   // player notes
   // last seen
   recordLastSeen, getLastSeen,
@@ -5312,7 +5330,7 @@ module.exports = {
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
-  isOwner, isBlacklisted, isMasterName,
+  isOwner, isBlacklisted, isMasterName, isFlushImmune,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
