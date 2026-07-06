@@ -5248,14 +5248,6 @@ async function onInteraction(interaction) {
             value: ordered.map(([f, d]) => `${GLYPH.rank} **${f}** — ${d.total} kill${d.total !== 1 ? "s" : ""}`).join("\n"),
             inline: false,
           });
-          const MEMBERS_SHOWN = 12;
-          for (const [faction, data] of ordered) {
-            const shown = data.members.slice(0, MEMBERS_SHOWN);
-            const lines = shown.map(m => `${GLYPH.dot} ${m.name} — **${m.count}**`);
-            const more  = data.members.length - shown.length;
-            if (more > 0) lines.push(`*…and ${more} more*`);
-            embed.addFields({ name: `${faction} (${data.total})`, value: lines.join("\n"), inline: true });
-          }
         }
 
         brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });
