@@ -1763,6 +1763,21 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
   return { ...enf, blacklist: bl, ok: bl.servers > 0 };
 }
+/* What should the IP-Guard do with a join that matched a flagged IP/name/id?
+   - "block": an UNEXPIRED temp ban covers this name — the blacklist already bounced
+     them; log it, never escalate.
+   - "lift":  the covering temp ban has EXPIRED but the entry/flags are still around
+     (the 60s lift sweep hasn't run yet, or a stale flag survived). A served temp ban
+     must never turn permanent — lift it right now instead.
+   - "ban":   nothing covers them (evasion alt / fresh blacklist match) — auto-ban. */
+function autoBanDecision(existing, reason, now = Date.now()) {
+  if (existing && !existing.permanent && existing.expires) {
+    if (existing.expires > now) return "block";
+    if (/\bIP\b/.test(String(reason || ""))) return "lift";   // IP flags come from the ban itself — stale after expiry
+  }
+  return "ban";
+}
+
 // Lift a ban: remove the name from blacklist.txt on both installs + clear IP flags.
 function unbanEverywhere(playerId) {
   const name = sanitizeBanName(playerId);
@@ -3262,8 +3277,17 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // A TEMP-banned player bouncing off the blacklist still shows up in the log as
       // a join attempt from their flagged IP/EOS id. Their temp ban already covers
       const existing = loadBans().find(b => _sameId(b.playerId, name));
-      if (existing && !existing.permanent && existing.expires && existing.expires > Date.now()) {
+      const decision = autoBanDecision(existing, reason);
+      if (decision === "block") {
         logger.info("IPGuard", `${name} tried to join while temp-banned — blocked, no escalation`);
+        return;
+      }
+      if (decision === "lift") {
+        // Temp ban served in full but the 60s sweep hasn't lifted it yet (or a stale
+        // IP flag survived). Lift now instead of escalating to permanent.
+        try { unbanEverywhere(existing.playerId); } catch {}
+        try { await removeBans(existing.playerId); } catch {}
+        logger.info("IPGuard", `${name} rejoined after temp-ban expiry — lifted now, stale IP flags cleared (no escalation)`);
         return;
       }
       const res = await banWithIp(name, "both", { permanent: true });
@@ -5366,7 +5390,7 @@ module.exports = {
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
   // bans (serialized)
-  loadBans, upsertTempBan, upsertPermBan, removeBans,
+  loadBans, upsertTempBan, upsertPermBan, removeBans, autoBanDecision,
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access

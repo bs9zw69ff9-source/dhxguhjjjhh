@@ -197,6 +197,18 @@ const ok = (cond, msg) => {
   ok(!bot.isFlushImmune("whale_dan"), "removed donator loses flush immunity");
   ok(!bot.isFlushImmune("Rando"), "regular player is not immune");
 
+  console.log("IP-Guard escalation decisions:");
+  {
+    const now = 1_000_000_000;
+    const active  = { playerId: "Teno", permanent: false, expires: now + 60_000 };
+    const expired = { playerId: "Teno", permanent: false, expires: now - 60_000 };
+    ok(bot.autoBanDecision(active, "blacklisted IP", now) === "block", "unexpired temp ban -> blocked, no escalation");
+    ok(bot.autoBanDecision(expired, "blacklisted IP", now) === "lift", "EXPIRED temp ban + IP flag -> lifted, never escalated to permanent");
+    ok(bot.autoBanDecision(null, "blacklisted IP", now) === "ban", "no covering ban (evasion alt) -> auto-ban proceeds");
+    ok(bot.autoBanDecision({ playerId: "X", permanent: true }, "blacklisted IP", now) === "ban", "permanent entry -> auto-ban path unchanged");
+    ok(bot.autoBanDecision(expired, "blacklisted username", now) === "ban", "expired temp + manual USERNAME flag -> still bans (manual flags are deliberate)");
+  }
+
   console.log("IP bans (ipBans.js):");
   {
     const logPath = path.join(sandbox, "Pavlov.log");
