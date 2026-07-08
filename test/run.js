@@ -260,8 +260,8 @@ const ok = (cond, msg) => {
     ok(ipBans.getAltsOf("NCR_Ranger").length === 1, "non-sharing ids are not flagged as alts");
     const enf = ipBans.blacklistPlayer("NCR_Ranger");
     ok(enf.ips.includes("198.51.100.9") && ipBans.blacklist.includes("198.51.100.9"), "blacklistPlayer flags the player's CONFIRMED IPs");
-    ok(enf.ips.includes("203.0.113.7") && ipBans.blacklist.includes("203.0.113.7"), "join-correlated IPs are ALSO flagged (broader evasion net) — every IP the account is on record for");
-    ok(enf.alts.includes("AltGuy"), "blacklist summary reports shared-IP alts by username (alt detection still keys on CONFIRMED IPs)");
+    ok(!enf.ips.includes("203.0.113.7") && !ipBans.blacklist.includes("203.0.113.7"), "join-correlated (tentative) IPs are NOT flagged — a mis-correlation would ban a stranger");
+    ok(enf.alts.includes("AltGuy"), "blacklist summary reports shared-IP alts by username (alt detection keys on CONFIRMED IPs)");
     ok(!ipBans.getBlacklist().names.includes("ncr_ranger"), "blacklistPlayer does NOT auto-flag the username (no 'banned for no reason')");
     ipBans.unblacklistPlayer("NCR_Ranger");
     ok(!ipBans.blacklist.includes("198.51.100.9"), "unblacklistPlayer clears the flags");
@@ -489,9 +489,9 @@ const ok = (cond, msg) => {
     fs.appendFileSync(logB,
       "[2026.06.26-10.00.00:000][1]LogNet: NotifyAcceptingConnection accepted from: 5.6.7.8:5000\n" +
       "[2026.06.26-10.00.00:200][2]LogNet: Login request: ?Name=FreshBan?pid=FreshBan userId: NULL:fresh01 platform: NULL\n" +
-      "[2026.06.26-10.01.00:000][3]LogTemp: Rcon: BanPlayer FreshBan\n");   // no confirmed IP yet -> best-effort tentative IP flagged
+      "[2026.06.26-10.01.00:000][3]LogTemp: Rcon: BanPlayer FreshBan\n");   // no confirmed IP yet -> pendingFlag armed, nothing flagged yet
     await new Promise(r => setTimeout(r, 80));
-    ok(ipBans.blacklist.includes("5.6.7.8"), "no confirmed IP at ban time -> best-effort (tentative) IP IS flagged so the ban still enforces");
+    ok(!ipBans.blacklist.includes("5.6.7.8"), "no confirmed IP at ban time -> tentative IP is NOT flagged yet (avoids banning a mis-correlated stranger)");
     fs.appendFileSync(logB,
       "[2026.06.26-10.01.05:000][4]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 5.6.7.8:5000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:fresh01\n");
     await new Promise(r => setTimeout(r, 80));

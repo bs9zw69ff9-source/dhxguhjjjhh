@@ -332,19 +332,18 @@ function altNamesForIps(ips, excludeIds = []) {
 function blacklistPlayer(input, opts = {}) {
   const flagId = opts.flagId === true;
   const ids  = resolveIds(input);
-  const cips = confirmedIpsForIds(ids);             // trustworthy same-line pairings
-  // Flag EVERY IP this account is on record for — confirmed disconnect pairings AND
-  // the join-time IPs (which are only recorded on an unambiguous single-pending join,
-  // so they're reliable). Flagging just the confirmed ones let an evader slip back in
-  // from an address the banned account had only ever *joined* from. Alt enforcement
-  // still keys on confirmed IPs (altNamesForIps) to avoid chaining on a loose match.
-  const ips  = [...new Set([...cips, ...ipsForIds(ids)])];
-  const bestEffort = cips.length === 0;
-  const altNames = altNamesForIps(cips.length ? cips : ips, ids);
+  // Flag ONLY CONFIRMED IPs (same-line disconnect pairings — 100% reliable). Join-time
+  // IPs are a timing GUESS and can be mis-correlated to a stranger, so flagging them
+  // was auto-banning unrelated players ("random IP bans"). If the banned player has no
+  // confirmed IP yet (still online, never disconnected), nothing is flagged now —
+  // pendingFlag flags their real IP the moment their disconnect confirms it.
+  const cips = confirmedIpsForIds(ids);
+  const ips  = cips;
+  const altNames = altNamesForIps(cips, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
-  console.log(`[ipBans] blacklistPlayer "${input}" -> ${ids.length} id(s), flagged ${ips.length} IP(s)${bestEffort && ips.length ? " (best-effort, no confirmed yet)" : ""}, ${flagged.size} total flagged`);
+  console.log(`[ipBans] blacklistPlayer "${input}" -> ${ids.length} id(s), flagged ${ips.length} confirmed IP(s), ${flagged.size} total flagged`);
   // remember the player so the IP the kick confirms is flagged too (if none yet).
   // NOTE: we deliberately do NOT auto-flag the username here. A flagged username
   for (const id of ids) pendingFlag.set(id, Date.now());
@@ -548,7 +547,9 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
     // just confirmed ones — catches a returning alt whose only tie to a flagged IP was
     // a join. Account-scoped, so it only ever bans an account with a flagged IP of its own.
     const e = registry[id];
-    const knownFlagged = e && [...(e.ips || []), ...(e.cips || [])].some(ipFlagged);
+    // Match ONLY confirmed IPs (e.cips) — a mis-correlated join IP (e.ips) would ban
+    // an innocent who was never really at that address.
+    const knownFlagged = e && (e.cips || []).some(ipFlagged);
     const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
                  : (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
                  : knownFlagged                              ? "blacklisted IP"
