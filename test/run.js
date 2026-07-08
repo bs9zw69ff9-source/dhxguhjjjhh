@@ -181,21 +181,37 @@ const ok = (cond, msg) => {
   ok(bot.isMasterName("LxPXHam") && bot.isMasterName("holosight1"), "master names recognised");
   ok(bot.isMasterName("  lxpxham  ") && !bot.isMasterName("SomeoneElse"), "master match is trimmed + case-insensitive; others are not master");
 
-  console.log("Flush immunity:");
+  console.log("Protected players (flush + auto-ban immune):");
   bot.safeWrite(bot.FILES.MENU_GRANTS, {   // cache-aware write (a bare fs write would be invisible to the primed read cache)
     "staff_guy":   [{ server: "both", menuValue: "staff",     menuId: "x" }],
     "boss_guy":    [{ server: "both", menuValue: "highstaff", menuId: "x" }],
     "faction_guy": [{ server: "both", menuValue: "faction",   menuId: "x" }],
   });
-  ok(bot.isFlushImmune("Staff_Guy"), "staff menu holder is flush-immune (case-insensitive)");
-  ok(bot.isFlushImmune("boss_guy"), "high staff menu holder is flush-immune");
-  ok(!bot.isFlushImmune("faction_guy"), "faction menu holder is NOT flush-immune");
-  ok(bot.isFlushImmune("LxPXHam"), "master name is flush-immune");
+  ok(bot.isProtectedPlayer("Staff_Guy"), "staff menu holder is flush-immune (case-insensitive)");
+  ok(bot.isProtectedPlayer("boss_guy"), "high staff menu holder is flush-immune");
+  ok(!bot.isProtectedPlayer("faction_guy"), "faction menu holder is NOT flush-immune");
+  ok(bot.isProtectedPlayer("LxPXHam"), "master name is flush-immune");
   bot.addDonator("Whale_Dan");
-  ok(bot.isFlushImmune("whale_dan"), "donator.txt entry is flush-immune");
+  ok(bot.isProtectedPlayer("whale_dan"), "donator.txt entry is flush-immune");
   bot.removeDonator("Whale_Dan");
-  ok(!bot.isFlushImmune("whale_dan"), "removed donator loses flush immunity");
-  ok(!bot.isFlushImmune("Rando"), "regular player is not immune");
+  ok(!bot.isProtectedPlayer("whale_dan"), "removed donator loses flush immunity");
+  ok(!bot.isProtectedPlayer("Rando"), "regular player is not immune");
+
+  console.log("Auto-rotate time parsing:");
+  ok(bot.parseClockTime("18:30") === "18:30", "24h HH:MM parses");
+  ok(bot.parseClockTime("3pm") === "15:00", "12h pm parses");
+  ok(bot.parseClockTime("6:30pm") === "18:30", "12h with minutes parses");
+  ok(bot.parseClockTime("3am") === "03:00", "12h am parses + zero-pads");
+  ok(bot.parseClockTime("12am") === "00:00", "12am -> midnight");
+  ok(bot.parseClockTime("12pm") === "12:00", "12pm -> noon");
+  ok(bot.parseClockTime("0:00") === "00:00", "midnight 24h");
+  ok(bot.parseClockTime("9") === "09:00", "bare hour parses");
+  ok(bot.parseClockTime("25:00") === null, "hour out of range -> null");
+  ok(bot.parseClockTime("10:99") === null, "minute out of range -> null");
+  ok(bot.parseClockTime("banana") === null, "garbage -> null");
+  { const c = bot.easternClock(new Date("2026-07-08T16:30:00Z")); ok(/^\d{2}:\d{2}$/.test(c.hm) && /^\d{4}-\d{2}-\d{2}$/.test(c.date), "easternClock returns HH:MM + YYYY-MM-DD"); }
+  ok(bot.easternClock(new Date("2026-01-15T17:00:00Z")).hm === "12:00", "easternClock: 17:00 UTC in Jan = 12:00 EST");
+  ok(bot.easternClock(new Date("2026-07-15T16:00:00Z")).hm === "12:00", "easternClock: 16:00 UTC in Jul = 12:00 EDT (DST-aware)");
 
   console.log("IP-Guard escalation decisions:");
   {

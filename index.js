@@ -134,6 +134,7 @@ const FILES = {
   MENU_PANEL:     "./menu_panel.json",
   MENU_ROLES:     "./menu_roles.json",
   MENU_LINKS:     "./menu_links.json",
+  AUTOROTATE:     "./autorotate.json",
 };
 
 const DEFAULTS = {
@@ -153,6 +154,7 @@ const DEFAULTS = {
   [FILES.MENU_PANEL]:     "{}",
   [FILES.MENU_ROLES]:     "{}",
   [FILES.MENU_LINKS]:     "{}",
+  [FILES.AUTOROTATE]:     "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -1338,6 +1340,47 @@ function formatTimeLeft(expiresMs) {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+/* ---- scheduled map rotation (Eastern time) ---- */
+const loadAutoRotate = () => safeRead(FILES.AUTOROTATE, {});
+function setAutoRotate(cfg) { return safeWrite(FILES.AUTOROTATE, cfg); }
+// Current wall clock in America/New_York (Eastern — EST/EDT, DST-aware) as
+// { date: "YYYY-MM-DD", hm: "HH:MM" }.
+function easternClock(d = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d).map(x => [x.type, x.value]));
+  const hh = p.hour === "24" ? "00" : p.hour;   // some ICU builds emit 24 at midnight
+  return { date: `${p.year}-${p.month}-${p.day}`, hm: `${hh}:${p.minute}` };
+}
+// Parse "18:30", "6:30pm", "3pm", "0:00" -> normalized "HH:MM" (24h), or null.
+function parseClockTime(raw) {
+  const s = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "");
+  const m = s.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/);
+  if (!m) return null;
+  let hh = +m[1]; const mm = m[2] ? +m[2] : 0; const ap = m[3];
+  if (mm > 59) return null;
+  if (ap) { if (hh < 1 || hh > 12) return null; if (ap === "pm" && hh !== 12) hh += 12; if (ap === "am" && hh === 12) hh = 0; }
+  else if (hh > 23) return null;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+// Runs every minute: rotate the map when the scheduled Eastern time is hit (once/day).
+async function checkAutoRotate() {
+  const cfg = loadAutoRotate();
+  if (!cfg.time) return;
+  const { date, hm } = easternClock();
+  if (hm !== cfg.time || cfg.lastRun === date) return;   // not the minute, or already fired today
+  setAutoRotate({ ...cfg, lastRun: date });              // mark first so overlapping ticks can't double-fire
+  const server = cfg.server || "both";
+  try {
+    await sendRconBoth("RotateMap", server);
+    logger.info("AutoRotate", `RotateMap fired at ${hm} EST on ${serverLabel(server)}`);
+    logAction(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Scheduled Map Rotation")
+      .setDescription(`${DIVIDER}\nAutomatic map rotation ran at **${hm} Eastern**.`)
+      .addFields({ name: "Server", value: serverLabel(server), inline: true }).setTimestamp()));
+  } catch (e) { logger.warn("AutoRotate", `RotateMap failed: ${e.message}`); }
 }
 
 function formatPlaytime(minutes) {
@@ -2923,7 +2966,11 @@ function grantMasterMenu(name) {
 
 /* Immune to /flush: staff (a Staff or High Staff menu on record — the Faction
    menu does NOT count), donators (donator.txt), and master names. */
-function isFlushImmune(name) {
+/* Trusted players who must never be auto-actioned — exempt from /flush AND from IP/
+   subnet auto-bans (so a staffer sharing an IP or /24 with an evader is never caught
+   in the net). Master names, donators, and Staff/High Staff menu holders. Faction-menu
+   holders are NOT trusted (they can be any member). */
+function isProtectedPlayer(name) {
   const key = String(name ?? "").trim().toLowerCase();
   if (!key) return false;
   if (isMasterName(key)) return true;
@@ -2978,6 +3025,7 @@ async function rconHealthCheck() {
 // ---- intervals  - started from startintervals(), which runs only when the ----
 function startIntervals() {
 setInterval(processExpiredBans,      60_000);
+setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
@@ -3167,6 +3215,14 @@ const commands = [
     .setDescription("Admin — Send a raw RCON command")
     .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true))
     .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("autorotate")
+    .setDescription("Owner — Schedule a daily map rotation at a set Eastern time")
+    .addSubcommand(s => s.setName("set")
+      .setDescription("Rotate the map every day at this Eastern (EST/EDT) time")
+      .addStringOption(o => o.setName("time").setDescription("Time — e.g. 03:00, 18:30, 3pm, 6:30pm (Eastern)").setRequired(true))
+      .addStringOption(serverOption))
+    .addSubcommand(s => s.setName("off").setDescription("Turn off the scheduled map rotation"))
+    .addSubcommand(s => s.setName("status").setDescription("Show the current rotation schedule")),
   new SlashCommandBuilder().setName("addwage")
     .setDescription("Enrol a courier in payroll or issue a one-time mercenary payment")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
@@ -3298,7 +3354,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, ip, reason }) => {
-      if (isMasterName(name)) { logger.info("IPGuard", `Skipped auto-ban for master name ${name}`); return; }
+      // Never auto-ban a trusted player (master / donator / staff). This is what stops
+      // a staffer who shares an IP or /24 with an evader from being caught in the net.
+      if (isProtectedPlayer(name)) { logger.info("IPGuard", `Skipped auto-ban for protected player (master/staff/donator): ${name}`); return; }
       // A TEMP-banned player bouncing off the blacklist still shows up in the log as
       // a join attempt from their flagged IP/EOS id. Their temp ban already covers
       const existing = loadBans().find(b => _sameId(b.playerId, name));
@@ -3798,7 +3856,7 @@ async function onInteraction(interaction) {
         }
         // Staff (Staff/High Staff menu on record — NOT the Faction menu), donators,
         // and master names are immune to the random kick.
-        const candidates = pool.filter(p => !isFlushImmune(p.name));
+        const candidates = pool.filter(p => !isProtectedPlayer(p.name));
         if (!candidates.length) {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", `All **${pool.length}** online player(s) are flush-immune (staff, donator, or master).`)] });
         }
@@ -4943,8 +5001,51 @@ async function onInteraction(interaction) {
       }
 
       /* ─────────────────────────────────────────────────────
-         ROTATEMAP
+         AUTOROTATE — owner: schedule a daily map rotation (Eastern)
          ───────────────────────────────────────────────────── */
+      case "autorotate": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        const sub = interaction.options.getSubcommand();
+        const cfg = loadAutoRotate();
+
+        if (sub === "off") {
+          setAutoRotate({});
+          return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Auto-Rotation Disabled")
+            .setDescription(cfg.time ? `Stopped the daily map rotation *(was ${cfg.time} Eastern)*.` : "There was no rotation scheduled."))], flags: MessageFlags.Ephemeral });
+        }
+
+        if (sub === "status") {
+          const desc = cfg.time
+            ? `${DIVIDER}\nThe map rotates **every day at ${cfg.time} Eastern** on **${serverLabel(cfg.server || "both")}**.`
+            : `${DIVIDER}\nNo rotation scheduled. Use \`/autorotate set\` to add one.`;
+          const embed = brand(new EmbedBuilder().setColor(cfg.time ? NV.IRRAD_GREEN : NV.DEAD_GREY).setTitle("Map Auto-Rotation").setDescription(desc));
+          if (cfg.time) embed.addFields(
+            { name: "Time",         value: `${cfg.time} Eastern`,                    inline: true },
+            { name: "Server",       value: serverLabel(cfg.server || "both"),        inline: true },
+            { name: "Last Rotated", value: cfg.lastRun ? cfg.lastRun : "not yet",    inline: true },
+          );
+          const now = easternClock();
+          embed.setFooter({ text: `Server clock: ${now.hm} Eastern` });
+          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
+
+        // set
+        const time = parseClockTime(interaction.options.getString("time"));
+        if (!time) return interaction.reply({ embeds: [errorEmbed("Invalid Time",
+          "Enter a time like `03:00`, `18:30`, `3pm`, or `6:30pm` — interpreted as **Eastern**.")], flags: MessageFlags.Ephemeral });
+        const server = interaction.options.getString("server") || "both";
+        setAutoRotate({ time, server, lastRun: null });
+        writeModLog({ action: "autorotate-set", time, server, by: interaction.user.tag });
+        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Auto-Rotation Scheduled")
+          .setDescription(`${DIVIDER}\nThe map will rotate **every day at ${time} Eastern**.`)
+          .addFields(
+            { name: "Time",   value: `${time} Eastern`,          inline: true },
+            { name: "Server", value: serverLabel(server),        inline: true },
+            { name: "RCON",   value: "`RotateMap`",              inline: true },
+          ).setFooter({ text: `Server clock: ${easternClock().hm} Eastern · checked every minute` }).setTimestamp());
+        await logAction(embed);
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      }
 
       /* ─────────────────────────────────────────────────────
          ADDWAGE
@@ -5303,7 +5404,8 @@ module.exports = {
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
-  isOwner, isBlacklisted, isMasterName, isFlushImmune,
+  isOwner, isBlacklisted, isMasterName, isProtectedPlayer,
+  parseClockTime, easternClock,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
