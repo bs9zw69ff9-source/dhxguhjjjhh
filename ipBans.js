@@ -114,13 +114,10 @@ function saveJSON(p, data) {
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }
 const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
-// Every flagged IP projects its whole /24, so an evader who returns from a NEARBY
-// address in the same block is still auto-banned. Kept in sync with `flagged` inside
-// saveFlagged(). Set IP_SUBNET_AUTOBAN=off to fall back to exact-IP-only enforcement.
-const SUBNET_AUTOBAN = process.env.IP_SUBNET_AUTOBAN !== "off";
-let flaggedSubnets = new Set([...flagged].map(subnetOf).filter(Boolean));
-// True when this IP is banned outright OR sits in a flagged /24 (when subnet mode is on).
-const ipFlagged = ip => flagged.has(ip) || (SUBNET_AUTOBAN && flaggedSubnets.has(subnetOf(ip)));
+// Auto-ban matches EXACT flagged IPs only. /24 subnet matching was too broad — it
+// caught unrelated players on the same ISP/carrier — so it never drives a ban. Nearby
+// same-/24 accounts are still surfaced in the feed (subnetAlts) for manual review.
+const ipFlagged = ip => flagged.has(ip);
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
 const MANUAL_IPS_PATH = path.join(__dirname, "ip_manual.json");
 const manualIps = new Set(loadJSON(MANUAL_IPS_PATH, []) || []);   // admin-flagged IPs - never cleared by a player unban
@@ -205,7 +202,7 @@ function topKD(limit = 30, minKills = 0) {
 function flushRegistry() { dirty = false; saveJSON(REGISTRY_PATH, registry); }
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
 // Rebuild the /24 index on every flag change (every flagged mutation calls this).
-function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); flaggedSubnets = new Set([...flagged].map(subnetOf).filter(Boolean)); }
+function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); }
 function saveFNames()     { saveJSON(FNAMES_PATH, [...flaggedNames]); }
 function saveFIds()       { saveJSON(FIDS_PATH, [...flaggedIds]); }
 function saveUntracked()  { saveJSON(UNTRACKED_PATH, [...untrackedNames]); }
@@ -293,9 +290,6 @@ function getRecord(input) {
     recent: recent.slice(0, 8),
     bypass: untrackedNames.has(nm),                                   // ignore-listed (never auto-banned/tracked)
     flagged: [...cips].some(ipFlagged) || flaggedNames.has(nm) || ids.some(id => flaggedIds.has(id)),
-    // A confirmed IP that isn't itself banned but sits in a flagged /24 — an evasion
-    // from a nearby dynamic address. When subnet mode is on this IS auto-banned.
-    flaggedSubnet: [...cips].some(ip => !flagged.has(ip) && flaggedSubnets.has(subnetOf(ip))),
   };
 }
 

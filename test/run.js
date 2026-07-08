@@ -638,15 +638,13 @@ const ok = (cond, msg) => {
       "[2026.07.05-12.05.00:000][6]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 99.1.2.3:40000, UniqueId: NULL:sub03\n");
     clearInterval(ipBans.init({ logFiles: [logSub], onAutoBan: async () => {}, pollMs: 9e8 }));
     const subRec = ipBans.getRecord("Evader");
-    ok(subRec.subnetAlts.includes("EvaderAlt"), "subnet detection surfaces a same-/24 alt on a different IP");
+    ok(subRec.subnetAlts.includes("EvaderAlt"), "subnet detection surfaces a same-/24 alt on a different IP (display only)");
     ok(!subRec.subnetAlts.includes("Unrelated"), "different /24 is NOT a subnet alt");
     ok(!subRec.alts.includes("EvaderAlt"), "same-/24-different-IP is a SUBNET alt, not an exact-IP alt");
-    ok(subRec.flaggedSubnet === false, "flaggedSubnet is false with nothing flagged");
     ipBans.flagIp("42.42.42.10");                       // ban Evader's exact IP
     const subRec2 = ipBans.getRecord("EvaderAlt");      // the alt on .99 (same /24, different IP)
-    ok(subRec2.flaggedSubnet === true, "flaggedSubnet flags an account sharing a /24 with a blacklisted IP");
-    ok(subRec2.flagged === true, "subnet mode: an account in a flagged /24 IS marked flagged (auto-ban)");
-    // A LIVE join from a DIFFERENT IP in the flagged /24 is auto-banned
+    ok(subRec2.flagged === false, "a same-/24 (different IP) account is NOT flagged — /24 never auto-bans");
+    // A LIVE join from a DIFFERENT IP in the flagged /24 is NOT auto-banned (exact-IP only)
     const logNet = path.join(sandbox, "PavlovSubnet.log");
     fs.writeFileSync(logNet, "");
     let subnetAuto = null;
@@ -656,9 +654,18 @@ const ok = (cond, msg) => {
       "[2026.07.05-13.00.00:200][8]LogNet: Login request: ?Name=FreshAlt?pid=FreshAlt userId: NULL:sub09 platform: NULL\n");
     await new Promise(r => setTimeout(r, 60));
     clearInterval(tNet);
-    ok(subnetAuto && subnetAuto.name === "FreshAlt", "live join from a NEW IP in a flagged /24 is auto-banned (subnet mode)");
+    ok(subnetAuto === null, "live join from a NEW IP in a flagged /24 is NOT auto-banned (exact-IP only)");
+    // ...but the SAME exact flagged IP still auto-bans
+    const logNet2 = path.join(sandbox, "PavlovSubnet2.log");
+    fs.writeFileSync(logNet2, "");
+    let exactAuto = null;
+    const tNet2 = ipBans.init({ logFiles: [logNet2], onAutoBan: async (i) => { exactAuto = i; }, pollMs: 20 });
+    fs.appendFileSync(logNet2,
+      "[2026.07.05-14.00.00:000][9]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 42.42.42.10:1, UniqueId: NULL:sub02\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tNet2);
+    ok(exactAuto && exactAuto.name === "EvaderAlt", "the EXACT flagged IP still auto-bans");
     ipBans.clearIp("42.42.42.10");
-    ok(ipBans.getRecord("EvaderAlt").flagged === false, "clearing the last flagged IP in a /24 drops the subnet flag");
 
     // EOS flagging catches an evader who keeps their account but changes IP.
     const logEos = path.join(sandbox, "PavlovEosCatch.log");
