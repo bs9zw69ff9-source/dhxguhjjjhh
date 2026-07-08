@@ -1769,60 +1769,31 @@ function preserveBalanceAcrossKick(name) {
    RCON Kick. blacklist.txt only blocks RECONNECTS, so without this an already-connected
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
    delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
-function kickEverywhere(name) {
+function kickEverywhere(name, knownId = null) {
   const clean = sanitizeId(name);
-  if (!clean) return;
+  if (!clean && !knownId) return;
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  // Pavlov's RCON Kick targets the player's UniqueId, which only appears in RefreshList
-  // once the join has settled. An auto-ban fires the INSTANT the join line is logged —
-  // usually before the player is listed — so a single lookup misses them and they end
-  // up flagged-but-not-kicked. Retry the resolve+kick over ~20s until the id resolves
-  // and the kick lands (or they're confirmed gone). Kicking by name is a no-op on this
-  // gamemode, so we never fall back to it — that only hid the failure.
+  // Pavlov's RCON Kick targets the player's UniqueId. When we already have it (auto-bans
+  // parse it from the log), kick by it IMMEDIATELY — no RefreshList timing race. Otherwise
+  // (a manual /kick or /permban) the id only appears in RefreshList once the join settles,
+  // so we retry the resolve+kick over ~20s until it lands.
   const kickOn = async (srv) => {
+    const done = new Set();
+    const kick = async (id) => {
+      if (!id || done.has(id)) return false;
+      done.add(id);
+      try { await sendRcon(`Kick ${id}`, srv, 2500, 1); logger.info("Bans", `Kicked ${name} (${id}) on ${srv}`); return true; }
+      catch (err) { logger.warn("Bans", `Kick ${id} on ${srv} failed: ${err.message}`); return false; }
+    };
+    await kick(knownId);                        // best shot first — the log-parsed id
     for (const delay of [0, 1500, 3500, 6000, 9000, 14000, 20000]) {
       if (delay) await new Promise(r => setTimeout(r, delay));
       let id = null;
       try { id = await resolveOnlineId(name, srv); } catch {}
-      if (!id) continue;                       // not listed yet (settling) or already left — retry
-      try {
-        await sendRcon(`Kick ${id}`, srv, 2500, 1);
-        logger.info("Bans", `Kicked ${name} (${id}) on ${srv}`);
-        return true;
-      } catch (err) { logger.warn("Bans", `Kick ${id} on ${srv} failed, will retry: ${err.message}`); }
+      if (id) { await kick(id); return true; }  // RefreshList-confirmed id — authoritative, done
     }
-    logger.warn("Bans", `Could not kick "${name}" on ${srv} — no live id resolved (already left, or never listed)`);
-    return false;
   };
   Promise.all(ACTIVE_SERVERS.map(kickOn)).catch(() => {});
-}
-
-/* Auto-ban enforcement: native RCON `Ban` + `Kick` — NOT the blacklist.txt file. The
-   IP tracker already parsed the player's UniqueId from the log, so we ban/kick by that
-   id directly (no RefreshList timing race). We also try the live-resolved id and the
-   name, so whichever form the server matches on, the ban lands. Returns { targets }. */
-async function autoBanKick(name, uniqueId, { kickOnly = false } = {}) {
-  const clean = sanitizeId(name);
-  preserveBalanceAcrossKick(name);
-  const all = new Set();
-  const perServer = async (srv) => {
-    const targets = new Set();
-    if (uniqueId) targets.add(uniqueId);                 // the id the log gave us — no timing race
-    for (const delay of [0, 2000, 5000]) {               // also grab the live-resolved id (settling join)
-      if (delay) await new Promise(r => setTimeout(r, delay));
-      let id = null; try { id = await resolveOnlineId(name, srv); } catch {}
-      if (id) { targets.add(id); break; }
-    }
-    if (clean) targets.add(clean);                       // name fallback
-    for (const t of targets) {
-      all.add(t);
-      if (!kickOnly) { try { await sendRcon(`Ban ${t}`, srv, 2500, 1); } catch (e) { logger.warn("IPGuard", `Ban ${t} on ${srv} failed: ${e.message}`); } }
-      try { await sendRcon(`Kick ${t}`, srv, 2500, 1); } catch {}
-    }
-    logger.info("IPGuard", `RCON ${kickOnly ? "Kick" : "Ban+Kick"} on ${srv} for ${name} [${[...targets].join(", ")}]`);
-  };
-  await Promise.all(ACTIVE_SERVERS.map(perServer));
-  return { targets: [...all] };
 }
 
 /* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
@@ -1846,7 +1817,7 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   try { bl = blacklistAdd(name); }
   catch (err) { logger.error("Bans", `blacklist add failed for "${name}": ${err.message}`); }
   logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
-  kickEverywhere(name);                        // remove them immediately if they're online
+  kickEverywhere(name, opts.uniqueId || null); // remove them now (auto-bans pass the log-parsed id so the kick lands at join)
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
@@ -1877,15 +1848,6 @@ function unbanEverywhere(playerId) {
   try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
   let cleared = null;
   try { cleared = ipBans.unblacklistPlayer(name); } catch {}
-  // Also lift any NATIVE RCON ban — auto-bans use `Ban <id>`, not blacklist.txt, so an
-  // unban has to `Unban` the id(s) too or the player stays banned server-side.
-  (async () => {
-    const targets = new Set();
-    const clean = sanitizeId(name); if (clean) targets.add(clean);
-    try { const rec = ipBans.getRecord(name); (rec?.ids || []).forEach(i => i && targets.add(i)); } catch {}
-    for (const srv of ACTIVE_SERVERS) for (const t of targets) { try { await sendRcon(`Unban ${t}`, srv, 2500, 1); } catch {} }
-    if (targets.size) logger.info("Bans", `RCON Unban issued for ${name} [${[...targets].join(", ")}]`);
-  })().catch(() => {});
   return { blacklist: bl, cleared: cleared?.cleared ?? { ips: 0, names: 0 } };
 }
 
@@ -3397,9 +3359,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const existing = loadBans().find(b => _sameId(b.playerId, name));
       const decision = autoBanDecision(existing, reason);
       if (decision === "block") {
-        // Still actively (temp-)banned — kick them off, but DON'T native-Ban (that would
-        // make a temporary ban permanent server-side). Their ban record already stands.
-        try { await autoBanKick(name, uniqueId, { kickOnly: true }); } catch {}
+        // Still actively (temp-)banned — just kick them off (their ban already stands).
+        try { kickEverywhere(name, uniqueId); } catch {}
         logger.info("IPGuard", `${name} tried to join while banned — re-kicked, no escalation`);
         return;
       }
@@ -3409,24 +3370,23 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
         logger.info("IPGuard", `${name} rejoined after temp-ban expiry — lifted now (no escalation)`);
         return;
       }
-      // Enforce with a native RCON Ban + Kick (not blacklist.txt), by the id the log
-      // gave us, and flag their IPs/EOS so any reconnect re-triggers this.
-      let enf = { targets: [] };
-      try { enf = await autoBanKick(name, uniqueId); } catch (e) { logger.warn("IPGuard", `RCON ban failed for ${name}: ${e.message}`); }
-      try { ipBans.blacklistPlayer(name, { flagId: true }); } catch (e) { logger.warn("IPGuard", `IP flag failed for ${name}: ${e.message}`); }
-      try { await upsertPermBan({ playerId: name, reason: `Auto-ban — ${reason || "IP/EOS match"}`, moderator: "IP-Guard" }); } catch {}   // show in /banlist
-      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "match"}${ip ? ` (${ip})` : ""}`, by: "IP-Guard" });
-      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "match"}${ip ? ` (${ip})` : ""} — RCON Ban+Kick [${enf.targets.join(", ")}]`);
-      const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red)
-        .setTitle("Auto-Ban — Courier Removed")
-        .setDescription(`${hero(randomQuote("autoban"))}`)
+      // Enforce exactly like /permban — banWithIp (blacklist.txt + RCON Kick + IP flag) —
+      // but hand it the log-parsed UniqueId so the kick lands even at the instant of join.
+      const res = await banWithIp(name, "both", { permanent: true, uniqueId });
+      const ok  = res?.ok;
+      try { await upsertPermBan({ playerId: name, reason: `Auto-ban — ${reason || "blacklist match"}`, moderator: "IP-Guard" }); } catch {}   // show in /banlist
+      writeModLog({ action: "auto-ipban", playerId: name, reason: `Auto-ban — ${reason || "match"}${ip ? ` (${ip})` : ""}${ok ? "" : " [BLACKLIST WRITE FAILED]"}`, by: "IP-Guard" });
+      logger.warn("IPGuard", `Auto-banned ${name} — ${reason || "match"}${ip ? ` (${ip})` : ""} — blacklisted on ${res?.blacklist?.servers ?? 0}/${PAVLOV_BASES.length} install(s), kicked by [${uniqueId || "resolve"}]`);
+      const banEmbed = clinical(new EmbedBuilder().setColor(ok ? CLIN.red : CLIN.grey)
+        .setTitle(ok ? "Auto-Ban — Courier Removed" : "Auto-Ban — WRITE FAILED")
+        .setDescription(ok ? `${hero(randomQuote("autoban"))}` : "> *The order went out, but the ledger wouldn't take it — check the file paths and ban them by hand.*")
         .addFields(
           { name: "Courier", value: `\`${name}\``,            inline: true },
           { name: "IP",      value: `\`${ip ?? "unknown"}\``, inline: true },
           { name: "EOS ID",  value: uniqueId ? `\`${uniqueId}\`` : "unknown", inline: true },
           { name: "Reason",  value: reason || "match",         inline: true },
-          { name: "Action",  value: "RCON `Ban` + `Kick` on all servers", inline: false },
-        ), "Auto-ban · RCON · all servers");
+          { name: "Blacklisted on", value: `${res?.blacklist?.servers ?? 0} of ${PAVLOV_BASES.length} install(s)`, inline: false },
+        ), "Auto-ban · blacklist.txt + RCON Kick · all servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       postFeed(banEmbed);       // also surface it in the connection feed
     },
