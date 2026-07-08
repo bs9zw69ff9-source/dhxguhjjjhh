@@ -556,7 +556,7 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
                  : null;
     if (reason) {
       recentAuto.set(id, Date.now());
-      try { await onAutoBan({ name: display, ip: ip || null, server, reason }); }
+      try { await onAutoBan({ name: display, uniqueId: id, ip: ip || null, server, reason }); }
       catch (e) { console.error("[ipBans] onAutoBan failed:", e.message); recentAuto.delete(id); }
     }
   }
@@ -620,7 +620,7 @@ function parseLine(line, server, key) {
     if (live && (ipFlagged(ip) || flaggedIds.has(id)) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
         && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
       recentAuto.set(id, Date.now());
-      Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: flaggedIds.has(id) ? "blacklisted account (EOS id)" : "blacklisted IP" }))
+      Promise.resolve(onAutoBan({ name: registry[id].name, uniqueId: id, ip, server, reason: flaggedIds.has(id) ? "blacklisted account (EOS id)" : "blacklisted IP" }))
         .catch(e => { console.error("[ipBans] onAutoBan (confirm) failed:", e.message); recentAuto.delete(id); });
     }
     return;
