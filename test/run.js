@@ -573,6 +573,42 @@ const ok = (cond, msg) => {
     ok(masterJoin && masterJoin.ip === null, "master onConnect carries NO ip (never IP-logged)");
     ok(ipBans.getIPsForPlayer("BossMan").length === 0, "master join still records no IP after a live join");
 
+    // Un-ignoring a player must resume tracking LIVE (not after a restart)
+    const logUn = path.join(sandbox, "PavlovUn.log");
+    fs.writeFileSync(logUn, "");
+    const tUn = ipBans.init({ logFiles: [logUn], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logUn,
+      "[2026.07.04-10.00.00:000][1]LogNet: Login request: ?Name=Ghosty?platform=oculus?pid=Ghosty?name=Ghosty userId: NULL:ghost01 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    ipBans.addUntracked("Ghosty");                     // purge + ignore (id now in the untracked-id map)
+    ipBans.removeUntracked("Ghosty");                  // un-ignore — must release the id too
+    fs.appendFileSync(logUn,
+      "[2026.07.04-10.05.00:000][2]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 8.8.4.4:40000, Name: IpConnection_1, IsServer: YES, UniqueId: NULL:ghost01\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tUn);
+    ok(ipBans.getIPsForPlayer("ghost01").includes("8.8.4.4"), "un-ignored player is tracked again immediately (no restart needed)");
+
+    // A manually flagged IP survives an unrelated player's unban
+    ipBans.flagIp("77.77.77.77");
+    // NCR_Ranger's record includes 198.51.100.9; give the manual IP to him too via registry? Not needed:
+    // unblacklistPlayer clears by raw token as well — the manual flag must survive that path.
+    ipBans.unblacklistPlayer("77.77.77.77");
+    ok(ipBans.blacklist.includes("77.77.77.77"), "manual IP flag survives unblacklistPlayer (raw-token path)");
+    ipBans.clearIp("77.77.77.77");
+    ok(!ipBans.blacklist.includes("77.77.77.77"), "clearIp still removes a manual IP deliberately");
+
+    // Wiping all flags must also drop pendingFlag so a ban-kick's disconnect can't re-flag
+    ipBans.blacklistPlayer("NCR_Ranger");              // sets pendingFlag for aaa111
+    ipBans.clearFlags();                               // admin wipes everything
+    const logPf = path.join(sandbox, "PavlovPf.log");
+    fs.writeFileSync(logPf, "");
+    const tPf = ipBans.init({ logFiles: [logPf], onAutoBan: async () => {}, pollMs: 20 });
+    fs.appendFileSync(logPf,
+      "[2026.07.04-11.00.00:000][3]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 66.66.66.66:40000, Name: IpConnection_9, IsServer: YES, UniqueId: NULL:aaa111\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tPf);
+    ok(!ipBans.blacklist.includes("66.66.66.66"), "clearFlags kills pendingFlag — post-wipe disconnect does not re-flag the IP");
+
     // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
     const logEid = path.join(sandbox, "PavlovEID.log");
     fs.writeFileSync(logEid, "");
@@ -631,6 +667,11 @@ const ok = (cond, msg) => {
   ok(bot.bar(5, 10, 10) === "█████░░░░░", "bar renders half meter");
   ok(bot.bar(0, 0, 6) === "░░░░░░", "bar handles max=0 safely");
   ok(bot.bar(99, 10, 4) === "████", "bar clamps over-full to width");
+  ok(bot.bar(199, 200, 12) === "████████████", "bar carries a rounded-up fraction into a full block (199/200)");
+  {
+    const fillCells = (s) => [...s].filter(c => c !== "░").length;
+    ok(fillCells(bot.bar(199, 200, 12)) >= fillCells(bot.bar(190, 200, 12)), "bar is monotonic — higher value never draws shorter");
+  }
 
   console.log("Command wiring (defs <-> handlers):");
   {

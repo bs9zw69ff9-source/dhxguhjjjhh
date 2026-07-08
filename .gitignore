@@ -36,6 +36,8 @@ ip_blacklist.json
 ip_flagged_names.json
 ip_flagged_ids.json
 ip_untracked.json
+ip_untracked_ids.json
+ip_manual.json
 ip_cutoff.json
 
 # OS / editor noise

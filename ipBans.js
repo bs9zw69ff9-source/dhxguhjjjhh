@@ -29,6 +29,7 @@ const BLACKLIST_PATH = path.join(__dirname, "ip_blacklist.json");      // flagge
 const FNAMES_PATH    = path.join(__dirname, "ip_flagged_names.json");  // flagged usernames
 const FIDS_PATH      = path.join(__dirname, "ip_flagged_ids.json");    // flagged EOS/unique ids
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
+const UNTRACKED_IDS_PATH = path.join(__dirname, "ip_untracked_ids.json"); // ids resolved to those names (persisted - registry entries are purged)
 const CUTOFF_PATH    = path.join(__dirname, "ip_cutoff.json");      // ignore log lines older than this (set by "wipe all IP data")
 const KD_PATH        = path.join(__dirname, "kd.json");            // per-player kills/deaths
 const KILLLOG_PATH   = path.join(__dirname, "kill_log.json");      // per-killer victim tallies (for faction kill counts)
@@ -112,9 +113,12 @@ function saveJSON(p, data) {
 const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
+const MANUAL_IPS_PATH = path.join(__dirname, "ip_manual.json");
+const manualIps = new Set(loadJSON(MANUAL_IPS_PATH, []) || []);   // admin-flagged IPs - never cleared by a player unban
+function saveManualIps() { saveJSON(MANUAL_IPS_PATH, [...manualIps]); }
 const flaggedIds   = new Set((loadJSON(FIDS_PATH, []) || []).map(cleanId).filter(Boolean));               // flagged EOS/unique ids
 const untrackedNames = new Set((loadJSON(UNTRACKED_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // usernames excluded from tracking
-const untrackedIds   = new Set();   // runtime: ids resolved to belong to an untracked name
+const untrackedIds   = new Map(Object.entries(loadJSON(UNTRACKED_IDS_PATH, {}) || {}));   // id -> nameKey it was ignored under
 const masterNames    = new Set();   // never tracked, but still fire onConnect (so the bot can hand them a menu)
 
 let onAutoBan = async () => {};
@@ -195,6 +199,7 @@ function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); }
 function saveFNames()     { saveJSON(FNAMES_PATH, [...flaggedNames]); }
 function saveFIds()       { saveJSON(FIDS_PATH, [...flaggedIds]); }
 function saveUntracked()  { saveJSON(UNTRACKED_PATH, [...untrackedNames]); }
+function saveUntrackedIds() { saveJSON(UNTRACKED_IDS_PATH, Object.fromEntries(untrackedIds)); }
 
 /* ---------------- lookups ---------------- */
 function resolveIds(input) {
@@ -344,7 +349,7 @@ function unblacklistPlayer(input) {
   const ids = resolveIds(input);
   const ips = ipsForIds(ids);
   let nIp = 0, nName = 0, nId = 0;
-  for (const ip of ips) if (flagged.delete(ip)) nIp++;
+  for (const ip of ips) if (!manualIps.has(ip) && flagged.delete(ip)) nIp++;   // never clear an admin's manual IP flag
   for (const id of ids) {
     const nm = norm(registry[id]?.name);
     if (nm && flaggedNames.delete(nm)) nName++;
@@ -354,7 +359,7 @@ function unblacklistPlayer(input) {
   // also clear a raw name/ip/id token (e.g. unbanning by a value not in the registry)
   const raw = String(input ?? "").trim();
   if (flaggedNames.delete(norm(raw))) nName++;
-  if (flagged.delete(raw)) nIp++;
+  if (!manualIps.has(raw) && flagged.delete(raw)) nIp++;
   if (flaggedIds.delete(cleanId(raw))) nId++;
   if (nIp) saveFlagged();
   if (nName) saveFNames();
@@ -375,6 +380,7 @@ function flagIp(ip) {
   ip = String(ip || "").trim();
   const added = !!ip && !flagged.has(ip);
   if (added) { flagged.add(ip); saveFlagged(); }
+  if (ip) { manualIps.add(ip); saveManualIps(); }   // deliberate flag - unbanning a player never clears it
   return { added, ip, ids: idsWithIp(ip) };
 }
 // Manually blacklist an IP or a username (IPv4 detected by shape; anything else
@@ -383,6 +389,7 @@ function flagTarget(input) {
   const val = String(input || "").trim();
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(val)) {            // IPv4
     const added = !flagged.has(val); if (added) { flagged.add(val); saveFlagged(); }
+    manualIps.add(val); saveManualIps();              // deliberate flag - survives player unbans
     return { kind: "IP", value: val, added, ids: idsWithIp(val) };
   }
   const ids = resolveIds(val);                          // known player by username?
@@ -402,8 +409,8 @@ function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames], 
 // Clear ALL flags (IPs + usernames + account ids). Stops every auto-ban. Registry kept.
 function clearFlags() {
   const n = flagged.size + flaggedNames.size + flaggedIds.size;
-  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
-  saveFlagged(); saveFNames(); saveFIds();
+  flagged.clear(); flaggedNames.clear(); flaggedIds.clear(); manualIps.clear(); pendingFlag.clear();
+  saveFlagged(); saveFNames(); saveFIds(); saveManualIps();
   return n;
 }
 // Clear only the flagged USERNAMES (keep flagged IPs). Stops "blacklisted
@@ -417,6 +424,7 @@ function clearFlaggedNames() {
 function clearIp(ip) {
   const flagRemoved = flagged.delete(ip) ? 1 : 0;
   if (flagRemoved) saveFlagged();
+  if (manualIps.delete(ip)) saveManualIps();   // deliberate clear releases the manual protection too
   let players = 0;
   for (const e of Object.values(registry)) {
     let hit = false;
@@ -433,9 +441,9 @@ function clearIp(ip) {
 function clearAll() {
   const ids = Object.keys(registry).length, fl = flagged.size + flaggedNames.size + flaggedIds.size;
   for (const k of Object.keys(registry)) delete registry[k];
-  flagged.clear(); flaggedNames.clear(); flaggedIds.clear();
+  flagged.clear(); flaggedNames.clear(); flaggedIds.clear(); manualIps.clear(); pendingFlag.clear();
   cutoffTs = Math.max(cutoffTs, lastTs || Date.now());
-  flushRegistry(); saveFlagged(); saveFNames(); saveFIds(); saveCutoff();
+  flushRegistry(); saveFlagged(); saveFNames(); saveFIds(); saveManualIps(); saveCutoff();
   return { ids, flagged: fl };
 }
 
@@ -450,7 +458,7 @@ function addUntracked(name) {
   saveUntracked();
   let purged = 0;
   for (const [id, e] of Object.entries(registry))
-    if (norm(e.name) === key) { untrackedIds.add(id); delete registry[id]; purged++; }
+    if (norm(e.name) === key) { untrackedIds.set(id, key); delete registry[id]; purged++; }
   if (purged) scheduleSave();
   return { name: key, purged };
 }
@@ -458,6 +466,11 @@ function removeUntracked(name) {
   const key = norm(name);
   const had = untrackedNames.delete(key);
   if (had) saveUntracked();
+  // Also release the ids ignored under this name, or record() keeps dropping
+  // their lines until a restart and tracking never actually resumes.
+  let freed = 0;
+  for (const [id, nm] of untrackedIds) if (nm === key) { untrackedIds.delete(id); freed++; }
+  if (freed) saveUntrackedIds();
   return had;
 }
 function getUntracked() { return [...untrackedNames]; }
@@ -473,7 +486,7 @@ function parseTs(line) {
 async function handleJoin(name, rawId, ip, ts, server, confident) {
   if (/localhost-/i.test(rawId || "")) return;     // server self-connection
   if (name && untrackedNames.has(norm(name))) {    // ignore-listed username - don't track at all
-    if (!skipId(rawId)) untrackedIds.add(cleanId(rawId));   // also skip their disconnect lines
+    if (!skipId(rawId)) { const cid = cleanId(rawId); if (!untrackedIds.has(cid)) { untrackedIds.set(cid, norm(name)); saveUntrackedIds(); } }   // also skip their disconnect lines
     // Master names still get a live join callback (with NO IP) so the bot can hand
     // them a menu on join — but nothing about them is recorded.
     if (live && masterNames.has(norm(name)) && Date.now() - (recentJoin.get(norm(name)) ?? 0) >= JOIN_DEBOUNCE_MS) {
@@ -596,8 +609,10 @@ function parseLine(line, server, key) {
     const within    = ts - (pendingTs[key] ?? 0) <= CORRELATE_WINDOW_MS;
     const ip        = within ? (pendingIP[key] ?? null) : null;
     const confident = within && !!pendingSet[key] && pendingSet[key].size === 1;   // exactly one connection pending
-    pendingIP[key] = null;
-    if (pendingSet[key]) pendingSet[key].clear();
+    // Pavlov often logs a pre-auth login (userId INVALID) before the real one.
+    // Only a VALID id consumes the pending accept-IP - otherwise the throwaway
+    // line eats it and the authed login correlates to nothing.
+    if (!skipId(lg.id)) { pendingIP[key] = null; if (pendingSet[key]) pendingSet[key].clear(); }
     handleJoin(lg.name, lg.id, ip, ts, server, confident);
     return;
   }
@@ -611,9 +626,12 @@ function parseLine(line, server, key) {
 }
 
 /* ---------------- polling reader ---------------- */
+const inodes = {};   // per-path inode - detects rotation even when the new file is already larger than our offset
 function poll() {
   for (const f of watchList) {
     let st; try { st = fs.statSync(f); } catch { continue; }
+    if (st.ino && inodes[f] && st.ino !== inodes[f]) { offsets[f] = 0; leftover[f] = ""; }   // file replaced under the same path
+    if (st.ino) inodes[f] = st.ino;
     let from = offsets[f];
     if (from === undefined) from = Math.max(0, st.size - MAX_BACKFILL_BYTES);
     if (st.size < from) { from = 0; leftover[f] = ""; }   // rotated / truncated
@@ -636,6 +654,14 @@ function poll() {
   if (kdDirty) flushKD();
   if (killLogDirty) flushKillLog();
   pruneDebounceMaps();
+}
+
+// Flush every throttled store now - called by the bot's graceful shutdown so a
+// pm2 restart can't drop the last few seconds of registry/K-D/kill-log updates.
+function flushAll() {
+  if (dirty) flushRegistry();
+  if (kdDirty) flushKD();
+  if (killLogDirty) flushKillLog();
 }
 
 // Drop stale debounce entries so these maps don't grow without bound over long uptime.
@@ -719,9 +745,11 @@ function init(opts = {}) {
 
   // untrackedIds isn't persisted - rebuild it from the loaded registry so ignore-listed
   // players stay ignored across restarts (disconnect lines carry no name to re-match on).
+  let untrackedDirty = false;
   for (const [id, e] of Object.entries(registry)) {
-    if (e && untrackedNames.has(norm(e.name))) { untrackedIds.add(id); delete registry[id]; }
+    if (e && untrackedNames.has(norm(e.name))) { untrackedIds.set(id, norm(e.name)); delete registry[id]; untrackedDirty = true; }
   }
+  if (untrackedDirty) saveUntrackedIds();
 
   live = false; poll();              // backfill (no feed / no auto-ban for old joins)
   live = true;                       // everything from here on is a live event
@@ -753,6 +781,7 @@ module.exports = {
   getKD,
   topKD,
   getKills,
+  flushAll,
   addUntracked,
   removeUntracked,
   getUntracked,

@@ -1529,11 +1529,14 @@ function clampEmbed(embed) {
 /** Fine-grained progress bar — smooth 1/8-cell fill, e.g. ██████▍░░░░░ */
 const _BAR_FRAC = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 function bar(value, max, width = 12) {
-  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
-  const units = ratio * width;
-  const full  = Math.floor(units);
-  const frac  = _BAR_FRAC[Math.round((units - full) * 8)] || "";
-  const used  = full + (frac ? 1 : 0);
+  const ratio  = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  // Work in 1/8-cell units and carry a rounded-up fraction into a full block,
+  // otherwise a fraction that rounds to 8/8 renders as EMPTY and a higher value
+  // can draw a shorter bar than a lower one.
+  const eighths = Math.round(ratio * width * 8);
+  const full    = Math.floor(eighths / 8);
+  const frac    = _BAR_FRAC[eighths % 8] || "";
+  const used    = full + (frac ? 1 : 0);
   return "█".repeat(full) + frac + "░".repeat(Math.max(0, width - used));
 }
 /** Labeled meter: `██████▍░░░░░  n/max (p%)` — for dashboards and rosters. */
@@ -1645,10 +1648,16 @@ function sendRconRaw(command, server = "server1", timeoutMs = 3000) {
       }
       response += text;
     });
-    socket.on("timeout", () => finish(resolve, response || ""));
+    // A socket that times out / closes BEFORE authenticating never ran the command -
+    // that's a failure (wrong password, dead host), not an empty response. Resolving
+    // it would make sendRconBoth report ok for a server that silently did nothing.
+    const settle = () => authenticated
+      ? finish(resolve, response)
+      : finish(reject, new Error(`no RCON auth from ${host}:${port}`));
+    socket.on("timeout", settle);
     socket.on("error",   (err) => finish(reject, err));
-    socket.on("close",   () => finish(resolve, response));
-    fallbackTimer = setTimeout(() => finish(resolve, response), timeoutMs);
+    socket.on("close",   settle);
+    fallbackTimer = setTimeout(settle, timeoutMs);
   });
 }
 
@@ -1707,7 +1716,9 @@ function preserveBalanceAcrossKick(name) {
     setTimeout(() => {
       try {
         const after = readPlayerBalance(name);
-        if (after == null || after < before) {
+        // Only restore a WIPE (file gone or zeroed). Restoring any drop would refund
+        // caps a rejoining player legitimately spent within the 25s window.
+        if (after == null || after === 0) {
           writePlayerBalance(name, before);
           logger.info("Caps", `Restored ${name}'s caps after kick: ${after ?? "missing"} -> ${before}`);
         }
@@ -3331,6 +3342,7 @@ async function shutdown(signal) {
   // _queues holds the tail promise of every per-file write chain; waiting on them
   // means pm2 restarts can't kill an in-flight atomic write mid-rename.
   try { await Promise.allSettled([..._queues.values()]); } catch {}
+  try { ipBans.flushAll(); } catch {}   // registry / K-D / kill-log throttled writes
   logger.info("Bot", "Queues drained — exiting.");
   process.exit(0);
 }
@@ -3478,7 +3490,11 @@ async function onInteraction(interaction) {
     if (ADMIN_COMMANDS.includes(name) && !hasAdminRole(interaction.member)) {
       return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
-    if (FL_COMMANDS.includes(name) && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
+    // /faction's read-only subcommands (list / audit / playtime) are public - only
+    // the mutating ones need the Faction Leader / Mod gate.
+    const factionPublicSub = name === "faction" &&
+      ["list", "audit", "playtime"].includes(interaction.options.getSubcommand(false));
+    if (FL_COMMANDS.includes(name) && !factionPublicSub && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
       return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
     if (MOD_COMMANDS.includes(name) && !hasModRole(interaction.member)) {
@@ -3878,7 +3894,7 @@ async function onInteraction(interaction) {
             .setTitle(`Staff Activity — ${staff.tag}`)
             .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log" }).setTimestamp(),
-          { perPage: 12, flags: MessageFlags.Ephemeral });
+          { perPage: 12, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -4260,7 +4276,7 @@ async function onInteraction(interaction) {
               .setTitle(`Donators — ${lines.length}`)
               .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
               .setFooter({ text: DONATOR_FILE }),
-            { perPage: 20, flags: MessageFlags.Ephemeral });
+            { perPage: 20, ephemeral: true });
         }
 
         const playerId = sanitizeId(interaction.options.getString("playerid"));
@@ -4312,7 +4328,7 @@ async function onInteraction(interaction) {
         const target = isAll ? "All" : sanitizeId(rawTarget);
         if (!target) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
-        const { s1, s2 } = await sendRconBoth(`Notify ${target} ${message}`, server);
+        const rres = await sendRconBoth(`Notify ${target} ${message}`, server);
         // Pavlov RCON has no broadcast verb on stock builds; Notify is build/mod-dependent.
         // Heuristically detect whether the server acknowledged the command.
         const ackOne = (raw) => {
@@ -4324,9 +4340,7 @@ async function onInteraction(interaction) {
                    lower.includes("not recognised") || lower.includes("invalid") ||
                    lower.includes("\"successful\":false"));
         };
-        const a1 = ackOne(s1);
-        const a2 = ackOne(s2);
-        const acks = [a1, a2].filter(v => v !== null);
+        const acks = [rres.s1, rres.s2, rres.s3].map(ackOne).filter(v => v !== null);
         const allOk  = acks.length > 0 && acks.every(Boolean);
         const anyOk  = acks.some(Boolean);
         writeModLog({ action: "announce", message, target, by: interaction.user.tag, server, delivered: allOk });
@@ -4758,7 +4772,7 @@ async function onInteraction(interaction) {
             new EmbedBuilder().setColor(NV.AMBER)
               .setTitle(`${faction} — Audit Log`)
               .setDescription(`**${allAudit.length}** total changes *(newest first)*\n\n${DIVIDER}\n${pageLines.join("\n")}`),
-            { perPage: 15, flags: MessageFlags.Ephemeral });
+            { perPage: 15, ephemeral: true });
         }
 
         /* ── rank (Faction Leader ONLY) ── */
@@ -4787,7 +4801,9 @@ async function onInteraction(interaction) {
             if (!had.includes(rank)) {
               return interaction.reply({ embeds: [warningEmbed("Rank Not Held", `\`${playerId}\` doesn't hold **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ") || "none"}.`)], flags: MessageFlags.Ephemeral });
             }
-            removePlayerFromRankFile(faction, playerId, rank);
+            if (!removePlayerFromRankFile(faction, playerId, rank)) {
+              return interaction.reply({ embeds: [errorEmbed("Rank File Write Failed", `Could not update the **${rank}** file for **${faction}** — check the server path/permissions. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
+            }
           } else {
             if (had.includes(rank)) {
               return interaction.reply({ embeds: [warningEmbed("Already Holds Rank", `\`${playerId}\` already holds **${rank}** in **${faction}**.\n\nThey hold: ${had.join(", ")}.`)], flags: MessageFlags.Ephemeral });
@@ -4797,7 +4813,9 @@ async function onInteraction(interaction) {
               return interaction.reply({ embeds: [errorEmbed("Rank Full",
                 `**${rank}** in **${faction}** is at its cap (**${room.count}/${room.cap}**).\n\nRaise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
             }
-            addPlayerToRankFile(faction, playerId, rank);
+            if (!addPlayerToRankFile(faction, playerId, rank)) {
+              return interaction.reply({ embeds: [errorEmbed("Rank File Write Failed", `Could not update the **${rank}** file for **${faction}** — check the server path/permissions. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
+            }
           }
           const now = getPlayerRanks(faction, playerId);
           await setFactionRank(faction, playerId, now[now.length - 1] ?? getFactionDefaultRank(faction));   // track highest as primary
@@ -4876,7 +4894,8 @@ async function onInteraction(interaction) {
             await setFactionRank(fromFaction, playerId, oldRank);
             return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update \`${toSpawn}\`. Transfer rolled back.`)], flags: MessageFlags.Ephemeral });
           }
-          addPlayerToRankFile(toFaction, playerId, newRank);
+          const rankFileOk = addPlayerToRankFile(toFaction, playerId, newRank);
+          if (!rankFileOk) logger.warn("Faction", `Transfer: membership moved but rank file write failed for ${playerId} -> ${toFaction}/${newRank}`);
           await setFactionRank(toFaction, playerId, newRank);
           writeFactionAudit({ action: "transfer-out", faction: fromFaction, playerId, oldRank, by: interaction.user.tag });
           writeFactionAudit({ action: "transfer-in",  faction: toFaction,   playerId, rank: newRank, by: interaction.user.tag });
@@ -4889,7 +4908,7 @@ async function onInteraction(interaction) {
               { name: "To",             value: `**${toFaction}**  *(${rankBadge(toFaction, newRank)})*`,   inline: true },
               { name: "New Roster Size",value: `${toNow.length} / ${toCap}`,                              inline: true },
               { name: "Transferred By", value: `${interaction.user}`,                                     inline: true },
-              { name: "Rank Files",     value: `Cleared from **${fromFaction}** rank files\nAdded to \`${getFactionRankConfig(toFaction)?.rankFiles[newRank] ?? "n/a"}\``, inline: false },
+              { name: "Rank Files",     value: `Cleared from **${fromFaction}** rank files\n${rankFileOk ? "Added to" : "FAILED to write"} \`${getFactionRankConfig(toFaction)?.rankFiles[newRank] ?? "n/a"}\`${rankFileOk ? "" : " — re-run /faction rank"}`, inline: false },
             ).setFooter({ text: "Both faction files updated · rank files updated on disk · audit logged" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -5142,7 +5161,7 @@ async function onInteraction(interaction) {
           new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Payroll — The House's Ledger")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Wages disbursed automatically every 7 days" }).setTimestamp(),
-          { perPage: 12, flags: MessageFlags.Ephemeral });
+          { perPage: 12, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -5257,7 +5276,8 @@ async function onInteraction(interaction) {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const playtime = loadPlaytime();
-        const minutes  = playtime[playerId] ?? null;
+        const ptKey    = Object.keys(playtime).find(k => k.toLowerCase() === playerId.toLowerCase());
+        const minutes  = ptKey !== undefined ? playtime[ptKey] : null;
         const factions = getPlayerFactions(playerId);
         const onS1     = playerCache.server1.some(n => n.toLowerCase() === playerId.toLowerCase());
         const onS2     = playerCache.server2.some(n => n.toLowerCase() === playerId.toLowerCase());
