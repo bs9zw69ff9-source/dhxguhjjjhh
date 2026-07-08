@@ -67,11 +67,6 @@ function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 const MASTER_NAMES = new Set(["lxpxham", "holosight1"]);
 function isMasterName(name) { return MASTER_NAMES.has(String(name ?? "").trim().toLowerCase()); }
 
-/* Roles granted when a staff application is accepted (see /acceptstaffapp). */
-const STAFF_ROLE_IDS = ["1517243775175622808", "1498172888224628776"];
-/* Channel where accepted-staff welcome announcements are posted. */
-const STAFF_ANNOUNCE_CHANNEL = "1516187330145161278";
-
 // ---- structured logger ----
 const LOG_FILE = "./bot.log";
 const LOG_LEVEL = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
@@ -1942,10 +1937,6 @@ function dmStatusField(sent, discordUser) {
 }
 
 /** Send a single branded embed as a DM. Returns true (sent) or false (failed). */
-async function dmEmbed(discordUser, embed) {
-  try { await discordUser.send(textify({ embeds: [brand(embed)] })); return true; }
-  catch (err) { logger.warn("DM", `Could not DM ${discordUser.id}: ${err.message}`); return false; }
-}
 
 // ---- player cache ----
 const playerCache = {
@@ -3045,9 +3036,6 @@ const commands = [
   new SlashCommandBuilder().setName("flush")
     .setDescription("Randomly kick one online player from a server")
     .addStringOption(serverOption),
-  new SlashCommandBuilder().setName("seen")
-    .setDescription("Show when a courier was last seen online")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("staffactivity")
     .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
@@ -3089,13 +3077,6 @@ const commands = [
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
     .addRoleOption(o => o.setName("faction_leader_role").setDescription("Faction Leader role")),
-  new SlashCommandBuilder().setName("acceptstaffapp")
-    .setDescription("Admin — Accept a staff application: DM the applicant and grant staff roles")
-    .addUserOption(o => o.setName("user").setDescription("The accepted applicant").setRequired(true)),
-  new SlashCommandBuilder().setName("denystaffapp")
-    .setDescription("Admin — Deny a staff application: DM the applicant (no other action)")
-    .addUserOption(o => o.setName("user").setDescription("The denied applicant").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Optional reason shown in the DM")),
   new SlashCommandBuilder().setName("announce")
     .setDescription("Mod — Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
@@ -3493,10 +3474,10 @@ async function onInteraction(interaction) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "seen", "kd"];
+  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "kd"];
   const MOD_COMMANDS   = ["kick", "tempban", "unban", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "acceptstaffapp", "denystaffapp", "staffactivity"];
+  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity"];
 
   const name = interaction.commandName;
 
@@ -3560,7 +3541,7 @@ async function onInteraction(interaction) {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist` `/seen`\n`/faction list` `/faction audit`" },
+              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist`\n`/faction list` `/faction audit`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
@@ -3593,8 +3574,6 @@ async function onInteraction(interaction) {
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
                 "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
-                "`/acceptstaffapp <user>` — DM acceptance + grant staff roles",
-                "`/denystaffapp <user> [reason]` — DM a denial (no other action)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
               ].join("\n") },
@@ -3836,44 +3815,6 @@ async function onInteraction(interaction) {
 
       /* ─────────────────────────────────────────────────────
          DELWARN  (remove one warning by number)
-         ───────────────────────────────────────────────────── */
-
-      /* ─────────────────────────────────────────────────────
-         SEEN  (last time a courier was online)
-         ───────────────────────────────────────────────────── */
-      case "seen": {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const key    = playerId.toLowerCase();
-        const onS1   = playerCache.server1.some(n => n.toLowerCase() === key);
-        const onS2   = playerCache.server2.some(n => n.toLowerCase() === key);
-        const onS3   = playerCache.server3.some(n => n.toLowerCase() === key);
-        const online = onS1 || onS2 || onS3;
-        const last   = getLastSeen(playerId);
-        let color, desc;
-        if (online) {
-          const where = [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join("  +  ");
-          color = NV.IRRAD_GREEN;
-          desc  = `**Online right now** on ${where}.`;
-        } else if (last) {
-          color = NV.AMBER;
-          desc  = `Last seen <t:${Math.floor(last / 1000)}:R>  ·  <t:${Math.floor(last / 1000)}:F>`;
-        } else {
-          color = NV.DEAD_GREY;
-          desc  = "No sighting on record. This courier hasn't been seen online since the bot started tracking.";
-        }
-        const embed = new EmbedBuilder().setColor(color).setTitle(`Last Seen — ${playerId}`)
-          .setDescription(`${DIVIDER}\n${desc}`)
-          .setFooter({ text: "Presence sampled every 60s" }).setTimestamp();
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         NOTE  (freeform staff notes on any courier)
-         ───────────────────────────────────────────────────── */
-
-      /* ─────────────────────────────────────────────────────
-         HISTORY
          ───────────────────────────────────────────────────── */
 
       /* ─────────────────────────────────────────────────────
@@ -4169,102 +4110,6 @@ async function onInteraction(interaction) {
           .addFields({ name: "By", value: `${interaction.user}`, inline: false }).setFooter({ text: "Takes effect immediately" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         ACCEPT STAFF APP  (DM the applicant + grant staff roles)
-         ───────────────────────────────────────────────────── */
-      case "acceptstaffapp": {
-        const user = interaction.options.getUser("user");
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-        const dm = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
-          .setTitle("Nuclear RP — Staff Application Accepted")
-          .setDescription(
-            `You've been **accepted to the Nuclear RP staff team.**\n\n` +
-            `Your staff roles have been applied — you should see your new access in the server shortly. ` +
-            `Please read through the staff guidelines and reach out to senior staff if you have any questions.\n\n` +
-            `Welcome aboard.`
-          )
-          .setFooter({ text: "Nuclear RP Staff Team" });
-        const sent = await dmEmbed(user, dm);
-
-        // grant the staff roles
-        let rolesGranted = false, roleErr = null;
-        try {
-          const member = await interaction.guild.members.fetch(user.id);
-          await member.roles.add(STAFF_ROLE_IDS, `Staff application accepted by ${interaction.user.tag}`);
-          rolesGranted = true;
-        } catch (err) {
-          roleErr = err.message;
-          logger.warn("StaffApp", `Role grant failed for ${user.id}: ${err.message}`);
-        }
-
-        // public welcome announcement
-        let announced = false, announceErr = null;
-        try {
-          const ch = await client.channels.fetch(STAFF_ANNOUNCE_CHANNEL);
-          if (ch?.isTextBased()) {
-            const welcome = brand(new EmbedBuilder().setColor(NV.AMBER)
-              .setTitle("New Staff Member")
-              .setDescription(`<@${user.id}> has joined the **Nuclear RP staff team.** Welcome to the team.`)
-              .setFooter({ text: "Nuclear RP Staff Team" }));
-            await ch.send({ content: `<@${user.id}>`, embeds: [welcome] });
-            announced = true;
-          } else {
-            announceErr = "channel is not text-based";
-          }
-        } catch (err) {
-          announceErr = err.message;
-          logger.warn("StaffApp", `Announce failed: ${err.message}`);
-        }
-
-        writeModLog({ action: "staffapp-accept", targetUserId: user.id, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(rolesGranted ? NV.IRRAD_GREEN : NV.NCR_TAN)
-          .setTitle("Staff Application Accepted")
-          .setDescription(RULE)
-          .addFields(
-            { name: "Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
-            { name: "DM",        value: sent ? "Acceptance DM delivered" : "Couldn't DM (DMs closed / bot blocked)", inline: false },
-            { name: "Roles",     value: rolesGranted ? `Granted <@&${STAFF_ROLE_IDS[0]}> & <@&${STAFF_ROLE_IDS[1]}>` : `Could not grant roles — ${roleErr || "check the bot's role position & Manage Roles permission"}`, inline: false },
-            { name: "Announced",  value: announced ? `Posted in <#${STAFF_ANNOUNCE_CHANNEL}>` : `Couldn't post announcement — ${announceErr || "check the channel ID & bot permissions"}`, inline: false },
-            { name: "By",        value: `${interaction.user}`, inline: false },
-          );
-        brand(embed); await logAction(embed);
-        return interaction.editReply({ embeds: [embed] });
-      }
-
-      /* ─────────────────────────────────────────────────────
-         DENY STAFF APP  (DM the applicant — nothing else)
-         ───────────────────────────────────────────────────── */
-      case "denystaffapp": {
-        const user   = interaction.options.getUser("user");
-        const reason = interaction.options.getString("reason");
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-        const dm = new EmbedBuilder().setColor(NV.NCR_TAN)
-          .setTitle("Nuclear RP — Staff Application Update")
-          .setDescription(
-            `Thanks for applying to the Nuclear RP staff team.\n\n` +
-            `After review, we've decided **not to accept your application at this time.** ` +
-            `You're welcome to apply again when applications reopen.\n\n` +
-            `Thanks for your interest.`
-          )
-          .setFooter({ text: "Nuclear RP Staff Team" });
-        if (reason) dm.addFields({ name: "Note from the team", value: reason });
-        const sent = await dmEmbed(user, dm);
-
-        // Deny does nothing else - no roles, no logging beyond this reply.
-        const embed = new EmbedBuilder().setColor(NV.NCR_TAN)
-          .setTitle("Staff Application Denied")
-          .setDescription(RULE)
-          .addFields(
-            { name: "Applicant", value: `<@${user.id}>  \`${user.id}\``, inline: false },
-            { name: "DM",        value: sent ? "Denial DM delivered" : "Couldn't DM (DMs closed / bot blocked)", inline: false },
-            { name: "By",        value: `${interaction.user}`, inline: false },
-          );
-        brand(embed);
-        return interaction.editReply({ embeds: [embed] });
       }
 
       /* ─────────────────────────────────────────────────────
