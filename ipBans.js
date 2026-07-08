@@ -84,6 +84,8 @@ const norm     = s => String(s ?? "").trim().toLowerCase();
 // "'" captured from quoted NetworkFailure/error log lines).
 const cleanId  = raw => { const s = raw == null ? "" : String(raw); const p = s.includes(":") ? s.split(":").pop() : s; return p.replace(/[^a-z0-9]/gi, ""); };
 const skipId   = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);       // pre-auth / server self-conn
+// IPv4 /24 (first three octets) — the block an ISP hands out dynamically.
+const subnetOf = ip => { const m = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(String(ip || "")); return m ? m[1] : null; };
 const labelFor = f => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
 const mtimeOf  = f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
 const exists   = f => { try { return fs.existsSync(f); } catch { return false; } };
@@ -112,6 +114,13 @@ function saveJSON(p, data) {
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }
 const registry  = loadJSON(REGISTRY_PATH, {});
 const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
+// Every flagged IP projects its whole /24, so an evader who returns from a NEARBY
+// address in the same block is still auto-banned. Kept in sync with `flagged` inside
+// saveFlagged(). Set IP_SUBNET_AUTOBAN=off to fall back to exact-IP-only enforcement.
+const SUBNET_AUTOBAN = process.env.IP_SUBNET_AUTOBAN !== "off";
+let flaggedSubnets = new Set([...flagged].map(subnetOf).filter(Boolean));
+// True when this IP is banned outright OR sits in a flagged /24 (when subnet mode is on).
+const ipFlagged = ip => flagged.has(ip) || (SUBNET_AUTOBAN && flaggedSubnets.has(subnetOf(ip)));
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
 const MANUAL_IPS_PATH = path.join(__dirname, "ip_manual.json");
 const manualIps = new Set(loadJSON(MANUAL_IPS_PATH, []) || []);   // admin-flagged IPs - never cleared by a player unban
@@ -195,7 +204,8 @@ function topKD(limit = 30, minKills = 0) {
 /* ---------------- persistence ---------------- */
 function flushRegistry() { dirty = false; saveJSON(REGISTRY_PATH, registry); }
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
-function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); }
+// Rebuild the /24 index on every flag change (every flagged mutation calls this).
+function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); flaggedSubnets = new Set([...flagged].map(subnetOf).filter(Boolean)); }
 function saveFNames()     { saveJSON(FNAMES_PATH, [...flaggedNames]); }
 function saveFIds()       { saveJSON(FIDS_PATH, [...flaggedIds]); }
 function saveUntracked()  { saveJSON(UNTRACKED_PATH, [...untrackedNames]); }
@@ -232,11 +242,6 @@ function altIdsForIps(ips, excludeIds = []) {
     if (!ex.has(norm(id)) && (e.cips || []).some(ip => ips.includes(ip))) set.add(id);
   return [...set];
 }
-// IPv4 /24 (first three octets). Evaders on a dynamic ISP address usually reconnect
-// from a NEARBY address in the same block, so subnet matching catches what an exact
-// IP match misses. Kept DISPLAY-ONLY (never auto-bans) since a /24 can also be a
-// shared ISP/CGNAT range - a human decides.
-const subnetOf = ip => { const m = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(String(ip || "")); return m ? m[1] : null; };
 // ids that share a /24 with `ips` but NOT an exact IP (those are already exact alts).
 function subnetAltIdsForIps(ips, excludeIds = []) {
   const subs = new Set(ips.map(subnetOf).filter(Boolean));
@@ -287,13 +292,10 @@ function getRecord(input) {
     logins,
     recent: recent.slice(0, 8),
     bypass: untrackedNames.has(nm),                                   // ignore-listed (never auto-banned/tracked)
-    flagged: [...cips].some(ip => flagged.has(ip)) || flaggedNames.has(nm) || ids.some(id => flaggedIds.has(id)),
-    // A confirmed IP that isn't itself flagged but shares a /24 with one that is —
-    // a possible evasion from a nearby dynamic address. Surfaced, never auto-banned.
-    flaggedSubnet: (() => {
-      const fsubs = new Set([...flagged].map(subnetOf).filter(Boolean));
-      return [...cips].some(ip => !flagged.has(ip) && fsubs.has(subnetOf(ip)));
-    })(),
+    flagged: [...cips].some(ipFlagged) || flaggedNames.has(nm) || ids.some(id => flaggedIds.has(id)),
+    // A confirmed IP that isn't itself banned but sits in a flagged /24 — an evasion
+    // from a nearby dynamic address. When subnet mode is on this IS auto-banned.
+    flaggedSubnet: [...cips].some(ip => !flagged.has(ip) && flaggedSubnets.has(subnetOf(ip))),
   };
 }
 
@@ -552,11 +554,11 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
     // just confirmed ones — catches a returning alt whose only tie to a flagged IP was
     // a join. Account-scoped, so it only ever bans an account with a flagged IP of its own.
     const e = registry[id];
-    const knownFlagged = e && [...(e.ips || []), ...(e.cips || [])].some(x => flagged.has(x));
+    const knownFlagged = e && [...(e.ips || []), ...(e.cips || [])].some(ipFlagged);
     const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
                  : (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
                  : knownFlagged                              ? "blacklisted IP"
-                 : (confident && ip && flagged.has(ip))      ? "blacklisted IP"
+                 : (confident && ip && ipFlagged(ip))        ? "blacklisted IP"
                  : null;
     if (reason) {
       recentAuto.set(id, Date.now());
@@ -621,7 +623,7 @@ function parseLine(line, server, key) {
     // retroactive auto-ban: an alt that slipped the ambiguous join check is caught
     // here with the 100%-accurate confirmed IP. Skip the freshly-banned account
     // itself (pendingFlag). The login-time check also catches them next connect.
-    if (live && (flagged.has(ip) || flaggedIds.has(id)) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
+    if (live && (ipFlagged(ip) || flaggedIds.has(id)) && registry[id]?.name && !pendingFlag.has(id) && !untrackedIds.has(id)
         && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
       recentAuto.set(id, Date.now());
       Promise.resolve(onAutoBan({ name: registry[id].name, ip, server, reason: flaggedIds.has(id) ? "blacklisted account (EOS id)" : "blacklisted IP" }))

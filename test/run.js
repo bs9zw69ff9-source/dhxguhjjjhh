@@ -629,8 +629,20 @@ const ok = (cond, msg) => {
     ipBans.flagIp("42.42.42.10");                       // ban Evader's exact IP
     const subRec2 = ipBans.getRecord("EvaderAlt");      // the alt on .99 (same /24, different IP)
     ok(subRec2.flaggedSubnet === true, "flaggedSubnet flags an account sharing a /24 with a blacklisted IP");
-    ok(subRec2.flagged === false, "subnet proximity does NOT mark the account itself flagged (no auto-ban)");
+    ok(subRec2.flagged === true, "subnet mode: an account in a flagged /24 IS marked flagged (auto-ban)");
+    // A LIVE join from a DIFFERENT IP in the flagged /24 is auto-banned
+    const logNet = path.join(sandbox, "PavlovSubnet.log");
+    fs.writeFileSync(logNet, "");
+    let subnetAuto = null;
+    const tNet = ipBans.init({ logFiles: [logNet], onAutoBan: async (i) => { subnetAuto = i; }, pollMs: 20 });
+    fs.appendFileSync(logNet,
+      "[2026.07.05-13.00.00:000][7]LogNet: NotifyAcceptedConnection: RemoteAddr: 42.42.42.200:1, UniqueId: INVALID\n" +
+      "[2026.07.05-13.00.00:200][8]LogNet: Login request: ?Name=FreshAlt?pid=FreshAlt userId: NULL:sub09 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tNet);
+    ok(subnetAuto && subnetAuto.name === "FreshAlt", "live join from a NEW IP in a flagged /24 is auto-banned (subnet mode)");
     ipBans.clearIp("42.42.42.10");
+    ok(ipBans.getRecord("EvaderAlt").flagged === false, "clearing the last flagged IP in a /24 drops the subnet flag");
 
     // EOS flagging catches an evader who keeps their account but changes IP.
     const logEos = path.join(sandbox, "PavlovEosCatch.log");
