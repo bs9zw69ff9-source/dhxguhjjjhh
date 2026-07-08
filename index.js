@@ -1727,20 +1727,31 @@ function preserveBalanceAcrossKick(name) {
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
    delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
 function kickEverywhere(name) {
-  const clean = sanitizeId(name);              // fallback token if we can't resolve a live id
+  const clean = sanitizeId(name);
   if (!clean) return;
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  // Pavlov's RCON Kick targets the player's UniqueId, not their display name — so we
-  // look the name up in each server's live player list and kick by that id. Without
-  // this the auto-ban kick (and any name-based kick) silently does nothing.
-  (async () => {
-    for (const srv of ACTIVE_SERVERS) {
-      let target = clean;
-      try { const id = await resolveOnlineId(name, srv); if (id) target = id; } catch {}
-      try { await sendRcon(`Kick ${target}`, srv, 2500, 1); logger.info("Bans", `Kick ${target} on ${srv} (was "${name}")`); }
-      catch (err) { logger.warn("Bans", `Kick ${target} on ${srv} failed: ${err.message}`); }
+  // Pavlov's RCON Kick targets the player's UniqueId, which only appears in RefreshList
+  // once the join has settled. An auto-ban fires the INSTANT the join line is logged —
+  // usually before the player is listed — so a single lookup misses them and they end
+  // up flagged-but-not-kicked. Retry the resolve+kick over ~20s until the id resolves
+  // and the kick lands (or they're confirmed gone). Kicking by name is a no-op on this
+  // gamemode, so we never fall back to it — that only hid the failure.
+  const kickOn = async (srv) => {
+    for (const delay of [0, 1500, 3500, 6000, 9000, 14000, 20000]) {
+      if (delay) await new Promise(r => setTimeout(r, delay));
+      let id = null;
+      try { id = await resolveOnlineId(name, srv); } catch {}
+      if (!id) continue;                       // not listed yet (settling) or already left — retry
+      try {
+        await sendRcon(`Kick ${id}`, srv, 2500, 1);
+        logger.info("Bans", `Kicked ${name} (${id}) on ${srv}`);
+        return true;
+      } catch (err) { logger.warn("Bans", `Kick ${id} on ${srv} failed, will retry: ${err.message}`); }
     }
-  })().catch(() => {});
+    logger.warn("Bans", `Could not kick "${name}" on ${srv} — no live id resolved (already left, or never listed)`);
+    return false;
+  };
+  Promise.all(ACTIVE_SERVERS.map(kickOn)).catch(() => {});
 }
 
 /* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
