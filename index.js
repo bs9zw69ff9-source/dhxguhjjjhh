@@ -2007,6 +2007,13 @@ async function refreshPlayerCache(server = "server1") {
     }
   } catch (err) {
     logger.warn("Cache", `${server} refresh failed: ${err.message}`);
+    // A roster we can't refresh goes stale fast. Past the TTL, treat the server as
+    // empty - otherwise a crashed server's last players keep earning playtime and
+    // fresh last-seen stamps indefinitely and stay "online" in every list.
+    if (playerCache[server].length && Date.now() - playerCache.lastUpdated[server] > CACHE_TTL_MS) {
+      playerCache[server] = [];
+      logger.warn("Cache", `${server} roster cleared — unreachable beyond cache TTL`);
+    }
   }
 }
 
@@ -2323,7 +2330,7 @@ function wipeAllMoney() {
   const base = getModsavePath();
   if (!base) return { ok: false, error: "MODSAVE_PATH not set" };
   let files;
-  try { files = fs.readdirSync(base).filter(f => f.endsWith(".txt")); }
+  try { files = fs.readdirSync(base).filter(f => f.endsWith(".txt") && f.toLowerCase() !== "banlist.txt"); }   // banlist.txt is the ban-message file, not a ledger
   catch (e) { return { ok: false, error: e.code || e.message }; }
   let wiped = 0;
   for (const f of files) { if (writePlayerBalance(path.basename(f, ".txt"), 0)) wiped++; }
@@ -2401,7 +2408,14 @@ function importModsaveBanlist() {
     let added = 0;
     for (const p of parsed) {
       if (have.has(p.name.toLowerCase())) continue;
-      const expires   = /^perm/i.test(p.unban) || !p.unban ? null : easternNoonUTC(p.unban);   // lift at noon Eastern that day
+      const wantsPerm = /^perm/i.test(p.unban) || !p.unban;
+      const expires   = wantsPerm ? null : easternNoonUTC(p.unban);   // lift at noon Eastern that day
+      if (!wantsPerm && !expires) {
+        // Date we can't parse - keep the ban (safe direction) but say so loudly
+        // instead of silently escalating a dated ban to permanent.
+        logger.warn("Bans", `Imported ban for "${p.name}" has an unparseable unban date "${p.unban}" — recorded as permanent; /unban and re-ban with a YYYY-MM-DD date to fix`);
+        p.reason = `${p.reason} [unparseable unban date: ${p.unban}]`;
+      }
       bans.push(expires
         ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: "until " + p.unban }
         : { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), permanent: true });
@@ -2530,7 +2544,7 @@ function buildLeaderboardData() {
   if (!base) return null;
   const entries = [];
   try {
-    for (const file of fs.readdirSync(base).filter(f => f.endsWith(".txt"))) {
+    for (const file of fs.readdirSync(base).filter(f => f.endsWith(".txt") && f.toLowerCase() !== "banlist.txt")) {
       const id  = path.basename(file, ".txt");
       try {
         const bal = parseInt(fs.readFileSync(path.join(base, file), "utf8").trim(), 10);
@@ -2814,7 +2828,7 @@ async function handleMenuPanelSubmit(interaction) {
       const t = sanitizeId(link.name);
       const hadHS = (loadMenuGrants()[link.name.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
       await sendRconBoth(`RemoveMenu ${t}`, "both");
-      if (hadHS) await sendRconBoth(`RemoveAccessManager ${t}`, "both");
+      if (hadHS) { await sendRconBoth(`RemoveMod ${t}`, "both"); await sendRconBoth(`RemoveAccessManager ${t}`, "both"); }
       for (const m of MENUS) for (const srv of [...ACTIVE_SERVERS, "both"]) await removeMenuGrant(link.name, srv, m.value);
       await clearMenuLink(interaction.user.id);
       logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Removed (self)")
@@ -4415,6 +4429,10 @@ async function onInteraction(interaction) {
         const applied = [`RemoveMenu ${target}`];
         await sendRconBoth(`RemoveMenu ${target}`, server);            // clears the menu bit code
         if (wasHighStaff) {
+          // AddMod was run at grant time - revoke it too, or the player keeps
+          // in-game moderator powers after losing the menu.
+          await sendRconBoth(`RemoveMod ${target}`, server);
+          applied.push(`RemoveMod ${target}`);
           await sendRconBoth(`RemoveAccessManager ${target}`, server);
           applied.push(`RemoveAccessManager ${target}`);
         }
@@ -4450,6 +4468,13 @@ async function onInteraction(interaction) {
         // Clear every menu grant record across both servers.
         const grants = loadMenuGrants();
         const holders = Object.keys(grants);
+        // There is no ClearMods verb - revoke AddMod per player for every High Staff
+        // grant on record, or they keep in-game moderator powers after the wipe.
+        for (const pid of holders) {
+          if ((grants[pid] || []).some(g => g.menuValue === "highstaff")) {
+            await sendRconBoth(`RemoveMod ${sanitizeId(pid)}`, "both");
+          }
+        }
         for (const pid of holders) for (const m of MENUS) {
           removeMenuGrant(pid, "server1", m.value);
           removeMenuGrant(pid, "server2", m.value);
