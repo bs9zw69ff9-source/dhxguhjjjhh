@@ -232,6 +232,28 @@ function altIdsForIps(ips, excludeIds = []) {
     if (!ex.has(norm(id)) && (e.cips || []).some(ip => ips.includes(ip))) set.add(id);
   return [...set];
 }
+// IPv4 /24 (first three octets). Evaders on a dynamic ISP address usually reconnect
+// from a NEARBY address in the same block, so subnet matching catches what an exact
+// IP match misses. Kept DISPLAY-ONLY (never auto-bans) since a /24 can also be a
+// shared ISP/CGNAT range - a human decides.
+const subnetOf = ip => { const m = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(String(ip || "")); return m ? m[1] : null; };
+// ids that share a /24 with `ips` but NOT an exact IP (those are already exact alts).
+function subnetAltIdsForIps(ips, excludeIds = []) {
+  const subs = new Set(ips.map(subnetOf).filter(Boolean));
+  if (!subs.size) return [];
+  const ex = new Set(excludeIds.map(norm));
+  const exactAlts = new Set(altIdsForIps(ips, excludeIds).map(norm));   // already reported as exact-IP alts
+  const exactIps  = new Set(ips);
+  const set = new Set();
+  for (const [id, e] of Object.entries(registry)) {
+    if (ex.has(norm(id)) || exactAlts.has(norm(id))) continue;
+    if ((e.cips || []).some(ip => !exactIps.has(ip) && subs.has(subnetOf(ip)))) set.add(id);
+  }
+  return [...set];
+}
+function subnetAltNamesForIps(ips, excludeIds = []) {
+  return subnetAltIdsForIps(ips, excludeIds).map(id => registry[id]?.name).filter(Boolean);
+}
 // Everything Pavlov.log has taught us about a player: name, all/confirmed IPs,
 // first/last seen, and shared-IP alt usernames. Returns null if unknown.
 function getRecord(input) {
@@ -261,10 +283,17 @@ function getRecord(input) {
     firstSeen: firstSeen === Infinity ? null : firstSeen,
     lastSeen: lastSeen || null,
     alts: altNamesForIps([...cips], ids),
+    subnetAlts: subnetAltNamesForIps([...cips], ids),                 // share a /24 but not an exact IP (display-only)
     logins,
     recent: recent.slice(0, 8),
     bypass: untrackedNames.has(nm),                                   // ignore-listed (never auto-banned/tracked)
     flagged: [...cips].some(ip => flagged.has(ip)) || flaggedNames.has(nm) || ids.some(id => flaggedIds.has(id)),
+    // A confirmed IP that isn't itself flagged but shares a /24 with one that is —
+    // a possible evasion from a nearby dynamic address. Surfaced, never auto-banned.
+    flaggedSubnet: (() => {
+      const fsubs = new Set([...flagged].map(subnetOf).filter(Boolean));
+      return [...cips].some(ip => !flagged.has(ip) && fsubs.has(subnetOf(ip)));
+    })(),
   };
 }
 
@@ -630,7 +659,14 @@ const inodes = {};   // per-path inode - detects rotation even when the new file
 function poll() {
   for (const f of watchList) {
     let st; try { st = fs.statSync(f); } catch { continue; }
-    if (st.ino && inodes[f] && st.ino !== inodes[f]) { offsets[f] = 0; leftover[f] = ""; }   // file replaced under the same path
+    if (st.ino && inodes[f] && st.ino !== inodes[f]) {
+      // File replaced under the same path. A fresh rotated log is near-empty so we read
+      // it all; but if a LARGE file was swapped in (a restored backup / non-empty
+      // rotation), only tail it - replaying its whole history as live events would
+      // inflate login counts and re-fire the feed/auto-ban for old connections.
+      offsets[f] = Math.max(0, st.size - MAX_BACKFILL_BYTES);
+      leftover[f] = "";
+    }
     if (st.ino) inodes[f] = st.ino;
     let from = offsets[f];
     if (from === undefined) from = Math.max(0, st.size - MAX_BACKFILL_BYTES);
@@ -743,11 +779,17 @@ function init(opts = {}) {
   const backups = watchList.filter(f => !files.includes(f));
   if (backups.length) console.log(`[ipBans] also backfilling ${backups.length} rotated log(s): ${backups.map(b => path.basename(b)).join(", ")}`);
 
-  // untrackedIds isn't persisted - rebuild it from the loaded registry so ignore-listed
-  // players stay ignored across restarts (disconnect lines carry no name to re-match on).
+  // Ignore-list reconciliation across restarts:
+  //  • add ids for any registry entry whose name is ignore-listed (disconnect lines
+  //    carry no name to re-match on, so we need the id set), and
+  //  • drop any persisted id whose name is no longer ignored (e.g. removed out-of-band
+  //    while the bot was down) - otherwise that player is dropped forever.
   let untrackedDirty = false;
   for (const [id, e] of Object.entries(registry)) {
     if (e && untrackedNames.has(norm(e.name))) { untrackedIds.set(id, norm(e.name)); delete registry[id]; untrackedDirty = true; }
+  }
+  for (const [id, nm] of untrackedIds) {
+    if (!untrackedNames.has(nm)) { untrackedIds.delete(id); untrackedDirty = true; }   // no longer ignored -> resume tracking
   }
   if (untrackedDirty) saveUntrackedIds();
 

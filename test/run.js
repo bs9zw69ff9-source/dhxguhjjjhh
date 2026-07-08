@@ -609,6 +609,27 @@ const ok = (cond, msg) => {
     clearInterval(tPf);
     ok(!ipBans.blacklist.includes("66.66.66.66"), "clearFlags kills pendingFlag — post-wipe disconnect does not re-flag the IP");
 
+    // Subnet (/24) evasion detection — two accounts on the SAME /24 but different IPs
+    const logSub = path.join(sandbox, "PavlovSub.log");
+    fs.writeFileSync(logSub,
+      "[2026.07.05-10.00.00:000][1]LogNet: Login request: ?Name=Evader?pid=Evader userId: NULL:sub01 platform: NULL\n" +
+      "[2026.07.05-10.05.00:000][2]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 42.42.42.10:40000, UniqueId: NULL:sub01\n" +
+      "[2026.07.05-11.00.00:000][3]LogNet: Login request: ?Name=EvaderAlt?pid=EvaderAlt userId: NULL:sub02 platform: NULL\n" +
+      "[2026.07.05-11.05.00:000][4]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 42.42.42.99:40000, UniqueId: NULL:sub02\n" +
+      "[2026.07.05-12.00.00:000][5]LogNet: Login request: ?Name=Unrelated?pid=Unrelated userId: NULL:sub03 platform: NULL\n" +
+      "[2026.07.05-12.05.00:000][6]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 99.1.2.3:40000, UniqueId: NULL:sub03\n");
+    clearInterval(ipBans.init({ logFiles: [logSub], onAutoBan: async () => {}, pollMs: 9e8 }));
+    const subRec = ipBans.getRecord("Evader");
+    ok(subRec.subnetAlts.includes("EvaderAlt"), "subnet detection surfaces a same-/24 alt on a different IP");
+    ok(!subRec.subnetAlts.includes("Unrelated"), "different /24 is NOT a subnet alt");
+    ok(!subRec.alts.includes("EvaderAlt"), "same-/24-different-IP is a SUBNET alt, not an exact-IP alt");
+    ok(subRec.flaggedSubnet === false, "flaggedSubnet is false with nothing flagged");
+    ipBans.flagIp("42.42.42.10");                       // ban Evader's exact IP
+    const subRec2 = ipBans.getRecord("EvaderAlt");      // the alt on .99 (same /24, different IP)
+    ok(subRec2.flaggedSubnet === true, "flaggedSubnet flags an account sharing a /24 with a blacklisted IP");
+    ok(subRec2.flagged === false, "subnet proximity does NOT mark the account itself flagged (no auto-ban)");
+    ipBans.clearIp("42.42.42.10");
+
     // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
     const logEid = path.join(sandbox, "PavlovEID.log");
     fs.writeFileSync(logEid, "");

@@ -3268,9 +3268,14 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Last Seen",       value: fmt(rec.lastSeen),                   inline: true },
           { name: "Login Count",     value: String(rec.logins ?? 0),             inline: true },
           { name: "Possible Alts",   value: (rec.alts && rec.alts.length ? rec.alts.join(", ") : "None").slice(0, 1024), inline: false },
+          ...(rec.subnetAlts && rec.subnetAlts.length
+            ? [{ name: "Same-Subnet Accounts (/24)", value: `${rec.subnetAlts.join(", ").slice(0, 980)}\n*Not auto-banned — a /24 can be a shared ISP.*`, inline: false }]
+            : []),
           { name: "Bypass Auto-Ban", value: rec.bypass ? "Yes" : "No",           inline: true },
           { name: "Server",          value: srvName,                             inline: true },
-          { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist" : "No matches", inline: false },
+          { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist"
+            : rec.flaggedSubnet ? "⚠ Same /24 as a blacklisted IP — possible evasion (review manually)"
+            : "No matches", inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
         ), "Connection log · Mojave Authority");
