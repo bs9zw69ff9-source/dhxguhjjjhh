@@ -334,14 +334,17 @@ function altNamesForIps(ips, excludeIds = []) {
 // Flags the player's username(s) AND confirmed IP(s). Any account that later
 // connects matching either is auto-banned. (No hex ids - Shack bans by name.)
 function blacklistPlayer(input, opts = {}) {
-  const flagId = opts.flagId === true;              // EOS-id flagging is OPT-IN - permanent bans only
+  const flagId = opts.flagId === true;
   const ids  = resolveIds(input);
   const cips = confirmedIpsForIds(ids);             // trustworthy same-line pairings
-  // Flag confirmed IPs. If none are on record yet - the usual case when you ban a
-  // player who is still ONLINE (logged in, not yet disconnected) - fall back to their
+  // Flag EVERY IP this account is on record for — confirmed disconnect pairings AND
+  // the join-time IPs (which are only recorded on an unambiguous single-pending join,
+  // so they're reliable). Flagging just the confirmed ones let an evader slip back in
+  // from an address the banned account had only ever *joined* from. Alt enforcement
+  // still keys on confirmed IPs (altNamesForIps) to avoid chaining on a loose match.
+  const ips  = [...new Set([...cips, ...ipsForIds(ids)])];
   const bestEffort = cips.length === 0;
-  const ips  = bestEffort ? ipsForIds(ids) : cips;
-  const altNames = altNamesForIps(ips, ids);
+  const altNames = altNamesForIps(cips.length ? cips : ips, ids);
   let added = 0;
   for (const ip of ips) if (!flagged.has(ip)) { flagged.add(ip); added++; }
   if (added) saveFlagged();
@@ -545,7 +548,11 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   // auto-ban if this join matches a flagged username or IP.
   //  • username comes straight from the login line -> reliable, ban on sight.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
-    const knownFlagged = (registry[id]?.cips || []).some(x => flagged.has(x));
+    // Match against the joining account's WHOLE IP history (join + disconnect), not
+    // just confirmed ones — catches a returning alt whose only tie to a flagged IP was
+    // a join. Account-scoped, so it only ever bans an account with a flagged IP of its own.
+    const e = registry[id];
+    const knownFlagged = e && [...(e.ips || []), ...(e.cips || [])].some(x => flagged.has(x));
     const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
                  : (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
                  : knownFlagged                              ? "blacklisted IP"

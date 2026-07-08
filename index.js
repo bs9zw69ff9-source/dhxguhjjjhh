@@ -1749,9 +1749,10 @@ function kickEverywhere(name) {
    never hangs; the kick is fire-and-forget.
    Returns ipBans' enforcement summary plus the blacklist outcome:
    { ids, ips, alts, field, blacklist: { name, servers }, ok }. */
-// opts.permanent = true flags the account's EOS id for permanent evasion-catching.
-// Temp bans (default) only blacklist the name + flag IPs - never the EOS id, so a
-// returning player after their temp ban lifts isn't wrongly auto-banned.
+// Every ban flags the account's EOS id so an evader who keeps their account but
+// changes name AND IP is still caught. This is safe for temp bans because a served
+// temp ban is lifted on rejoin by autoBanDecision (and cleared outright by the 60s
+// expiry sweep), so the flag never outlives the ban.
 async function banWithIp(playerId, server = "both", opts = {}) {
   const name = sanitizeBanName(playerId);
   // Master names are never banned — no matter which path asks (command or auto-ban).
@@ -1765,7 +1766,7 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
   kickEverywhere(name);                        // remove them immediately if they're online
   let enf;
-  try { enf = ipBans.blacklistPlayer(name, { flagId: opts.permanent === true }); }
+  try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
   return { ...enf, blacklist: bl, ok: bl.servers > 0 };
 }
@@ -1779,7 +1780,10 @@ async function banWithIp(playerId, server = "both", opts = {}) {
 function autoBanDecision(existing, reason, now = Date.now()) {
   if (existing && !existing.permanent && existing.expires) {
     if (existing.expires > now) return "block";
-    if (/\bIP\b/.test(String(reason || ""))) return "lift";   // IP flags come from the ban itself — stale after expiry
+    // Served temp ban: lift on rejoin instead of escalating. IP and EOS-account flags
+    // both come from the ban itself (stale after expiry). A "username" match is only
+    // ever a deliberate manual flag (/configure), so that still escalates.
+    if (/blacklisted (ip|account)/i.test(String(reason || ""))) return "lift";
   }
   return "ban";
 }

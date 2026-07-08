@@ -207,6 +207,8 @@ const ok = (cond, msg) => {
     ok(bot.autoBanDecision(null, "blacklisted IP", now) === "ban", "no covering ban (evasion alt) -> auto-ban proceeds");
     ok(bot.autoBanDecision({ playerId: "X", permanent: true }, "blacklisted IP", now) === "ban", "permanent entry -> auto-ban path unchanged");
     ok(bot.autoBanDecision(expired, "blacklisted username", now) === "ban", "expired temp + manual USERNAME flag -> still bans (manual flags are deliberate)");
+    ok(bot.autoBanDecision(expired, "blacklisted account (EOS id)", now) === "lift", "EXPIRED temp ban + EOS flag -> lifted (temp bans now flag EOS; served ban must not perma-escalate)");
+    ok(bot.autoBanDecision(active, "blacklisted account (EOS id)", now) === "block", "active temp ban + same-account rejoin -> blocked");
   }
 
   console.log("IP bans (ipBans.js):");
@@ -242,8 +244,8 @@ const ok = (cond, msg) => {
     ok(ipBans.getAltsOf("NCR_Ranger").length === 1, "non-sharing ids are not flagged as alts");
     const enf = ipBans.blacklistPlayer("NCR_Ranger");
     ok(enf.ips.includes("198.51.100.9") && ipBans.blacklist.includes("198.51.100.9"), "blacklistPlayer flags the player's CONFIRMED IPs");
-    ok(!enf.ips.includes("203.0.113.7") && !ipBans.blacklist.includes("203.0.113.7"), "tentative (join-correlated) IPs are NOT flagged");
-    ok(enf.alts.includes("AltGuy"), "blacklist summary reports shared-IP alts by username");
+    ok(enf.ips.includes("203.0.113.7") && ipBans.blacklist.includes("203.0.113.7"), "join-correlated IPs are ALSO flagged (broader evasion net) — every IP the account is on record for");
+    ok(enf.alts.includes("AltGuy"), "blacklist summary reports shared-IP alts by username (alt detection still keys on CONFIRMED IPs)");
     ok(!ipBans.getBlacklist().names.includes("ncr_ranger"), "blacklistPlayer does NOT auto-flag the username (no 'banned for no reason')");
     ipBans.unblacklistPlayer("NCR_Ranger");
     ok(!ipBans.blacklist.includes("198.51.100.9"), "unblacklistPlayer clears the flags");
@@ -629,6 +631,26 @@ const ok = (cond, msg) => {
     ok(subRec2.flaggedSubnet === true, "flaggedSubnet flags an account sharing a /24 with a blacklisted IP");
     ok(subRec2.flagged === false, "subnet proximity does NOT mark the account itself flagged (no auto-ban)");
     ipBans.clearIp("42.42.42.10");
+
+    // EOS flagging catches an evader who keeps their account but changes IP.
+    const logEos = path.join(sandbox, "PavlovEosCatch.log");
+    fs.writeFileSync(logEos,
+      "[2026.07.06-10.00.00:000][1]LogNet: Login request: ?Name=Cheater?pid=Cheater userId: NULL:acct99 platform: NULL\n" +
+      "[2026.07.06-10.05.00:000][2]LogNet: UChannel::Close: [UNetConnection] RemoteAddr: 30.30.30.30:40000, UniqueId: NULL:acct99\n");
+    clearInterval(ipBans.init({ logFiles: [logEos], onAutoBan: async () => {}, pollMs: 9e8 }));
+    ipBans.blacklistPlayer("Cheater", { flagId: true });   // a ban (temp or perm) now flags the EOS id
+    ok(ipBans.getBlacklist().ids.includes("acct99"), "ban flags the account's EOS id so a name+IP change is still caught");
+    // The evader returns with a NEW name and a NEW IP but the SAME account id -> caught
+    const logEos2 = path.join(sandbox, "PavlovEosCatch2.log");
+    fs.writeFileSync(logEos2, "");
+    let eosAuto = null;
+    const tEos = ipBans.init({ logFiles: [logEos2], onAutoBan: async (i) => { eosAuto = i; }, pollMs: 20 });
+    fs.appendFileSync(logEos2,
+      "[2026.07.06-11.00.00:000][3]LogNet: Login request: ?Name=TotallyNew?pid=TotallyNew userId: NULL:acct99 platform: NULL\n");
+    await new Promise(r => setTimeout(r, 60));
+    clearInterval(tEos);
+    ok(eosAuto && eosAuto.name === "TotallyNew" && /EOS id/.test(eosAuto.reason), "evader with a new name + new IP but the same EOS id is auto-banned on join");
+    ipBans.unblacklistPlayer("Cheater");
 
     // EOS/account-id flagging: same id from a NEW IP + NEW name is still auto-banned
     const logEid = path.join(sandbox, "PavlovEID.log");
