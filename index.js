@@ -1837,7 +1837,7 @@ function parseDuration(raw) {
   return n * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2] || "m"]);
 }
 const gagEverywhere   = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Gag ${t}`,   srv, 2500, 0).catch(() => {}); };
-const ungagEverywhere = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`UnGag ${t}`, srv, 2500, 0).catch(() => {}); };
+const ungagEverywhere = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Un-Gag ${t}`, srv, 2500, 0).catch(() => {}); };
 // Called on every live join: re-apply an active gag, or lift+clear an expired one.
 function applyMuteOnJoin(name) {
   const mute = getMute(name);
