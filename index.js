@@ -712,6 +712,44 @@ const FACTION_RANKS = {
       "The King":    "kingstheking.txt",
     },
   },
+  "Super Mutants": {
+    order:   ["Suicider", "Infantry", "Sergeant", "Nightkin", "Bombardier", "Behemoth"],
+    default: "Suicider",
+    badges:  {
+      "Suicider":   "",
+      "Infantry":   "",
+      "Sergeant":   "",
+      "Nightkin":   "",
+      "Bombardier": "",
+      "Behemoth":   "",
+    },
+    rankFiles: {
+      "Suicider":   "supermutantsuicider.txt",
+      "Infantry":   "supermutantinfantry.txt",
+      "Sergeant":   "supermutantsergeant.txt",
+      "Nightkin":   "supermutantnightkin.txt",
+      "Bombardier": "supermutantbombardier.txt",
+      "Behemoth":   "supermutantbehemoth.txt",
+    },
+  },
+  "Followers": {
+    order:   ["Follower", "Guard", "Recruit", "Scholar", "Director"],
+    default: "Follower",
+    badges:  {
+      "Follower": "",
+      "Guard":    "",
+      "Recruit":  "",
+      "Scholar":  "",
+      "Director": "",
+    },
+    rankFiles: {
+      "Follower": "followersfollower.txt",
+      "Guard":    "followersguard.txt",
+      "Recruit":  "followersrecruit.txt",
+      "Scholar":  "followersscholar.txt",
+      "Director": "followersdirector.txt",
+    },
+  },
 };
 
 function getFactionRankConfig(faction) { return FACTION_RANKS[faction] ?? null; }
@@ -1056,16 +1094,20 @@ const SPAWN_FILE_MAP = {
   "Khans":               "khansspawn.txt",
   "Brotherhood of Steel":"bosspawn.txt",
   "Kings":               "kingsspawn.txt",
+  "Super Mutants":       "supermutantspawn.txt",
+  "Followers":           "followersspawn.txt",
 };
 
 const FACTION_SPAWN_MAP = {
-  ncrspawn:     "NCR",
-  legionspawn:  "Legion",
-  enclavespawn: "Enclave",
-  khanspawn:    "Khans",
-  khansspawn:   "Khans",
-  bosspawn:     "Brotherhood of Steel",
-  kingsspawn:   "Kings",
+  ncrspawn:          "NCR",
+  legionspawn:       "Legion",
+  enclavespawn:      "Enclave",
+  khanspawn:         "Khans",
+  khansspawn:        "Khans",
+  bosspawn:          "Brotherhood of Steel",
+  kingsspawn:        "Kings",
+  supermutantspawn:  "Super Mutants",
+  followersspawn:    "Followers",
 };
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
