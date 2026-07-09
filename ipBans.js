@@ -46,7 +46,7 @@ const KILLLOG_PATH   = path.join(__dirname, "kill_log.json");      // per-killer
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
 const DEFAULT_LOG    = path.join("/home/steam/pavlovserver", LOG_TAIL);
 
-const POLL_MS             = 5000;
+const POLL_MS             = 1500;   // tail the log ~every 1.5s so flagged joins are banned on sight
 const CORRELATE_WINDOW_MS = 10000;            // join IP must precede the login line by < this
 const JOIN_DEBOUNCE_MS    = 20000;            // one feed message per join (collapse INVALID+auth pair)
 const CONFIRM_DEBOUNCE_MS = 20000;            // one confirm feed message per id (collapse a disconnect's close lines)
@@ -529,12 +529,13 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   // auto-ban if this join matches a flagged username or IP.
   //  • username comes straight from the login line -> reliable, ban on sight.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
-    // Match against the joining account's WHOLE IP history (join + disconnect), not
-    // just confirmed ones — catches a returning alt whose only tie to a flagged IP was
-    // a join. Account-scoped, so it only ever bans an account with a flagged IP of its own.
+    // Ban-on-join match, EXACT only:
+    //  • flagged EOS id           — straight off the login line, most reliable
+    //  • flagged username         — deliberate manual flag
+    //  • a CONFIRMED IP on record  — this account previously disconnected from a flagged IP
+    //  • the current join's IP     — only when the correlation is unambiguous (confident)
+    // Never a mis-correlated join IP (e.ips) — that would ban an innocent.
     const e = registry[id];
-    // Match ONLY confirmed IPs (e.cips) — a mis-correlated join IP (e.ips) would ban
-    // an innocent who was never really at that address.
     const knownFlagged = e && (e.cips || []).some(ipFlagged);
     const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
                  : (name && flaggedNames.has(norm(name)))    ? "blacklisted username"
