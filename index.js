@@ -1769,28 +1769,19 @@ function preserveBalanceAcrossKick(name) {
    RCON Kick. blacklist.txt only blocks RECONNECTS, so without this an already-connected
    player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
    delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
-function kickEverywhere(name, knownId = null) {
-  const clean = sanitizeId(name);
-  if (!clean && !knownId) return;
+function kickEverywhere(name) {
+  const target = sanitizeId(name);             // this gamemode's RCON matches by USERNAME
+  if (!target) return;
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  // Pavlov's RCON Kick targets the player's UniqueId. When we already have it (auto-bans
-  // parse it from the log), kick by it IMMEDIATELY — no RefreshList timing race. Otherwise
-  // (a manual /kick or /permban) the id only appears in RefreshList once the join settles,
-  // so we retry the resolve+kick over ~20s until it lands.
+  // Kick by USERNAME. Retry a few times over ~15s in case the join is still settling,
+  // and log the server's response so `pm2 logs` shows whether it landed.
   const kickOn = async (srv) => {
-    const done = new Set();
-    const kick = async (id) => {
-      if (!id || done.has(id)) return false;
-      done.add(id);
-      try { await sendRcon(`Kick ${id}`, srv, 2500, 1); logger.info("Bans", `Kicked ${name} (${id}) on ${srv}`); return true; }
-      catch (err) { logger.warn("Bans", `Kick ${id} on ${srv} failed: ${err.message}`); return false; }
-    };
-    await kick(knownId);                        // best shot first — the log-parsed id
-    for (const delay of [0, 1500, 3500, 6000, 9000, 14000, 20000]) {
+    for (const delay of [0, 1500, 3500, 6000, 10000, 15000]) {
       if (delay) await new Promise(r => setTimeout(r, delay));
-      let id = null;
-      try { id = await resolveOnlineId(name, srv); } catch {}
-      if (id) { await kick(id); return true; }  // RefreshList-confirmed id — authoritative, done
+      try {
+        const r = await sendRcon(`Kick ${target}`, srv, 2500, 1);
+        logger.info("Bans", `${srv} < Kick ${target}  ->  ${String(r ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || "(no response)"}`);
+      } catch (err) { logger.warn("Bans", `Kick ${target} on ${srv} failed: ${err.message}`); }
     }
   };
   Promise.all(ACTIVE_SERVERS.map(kickOn)).catch(() => {});
@@ -1817,33 +1808,26 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   try { bl = blacklistAdd(name); }
   catch (err) { logger.error("Bans", `blacklist add failed for "${name}": ${err.message}`); }
   logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
-  kickEverywhere(name, opts.uniqueId || null); // remove them now (auto-bans pass the log-parsed id so the kick lands at join)
+  kickEverywhere(name);                        // remove them now (RCON matches by username)
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
   return { ...enf, blacklist: bl, ok: bl.servers > 0 };
 }
 
-/* Force-remove a player using EVERY id form the server might match on and BOTH verbs
-   (native RCON Ban + Kick), on every server, LOGGING the server's response to each so
-   `pm2 logs` shows exactly what the server accepts. Whatever form works, they're
-   removed + banned; the rest are harmless no-ops. This is the fallback for when a
-   plain kick silently does nothing (the player stayed / rejoined). */
-async function hardEnforce(name, uniqueId, { banToo = true } = {}) {
-  const clean = sanitizeId(name);
+/* Force-remove a player by USERNAME on every server — RCON Ban + Kick — logging the
+   server's response to each so `pm2 logs` shows exactly what landed. Every command
+   uses the username (this gamemode matches names, not ids). */
+async function hardEnforce(name, { banToo = true } = {}) {
+  const target = sanitizeId(name);
+  if (!target) return;
   const perServer = async (srv) => {
-    const ids = new Set();
-    if (uniqueId) ids.add(uniqueId);                          // id parsed from the log
-    try { const rid = await resolveOnlineId(name, srv); if (rid) ids.add(rid); } catch {}   // id from RefreshList
-    if (clean) ids.add(clean);                               // the name
-    for (const t of ids) {
-      const verbs = banToo ? [`Ban ${t}`, `Kick ${t}`] : [`Kick ${t}`];
-      for (const cmd of verbs) {
-        try {
-          const r = await sendRcon(cmd, srv, 2500, 1);
-          logger.info("IPGuard", `${srv} < ${cmd}  ->  ${String(r ?? "").replace(/\s+/g, " ").trim().slice(0, 140) || "(no response)"}`);
-        } catch (e) { logger.warn("IPGuard", `${srv} < ${cmd}  FAILED: ${e.message}`); }
-      }
+    const verbs = banToo ? [`Ban ${target}`, `Kick ${target}`] : [`Kick ${target}`];
+    for (const cmd of verbs) {
+      try {
+        const r = await sendRcon(cmd, srv, 2500, 1);
+        logger.info("IPGuard", `${srv} < ${cmd}  ->  ${String(r ?? "").replace(/\s+/g, " ").trim().slice(0, 140) || "(no response)"}`);
+      } catch (e) { logger.warn("IPGuard", `${srv} < ${cmd}  FAILED: ${e.message}`); }
     }
   };
   await Promise.all(ACTIVE_SERVERS.map(perServer));
@@ -1884,13 +1868,9 @@ function unbanEverywhere(playerId) {
   try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
   let cleared = null;
   try { cleared = ipBans.unblacklistPlayer(name); } catch {}
-  // Lift the native RCON ban too (auto-bans issue `Ban <id>`), by every id form.
-  (async () => {
-    const targets = new Set();
-    const clean = sanitizeId(name); if (clean) targets.add(clean);
-    try { const rec = ipBans.getRecord(name); (rec?.ids || []).forEach(i => i && targets.add(i)); } catch {}
-    for (const srv of ACTIVE_SERVERS) for (const t of targets) { try { await sendRcon(`Unban ${t}`, srv, 2500, 1); } catch {} }
-  })().catch(() => {});
+  // Lift the native RCON ban too (auto-bans issue `Ban <username>`), by USERNAME.
+  const _uname = sanitizeId(name);
+  if (_uname) (async () => { for (const srv of ACTIVE_SERVERS) { try { await sendRcon(`Unban ${_uname}`, srv, 2500, 1); } catch {} } })().catch(() => {});
   return { blacklist: bl, cleared: cleared?.cleared ?? { ips: 0, names: 0 } };
 }
 
@@ -2072,14 +2052,6 @@ async function getOnlinePlayers(server) {
   })).filter(p => p.name || p.id);
 }
 
-/** Look up an online player's UniqueId by (case-insensitive) name on one server.
-    RCON Kick/Ban target the UniqueId, not the display name — resolve it here so a
-    name-based kick actually lands. Returns null if they aren't currently online. */
-async function resolveOnlineId(name, server) {
-  const key = String(name).toLowerCase();
-  const hit = (await getOnlinePlayers(server)).find(p => p.name.toLowerCase() === key);
-  return hit?.id || null;
-}
 
 /** Update the cached player list for one server from a parsed payload. */
 function setPlayerCacheFromData(server, data) {
@@ -3399,7 +3371,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const decision = autoBanDecision(existing, reason);
       if (decision === "block") {
         // Still actively (temp-)banned — force them off (their ban already stands).
-        try { await hardEnforce(name, uniqueId, { banToo: false }); } catch {}
+        try { await hardEnforce(name, { banToo: false }); } catch {}
         logger.info("IPGuard", `${name} tried to join while banned — re-removed, no escalation`);
         return;
       }
@@ -3417,7 +3389,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // Enforce: blacklist.txt + IP flag (banWithIp) AND a hard native Ban+Kick by every
       // id form, with per-command server responses logged so we can see what actually lands.
       const res = await banWithIp(name, "both", { permanent: true, uniqueId });
-      try { await hardEnforce(name, uniqueId); } catch (e) { logger.warn("IPGuard", `hardEnforce failed for ${name}: ${e.message}`); }
+      try { await hardEnforce(name); } catch (e) { logger.warn("IPGuard", `hardEnforce failed for ${name}: ${e.message}`); }
       try { await upsertPermBan({ playerId: name, reason: banReason, moderator: banMod }); } catch {}   // show in /banlist with the real punishment
       writeModLog({ action: "auto-ipban", playerId: name, reason: `${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""})`, by: banMod });
       logger.warn("IPGuard", `Auto-banned ${name} — ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
@@ -3855,12 +3827,9 @@ async function onInteraction(interaction) {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
-        // RCON Kick targets the live UniqueId, not the display name — resolve it per
-        // server (fall back to the typed name if they aren't currently online).
+        // Kick by USERNAME (this gamemode matches names).
         for (const srv of (server === "both" ? ACTIVE_SERVERS : [server])) {
-          let target = playerId;
-          try { const id = await resolveOnlineId(playerId, srv); if (id) target = id; } catch {}
-          try { await sendRcon(`Kick ${target}`, srv, 2500, 1); } catch {}
+          try { await sendRcon(`Kick ${playerId}`, srv, 2500, 1); } catch {}
         }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
@@ -3904,7 +3873,7 @@ async function onInteraction(interaction) {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", `All **${pool.length}** online player(s) are flush-immune (staff, donator, or master).`)] });
         }
         const pick   = candidates[Math.floor(Math.random() * candidates.length)];
-        const target = pick.id || sanitizeId(pick.name);  // kick by live UniqueId (name fallback)
+        const target = sanitizeId(pick.name);             // kick by USERNAME
         preserveBalanceAcrossKick(pick.name);                   // don't let the kick wipe their caps
         let kicked = false;
         try { await sendRcon(`Kick ${target}`, pick.srv, 2500, 1); kicked = true; } catch {}
