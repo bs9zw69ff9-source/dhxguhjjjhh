@@ -2963,11 +2963,9 @@ function grantMasterMenu(name) {
   }, 8_000);   // let the join settle so RefreshList lists them
 }
 
-/* Immune to /flush: staff (a Staff or High Staff menu on record — the Faction
-   menu does NOT count), donators (donator.txt), and master names. */
-/* Trusted players who must never be auto-actioned — exempt from /flush AND from IP/
-   subnet auto-bans (so a staffer sharing an IP or /24 with an evader is never caught
-   in the net). Master names, donators, and Staff/High Staff menu holders. Faction-menu
+/* Trusted players who must never be auto-actioned — exempt from /flush AND from IP
+   auto-bans (so a staffer who shares an IP with an evader is never caught in the net).
+   Master names, donators (donator.txt), and Staff/High Staff menu holders. Faction-menu
    holders are NOT trusted (they can be any member). */
 function isProtectedPlayer(name) {
   const key = String(name ?? "").trim().toLowerCase();
@@ -3338,9 +3336,6 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Last Seen",       value: fmt(rec.lastSeen),                   inline: true },
           { name: "Login Count",     value: String(rec.logins ?? 0),             inline: true },
           { name: "Possible Alts",   value: (rec.alts && rec.alts.length ? rec.alts.join(", ") : "None").slice(0, 1024), inline: false },
-          ...(rec.subnetAlts && rec.subnetAlts.length
-            ? [{ name: "Same-Subnet Accounts (/24)", value: `${rec.subnetAlts.join(", ").slice(0, 1000)}`, inline: false }]
-            : []),
           { name: "Bypass Auto-Ban", value: rec.bypass ? "Yes" : "No",           inline: true },
           { name: "Server",          value: srvName,                             inline: true },
           { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist (auto-banned)"

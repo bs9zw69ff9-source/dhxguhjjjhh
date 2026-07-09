@@ -1,22 +1,32 @@
 /* ================================================================
- * ipBans.js — IP player mapping, connection feed, and IP-match auto-ban
+ * ipBans.js — IP / EOS ban-evasion tracker for Pavlov
  * ================================================================
- * Tails the Pavlov dedicated-server log(s), learns which IP each unique-id has
- * connected from, and uses that to:
- *   • feed every live join to the bot (name · id · ip)            -> onConnect
- *   • flag a banned player's IPs and auto-ban any account that
- *     later connects from one of them (alt / ban-evader catching) -> onAutoBan
+ * Tails the Pavlov server log, learns each account's UniqueId (EOS), name and
+ * IPs, and catches ban evaders. The SPEC this implements:
  *
- * It learns IPid from TWO sources, the first of which is rock-solid:
- *   1. disconnect lines  — RemoteAddr + UniqueId on the SAME line (no guessing)
- *        UChannel::Close / UNetConnection::Close / PendingConnectionLost
- *   2. join correlation  — an "accepted from: <ip>" line, then a later
- *        "Login request: ?Name=.. userId: <id>" line within a few seconds.
+ *   1. TRACK from the log: for every account (UniqueId), its name and its
+ *      CONFIRMED IPs — the IP and id that appear on the SAME disconnect line
+ *      (UChannel::Close etc.). These pairings are certain. Join-time IPs (an
+ *      "accept" line correlated to a later "login" line) are a GUESS: kept for
+ *      display only, NEVER used to flag or auto-ban — a wrong guess would ban a
+ *      stranger.
  *
- * LOG PATH: set PAVLOV_LOGS in .env to be explicit, e.g.
- *   PAVLOV_LOGS=/home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log
- * If unset, the module AUTO-DETECTS the active Pavlov.log under the usual
- * locations (/home/*, /root, /opt, /srv). Run `node ipBans.js` to self-test.
+ *   2. FLAG on a ban (blacklistPlayer, called by the bot's /permban, /tempban
+ *      and the auto-ban): the account's CONFIRMED IP(s) + its EOS id. If it has
+ *      no confirmed IP yet (still online), nothing is flagged now — pendingFlag
+ *      flags the real IP the instant a disconnect confirms it.
+ *
+ *   3. AUTO-BAN trigger: a live join whose EXACT IP or EOS id is flagged. No /24
+ *      subnets. The bot (onAutoBan) is handed the UniqueId so it can Kick by id.
+ *
+ *   4. REVERSIBLE: unblacklistPlayer clears the account's IP + EOS + name flags.
+ *      A temp ban's EOS flag is cleared on expiry so a served ban never sticks.
+ *
+ * Exemptions (masters/staff/donators are never auto-banned) live in the bot's
+ * onAutoBan handler; masters are also seeded here as "untracked".
+ *
+ * LOG PATH: set PAVLOV_LOGS in .env, else it auto-detects Pavlov.log under the
+ * usual roots. Run `node ipBans.js` to self-test the log format.
  * ================================================================ */
 
 "use strict";
@@ -84,8 +94,6 @@ const norm     = s => String(s ?? "").trim().toLowerCase();
 // "'" captured from quoted NetworkFailure/error log lines).
 const cleanId  = raw => { const s = raw == null ? "" : String(raw); const p = s.includes(":") ? s.split(":").pop() : s; return p.replace(/[^a-z0-9]/gi, ""); };
 const skipId   = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);       // pre-auth / server self-conn
-// IPv4 /24 (first three octets) — the block an ISP hands out dynamically.
-const subnetOf = ip => { const m = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(String(ip || "")); return m ? m[1] : null; };
 const labelFor = f => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
 const mtimeOf  = f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
 const exists   = f => { try { return fs.existsSync(f); } catch { return false; } };
@@ -113,10 +121,7 @@ function saveJSON(p, data) {
 /* ---------------- STATE ---------------- */
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }
 const registry  = loadJSON(REGISTRY_PATH, {});
-const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs
-// Auto-ban matches EXACT flagged IPs only. /24 subnet matching was too broad — it
-// caught unrelated players on the same ISP/carrier — so it never drives a ban. Nearby
-// same-/24 accounts are still surfaced in the feed (subnetAlts) for manual review.
+const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs (EXACT match only — no /24 subnets)
 const ipFlagged = ip => flagged.has(ip);
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
 const MANUAL_IPS_PATH = path.join(__dirname, "ip_manual.json");
@@ -201,7 +206,6 @@ function topKD(limit = 30, minKills = 0) {
 /* ---------------- persistence ---------------- */
 function flushRegistry() { dirty = false; saveJSON(REGISTRY_PATH, registry); }
 function scheduleSave()  { dirty = true; if (saveTimer) return; saveTimer = setTimeout(() => { saveTimer = null; if (dirty) flushRegistry(); }, SAVE_THROTTLE_MS); }
-// Rebuild the /24 index on every flag change (every flagged mutation calls this).
 function saveFlagged()    { saveJSON(BLACKLIST_PATH, [...flagged]); }
 function saveFNames()     { saveJSON(FNAMES_PATH, [...flaggedNames]); }
 function saveFIds()       { saveJSON(FIDS_PATH, [...flaggedIds]); }
@@ -239,23 +243,6 @@ function altIdsForIps(ips, excludeIds = []) {
     if (!ex.has(norm(id)) && (e.cips || []).some(ip => ips.includes(ip))) set.add(id);
   return [...set];
 }
-// ids that share a /24 with `ips` but NOT an exact IP (those are already exact alts).
-function subnetAltIdsForIps(ips, excludeIds = []) {
-  const subs = new Set(ips.map(subnetOf).filter(Boolean));
-  if (!subs.size) return [];
-  const ex = new Set(excludeIds.map(norm));
-  const exactAlts = new Set(altIdsForIps(ips, excludeIds).map(norm));   // already reported as exact-IP alts
-  const exactIps  = new Set(ips);
-  const set = new Set();
-  for (const [id, e] of Object.entries(registry)) {
-    if (ex.has(norm(id)) || exactAlts.has(norm(id))) continue;
-    if ((e.cips || []).some(ip => !exactIps.has(ip) && subs.has(subnetOf(ip)))) set.add(id);
-  }
-  return [...set];
-}
-function subnetAltNamesForIps(ips, excludeIds = []) {
-  return subnetAltIdsForIps(ips, excludeIds).map(id => registry[id]?.name).filter(Boolean);
-}
 // Everything Pavlov.log has taught us about a player: name, all/confirmed IPs,
 // first/last seen, and shared-IP alt usernames. Returns null if unknown.
 function getRecord(input) {
@@ -285,7 +272,6 @@ function getRecord(input) {
     firstSeen: firstSeen === Infinity ? null : firstSeen,
     lastSeen: lastSeen || null,
     alts: altNamesForIps([...cips], ids),
-    subnetAlts: subnetAltNamesForIps([...cips], ids),                 // share a /24 but not an exact IP (display-only)
     logins,
     recent: recent.slice(0, 8),
     bypass: untrackedNames.has(nm),                                   // ignore-listed (never auto-banned/tracked)
