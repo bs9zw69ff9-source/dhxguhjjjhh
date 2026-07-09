@@ -1765,27 +1765,6 @@ function preserveBalanceAcrossKick(name) {
   }
 }
 
-/* Immediately remove a (possibly in-game) player from every reachable server via
-   RCON Kick. blacklist.txt only blocks RECONNECTS, so without this an already-connected
-   player keeps playing until they leave. Fire-and-forget + bounded RCON so it never
-   delays or hangs the ban (sendRconBoth is 2.5s/1-retry and never throws). */
-function kickEverywhere(name) {
-  const target = sanitizeId(name);             // this gamemode's RCON matches by USERNAME
-  if (!target) return;
-  preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
-  // Kick by USERNAME. Retry a few times over ~15s in case the join is still settling,
-  // and log the server's response so `pm2 logs` shows whether it landed.
-  const kickOn = async (srv) => {
-    for (const delay of [0, 1500, 3500, 6000, 10000, 15000]) {
-      if (delay) await new Promise(r => setTimeout(r, delay));
-      try {
-        const r = await sendRcon(`Kick ${target}`, srv, 2500, 1);
-        logger.info("Bans", `${srv} < Kick ${target}  ->  ${String(r ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || "(no response)"}`);
-      } catch (err) { logger.warn("Bans", `Kick ${target} on ${srv} failed: ${err.message}`); }
-    }
-  };
-  Promise.all(ACTIVE_SERVERS.map(kickOn)).catch(() => {});
-}
 
 /* Ban a player by writing their name to blacklist.txt on EVERY install (synced),
    kick them off now (RCON) so they don't keep playing, AND flag every IP we've ever
@@ -1804,33 +1783,40 @@ async function banWithIp(playerId, server = "both", opts = {}) {
     logger.warn("Bans", `Refused to ban master name "${name}"`);
     return { ids: [], ips: [], alts: [], field: null, blacklist: { name, servers: 0 }, ok: false, master: true };
   }
-  let bl = { name, servers: 0 };
-  try { bl = blacklistAdd(name); }
-  catch (err) { logger.error("Bans", `blacklist add failed for "${name}": ${err.message}`); }
-  logger.info("Bans", `Blacklisted "${name}" on ${bl.servers}/${PAVLOV_BASES.length} install(s)`);
-  kickEverywhere(name);                        // remove them now (RCON matches by username)
+  // Native RCON Ban + Kick by USERNAME on every server. NO blacklist.txt.
+  let enforced = { servers: 0 };
+  try { enforced = await hardEnforce(name); }
+  catch (err) { logger.warn("Bans", `RCON ban failed for "${name}": ${err.message}`); }
+  logger.info("Bans", `Native-banned "${name}" on ${enforced.servers}/${ACTIVE_SERVERS.length} server(s)`);
+  // Flag their EXACT confirmed IP(s) + EOS id so an alt/reconnect re-triggers the ban.
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
-  catch (err) { logger.warn("IPBan", `IP enforcement failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
-  return { ...enf, blacklist: bl, ok: bl.servers > 0 };
+  catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
+  return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0 };
 }
 
-/* Force-remove a player by USERNAME on every server — RCON Ban + Kick — logging the
-   server's response to each so `pm2 logs` shows exactly what landed. Every command
-   uses the username (this gamemode matches names, not ids). */
+/* Force-ban + remove a player by USERNAME on every server — native RCON `Ban` + `Kick`,
+   NO blacklist.txt — logging the server's response to each so `pm2 logs` shows exactly
+   what landed. Returns { servers } = how many servers accepted a command. */
 async function hardEnforce(name, { banToo = true } = {}) {
   const target = sanitizeId(name);
-  if (!target) return;
+  if (!target) return { servers: 0 };
+  preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
+  let ok = 0;
   const perServer = async (srv) => {
     const verbs = banToo ? [`Ban ${target}`, `Kick ${target}`] : [`Kick ${target}`];
+    let served = false;
     for (const cmd of verbs) {
       try {
         const r = await sendRcon(cmd, srv, 2500, 1);
+        served = true;
         logger.info("IPGuard", `${srv} < ${cmd}  ->  ${String(r ?? "").replace(/\s+/g, " ").trim().slice(0, 140) || "(no response)"}`);
       } catch (e) { logger.warn("IPGuard", `${srv} < ${cmd}  FAILED: ${e.message}`); }
     }
+    if (served) ok++;
   };
   await Promise.all(ACTIVE_SERVERS.map(perServer));
+  return { servers: ok };
 }
 
 /* The original ban whose flag caught this player — so /checkban and the ban record
@@ -3386,10 +3372,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const src       = sourceBanFor(name);
       const banReason = src?.reason || "Ban evasion";
       const banMod    = src?.moderator || "Ban evasion (auto)";
-      // Enforce: blacklist.txt + IP flag (banWithIp) AND a hard native Ban+Kick by every
-      // id form, with per-command server responses logged so we can see what actually lands.
-      const res = await banWithIp(name, "both", { permanent: true, uniqueId });
-      try { await hardEnforce(name); } catch (e) { logger.warn("IPGuard", `hardEnforce failed for ${name}: ${e.message}`); }
+      // Enforce with a native RCON Ban + Kick by username (banWithIp) + flag the exact
+      // IP/EOS. Per-command server responses are logged so we can see what lands.
+      const res = await banWithIp(name, "both", { permanent: true });
       try { await upsertPermBan({ playerId: name, reason: banReason, moderator: banMod }); } catch {}   // show in /banlist with the real punishment
       writeModLog({ action: "auto-ipban", playerId: name, reason: `${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""})`, by: banMod });
       logger.warn("IPGuard", `Auto-banned ${name} — ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
@@ -3402,7 +3387,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "EOS ID",  value: uniqueId ? `\`${uniqueId}\`` : "unknown", inline: true },
           { name: "Offense", value: banReason,                 inline: true },
           { name: "Caught by", value: reason || "match",       inline: true },
-        ), "Auto-ban · evasion · all servers");
+          { name: "Enforced",  value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
+        ), "Auto-ban · native RCON ban · all servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       postFeed(banEmbed);       // also surface it in the connection feed
     },
