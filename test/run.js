@@ -213,6 +213,18 @@ const ok = (cond, msg) => {
   ok(bot.easternClock(new Date("2026-01-15T17:00:00Z")).hm === "12:00", "easternClock: 17:00 UTC in Jan = 12:00 EST");
   ok(bot.easternClock(new Date("2026-07-15T16:00:00Z")).hm === "12:00", "easternClock: 16:00 UTC in Jul = 12:00 EDT (DST-aware)");
 
+  console.log("Mute duration + store:");
+  ok(bot.parseDuration("30s") === 30_000, "30s -> ms");
+  ok(bot.parseDuration("10m") === 600_000, "10m -> ms");
+  ok(bot.parseDuration("2h") === 7_200_000, "2h -> ms");
+  ok(bot.parseDuration("1d") === 86_400_000, "1d -> ms");
+  ok(bot.parseDuration("5") === 300_000, "bare number -> minutes");
+  ok(bot.parseDuration("0m") === null && bot.parseDuration("abc") === null && bot.parseDuration("") === null, "invalid durations -> null");
+  await bot.setMute("MutedGuy", { name: "MutedGuy", expires: Date.now() + 60_000, moderator: "m", at: Date.now() });
+  ok(bot.getMute("mutedguy") && bot.getMute("MUTEDGUY").name === "MutedGuy", "mute stored + fetched case-insensitively");
+  await bot.clearMute("MUTEDguy");
+  ok(bot.getMute("MutedGuy") === null, "clearMute removes it (case-insensitive)");
+
   console.log("IP-Guard escalation decisions:");
   {
     const now = 1_000_000_000;

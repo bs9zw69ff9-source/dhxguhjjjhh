@@ -135,6 +135,7 @@ const FILES = {
   MENU_ROLES:     "./menu_roles.json",
   MENU_LINKS:     "./menu_links.json",
   AUTOROTATE:     "./autorotate.json",
+  MUTES:          "./mutes.json",
 };
 
 const DEFAULTS = {
@@ -155,6 +156,7 @@ const DEFAULTS = {
   [FILES.MENU_ROLES]:     "{}",
   [FILES.MENU_LINKS]:     "{}",
   [FILES.AUTOROTATE]:     "{}",
+  [FILES.MUTES]:          "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -1788,6 +1790,7 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   try { enforced = await hardEnforce(name); }
   catch (err) { logger.warn("Bans", `RCON ban failed for "${name}": ${err.message}`); }
   logger.info("Bans", `Native-banned "${name}" on ${enforced.servers}/${ACTIVE_SERVERS.length} server(s)`);
+  scheduleBanRecheck(name);                     // 30s: blacklist.txt backup + re-enforce
   // Flag their EXACT confirmed IP(s) + EOS id so an alt/reconnect re-triggers the ban.
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
@@ -1819,6 +1822,46 @@ async function hardEnforce(name, { banToo = true } = {}) {
   return { servers: ok };
 }
 
+/* ---- in-game mute (RCON Gag) ----
+   A gag doesn't survive a reconnect, so a muted player is re-gagged on EVERY join
+   until their mute expires; the first join AFTER expiry ungags them and clears it. */
+const loadMutes = () => safeRead(FILES.MUTES, {});
+const getMute   = (name) => loadMutes()[String(name ?? "").toLowerCase()] || null;
+function setMute(name, data) { return update(FILES.MUTES, {}, (m) => { m[String(name).toLowerCase()] = data; return m; }); }
+function clearMute(name)     { return update(FILES.MUTES, {}, (m) => { delete m[String(name).toLowerCase()]; return m; }); }
+// "30s" "10m" "2h" "1d" (bare number = minutes) -> ms, or null.
+function parseDuration(raw) {
+  const m = String(raw ?? "").trim().toLowerCase().match(/^(\d+)\s*(s|m|h|d)?$/);
+  if (!m) return null;
+  const n = +m[1]; if (!n) return null;
+  return n * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2] || "m"]);
+}
+const gagEverywhere   = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Gag ${t}`,   srv, 2500, 0).catch(() => {}); };
+const ungagEverywhere = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`UnGag ${t}`, srv, 2500, 0).catch(() => {}); };
+// Called on every live join: re-apply an active gag, or lift+clear an expired one.
+function applyMuteOnJoin(name) {
+  const mute = getMute(name);
+  if (!mute) return;
+  if (mute.expires && mute.expires <= Date.now()) {
+    ungagEverywhere(name); clearMute(name);
+    logger.info("Mute", `${name}'s mute expired — ungagged on join`);
+  } else {
+    gagEverywhere(name);
+    logger.info("Mute", `Re-gagged ${name} on join`);
+  }
+}
+
+/* 30s after a ban, back it up: write the name into blacklist.txt (reconnect block that
+   doesn't depend on the RCON ban sticking) and re-run enforcement in case they slipped
+   back in. Requested belt-and-suspenders on top of the native ban. */
+function scheduleBanRecheck(name) {
+  setTimeout(async () => {
+    try { blacklistAdd(name); } catch (e) { logger.warn("Bans", `30s blacklist.txt backup failed for ${name}: ${e.message}`); }
+    try { await hardEnforce(name); } catch {}
+    logger.info("Bans", `30s recheck for ${name}: blacklist.txt backup written + re-enforced`);
+  }, 30_000);
+}
+
 /* Safety-net enforcement: RefreshList is the AUTHORITATIVE list of who is actually in
    the game. Every sweep, cross-reference it against the active ban list + IP/EOS flags
    and force-remove anyone banned who's still online — a ban whose join-time kick missed,
@@ -1834,6 +1877,7 @@ async function enforceBansSweep() {
     const banned = new Set(loadBans()
       .filter(b => b.permanent || (b.expires && b.expires > now))
       .map(b => String(b.playerId).toLowerCase()));
+    const mutes = loadMutes();
     for (const srv of ACTIVE_SERVERS) {
       let players;
       try { players = await getOnlinePlayers(srv); } catch { continue; }
@@ -1845,7 +1889,11 @@ async function enforceBansSweep() {
         if (hit) {
           logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} — force-removing`);
           await hardEnforce(nm);                // native Ban + Kick by username, responses logged
+          continue;
         }
+        // Keep an active mute enforced (a gag can be lost); expiry is lifted on rejoin.
+        const mute = mutes[nm.toLowerCase()];
+        if (mute && (!mute.expires || mute.expires > now)) gagEverywhere(nm);
       }
     }
   } finally { _sweepBusy = false; }
@@ -3127,6 +3175,14 @@ const commands = [
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Reason for ejection"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
+  new SlashCommandBuilder().setName("mute")
+    .setDescription("In-game mute (gag) a courier for a set time — re-applied every join until it expires")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("duration").setDescription("How long — e.g. 30s, 10m, 2h, 1d").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason for the mute")),
+  new SlashCommandBuilder().setName("unmute")
+    .setDescription("Lift a courier's in-game mute now")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("flush")
     .setDescription("Randomly kick one online player from a server")
     .addStringOption(serverOption),
@@ -3335,6 +3391,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired on every LIVE join - re-grant recorded RCON menus (the server drops a
     // player's menu on disconnect, so a rejoin needs the grant re-applied).
     onConnect: async ({ name }) => {
+      // Re-apply an active gag on join, or lift an expired one — for everyone.
+      try { applyMuteOnJoin(name); } catch (e) { logger.warn("Mute", `mute-on-join failed for ${name}: ${e.message}`); }
       // Master names get a menu handed to them on every join (no bit code).
       if (isMasterName(name)) { try { grantMasterMenu(name); } catch (e) { logger.warn("Menus", `master menu failed: ${e.message}`); } return; }
       try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
@@ -3587,7 +3645,7 @@ async function onInteraction(interaction) {
 
   /* ── Permission routing ───────────────────────────────── */
   const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "kd"];
-  const MOD_COMMANDS   = ["kick", "tempban", "unban", "announce", "givecaps"];
+  const MOD_COMMANDS   = ["kick", "tempban", "unban", "mute", "unmute", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity"];
 
@@ -3868,7 +3926,53 @@ async function onInteraction(interaction) {
         const kDmField = dmStatusField(kDm, kTarget);
         if (kDmField) embed.addFields(kDmField);
         brand(embed); await logAction(embed);
+        enforceBansSweep().catch(() => {});     // player sweep after the punishment
         return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         MUTE — in-game gag for a set time, re-applied every join
+         ───────────────────────────────────────────────────── */
+      case "mute": {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const durStr   = interaction.options.getString("duration");
+        const reason   = interaction.options.getString("reason") ?? "No reason provided";
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be muted.`)], flags: MessageFlags.Ephemeral });
+        const durMs = parseDuration(durStr);
+        if (!durMs) return interaction.reply({ embeds: [errorEmbed("Invalid Duration", "Use `30s`, `10m`, `2h`, or `1d` (a bare number = minutes).")], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply();
+        const expires = Date.now() + durMs;
+        await setMute(playerId, { name: playerId, expires, reason, moderator: interaction.user.tag, at: Date.now() });
+        gagEverywhere(playerId);                 // gag now if they're online
+        enforceBansSweep().catch(() => {});      // player sweep after the punishment
+        writeModLog({ action: "mute", playerId, reason, duration: durStr, by: interaction.user.tag });
+        const ts = Math.floor(expires / 1000);
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Courier Silenced")
+          .setDescription(`${DIVIDER}`)
+          .addFields(
+            { name: "Courier",  value: `\`${playerId}\``,                inline: true },
+            { name: "Duration", value: durStr,                          inline: true },
+            { name: "Expires",  value: `<t:${ts}:R>`,                    inline: true },
+            { name: "Reason",   value: reason,                          inline: false },
+            { name: "By",       value: `${interaction.user}`,           inline: true },
+          ).setFooter({ text: "Re-gagged every join until it expires — then unmuted on their next join" }).setTimestamp());
+        await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
+      }
+
+      case "unmute": {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        const had = getMute(playerId);
+        await clearMute(playerId);
+        ungagEverywhere(playerId);
+        writeModLog({ action: "unmute", playerId, by: interaction.user.tag });
+        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Courier Unsilenced")
+          .setDescription(had ? `Lifted the mute on \`${playerId}\` and ungagged them.` : `\`${playerId}\` had no active mute — sent an ungag anyway.`)
+          .addFields({ name: "By", value: `${interaction.user}`, inline: true }).setTimestamp());
+        await logAction(embed);
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
       /* ─────────────────────────────────────────────────────
@@ -3981,6 +4085,7 @@ async function onInteraction(interaction) {
         const label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
         const replaced       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const ipEnf = await banWithIp(playerId, server);
+        enforceBansSweep().catch(() => {});   // player sweep after the punishment
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
         writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         const ts = Math.floor(expires / 1000);
@@ -4109,6 +4214,7 @@ async function onInteraction(interaction) {
         if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be banned.`)], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         const ipEnf = await banWithIp(playerId, server, { permanent: true });
+        enforceBansSweep().catch(() => {});   // player sweep after the punishment
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
@@ -5437,7 +5543,8 @@ module.exports = {
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
   isOwner, isBlacklisted, isMasterName, isProtectedPlayer,
-  parseClockTime, easternClock,
+  parseClockTime, easternClock, parseDuration,
+  loadMutes, getMute, setMute, clearMute,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
