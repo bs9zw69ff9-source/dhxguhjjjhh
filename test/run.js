@@ -239,6 +239,15 @@ const ok = (cond, msg) => {
     ok(bot.autoBanDecision(active, "blacklisted account (EOS id)", now) === "block", "active temp ban + same-account rejoin -> blocked");
   }
 
+  console.log("Auto-ban record shows the real punishment:");
+  ok(bot.isRealBan({ reason: "Cheating", moderator: "ModX" }), "a normal ban is a 'real' source ban");
+  ok(!bot.isRealBan({ reason: "Auto-ban — blacklisted account (EOS id)", moderator: "IP-Guard" }), "a legacy IP-Guard auto-ban is NOT a source");
+  ok(!bot.isRealBan({ reason: "Ban evasion", moderator: "Ban evasion (auto)" }), "a 'Ban evasion' auto-ban is NOT a source");
+  await bot.upsertPermBan({ playerId: "OrigCheater", reason: "Hard R", moderator: "Chan-Chan" });
+  ok(bot.sourceBanFor("OrigCheater")?.reason === "Hard R", "sourceBanFor finds the original punishment by name");
+  ok(bot.sourceBanFor("SomeoneUnrelated") === null, "sourceBanFor returns null when no real ban matches");
+  await bot.removeBans("OrigCheater");
+
   console.log("IP bans (ipBans.js):");
   {
     const logPath = path.join(sandbox, "Pavlov.log");

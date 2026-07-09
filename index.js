@@ -1887,11 +1887,20 @@ async function enforceBansSweep() {
       for (const p of players) {
         const nm = p.name;
         if (!nm || isMasterName(nm)) continue;
-        let hit = banned.has(nm.toLowerCase());
-        if (!hit) { try { hit = !!ipBans.getRecord(nm)?.flagged; } catch {} }   // flagged IP/EOS
-        if (hit) {
+        const nameBanned = banned.has(nm.toLowerCase());
+        let flaggedHit = false;
+        if (!nameBanned) { try { flaggedHit = !!ipBans.getRecord(nm)?.flagged; } catch {} }   // flagged IP/EOS
+        if (nameBanned || flaggedHit) {
           logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} — force-removing`);
           await hardEnforce(nm);                // native Ban + Kick by username, responses logged
+          // Re-enforce an IP/EOS auto-ban by PERSISTING it: record the ban (with the real
+          // offense) so it's reconciled going forward and survives a server restart.
+          if (flaggedHit) {
+            let rec = null; try { rec = ipBans.getRecord(nm); } catch {}
+            const src = sourceBanFor(nm, rec?.id);
+            try { await upsertPermBan({ playerId: nm, reason: src?.reason || "Ban evasion", moderator: src?.moderator || "Ban evasion (auto)" }); } catch {}
+            banned.add(nm.toLowerCase());
+          }
           continue;
         }
         // Keep an active mute enforced (a gag can be lost); expiry is lifted on rejoin.
@@ -1900,6 +1909,26 @@ async function enforceBansSweep() {
       }
     }
   } finally { _sweepBusy = false; }
+}
+
+/* One-time repair: rewrite legacy auto-ban records (moderator "IP-Guard" or a reason
+   starting "Auto-ban") so /checkban shows the REAL punishment — the original ban's
+   offense + moderator where we can find it, else a clean "Ban evasion". */
+async function fixAutoBanReasons() {
+  await update(FILES.TEMPBAN, [], (bans) => {
+    let n = 0;
+    for (const b of bans) {
+      if (b.moderator === "IP-Guard" || /^auto-ban/i.test(String(b.reason || ""))) {
+        let rec = null; try { rec = ipBans.getRecord(b.playerId); } catch {}
+        const src = sourceBanFor(b.playerId, rec?.id);
+        b.reason = src?.reason || "Ban evasion";
+        b.moderator = src?.moderator || "Ban evasion (auto)";
+        n++;
+      }
+    }
+    if (n) logger.info("Bans", `Rewrote ${n} legacy auto-ban record(s) to show the real punishment (was "IP-Guard")`);
+    return bans;
+  });
 }
 
 /* Ban-list reconciliation: the bot's ban DB (tempbans.json) is the source of truth.
@@ -1928,14 +1957,24 @@ async function reconcileBans() {
 }
 
 /* The original ban whose flag caught this player — so /checkban and the ban record
-   show the REAL offense, not "IP-Guard". Looks for a ban on this name or any alt
-   (shared confirmed IP) whose reason isn't itself an auto-ban. */
-function sourceBanFor(name) {
+   show the REAL offense, not "IP-Guard" / "Ban evasion". A real ban is one whose reason
+   isn't itself an auto-ban and whose moderator isn't the auto-ban marker. Matched by:
+   1) the SAME EOS account (evader kept the account, changed name),
+   2) the same name, or a shared-confirmed-IP alt. */
+function isRealBan(b) {
+  return b && b.reason && !/^(auto-ban|ban evasion)/i.test(b.reason)
+    && b.moderator !== "IP-Guard" && !/evasion/i.test(String(b.moderator || ""));
+}
+function sourceBanFor(name, uniqueId) {
+  const real = loadBans().filter(isRealBan);
+  if (uniqueId) {   // same account (EOS id) under a possibly different name
+    const byEos = real.find(b => { try { return ipBans.getRecord(b.playerId)?.id === uniqueId; } catch { return false; } });
+    if (byEos) return byEos;
+  }
   let related = [name];
   try { related = [name, ...(ipBans.getAltNamesOf(name) || [])]; } catch {}
   const relSet = new Set(related.map(r => String(r).toLowerCase()));
-  return loadBans().find(b => b.reason && !/^(auto-ban|ban evasion)/i.test(b.reason)
-    && relSet.has(String(b.playerId).toLowerCase())) || null;
+  return real.find(b => relSet.has(String(b.playerId).toLowerCase())) || null;
 }
 /* What should the IP-Guard do with a join that matched a flagged IP/name/id?
    - "block": an UNEXPIRED temp ban covers this name — the blacklist already bounced
@@ -3489,7 +3528,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       }
       // Show the REAL offense in /checkban, not "IP-Guard": inherit the reason + mod from
       // the original ban whose flag caught them (fall back to "Ban evasion").
-      const src       = sourceBanFor(name);
+      const src       = sourceBanFor(name, uniqueId);
       const banReason = src?.reason || "Ban evasion";
       const banMod    = src?.moderator || "Ban evasion (auto)";
       // Enforce with a native RCON Ban + Kick by username (banWithIp) + flag the exact
@@ -3524,6 +3563,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   try { await importModsaveBanlist(); } catch (e) { logger.warn("Bans", `modsave banlist import failed: ${e.message}`); }   // pull in-game-menu bans into the DB
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
+  try { await fixAutoBanReasons(); } catch (e) { logger.warn("Bans", `auto-ban reason repair failed: ${e.message}`); }   // /checkban shows real punishment
   setTimeout(enforceBansSweep, 10_000);   // clear any banned players already online at startup
   setTimeout(reconcileBans,    15_000);   // rebuild the server ban list from the DB on startup
   ensureMenuPanel();
@@ -5568,7 +5608,7 @@ module.exports = {
   buildPlaytimeLeaderboardData, savePlaytime,
   // warnings
   // bans (serialized)
-  loadBans, upsertTempBan, upsertPermBan, removeBans, autoBanDecision,
+  loadBans, upsertTempBan, upsertPermBan, removeBans, autoBanDecision, isRealBan, sourceBanFor,
   // donators
   DONATOR_FILE, readDonatorFile, writeDonatorFile, isDonator, addDonator, removeDonator,
   // owner / access
