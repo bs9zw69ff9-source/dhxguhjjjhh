@@ -1856,6 +1856,9 @@ function applyMuteOnJoin(name) {
    back in. Requested belt-and-suspenders on top of the native ban. */
 function scheduleBanRecheck(name) {
   setTimeout(async () => {
+    // Skip if they were unbanned (or their temp ban expired) in the 30s window.
+    const stillBanned = loadBans().some(b => _sameId(b.playerId, name) && (b.permanent || (b.expires && b.expires > Date.now())));
+    if (!stillBanned) return;
     try { blacklistAdd(name); } catch (e) { logger.warn("Bans", `30s blacklist.txt backup failed for ${name}: ${e.message}`); }
     try { await hardEnforce(name); } catch {}
     logger.info("Bans", `30s recheck for ${name}: blacklist.txt backup written + re-enforced`);
@@ -1897,6 +1900,31 @@ async function enforceBansSweep() {
       }
     }
   } finally { _sweepBusy = false; }
+}
+
+/* Ban-list reconciliation: the bot's ban DB (tempbans.json) is the source of truth.
+   Re-apply every ACTIVE ban to each server (native RCON Ban) and to blacklist.txt so
+   the server's ban list is rebuilt and stays complete — even after a SERVER restart
+   wipes its native bans. Re-banning an already-banned player is a harmless no-op, so
+   this makes bans self-healing: a banned player can't slip in through a lost ban list. */
+let _reconcileBusy = false;
+async function reconcileBans() {
+  if (_reconcileBusy) return;
+  _reconcileBusy = true;
+  try {
+    const now = Date.now();
+    const active = loadBans().filter(b => b.permanent || (b.expires && b.expires > now));
+    let n = 0;
+    for (const b of active) {
+      const name = sanitizeId(b.playerId);
+      if (!name || isMasterName(name)) continue;
+      try { blacklistAdd(b.playerId); } catch {}                     // blacklist.txt reconnect-block backup
+      for (const srv of ACTIVE_SERVERS) { try { await sendRcon(`Ban ${name}`, srv, 2500, 0); } catch {} }
+      n++;
+      await new Promise(r => setTimeout(r, 120));                    // gentle pacing so a big list doesn't flood RCON
+    }
+    if (n) logger.info("Bans", `Reconciled ${n} active ban(s) to native RCON + blacklist.txt across ${ACTIVE_SERVERS.length} server(s)`);
+  } finally { _reconcileBusy = false; }
 }
 
 /* The original ban whose flag caught this player — so /checkban and the ban record
@@ -3104,6 +3132,7 @@ async function rconHealthCheck() {
 function startIntervals() {
 setInterval(processExpiredBans,      60_000);
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
+setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
@@ -3496,6 +3525,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
   setTimeout(enforceBansSweep, 10_000);   // clear any banned players already online at startup
+  setTimeout(reconcileBans,    15_000);   // rebuild the server ban list from the DB on startup
   ensureMenuPanel();
   // Wipe stale leaderboard/player-list messages from the previous run, then post fresh.
   try { await refreshLeaderboardChannels(); } catch (e) { logger.warn("Purge", `leaderboard refresh failed: ${e.message}`); }
