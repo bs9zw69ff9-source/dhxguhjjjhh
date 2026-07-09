@@ -1819,6 +1819,38 @@ async function hardEnforce(name, { banToo = true } = {}) {
   return { servers: ok };
 }
 
+/* Safety-net enforcement: RefreshList is the AUTHORITATIVE list of who is actually in
+   the game. Every sweep, cross-reference it against the active ban list + IP/EOS flags
+   and force-remove anyone banned who's still online — a ban whose join-time kick missed,
+   or a player who was already in the game when the ban landed. This is what actually
+   gets a stuck banned player OUT; the per-command RCON responses are logged so we can
+   see whether the removal takes. */
+let _sweepBusy = false;
+async function enforceBansSweep() {
+  if (_sweepBusy) return;                       // don't overlap a slow sweep
+  _sweepBusy = true;
+  try {
+    const now = Date.now();
+    const banned = new Set(loadBans()
+      .filter(b => b.permanent || (b.expires && b.expires > now))
+      .map(b => String(b.playerId).toLowerCase()));
+    for (const srv of ACTIVE_SERVERS) {
+      let players;
+      try { players = await getOnlinePlayers(srv); } catch { continue; }
+      for (const p of players) {
+        const nm = p.name;
+        if (!nm || isMasterName(nm)) continue;
+        let hit = banned.has(nm.toLowerCase());
+        if (!hit) { try { hit = !!ipBans.getRecord(nm)?.flagged; } catch {} }   // flagged IP/EOS
+        if (hit) {
+          logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} — force-removing`);
+          await hardEnforce(nm);                // native Ban + Kick by username, responses logged
+        }
+      }
+    }
+  } finally { _sweepBusy = false; }
+}
+
 /* The original ban whose flag caught this player — so /checkban and the ban record
    show the REAL offense, not "IP-Guard". Looks for a ban on this name or any alt
    (shared confirmed IP) whose reason isn't itself an auto-ban. */
@@ -3023,6 +3055,7 @@ async function rconHealthCheck() {
 // ---- intervals  - started from startintervals(), which runs only when the ----
 function startIntervals() {
 setInterval(processExpiredBans,      60_000);
+setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
@@ -3404,6 +3437,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   try { await importModsaveBanlist(); } catch (e) { logger.warn("Bans", `modsave banlist import failed: ${e.message}`); }   // pull in-game-menu bans into the DB
   try { syncModsaveBanlist(); } catch {}   // then (re)build the custom ban-message file
   setTimeout(rconHealthCheck, 5_000);
+  setTimeout(enforceBansSweep, 10_000);   // clear any banned players already online at startup
   ensureMenuPanel();
   // Wipe stale leaderboard/player-list messages from the previous run, then post fresh.
   try { await refreshLeaderboardChannels(); } catch (e) { logger.warn("Purge", `leaderboard refresh failed: ${e.message}`); }
