@@ -136,6 +136,7 @@ const FILES = {
   MENU_LINKS:     "./menu_links.json",
   AUTOROTATE:     "./autorotate.json",
   MUTES:          "./mutes.json",
+  DISCORD_LINKS:  "./discord_links.json",
 };
 
 const DEFAULTS = {
@@ -157,6 +158,7 @@ const DEFAULTS = {
   [FILES.MENU_LINKS]:     "{}",
   [FILES.AUTOROTATE]:     "{}",
   [FILES.MUTES]:          "{}",
+  [FILES.DISCORD_LINKS]:  "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -3007,9 +3009,28 @@ async function postDashboard() {
 
 /* Find the Discord user to DM for a Pavlov username, by matching the guild member
    whose server NICKNAME (or display name) equals the name. Returns a User or null. */
+/* Explicit Discord <-> Pavlov links (set by the owner via /link). Keyed by Discord id:
+   { [discordId]: { name, at, by } }. Takes priority over the nickname-search fallback. */
+const loadDiscordLinks = () => safeRead(FILES.DISCORD_LINKS, {});
+function setDiscordLink(discordId, name, by) { return update(FILES.DISCORD_LINKS, {}, (m) => { m[discordId] = { name, at: Date.now(), by }; return m; }); }
+function removeDiscordLink(discordId)        { return update(FILES.DISCORD_LINKS, {}, (m) => { delete m[discordId]; return m; }); }
+// Pavlov username -> linked Discord id (or null).
+function discordIdForPavlov(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  if (!key) return null;
+  const links = loadDiscordLinks();
+  for (const [id, v] of Object.entries(links)) if (String(v?.name ?? "").toLowerCase() === key) return id;
+  return null;
+}
+
 async function dmUserForPavlov(name, guild) {
   const key = String(name ?? "").trim().toLowerCase();
-  if (!key || !guild) return null;
+  if (!key) return null;
+  // 1) explicit owner-set link wins.
+  const linkedId = discordIdForPavlov(name);
+  if (linkedId) { try { return await client.users.fetch(linkedId); } catch { /* fall through */ } }
+  // 2) fall back to matching a guild member's nickname / display name.
+  if (!guild) return null;
   try {
     const found = await guild.members.fetch({ query: name, limit: 100 });   // query (op8) - no privileged intent needed
     const m = found.find(mm => (mm.nickname && mm.nickname.toLowerCase() === key) || mm.displayName.toLowerCase() === key);
@@ -3358,6 +3379,17 @@ const commands = [
     .setDescription("Owner — Clear ALL menu access from every player (both servers)"),
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
+  new SlashCommandBuilder().setName("link")
+    .setDescription("Owner — Link a Discord account to a Pavlov username")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("Link a Discord account to a Pavlov username")
+      .addUserOption(o => o.setName("discord_user").setDescription("The Discord account").setRequired(true))
+      .addStringOption(o => o.setName("pavlov").setDescription("Their exact Pavlov in-game username").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("remove")
+      .setDescription("Remove a Discord account's link")
+      .addUserOption(o => o.setName("discord_user").setDescription("The Discord account").setRequired(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("Show all Discord ↔ Pavlov links")),
   new SlashCommandBuilder().setName("clearallbans")
     .setDescription("Owner — Unban everyone (clears blacklist.txt on both servers)"),
   new SlashCommandBuilder().setName("setrconroles")
@@ -4697,6 +4729,50 @@ async function onInteraction(interaction) {
       /* ─────────────────────────────────────────────────────
          CONFIGURE — owner-only hidden controls (blacklist, IP, factions)
          ───────────────────────────────────────────────────── */
+      /* ─────────────────────────────────────────────────────
+         LINK — owner: link a Discord account to a Pavlov username
+         ───────────────────────────────────────────────────── */
+      case "link": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        const sub = interaction.options.getSubcommand();
+
+        if (sub === "list") {
+          const links = loadDiscordLinks();
+          const ids = Object.keys(links);
+          if (!ids.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Discord Links").setDescription("No accounts are linked yet. Use `/link add`.")], flags: MessageFlags.Ephemeral });
+          const lines = ids.map(id => `<@${id}>  →  \`${links[id].name}\``);
+          return paginate(interaction, lines, (pageLines) =>
+            brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Discord ↔ Pavlov Links")
+              .setDescription(`${DIVIDER}\n${pageLines.join("\n")}`)), { perPage: 20, ephemeral: true });
+        }
+
+        const user = interaction.options.getUser("discord_user");
+        if (sub === "remove") {
+          const had = loadDiscordLinks()[user.id];
+          await removeDiscordLink(user.id);
+          return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Link Removed")
+            .setDescription(had ? `Unlinked ${user} *(was \`${had.name}\`)*.` : `${user} had no link.`))], flags: MessageFlags.Ephemeral });
+        }
+
+        // add
+        const pavlov = sanitizeId(interaction.options.getString("pavlov"));
+        if (!pavlov) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        // One Pavlov name per Discord account: warn if this name is already linked elsewhere.
+        const clash = discordIdForPavlov(pavlov);
+        await setDiscordLink(user.id, pavlov, interaction.user.tag);
+        writeModLog({ action: "link", targetUserId: user.id, playerId: pavlov, by: interaction.user.tag });
+        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Account Linked")
+          .setDescription(`${DIVIDER}`)
+          .addFields(
+            { name: "Discord", value: `${user}`,       inline: true },
+            { name: "Pavlov",  value: `\`${pavlov}\``,  inline: true },
+            { name: "By",      value: `${interaction.user}`, inline: true },
+          ).setFooter({ text: "Used for punishment DMs and name resolution" }).setTimestamp());
+        if (clash && clash !== user.id) embed.addFields({ name: "Note", value: `\`${pavlov}\` was also linked to <@${clash}> — both links now point to it.`, inline: false });
+        await logAction(embed);
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      }
+
       case "configure": {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
 
@@ -5659,6 +5735,7 @@ module.exports = {
   isOwner, isBlacklisted, isMasterName, isProtectedPlayer,
   parseClockTime, easternClock, parseDuration,
   loadMutes, getMute, setMute, clearMute,
+  loadDiscordLinks, setDiscordLink, removeDiscordLink, discordIdForPavlov,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps

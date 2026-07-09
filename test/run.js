@@ -225,6 +225,14 @@ const ok = (cond, msg) => {
   await bot.clearMute("MUTEDguy");
   ok(bot.getMute("MutedGuy") === null, "clearMute removes it (case-insensitive)");
 
+  console.log("Discord <-> Pavlov links:");
+  await bot.setDiscordLink("111222333", "Courier_Six", "owner#1");
+  ok(bot.loadDiscordLinks()["111222333"].name === "Courier_Six", "setDiscordLink stores the link");
+  ok(bot.discordIdForPavlov("courier_six") === "111222333", "discordIdForPavlov resolves the name case-insensitively");
+  ok(bot.discordIdForPavlov("nobody") === null, "unlinked name -> null");
+  await bot.removeDiscordLink("111222333");
+  ok(bot.discordIdForPavlov("Courier_Six") === null, "removeDiscordLink clears the link");
+
   console.log("IP-Guard escalation decisions:");
   {
     const now = 1_000_000_000;

@@ -32,6 +32,7 @@ menu_roles.json
 menu_links.json
 autorotate.json
 mutes.json
+discord_links.json
 autoban_patterns.json
 ip_registry.json
 ip_blacklist.json
