@@ -1836,16 +1836,23 @@ function parseDuration(raw) {
   const n = +m[1]; if (!n) return null;
   return n * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2] || "m"]);
 }
-const gagEverywhere   = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Gag ${t}`,   srv, 2500, 0).catch(() => {}); };
-const ungagEverywhere = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Un-Gag ${t}`, srv, 2500, 0).catch(() => {}); };
+// `Gag <username>` is a TOGGLE — it mutes an unmuted player and un-mutes a muted one.
+// So both mute and un-mute send the SAME command; the difference is just the player's
+// current state. It must be sent exactly ONCE per state change (never re-applied
+// mid-session, or it would toggle back).
+const gagEverywhere   = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Gag ${t}`, srv, 2500, 0).catch(() => {}); };
+const ungagEverywhere = gagEverywhere;   // toggle: sending Gag again lifts the gag
 // Called on every live join: re-apply an active gag, or lift+clear an expired one.
 function applyMuteOnJoin(name) {
   const mute = getMute(name);
   if (!mute) return;
   if (mute.expires && mute.expires <= Date.now()) {
-    ungagEverywhere(name); clearMute(name);
-    logger.info("Mute", `${name}'s mute expired — ungagged on join`);
+    // Expired: the gag didn't survive the reconnect, so they're ALREADY un-muted.
+    // Just drop the record — sending Gag now would toggle them back into a mute.
+    clearMute(name);
+    logger.info("Mute", `${name}'s mute expired — cleared (they rejoin un-muted)`);
   } else {
+    // Active: they rejoin un-muted, so a single Gag re-applies the mute for this session.
     gagEverywhere(name);
     logger.info("Mute", `Re-gagged ${name} on join`);
   }
@@ -1880,7 +1887,6 @@ async function enforceBansSweep() {
     const banned = new Set(loadBans()
       .filter(b => b.permanent || (b.expires && b.expires > now))
       .map(b => String(b.playerId).toLowerCase()));
-    const mutes = loadMutes();
     for (const srv of ACTIVE_SERVERS) {
       let players;
       try { players = await getOnlinePlayers(srv); } catch { continue; }
@@ -1903,9 +1909,8 @@ async function enforceBansSweep() {
           }
           continue;
         }
-        // Keep an active mute enforced (a gag can be lost); expiry is lifted on rejoin.
-        const mute = mutes[nm.toLowerCase()];
-        if (mute && (!mute.expires || mute.expires > now)) gagEverywhere(nm);
+        // NOTE: mutes are NOT re-applied here — Gag is a toggle, so re-sending it to an
+        // already-gagged player would UN-mute them. The mute is applied once per join.
       }
     }
   } finally { _sweepBusy = false; }
