@@ -3349,6 +3349,8 @@ const commands = [
     .setDescription("Check if a courier is currently exiled")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
+  new SlashCommandBuilder().setName("banlist")
+    .setDescription("List all active bans"),
   new SlashCommandBuilder().setName("permban")
     .setDescription("Admin — Permanently exile a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
@@ -3805,7 +3807,7 @@ async function onInteraction(interaction) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "wagelist", "checkbalance", "stats", "kd"];
+  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "banlist", "wagelist", "checkbalance", "stats", "kd"];
   const MOD_COMMANDS   = ["kick", "tempban", "unban", "mute", "unmute", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity"];
@@ -3872,7 +3874,7 @@ async function onInteraction(interaction) {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/stats` `/checkbalance` `/wagelist`\n`/faction list` `/faction audit`" },
+              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist`\n`/faction list` `/faction audit`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
@@ -4303,6 +4305,30 @@ async function onInteraction(interaction) {
           ));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         BANLIST — all active bans
+         ───────────────────────────────────────────────────── */
+      case "banlist": {
+        const now  = Date.now();
+        const bans = loadBans()
+          .filter(b => b.permanent || (b.expires && b.expires > now))
+          .sort((a, b) => (b.permanent ? 1 : 0) - (a.permanent ? 1 : 0) || (a.expires ?? 0) - (b.expires ?? 0));   // perms first, then soonest-expiring
+        if (!bans.length) {
+          return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green)
+            .setTitle("Ban List — Empty").setDescription("No active bans."))], flags: MessageFlags.Ephemeral });
+        }
+        const lines = bans.map((b, i) => {
+          const when = (b.permanent || !b.expires) ? "**PERM**" : `until <t:${Math.floor(b.expires / 1000)}:d>`;
+          return `\`${String(i + 1).padStart(2, "0")}\`  **${b.playerId}**  ·  ${when}  ·  *${(b.reason || "no reason").slice(0, 60)}*  ·  ${b.moderator || "?"}`;
+        });
+        const perm = bans.filter(b => b.permanent || !b.expires).length;
+        return paginate(interaction, lines, (pageLines) =>
+          clinical(new EmbedBuilder().setColor(CLIN.red)
+            .setTitle(`Ban List — ${bans.length} active`)
+            .setDescription(`**${perm}** permanent · **${bans.length - perm}** temporary\n${DIVIDER}\n${pageLines.join("\n")}`)),
+          { perPage: 15, ephemeral: true });
       }
 
       /* ─────────────────────────────────────────────────────
