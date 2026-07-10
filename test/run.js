@@ -233,6 +233,13 @@ const ok = (cond, msg) => {
   await bot.removeDiscordLink("111222333");
   ok(bot.discordIdForPavlov("Courier_Six") === null, "removeDiscordLink clears the link");
 
+  console.log("Unban auto-ban exemption:");
+  ok(!bot.isAutobanExempt("Freed_One"), "not exempt by default");
+  await bot.addAutobanExempt("Freed_One", "mod#1");
+  ok(bot.isAutobanExempt("freed_one"), "unbanned player is exempt (case-insensitive)");
+  await bot.removeAutobanExempt("FREED_ONE");
+  ok(!bot.isAutobanExempt("Freed_One"), "re-ban clears the exemption (case-insensitive)");
+
   console.log("IP-Guard escalation decisions:");
   {
     const now = 1_000_000_000;

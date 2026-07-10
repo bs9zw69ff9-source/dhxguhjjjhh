@@ -137,6 +137,7 @@ const FILES = {
   AUTOROTATE:     "./autorotate.json",
   MUTES:          "./mutes.json",
   DISCORD_LINKS:  "./discord_links.json",
+  AUTOBAN_EXEMPT: "./autoban_exempt.json",
 };
 
 const DEFAULTS = {
@@ -159,6 +160,7 @@ const DEFAULTS = {
   [FILES.AUTOROTATE]:     "{}",
   [FILES.MUTES]:          "{}",
   [FILES.DISCORD_LINKS]:  "{}",
+  [FILES.AUTOBAN_EXEMPT]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
 };
 
@@ -1796,7 +1798,9 @@ function preserveBalanceAcrossKick(name) {
   let before;
   try { before = readPlayerBalance(name); } catch { return; }
   if (before == null || before <= 0) return;        // nothing worth preserving
-  for (const delay of [8000, 25000]) {              // re-check after the disconnect save (and a late one)
+  // Re-check several times over ~90s: the economy mod wipes the save at disconnect,
+  // but a laggy disconnect (or the game re-writing 0 after our restore) can land late.
+  for (const delay of [8000, 20000, 40000, 65000, 90000]) {
     setTimeout(() => {
       try {
         const after = readPlayerBalance(name);
@@ -1829,6 +1833,7 @@ async function banWithIp(playerId, server = "both", opts = {}) {
     logger.warn("Bans", `Refused to ban master name "${name}"`);
     return { ids: [], ips: [], alts: [], field: null, blacklist: { name, servers: 0 }, ok: false, master: true };
   }
+  removeAutobanExempt(name).catch(() => {});   // a deliberate ban clears any unban exemption
   // Native RCON Ban + Kick by USERNAME on every server. NO blacklist.txt.
   let enforced = { servers: 0 };
   try { enforced = await hardEnforce(name); }
@@ -1932,7 +1937,7 @@ async function enforceBansSweep() {
       try { players = await getOnlinePlayers(srv); } catch { continue; }
       for (const p of players) {
         const nm = p.name;
-        if (!nm || isMasterName(nm)) continue;
+        if (!nm || isMasterName(nm) || isAutobanExempt(nm)) continue;   // never sweep an unban-exempt player
         const nameBanned = banned.has(nm.toLowerCase());
         let flaggedHit = false;
         if (!nameBanned) { try { flaggedHit = !!ipBans.getRecord(nm)?.flagged; } catch {} }   // flagged IP/EOS
@@ -3188,6 +3193,14 @@ function isProtectedPlayer(name) {
   return grants.some(g => g.menuValue === "staff" || g.menuValue === "highstaff");
 }
 
+/* Auto-ban exemption: a player who was explicitly UNBANNED is never auto-banned again
+   (even if a lingering flag — e.g. a shared IP with a still-banned evader — would match),
+   until they're deliberately re-banned. Keyed by lowercased Pavlov name. */
+const loadAutobanExempt = () => safeRead(FILES.AUTOBAN_EXEMPT, {});
+const isAutobanExempt   = (name) => { const k = String(name ?? "").trim().toLowerCase(); return !!k && !!loadAutobanExempt()[k]; };
+function addAutobanExempt(name, by) { const k = String(name).toLowerCase(); return update(FILES.AUTOBAN_EXEMPT, {}, (m) => { m[k] = { name, at: Date.now(), by }; return m; }); }
+function removeAutobanExempt(name)  { const k = String(name).toLowerCase(); return update(FILES.AUTOBAN_EXEMPT, {}, (m) => { delete m[k]; return m; }); }
+
 function scheduleMenuRegrant(name) {
   const key = String(name ?? "").toLowerCase();
   if (!key) return;
@@ -3586,6 +3599,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // Only MASTER names are exempt from auto-ban. Staff/donators are exempt from /flush
       // only, not from ban evasion enforcement.
       if (isMasterName(name)) { logger.info("IPGuard", `Skipped auto-ban for master name ${name}`); return; }
+      // An explicitly-unbanned player is never auto-banned again (a lingering shared flag
+      // must not re-catch them) until they're deliberately re-banned.
+      if (isAutobanExempt(name)) { logger.info("IPGuard", `Skipped auto-ban for unban-exempt player ${name}`); return; }
       // A TEMP-banned player bouncing off their ban still shows up as a join attempt.
       const existing = loadBans().find(b => _sameId(b.playerId, name));
       const decision = autoBanDecision(existing, reason);
@@ -4270,6 +4286,7 @@ async function onInteraction(interaction) {
         await interaction.deferReply();
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await removeBans(playerId);
+        await addAutobanExempt(playerId, interaction.user.tag);            // never auto-ban them again until re-banned
         const { blacklist: bl, cleared: c } = unbanEverywhere(playerId);   // blacklist.txt (both installs) + IP flags
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
         const ipLifted = c && (c.ips + c.names) > 0
@@ -5735,6 +5752,7 @@ module.exports = {
   parseClockTime, easternClock, parseDuration,
   loadMutes, getMute, setMute, clearMute,
   loadDiscordLinks, setDiscordLink, removeDiscordLink, discordIdForPavlov,
+  isAutobanExempt, addAutobanExempt, removeAutobanExempt,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   // faction rank caps
