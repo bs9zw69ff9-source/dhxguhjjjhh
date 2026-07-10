@@ -239,6 +239,11 @@ const ok = (cond, msg) => {
   ok(bot.isAutobanExempt("freed_one"), "unbanned player is exempt (case-insensitive)");
   await bot.removeAutobanExempt("FREED_ONE");
   ok(!bot.isAutobanExempt("Freed_One"), "re-ban clears the exemption (case-insensitive)");
+  await bot.addAutobanExempt("Reoffender", "mod#1");
+  await bot.upsertTempBan({ playerId: "Reoffender", reason: "again", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
+  await new Promise(r => setTimeout(r, 30));   // exemption clear is fire-and-forget inside upsert
+  ok(!bot.isAutobanExempt("Reoffender"), "creating a ban record clears the exemption (any ban path)");
+  await bot.removeBans("Reoffender");
 
   console.log("IP-Guard escalation decisions:");
   {

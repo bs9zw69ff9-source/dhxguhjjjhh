@@ -294,6 +294,9 @@ const loadBans          = () => safeRead(FILES.TEMPBAN,        []);
    and the 60s expiry sweep can't clobber each other's writes. */
 const _sameId = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 function upsertTempBan(entry) {
+  // Creating a ban record is a deliberate ban — it must clear any unban exemption,
+  // or an exempt player could hold a /banlist entry the sweeps refuse to enforce.
+  try { removeAutobanExempt(entry.playerId).catch(() => {}); } catch {}
   return update(FILES.TEMPBAN, [], (bans) => {
     const next = bans.filter(b => !_sameId(b.playerId, entry.playerId));
     next.push(entry);
@@ -317,6 +320,7 @@ function importBlacklistToBans() {
     for (const nm of names) {
       if (have.has(nm.toLowerCase())) continue;
       bans.push({ playerId: nm, reason: "Imported from blacklist.txt", moderator: "system", at: Date.now(), permanent: true });
+      try { removeAutobanExempt(nm).catch(() => {}); } catch {}   // a re-appearing blacklist name is a deliberate ban
       added++;
     }
     if (added) logger.info("Bans", `Imported ${added} blacklist.txt name(s) into the ban registry for /banlist`);
@@ -1992,7 +1996,12 @@ async function reconcileBans() {
     let n = 0;
     for (const b of active) {
       const name = sanitizeId(b.playerId);
-      if (!name || isMasterName(name)) continue;
+      if (!name || isMasterName(name) || isAutobanExempt(name)) continue;
+      // Re-verify at ISSUE time: an /unban during this pass removes the DB entry, and
+      // re-Banning from the stale snapshot would natively re-ban them with nothing left
+      // to lift it (their Unban already went out).
+      const still = loadBans().some(x => _sameId(x.playerId, b.playerId) && (x.permanent || (x.expires && x.expires > Date.now())));
+      if (!still) continue;
       try { blacklistAdd(b.playerId); } catch {}                     // blacklist.txt reconnect-block backup
       for (const srv of ACTIVE_SERVERS) { try { await sendRcon(`Ban ${name}`, srv, 2500, 0); } catch {} }
       n++;
@@ -2665,6 +2674,7 @@ function importModsaveBanlist() {
       bans.push(expires
         ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: "until " + p.unban }
         : { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), permanent: true });
+      try { removeAutobanExempt(p.name).catch(() => {}); } catch {}   // an in-game ban is deliberate — clears any exemption
       added++;
     }
     if (added) logger.info("Bans", `Imported ${added} ban(s) from the modsave banlist into the database`);
@@ -2718,6 +2728,7 @@ async function processExpiredBans() {
     if (ban.permanent || !ban.expires || ban.expires > now) continue;   // never auto-lift permanent bans
     try {
       unbanEverywhere(ban.playerId);   // remove from blacklist.txt (both installs) + clear IP flags
+      await addAutobanExempt(ban.playerId, "sentence served");   // a served ban must never re-catch them via a shared flag
       lifted.push(ban.playerId);
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
@@ -3616,6 +3627,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       if (decision === "lift") {
         try { unbanEverywhere(existing.playerId); } catch {}
         try { await removeBans(existing.playerId); } catch {}
+        try { await addAutobanExempt(existing.playerId, "sentence served"); } catch {}   // served ban never re-catches them
         logger.info("IPGuard", `${name} rejoined after temp-ban expiry — lifted now (no escalation)`);
         return;
       }
@@ -4287,8 +4299,8 @@ async function onInteraction(interaction) {
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        await addAutobanExempt(playerId, interaction.user.tag);            // exempt FIRST so no sweep can fire mid-unban
         await removeBans(playerId);
-        await addAutobanExempt(playerId, interaction.user.tag);            // never auto-ban them again until re-banned
         const { blacklist: bl, cleared: c } = unbanEverywhere(playerId);   // blacklist.txt (both installs) + IP flags
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
         const ipLifted = c && (c.ips + c.names) > 0
