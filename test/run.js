@@ -251,6 +251,7 @@ const ok = (cond, msg) => {
   ok(bot.isRealBan({ reason: "Cheating", moderator: "ModX" }), "a normal ban is a 'real' source ban");
   ok(!bot.isRealBan({ reason: "Auto-ban — blacklisted account (EOS id)", moderator: "IP-Guard" }), "a legacy IP-Guard auto-ban is NOT a source");
   ok(!bot.isRealBan({ reason: "Ban evasion", moderator: "Ban evasion (auto)" }), "a 'Ban evasion' auto-ban is NOT a source");
+  ok(!bot.isRealBan({ reason: "Blacklisted via /configure", moderator: "owner#1" }), "a /configure blacklist is NOT a source — no owner mis-attribution on matches");
   await bot.upsertPermBan({ playerId: "OrigCheater", reason: "Hard R", moderator: "Chan-Chan" });
   ok(bot.sourceBanFor("OrigCheater")?.reason === "Hard R", "sourceBanFor finds the original punishment by name");
   ok(bot.sourceBanFor("SomeoneUnrelated") === null, "sourceBanFor returns null when no real ban matches");

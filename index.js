@@ -1939,14 +1939,9 @@ async function enforceBansSweep() {
         if (nameBanned || flaggedHit) {
           logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} — force-removing`);
           await hardEnforce(nm);                // native Ban + Kick by username, responses logged
-          // Re-enforce an IP/EOS auto-ban by PERSISTING it: record the ban (with the real
-          // offense) so it's reconciled going forward and survives a server restart.
-          if (flaggedHit) {
-            let rec = null; try { rec = ipBans.getRecord(nm); } catch {}
-            const src = sourceBanFor(nm, rec?.id);
-            try { await upsertPermBan({ playerId: nm, reason: src?.reason || "Ban evasion", moderator: src?.moderator || "Ban evasion (auto)" }); } catch {}
-            banned.add(nm.toLowerCase());
-          }
+          // NOTE: the sweep does NOT create a ban RECORD — the IP/EOS flag already
+          // persists the auto-ban and re-catches them on join. Recording here made a
+          // flagged/shared IP mass-create ban entries wrongly attributed to a person.
           continue;
         }
         // Keep an active mute enforced — `Gag True` is idempotent, so re-applying is safe.
@@ -2008,7 +2003,11 @@ async function reconcileBans() {
    1) the SAME EOS account (evader kept the account, changed name),
    2) the same name, or a shared-confirmed-IP alt. */
 function isRealBan(b) {
+  // A per-player punishment — NOT an auto-ban and NOT a broad /configure IP/name
+  // blacklist (those aren't a punishment on one person, and copying their moderator
+  // makes every match look like that admin banned it).
   return b && b.reason && !/^(auto-ban|ban evasion)/i.test(b.reason)
+    && !/blacklisted via/i.test(b.reason)
     && b.moderator !== "IP-Guard" && !/evasion/i.test(String(b.moderator || ""));
 }
 function sourceBanFor(name, uniqueId) {
@@ -3606,7 +3605,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // the original ban whose flag caught them (fall back to "Ban evasion").
       const src       = sourceBanFor(name, uniqueId);
       const banReason = src?.reason || "Ban evasion";
-      const banMod    = src?.moderator || "Ban evasion (auto)";
+      const banMod    = "Ban evasion (auto)";   // never attribute an auto-ban to a person
       // Enforce with a native RCON Ban + Kick by username (banWithIp) + flag the exact
       // IP/EOS. Per-command server responses are logged so we can see what lands.
       const res = await banWithIp(name, "both", { permanent: true });
