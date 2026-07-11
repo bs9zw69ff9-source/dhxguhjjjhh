@@ -165,6 +165,9 @@ const ok = (cond, msg) => {
   ok(bot.commandPlayerCandidates(mk("stats")) === null, "stats → null (default)");
   fs.writeFileSync(bot.FILES.MENU_GRANTS, JSON.stringify({ "rcon_guy": [{ server: "both", menuValue: "staff" }] }));
   ok(bot.commandPlayerCandidates(mk("stripmenu")).length === 1, "stripmenu → only menu-grant holders");
+  await bot.setMute("Gagged_Gal", { name: "Gagged_Gal", expires: Date.now() + 1e6, moderator: "m", at: Date.now() });
+  ok(bot.commandPlayerCandidates(mk("unmute")).includes("Gagged_Gal"), "unmute → only currently-muted players");
+  await bot.clearMute("Gagged_Gal");
   await bot.upsertTempBan({ playerId: "Exiled_One", reason: "x", expires: Date.now() + 1e6, durationLabel: "1d", moderator: "m", server: "both" });
   ok(bot.commandPlayerCandidates(mk("unban")).some(n => n === "Exiled_One"), "unban → only currently-banned players");
   fs.writeFileSync(process.env.DONATOR_PATH, "Big_Spender\n");

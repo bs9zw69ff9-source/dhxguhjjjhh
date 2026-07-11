@@ -463,6 +463,7 @@ function commandPlayerCandidates(interaction) {
   if (cmd === "unban" || cmd === "checkban")
                               return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAllCached()])];  // temp-banned + blacklist.txt (cached for autocomplete)
   if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
+  if (cmd === "unmute")       return Object.values(loadMutes()).map(m => m.name);                      // currently muted
   if (cmd === "removewage")   return loadWages().map(w => w.playerId);                                 // on payroll
   if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
   if (cmd === "faction" && (sub === "remove" || sub === "rank")) {
@@ -3795,6 +3796,24 @@ async function onInteraction(interaction) {
     const focused  = interaction.options.getFocused(true);
     const cmdName  = interaction.commandName;
 
+    // /mute duration - quick suggestions (typed valid durations are honoured)
+    if (focused.name === "duration" && cmdName === "mute") {
+      const q = focused.value.trim().toLowerCase();
+      const opts = ["30s", "5m", "10m", "30m", "1h", "2h", "12h", "1d", "3d", "7d"]
+        .map(d => ({ name: d, value: d }));
+      if (q && parseDuration(q) && !opts.find(o => o.value === q)) opts.unshift({ name: q, value: q });
+      return interaction.respond(opts.filter(o => !q || o.value.startsWith(q)).slice(0, 25)).catch(() => {});
+    }
+
+    // /autorotate time - common Eastern times (typed valid times are honoured)
+    if (focused.name === "time" && cmdName === "autorotate") {
+      const q = focused.value.trim().toLowerCase();
+      const opts = ["00:00", "03:00", "06:00", "09:00", "12:00", "15:00", "18:00", "21:00"]
+        .map(t => ({ name: `${t} Eastern`, value: t }));
+      if (q && parseClockTime(q)) opts.unshift({ name: `${q} Eastern`, value: q });
+      return interaction.respond(opts.filter(o => !q || o.value.includes(q)).slice(0, 25)).catch(() => {});
+    }
+
     // /tempban date - quick calendar suggestions (always future dates, YYYY-MM-DD)
     if (focused.name === "date" && cmdName === "tempban") {
       const q = focused.value.trim();
@@ -3932,11 +3951,13 @@ async function onInteraction(interaction) {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/checkbalance` `/wagelist`\n`/faction list` `/faction audit`" },
+              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/kd` `/checkbalance` `/wagelist`\n`/faction list` `/faction audit` `/faction playtime`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
-                "`/flush <server>` — Randomly kick one online player",
+                "`/mute <id> <duration> [reason]` — In-game mute (re-applied every join until it expires)",
+                "`/unmute <id>` — Lift a mute now",
+                "`/flush <server>` — Randomly kick one online player (staff & donators immune)",
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
                 "`/unban <id> <server>` — Lift exile",
                 "`/announce <msg> <server> <target>` — RCON Notify a player or All",
@@ -3964,6 +3985,8 @@ async function onInteraction(interaction) {
                 "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
                 "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
+                "`/link add|remove|list` — *Owner* — tie a Discord account to a Pavlov username",
+                "`/autorotate set|off|status` — *Owner* — daily map rotation at a set Eastern time",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
@@ -4073,6 +4096,11 @@ async function onInteraction(interaction) {
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
             .setTitle(info.serverName)
             .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
+          const roster = [...(playerCache[srv] || [])].sort((a, b) => a.localeCompare(b));
+          if (info.ok && roster.length) {
+            const shown = roster.slice(0, 15).map(n => `\`${n}\``).join("  ");
+            e.addFields({ name: `Online (${roster.length})`, value: (shown + (roster.length > 15 ? `  *+${roster.length - 15} more*` : "")).slice(0, 1024), inline: false });
+          }
           return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
         return interaction.editReply({ embeds });
@@ -4085,6 +4113,7 @@ async function onInteraction(interaction) {
         const query = interaction.options.getString("name").toLowerCase();
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         await Promise.all(ACTIVE_SERVERS.map(refreshPlayerCache));
+        const _findMembership = buildFactionMembershipIndex();   // one read for faction tags
         const matches = [];
         const seen    = new Set();
         for (const srv of ACTIVE_SERVERS) {
@@ -4108,7 +4137,8 @@ async function onInteraction(interaction) {
         }
         const lines = matches.map((m) => {
           const srvStr = m.servers.map(s => "S" + s.replace("server", "")).join("+");
-          return `\`[${srvStr}]\`  **${m.name}**`;
+          const facs = _findMembership?.get(m.name.toLowerCase());
+          return `\`[${srvStr}]\`  **${m.name}**${facs?.length ? `  —  ${facs.join(" / ")}` : ""}`;
         });
         return interaction.editReply({ embeds: [
           brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Search Results — "${query}"`)
@@ -4399,6 +4429,14 @@ async function onInteraction(interaction) {
         // Prefer an active TEMP entry if the registry ever holds duplicates for a name.
         const _entries = loadBans().filter(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const tb = _entries.find(b => !b.permanent && b.expires) ?? _entries[0];
+        // Cross-referenced context shown on every branch.
+        const _cbLink  = discordIdForPavlov(playerId);
+        const _cbMute  = getMute(playerId);
+        const _cbMuted = _cbMute && (!_cbMute.expires || _cbMute.expires > Date.now());
+        let _cbRec = null; try { _cbRec = ipBans.getRecord(playerId); } catch {}
+        const _cbCtx = [];
+        if (_cbLink)  _cbCtx.push({ name: "Discord", value: `<@${_cbLink}>`, inline: true });
+        if (_cbMuted) _cbCtx.push({ name: "In-Game Mute", value: `Active — lifts <t:${Math.floor(_cbMute.expires / 1000)}:R>`, inline: true });
         if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
@@ -4412,6 +4450,7 @@ async function onInteraction(interaction) {
                 { name: "By",        value: tb.moderator,                       inline: true },
                 { name: "Remaining", value: `**${formatTimeLeft(tb.expires)}**`, inline: true },
                 { name: "Expires",   value: `<t:${ts}:F>  ·  <t:${ts}:R>`,       inline: false },
+                ..._cbCtx,
               ), "Auto-lifted when timer expires")
           ]});
         }
@@ -4425,14 +4464,17 @@ async function onInteraction(interaction) {
                 { name: "Offense", value: tb.reason ?? "Permanent ban",               inline: true },
                 { name: "By",      value: tb.moderator ?? "?",                         inline: true },
                 { name: "On file", value: hits.length ? hits.map(n => `Server ${n}`).join(" + ") : "ban JSON", inline: false },
+                ..._cbCtx,
               ), "Permanent — use /unban to lift")
           ]});
         }
         if (!hits.length) {
-          return interaction.reply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exile Found")
-              .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` is not on blacklist.txt on either server.`))
-          ]});
+          const cleanE = clinical(new EmbedBuilder().setColor(_cbRec?.flagged ? CLIN.grey : CLIN.green).setTitle("No Exile Found")
+            .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` has no active ban.`));
+          if (_cbRec?.flagged) cleanE.addFields({ name: "Evasion Watch", value: "Matches an active IP/EOS flag — next join is auto-banned.", inline: false });
+          if (isAutobanExempt(playerId)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned — auto-bans will never re-catch this name.", inline: false });
+          if (_cbCtx.length) cleanE.addFields(..._cbCtx);
+          return interaction.reply({ embeds: [cleanE] });
         }
         return interaction.reply({ embeds: [
           clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Active")
@@ -5676,6 +5718,8 @@ async function onInteraction(interaction) {
                 { name: "Kills",  value: `**${k.kills}**`,  inline: true },
                 { name: "Deaths", value: `**${k.deaths}**`, inline: true },
                 { name: "Ratio",  value: `**${ratio}**`,    inline: true },
+                { name: "Playtime", value: (() => { const pt = loadPlaytime(); const key = Object.keys(pt).find(x => x.toLowerCase() === playerId.toLowerCase()); return key !== undefined ? formatPlaytime(pt[key]) : "*no record*"; })(), inline: true },
+                { name: "Faction",  value: (() => { const f = getPlayerFactions(playerId); return f && f.length ? f.join(", ") : "*none*"; })(), inline: true },
               ).setFooter({ text: "Tracked from live kill logs while the bot is running" }).setTimestamp()
           ]});
         }
@@ -5718,6 +5762,11 @@ async function onInteraction(interaction) {
 
         const statusStr = !online ? "Offline" : [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join("  +  ");
         const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
+        const muteRec  = getMute(playerId);
+        const muteStr  = muteRec && (!muteRec.expires || muteRec.expires > Date.now())
+          ? `Muted — lifts <t:${Math.floor(muteRec.expires / 1000)}:R>` : null;
+        const linkedId = discordIdForPavlov(playerId);
+        let ipRec = null; try { ipRec = ipBans.getRecord(playerId); } catch {}
 
         const embed = new EmbedBuilder().setColor(color)
           .setTitle(`Courier Dossier — ${playerId}`)
@@ -5732,6 +5781,8 @@ async function onInteraction(interaction) {
             { name: "Last Seen",     value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
             { name: "Donator",       value: donator ? "Yes" : "No",                                       inline: true },
             { name: "K / D",         value: formatKD(playerId),                                                 inline: true },
+            { name: "Sessions",      value: String(ipRec?.logins ?? 0),                                          inline: true },
+            { name: "Discord",       value: linkedId ? `<@${linkedId}>` : "*not linked*",                        inline: true },
             { name: "Faction Ranks", value: fStr,                                                               inline: false },
           );
 
@@ -5746,6 +5797,8 @@ async function onInteraction(interaction) {
         if (history.length) {
           embed.addFields({ name: "Mod Actions", value: `**${history.length}** on record`, inline: false });
         }
+        if (muteStr) embed.addFields({ name: "In-Game Mute", value: muteStr, inline: false });
+        if (ipRec?.flagged && !tb) embed.addFields({ name: "Evasion Watch", value: "This account matches an active IP/EOS flag — next join is auto-banned.", inline: false });
 
         // Faction kills — how many times this player has killed members of each
         // faction, cross-referenced from the live kill log against the spawn files.
