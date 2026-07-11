@@ -2900,11 +2900,16 @@ function buildPlaytimeLeaderboardEmbed() {
     .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while couriers are online (sampled every 60s).`),
     { footer: { text: `Updated every 30s` } });
   const top = entries[0]?.minutes || 1;
+  // Grand total across EVERY tracked player (not just the top N shown).
+  const all = loadPlaytime();
+  const totalMin = Object.values(all).reduce((s, m) => s + (Number(m) || 0), 0);
+  const players  = Object.keys(all).filter(k => (Number(all[k]) || 0) > 0).length;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.minutes, top, 8)}\`` : "";
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
   }).join("\n");
-  return brand(embed.setDescription(`${hero("Time served in the Mojave.")}\n${body}`),
+  return brand(embed.setDescription(
+    `${hero("Time served in the Mojave.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** couriers\n${DIVIDER}\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
