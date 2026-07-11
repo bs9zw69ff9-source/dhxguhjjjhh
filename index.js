@@ -4990,7 +4990,7 @@ async function onInteraction(interaction) {
           new ButtonBuilder().setCustomId(`linkreq_ok:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Accept").setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`linkreq_no:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Deny").setStyle(ButtonStyle.Danger),
         );
-        try { await ch.send(textify({ content: `<@&${LINK_APPROVER_ROLE}>`, embeds: [reqEmbed], components: [row] })); }
+        try { await ch.send(textify({ embeds: [reqEmbed], components: [row] })); }   // no staff ping — the card in the channel is enough
         catch (e) { return interaction.reply({ embeds: [errorEmbed("Request Failed", `Couldn't post the request: ${e.message}`)], flags: MessageFlags.Ephemeral }); }
         return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Link Request Sent")
           .setDescription(`Your request to link to \`${pavlov}\` is pending staff approval. You'll be DM'd the result.`))], flags: MessageFlags.Ephemeral });
