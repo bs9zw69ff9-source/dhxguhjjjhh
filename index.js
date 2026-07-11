@@ -930,7 +930,7 @@ const writeGameFileSingle = atomicWriteFile;
    every other install. Binary-safe, atomic, ownership-preserving, and it NEVER
    deletes anything. Set MODSAVE_SYNC=off to disable. */
 const MODSAVE_REL = path.join("Pavlov", "Saved", "Config", "ModSave");
-const MODSAVE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const MODSAVE_SYNC_INTERVAL_MS = 60 * 1000;   // blanket newest-wins net; per-player sync also fires on join/disconnect
 // NEVER sync RCON+ menu-access files. Those are managed live by GiveMenu / RemoveMenu
 // / ClearMenuAccess; blindly mirroring them (newest-wins) can wipe a player's menu
 const MODSAVE_SYNC_SKIP = new RegExp(
@@ -1007,6 +1007,39 @@ function syncAllModSave(bases = PAVLOV_BASES) {
   }
   if (synced) logger.info("Sync", `ModSave sync — propagated ${synced} file copy(ies) across ${bases.length} installs`);
   return { synced, installs: bases.length };
+}
+
+/* Targeted, EVENT-DRIVEN caps sync for one player. The blanket newest-wins pass runs
+   on an interval, which is too slow for server hoppers: leave server 1, join server 2
+   inside the window, and server 2 loads a stale ledger — then saves it later with a
+   newer mtime, clobbering the caps earned on server 1. So we sync the player's ledger
+   at the exact moments it matters: right after a disconnect (their balance was just
+   saved) and right on join (before the destination server reads it). */
+function syncPlayerLedger(name, pathsOverride = null) {
+  if (process.env.MODSAVE_SYNC === "off") return 0;
+  let paths = pathsOverride;
+  if (!paths) {
+    const fp = getPlayerFilePath(name);
+    if (!fp || PAVLOV_BASES.length < 2) return 0;
+    paths = mirrorPaths(fp);
+  }
+  if (paths.length < 2) return 0;
+  let newest = null;
+  for (const p of paths) {
+    try { const st = fs.statSync(p); if (!newest || st.mtimeMs > newest.mtime) newest = { p, mtime: st.mtimeMs }; } catch {}
+  }
+  if (!newest) return 0;                        // no ledger anywhere yet
+  let content; try { content = fs.readFileSync(newest.p); } catch { return 0; }
+  let synced = 0;
+  for (const p of paths) {
+    if (p === newest.p) continue;
+    let dm = -1; try { dm = fs.statSync(p).mtimeMs; } catch {}
+    if (dm >= newest.mtime - 2000) continue;    // already as new
+    if (wouldWipeBalance(content, p)) continue; // same 0-wipe guard as the blanket sync
+    if (atomicCopyPreservingMtime(p, content, newest.mtime)) synced++;
+  }
+  if (synced) logger.info("Sync", `Caps ledger for ${name} → ${synced} install(s)`);
+  return synced;
 }
 
 const FACTION_ROLES_PATH  = path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/FactionRoles");
@@ -3560,6 +3593,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired on every LIVE join - re-grant recorded RCON menus (the server drops a
     // player's menu on disconnect, so a rejoin needs the grant re-applied).
     onConnect: async ({ name }) => {
+      // Pull the newest caps ledger onto every install BEFORE this server reads it,
+      // so a hop from another server carries their money over.
+      try { syncPlayerLedger(name); } catch (e) { logger.warn("Sync", `join ledger sync failed for ${name}: ${e.message}`); }
       // Re-apply an active gag on join, or lift an expired one — for everyone.
       try { applyMuteOnJoin(name); } catch (e) { logger.warn("Mute", `mute-on-join failed for ${name}: ${e.message}`); }
       // Master names get a menu handed to them on every join (no bit code).
@@ -3569,6 +3605,11 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) -
     // posts an accurate name, ID, IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
+      // The economy mod saves the balance at disconnect — propagate it to the other
+      // installs now (and once more a few seconds later for a slow save write), so
+      // the caps are already there if they hop to another server.
+      try { syncPlayerLedger(name); } catch {}
+      setTimeout(() => { try { syncPlayerLedger(name); } catch {} }, 5_000);
       if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
       const srvName = serverNameByLabel.get(String(server)) || "Server 1";
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
@@ -5798,7 +5839,7 @@ module.exports = {
   // faction file safety
   readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
   // modsave sync
-  syncAllModSave,
+  syncAllModSave, syncPlayerLedger,
   // rcon menu roles
   loadMenuRoles, setMenuRole,
 };

@@ -112,6 +112,20 @@ const ok = (cond, msg) => {
     fs.writeFileSync(spB, "250");  // newer, real value
     bot.syncAllModSave([ia, ib]);
     ok(fs.readFileSync(spA, "utf8") === "250", "a newer non-zero balance still syncs normally");
+
+    // Per-player event-driven ledger sync (fires on join + disconnect)
+    const lA = path.join(ia, sub, "hopper.txt"), lB = path.join(ib, sub, "hopper.txt");
+    fs.writeFileSync(lA, "777");                                     // newest — just saved at disconnect
+    fs.writeFileSync(lB, "50"); fs.utimesSync(lB, new Date(1_000_000), new Date(1_000_000));   // stale on the other server
+    ok(bot.syncPlayerLedger("hopper", [lA, lB]) === 1, "ledger sync copies the newest balance to the stale install");
+    ok(fs.readFileSync(lB, "utf8") === "777", "hopper's caps followed them to the other server");
+    // 0-wipe guard also applies to the targeted sync
+    const zA = path.join(ia, sub, "zeroer.txt"), zB = path.join(ib, sub, "zeroer.txt");
+    fs.writeFileSync(zB, "900"); fs.utimesSync(zB, new Date(1_000_000), new Date(1_000_000));
+    fs.writeFileSync(zA, "0");                                       // newer fresh 0
+    bot.syncPlayerLedger("zeroer", [zA, zB]);
+    ok(fs.readFileSync(zB, "utf8") === "900", "targeted sync refuses to wipe a positive balance with a fresh 0");
+    ok(bot.syncPlayerLedger("hopper", [lA, lB]) === 0, "already-in-sync ledger is a no-op");
   }
 
   console.log("Last seen:");
