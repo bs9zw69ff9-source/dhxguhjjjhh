@@ -3780,6 +3780,18 @@ async function onInteraction(interaction) {
     const [tag, uid, encName] = interaction.customId.split(":");
     const pavlov = decodeURIComponent(encName ?? "");
     const approve = tag === "linkreq_ok";
+    // Re-check the one-to-one rules at ACCEPT time — a second pending request for the
+    // same name (or same user) may have been approved while this card sat here.
+    if (approve) {
+      const takenBy = discordIdForPavlov(pavlov);
+      const already = loadDiscordLinks()[uid];
+      if ((takenBy && takenBy !== uid) || already) {
+        const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Link Request — Void")
+          .setDescription(`${DIVIDER}\n${already ? `<@${uid}> is already linked to \`${already.name}\`.` : `\`${pavlov}\` was claimed by <@${takenBy}> while this request was pending.`}\nNothing was changed.`)
+          .setTimestamp());
+        return interaction.update(textify({ content: "", embeds: [stale], components: [] })).catch(() => {});
+      }
+    }
     try {
       if (approve) {
         await setDiscordLink(uid, pavlov, interaction.user.tag);
@@ -4944,25 +4956,35 @@ async function onInteraction(interaction) {
         }
 
         // add — PUBLIC: request to link YOUR OWN Discord to a Pavlov name; staff approves.
+        // Hard one-to-one rules, enforced BEFORE any request is posted:
+        //   • an account that already holds a link cannot use the command (staff must
+        //     /link remove it first), and
+        //   • a Pavlov name that is already linked to someone is auto-denied outright.
         const pavlov = sanitizeBanName(interaction.options.getString("pavlov"));   // preserves spaces in names
         if (!pavlov) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const existing = loadDiscordLinks()[interaction.user.id];
-        if (existing && existing.name.toLowerCase() === pavlov.toLowerCase()) {
-          return interaction.reply({ embeds: [warningEmbed("Already Linked", `You're already linked to \`${existing.name}\`.`)], flags: MessageFlags.Ephemeral });
+        if (existing) {
+          return interaction.reply({ embeds: [deniedEmbed("Already Linked",
+            `Your Discord is already linked to \`${existing.name}\`. One link per account — ask a mod to \`/link remove\` it first if it's wrong.`,
+            "One Pavlov name per Discord account")], flags: MessageFlags.Ephemeral });
+        }
+        const clash = discordIdForPavlov(pavlov);
+        if (clash) {
+          writeModLog({ action: "link-denied", targetUserId: interaction.user.id, playerId: pavlov, reason: `name already linked to ${clash}`, by: "auto" });
+          return interaction.reply({ embeds: [deniedEmbed("Name Already Claimed",
+            `\`${pavlov}\` is already linked to another Discord account. If that's YOUR in-game name, tell a mod — they can \`/link remove\` the false claim.`,
+            "Auto-denied — no request sent")], flags: MessageFlags.Ephemeral });
         }
         let ch = null;
         try { ch = await client.channels.fetch(LINK_REQUEST_CHANNEL); } catch {}
         if (!ch?.isTextBased()) {
           return interaction.reply({ embeds: [errorEmbed("Requests Unavailable", "The link-request channel is not reachable — tell an admin.")], flags: MessageFlags.Ephemeral });
         }
-        const clash = discordIdForPavlov(pavlov);
         const reqEmbed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Link Request — Pending")
           .setDescription(`${DIVIDER}`)
           .addFields(
             { name: "Discord", value: `${interaction.user}  \`${interaction.user.id}\``, inline: false },
             { name: "Pavlov",  value: `\`${pavlov}\``,                                    inline: true },
-            ...(existing ? [{ name: "Replaces", value: `\`${existing.name}\``, inline: true }] : []),
-            ...(clash && clash !== interaction.user.id ? [{ name: "Warning", value: `\`${pavlov}\` is already linked to <@${clash}>`, inline: false }] : []),
           ).setFooter({ text: "Approve or deny below" }).setTimestamp());
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`linkreq_ok:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Accept").setStyle(ButtonStyle.Success),
