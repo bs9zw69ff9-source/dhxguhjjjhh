@@ -508,6 +508,10 @@ const MENU_ROLE_DEFAULTS = {
 /* RCON blacklist role — anyone holding it is barred from the self-serve menu
    panel, even if they also hold a menu role. */
 const RCON_BLACKLIST_ROLE_ID = process.env.MENU_ROLE_BLACKLIST || "1520598947129852078";
+/* Public /link add requests get posted here with Accept/Deny buttons; only holders
+   of the approver role can act on them. */
+const LINK_REQUEST_CHANNEL = process.env.LINK_REQUEST_CHANNEL || "1525436831435591710";
+const LINK_APPROVER_ROLE   = process.env.LINK_APPROVER_ROLE   || "1521933974744858745";
 // Effective mapping: stored /setrconroles config overrides the env defaults.
 function loadMenuRoles() {
   const saved = safeRead(FILES.MENU_ROLES, {}) || {};
@@ -3450,16 +3454,15 @@ const commands = [
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
   new SlashCommandBuilder().setName("link")
-    .setDescription("Owner — Link a Discord account to a Pavlov username")
+    .setDescription("Link your Discord account to your Pavlov username")
     .addSubcommand(s => s.setName("add")
-      .setDescription("Link a Discord account to a Pavlov username")
-      .addUserOption(o => o.setName("discord_user").setDescription("The Discord account").setRequired(true))
-      .addStringOption(o => o.setName("pavlov").setDescription("Their exact Pavlov in-game username").setRequired(true).setAutocomplete(true)))
+      .setDescription("Request to link YOUR Discord to your Pavlov username (staff approves)")
+      .addStringOption(o => o.setName("pavlov").setDescription("Your exact Pavlov in-game username").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("remove")
-      .setDescription("Remove a Discord account's link")
+      .setDescription("Mod — Remove a Discord account's link")
       .addUserOption(o => o.setName("discord_user").setDescription("The Discord account").setRequired(true)))
     .addSubcommand(s => s.setName("list")
-      .setDescription("Show all Discord ↔ Pavlov links")),
+      .setDescription("Mod — Show all Discord ↔ Pavlov links")),
   new SlashCommandBuilder().setName("clearallbans")
     .setDescription("Owner — Unban everyone (clears blacklist.txt on both servers)"),
   new SlashCommandBuilder().setName("setrconroles")
@@ -3769,6 +3772,42 @@ async function onInteraction(interaction) {
     const payload = { embeds: [errorEmbed("Something Went Wrong", "That didn't go through — try again in a moment.")], flags: MessageFlags.Ephemeral };
     (interaction.deferred || interaction.replied ? interaction.followUp(payload) : interaction.reply(payload)).catch(() => {});
   };
+  /* Link-request Accept/Deny — persistent (no collector), so it works after restarts.
+     Only the approver role (or an owner) may act. */
+  if (interaction.isButton() && interaction.customId.startsWith("linkreq_")) {
+    const canAct = isOwner(interaction.user.id) || memberHasRoleId(interaction.member, LINK_APPROVER_ROLE);
+    if (!canAct) return interaction.reply({ embeds: [deniedEmbed("Not Authorized", `Only <@&${LINK_APPROVER_ROLE}> can approve or deny link requests.`)], flags: MessageFlags.Ephemeral }).catch(() => {});
+    const [tag, uid, encName] = interaction.customId.split(":");
+    const pavlov = decodeURIComponent(encName ?? "");
+    const approve = tag === "linkreq_ok";
+    try {
+      if (approve) {
+        await setDiscordLink(uid, pavlov, interaction.user.tag);
+        writeModLog({ action: "link", targetUserId: uid, playerId: pavlov, by: interaction.user.tag });
+      }
+      const done = brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
+        .setTitle(approve ? "Link Request — Approved" : "Link Request — Denied")
+        .setDescription(`${DIVIDER}`)
+        .addFields(
+          { name: "Discord", value: `<@${uid}>  \`${uid}\``,           inline: false },
+          { name: "Pavlov",  value: `\`${pavlov}\``,                    inline: true },
+          { name: approve ? "Approved By" : "Denied By", value: `${interaction.user}`, inline: true },
+        ).setTimestamp());
+      await interaction.update(textify({ content: "", embeds: [done], components: [] }));
+      // DM the requester the outcome (best effort).
+      try {
+        const u = await client.users.fetch(uid);
+        await u.send(textify({ embeds: [brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
+          .setTitle(approve ? "Your link request was approved" : "Your link request was denied")
+          .setDescription(approve ? `Your Discord is now linked to \`${pavlov}\`.` : `Your request to link to \`${pavlov}\` was denied by staff.`))] }));
+      } catch { /* DMs closed */ }
+    } catch (e) {
+      logger.warn("LinkReq", `accept/deny failed: ${e.message}`);
+      interaction.reply({ embeds: [errorEmbed("Failed", "Couldn't process that request — try again.")], flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+    return;
+  }
+
   if (interaction.isButton() && interaction.customId === "menu_start") {
     const modal = new ModalBuilder().setCustomId("menu_modal").setTitle("Get RCON menu access")
       .addComponents(new ActionRowBuilder().addComponents(
@@ -3890,7 +3929,7 @@ async function onInteraction(interaction) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "banlist", "wagelist", "checkbalance", "stats", "kd"];
+  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "banlist", "wagelist", "checkbalance", "stats", "kd", "link"];
   const MOD_COMMANDS   = ["kick", "tempban", "unban", "mute", "unmute", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity"];
@@ -3957,7 +3996,7 @@ async function onInteraction(interaction) {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/kd` `/checkbalance` `/wagelist`\n`/faction list` `/faction audit` `/faction playtime`" },
+              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/kd` `/checkbalance` `/wagelist` `/link add`\n`/faction list` `/faction audit` `/faction playtime`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
@@ -3991,7 +4030,7 @@ async function onInteraction(interaction) {
                 "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
                 "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
-                "`/link add|remove|list` — *Owner* — tie a Discord account to a Pavlov username",
+                "`/link remove|list` — *Mod* — manage Discord ↔ Pavlov links (adds are public requests)",
                 "`/autorotate set|off|status` — *Owner* — daily map rotation at a set Eastern time",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/faction setcap <faction> <cap>` — Set faction size limit",
@@ -4881,44 +4920,58 @@ async function onInteraction(interaction) {
          LINK — owner: link a Discord account to a Pavlov username
          ───────────────────────────────────────────────────── */
       case "link": {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const sub = interaction.options.getSubcommand();
 
         if (sub === "list") {
+          if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
           const links = loadDiscordLinks();
           const ids = Object.keys(links);
-          if (!ids.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Discord Links").setDescription("No accounts are linked yet. Use `/link add`.")], flags: MessageFlags.Ephemeral });
+          if (!ids.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Discord Links").setDescription("No accounts are linked yet.")], flags: MessageFlags.Ephemeral });
           const lines = ids.map(id => `<@${id}>  →  \`${links[id].name}\``);
           return paginate(interaction, lines, (pageLines) =>
             brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Discord ↔ Pavlov Links")
               .setDescription(`${DIVIDER}\n${pageLines.join("\n")}`)), { perPage: 20, ephemeral: true });
         }
 
-        const user = interaction.options.getUser("discord_user");
         if (sub === "remove") {
+          if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
+          const user = interaction.options.getUser("discord_user");
           const had = loadDiscordLinks()[user.id];
           await removeDiscordLink(user.id);
+          writeModLog({ action: "unlink", targetUserId: user.id, by: interaction.user.tag });
           return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Link Removed")
             .setDescription(had ? `Unlinked ${user} *(was \`${had.name}\`)*.` : `${user} had no link.`))], flags: MessageFlags.Ephemeral });
         }
 
-        // add
-        const pavlov = sanitizeId(interaction.options.getString("pavlov"));
+        // add — PUBLIC: request to link YOUR OWN Discord to a Pavlov name; staff approves.
+        const pavlov = sanitizeBanName(interaction.options.getString("pavlov"));   // preserves spaces in names
         if (!pavlov) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        // One Pavlov name per Discord account: warn if this name is already linked elsewhere.
+        const existing = loadDiscordLinks()[interaction.user.id];
+        if (existing && existing.name.toLowerCase() === pavlov.toLowerCase()) {
+          return interaction.reply({ embeds: [warningEmbed("Already Linked", `You're already linked to \`${existing.name}\`.`)], flags: MessageFlags.Ephemeral });
+        }
+        let ch = null;
+        try { ch = await client.channels.fetch(LINK_REQUEST_CHANNEL); } catch {}
+        if (!ch?.isTextBased()) {
+          return interaction.reply({ embeds: [errorEmbed("Requests Unavailable", "The link-request channel is not reachable — tell an admin.")], flags: MessageFlags.Ephemeral });
+        }
         const clash = discordIdForPavlov(pavlov);
-        await setDiscordLink(user.id, pavlov, interaction.user.tag);
-        writeModLog({ action: "link", targetUserId: user.id, playerId: pavlov, by: interaction.user.tag });
-        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Account Linked")
+        const reqEmbed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Link Request — Pending")
           .setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "Discord", value: `${user}`,       inline: true },
-            { name: "Pavlov",  value: `\`${pavlov}\``,  inline: true },
-            { name: "By",      value: `${interaction.user}`, inline: true },
-          ).setFooter({ text: "Used for punishment DMs and name resolution" }).setTimestamp());
-        if (clash && clash !== user.id) embed.addFields({ name: "Note", value: `\`${pavlov}\` was also linked to <@${clash}> — both links now point to it.`, inline: false });
-        await logAction(embed);
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            { name: "Discord", value: `${interaction.user}  \`${interaction.user.id}\``, inline: false },
+            { name: "Pavlov",  value: `\`${pavlov}\``,                                    inline: true },
+            ...(existing ? [{ name: "Replaces", value: `\`${existing.name}\``, inline: true }] : []),
+            ...(clash && clash !== interaction.user.id ? [{ name: "Warning", value: `\`${pavlov}\` is already linked to <@${clash}>`, inline: false }] : []),
+          ).setFooter({ text: "Approve or deny below" }).setTimestamp());
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`linkreq_ok:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Accept").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`linkreq_no:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Deny").setStyle(ButtonStyle.Danger),
+        );
+        try { await ch.send(textify({ content: `<@&${LINK_APPROVER_ROLE}>`, embeds: [reqEmbed], components: [row] })); }
+        catch (e) { return interaction.reply({ embeds: [errorEmbed("Request Failed", `Couldn't post the request: ${e.message}`)], flags: MessageFlags.Ephemeral }); }
+        return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Link Request Sent")
+          .setDescription(`Your request to link to \`${pavlov}\` is pending staff approval. You'll be DM'd the result.`))], flags: MessageFlags.Ephemeral });
       }
 
       case "configure": {
