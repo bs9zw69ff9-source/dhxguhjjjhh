@@ -2843,7 +2843,12 @@ function buildLeaderboardData() {
       } catch {}
     }
   } catch (err) { logger.error("Leaderboard", err.message); return null; }
-  return entries.sort((a, b) => b.balance - a.balance).slice(0, LEADERBOARD_TOP_N);
+  const sorted = entries.sort((a, b) => b.balance - a.balance);
+  const top = sorted.slice(0, LEADERBOARD_TOP_N);
+  // Whole-economy totals (every ledger, not just the shown top N) for the header.
+  top.totalCaps    = sorted.reduce((s, e) => s + e.balance, 0);
+  top.totalPlayers = sorted.length;
+  return top;
 }
 
 function rankLabel(i) {
@@ -2866,7 +2871,8 @@ function buildLeaderboardEmbed() {
     const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} caps${meter}`;
   }).join("\n");
-  return brand(embed.setDescription(`${hero("War never changes. But caps? Caps fluctuate.")}\n${body}`),
+  return brand(embed.setDescription(
+    `${hero("War never changes. But caps? Caps fluctuate.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} caps** across **${entries.totalPlayers ?? entries.length}** ledgers\n${DIVIDER}\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
