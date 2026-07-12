@@ -4130,6 +4130,11 @@ const commands = [
   new SlashCommandBuilder().setName("stats")
     .setDescription("Courier dossier: playtime, factions, balance, and mod history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+  // Owner-only deep inspection. Description is a zero-width space (Discord requires a
+  // non-empty description; validators are disabled at the top of the file). Not in /help.
+  new SlashCommandBuilder().setName("inspect")
+    .setDescription("​")
+    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("kd")
     .setDescription("Kill/death stats — a courier's K/D, or the leaderboard")
     .addStringOption(o => o.setName("playerid").setDescription("Courier (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
@@ -6710,6 +6715,64 @@ async function onInteraction(interaction) {
           new EmbedBuilder().setColor(NV.AMBER).setTitle("K/D Leaderboard")
             .setDescription(`> *"Only the deadliest walk the Strip."*\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Sorted by K/D ratio" }), { perPage: 20 });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         INSPECT — owner-only deep dossier (IPs, VPN detection,
+         alts, EOS id, enforcement flags). Ephemeral: sensitive.
+         ───────────────────────────────────────────────────── */
+      case "inspect": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // exposes IPs — never public
+
+        let rec = null; try { rec = ipBans.getRecord(playerId); } catch {}
+        const allIps = rec?.ips  ?? [];
+        const cIps   = rec?.cips ?? [];
+        const alts   = rec?.alts ?? [];
+        const vpn    = loadVpnChecks();
+
+        // VPN/proxy verdict per known IP (confirmed IPs preferred, else all).
+        const ipsToShow = (cIps.length ? cIps : allIps).slice(0, 12);
+        const vpnLines = ipsToShow.map(ip => {
+          const v = vpn[ip];
+          if (!v) return `\`${ip}\` — *not checked*`;
+          const verdict = v.confirmed === true ? "**VPN/proxy** (IPHub+IPQS agree)"
+            : v.confirmed === false            ? "disputed (IPHub flagged, IPQS clean)"
+            : v.flagged                        ? "flagged by IPHub"
+            :                                    "clean";
+          const q = v.ipqs ? ` · vpn:${v.ipqs.vpn} proxy:${v.ipqs.proxy} tor:${v.ipqs.tor} fraud:${v.ipqs.fraudScore}` : "";
+          return `\`${ip}\` — ${verdict}${v.isp ? ` · ${v.isp}` : ""}${q}`;
+        });
+
+        const tb       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        const linkedId = discordIdForPavlov(playerId);
+        const flags = [];
+        if (rec?.flagged)            flags.push("IP/EOS **flagged** — next join is auto-banned");
+        if (isMasterName(playerId))  flags.push("**MASTER** — bypasses all enforcement");
+        if (isDonator(playerId))     flags.push("Donator — flush-immune (NOT ban-immune)");
+        if (isAutobanExempt(playerId)) flags.push("Unban-exempt — auto-ban won't re-catch");
+        if (rec?.bypass)             flags.push("Untracked (ignore-list) — no IP logging/auto-ban");
+
+        const joinCap = (arr) => arr.length ? arr.map(x => `\`${x}\``).join("  ·  ").slice(0, 1000) : null;
+        const embed = new EmbedBuilder().setColor(rec?.flagged ? NV.LEGION_RED : NV.BLUE_VATS)
+          .setTitle(`Inspect — ${rec?.name || playerId}`)
+          .addFields(
+            { name: "EOS / Unique ID", value: rec?.id ? `\`${rec.id}\`` : "*unknown (no confirmed disconnect yet)*", inline: false },
+            { name: `All IPs (${allIps.length})`,        value: joinCap(allIps) ?? "*none on record*",   inline: false },
+            { name: `Confirmed IPs (${cIps.length})`,    value: joinCap(cIps)   ?? "*none confirmed yet*", inline: false },
+            { name: "VPN / Proxy detection",             value: vpnLines.length ? vpnLines.join("\n").slice(0, 1000) : "*no IPs to check (or IPHUB_API_KEY unset)*", inline: false },
+            { name: "Known alts (shared confirmed IP)",  value: joinCap(alts) ?? "*none*",                inline: false },
+            { name: "Sessions",   value: String(rec?.logins ?? 0),                                              inline: true },
+            { name: "First seen", value: rec?.firstSeen ? `<t:${Math.floor(rec.firstSeen / 1000)}:R>` : "*n/a*", inline: true },
+            { name: "Last seen",  value: rec?.lastSeen  ? `<t:${Math.floor(rec.lastSeen / 1000)}:R>`  : "*n/a*", inline: true },
+            { name: "Discord",    value: linkedId ? `<@${linkedId}> \`${linkedId}\`` : "*not linked*",           inline: true },
+            { name: "Ban",        value: tb ? (tb.permanent || !tb.expires ? `Permanent — ${tb.reason}` : `Temp — ${tb.reason} · until <t:${Math.floor(tb.expires / 1000)}:R>`) : "*none*", inline: false },
+            { name: "Flags / status", value: flags.length ? flags.map(f => `• ${f}`).join("\n") : "*none*",     inline: false },
+          )
+          .setFooter({ text: "Owner inspection · sensitive — do not share" }).setTimestamp();
+        return interaction.editReply({ embeds: [embed] });
       }
 
       case "stats": {
