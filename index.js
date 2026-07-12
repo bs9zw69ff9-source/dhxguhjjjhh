@@ -4261,7 +4261,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     masters: [...MASTER_NAMES],   // never IP-logged / fed / auto-banned
     // Fired on every LIVE join - re-grant recorded RCON menus (the server drops a
     // player's menu on disconnect, so a rejoin needs the grant re-applied).
-    onConnect: async ({ name }) => {
+    onConnect: async ({ name, ip, confident }) => {
       // Pull the newest caps ledger onto every install BEFORE this server reads it,
       // so a hop from another server carries their money over.
       try { syncPlayerLedger(name); } catch (e) { logger.warn("Sync", `join ledger sync failed for ${name}: ${e.message}`); }
@@ -4270,6 +4270,14 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // Master names get a menu handed to them on every join (no bit code).
       if (isMasterName(name)) { try { grantMasterMenu(name); } catch (e) { logger.warn("Menus", `master menu failed: ${e.message}`); } return; }
       try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
+      // VPN check at JOIN so a VPN/proxy user is banned AND kicked while still online —
+      // not just blocked on their next rejoin. Only act on a `confident` (unambiguous)
+      // join IP so a mis-correlated IP can't kick the wrong player; checkVpnAndAlert
+      // caches per IP and re-checks nothing. The disconnect (onConfirm) check remains a
+      // backstop for ambiguous joins. Masters already returned above.
+      if (ip && confident && IPHUB_API_KEY && !isAutobanExempt(name)) {
+        checkVpnAndAlert(name, ip).catch(err => logger.warn("VPN", `join check failed for ${name}: ${err.message}`));
+      }
     },
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) -
     // posts an accurate name, ID, IP entry to the connection-feed webhook.

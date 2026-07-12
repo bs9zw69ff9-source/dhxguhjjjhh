@@ -525,7 +525,9 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   const key  = norm(display);
   if (Date.now() - (recentJoin.get(key) ?? 0) >= JOIN_DEBOUNCE_MS) {
     recentJoin.set(key, Date.now());
-    try { await onConnect({ name: display, ip: ip || null, server }); }
+    // `confident` = the join IP was unambiguously correlated (exactly one pending
+    // connection) — safe for the bot to act on (e.g. VPN ban+kick while online).
+    try { await onConnect({ name: display, ip: ip || null, server, confident }); }
     catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
   }
 
