@@ -968,21 +968,28 @@ logger.info("Sync", `Syncing ${PAVLOV_BASES.length} install(s): ${PAVLOV_BASES.m
     return;
   }
   if (PAVLOV_BASES.length < 2) {
-    logger.warn("Sync", `Only ${PAVLOV_BASES.length} install detected (${PAVLOV_BASES.map(b => path.basename(b)).join(", ") || "none"}) — cross-install sync is a NO-OP with fewer than 2. If you run multiple installs, set them explicitly: PAVLOV_BASES=/home/steam/pavlovserver,/home/steam/pavlovserver1,/home/steam/pavlovserver2`);
+    logger.warn("Sync", `Cross-install sync is a NO-OP with only ${PAVLOV_BASES.length} install (listed above). If you run multiple installs, set them explicitly: PAVLOV_BASES=/home/steam/pavlovserver,/home/steam/pavlovserver1,/home/steam/pavlovserver2`);
   }
   const mp = process.env.MODSAVE_PATH;
   if (mp && !PAVLOV_BASES.some(b => mp === b || mp.startsWith(b + path.sep))) {
     logger.warn("Sync", `MODSAVE_PATH (${mp}) is NOT under any install base — per-player balance writes will not be mirrored to other installs. Point it inside one of: ${PAVLOV_BASES.join(", ")}`);
   }
-  // Probe write access to each install's ModSave dir; a permission failure here is a
-  // common silent cause (the bot user can't write into another install owned by steam).
+  // Read-only probe of each install's ModSave dir — a permission problem is a common
+  // silent cause (the bot user can't write into another install owned by steam). This
+  // must NOT create anything: a diagnostic that mkdir's would mask a missing dir and
+  // could seed ModSave trees in a mis-discovered install.
   for (const base of PAVLOV_BASES) {
     const dir = path.join(base, "Pavlov", "Saved", "Config", "ModSave");   // = MODSAVE_REL (defined below; inlined to avoid TDZ)
     try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.accessSync(dir, fs.constants.W_OK);
+      fs.accessSync(dir, fs.constants.W_OK);   // exists and writable — good
     } catch (err) {
-      logger.warn("Sync", `ModSave dir not writable for ${path.basename(base)} (${dir}): ${err.code || err.message} — sync into this install will fail. Check ownership/permissions.`);
+      if (err.code === "ENOENT") {
+        // Not created yet — fine, as long as the bot could create it (parent writable).
+        try { fs.accessSync(path.dirname(dir), fs.constants.W_OK); }
+        catch (e2) { logger.warn("Sync", `Cannot create ModSave dir for ${path.basename(base)} (${dir}): parent not writable (${e2.code || e2.message}).`); }
+      } else {
+        logger.warn("Sync", `ModSave dir not writable for ${path.basename(base)} (${dir}): ${err.code || err.message} — sync into this install will fail. Check ownership/permissions.`);
+      }
     }
   }
 })();
@@ -2452,6 +2459,13 @@ async function checkVpnAndAlert(name, ip) {
   const alreadyChecked = !!loadVpnChecks()[ip];
   const result = await checkVpn(ip).catch(() => null);
   if (!result || !result.flagged || alreadyChecked) return;
+
+  // Masters and explicitly-unbanned players are never auto-actioned (matches onAutoBan).
+  // Only master names bypass ALL enforcement; staff/donators are NOT exempt from this.
+  if (isMasterName(name) || isAutobanExempt(name)) {
+    logger.info("VPN", `Skipped VPN auto-ban for exempt/master ${name}`);
+    return;
+  }
 
   const disputed = result.confirmed === false;   // IPHub flagged it, IPQS actively said clean
   if (disputed) {
@@ -4210,6 +4224,17 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     logger.info("Bot", `${result.length} slash commands registered`);
   } catch (err) {
     logger.error("Bot", `Command registration failed: ${err.message}`);
+    // The PUT is atomic — one bad command fails ALL of them. /inspect uses a zero-width
+    // description; if Discord rejects it, retry without /inspect so the rest still come up.
+    try {
+      const reduced = mainCommands.filter(c => c.name !== "inspect");
+      if (reduced.length !== mainCommands.length) {
+        const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: reduced });
+        logger.warn("Bot", `Re-registered ${result.length} commands WITHOUT /inspect — Discord rejected its description. Give /inspect a non-empty description to restore it.`);
+      }
+    } catch (err2) {
+      logger.error("Bot", `Fallback command registration also failed: ${err2.message}`);
+    }
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   postUpdateLogIfChanged().catch(err => logger.warn("UpdateLog", err.message));   // announce this deploy, if it's a new one
@@ -5005,7 +5030,7 @@ async function onInteraction(interaction) {
         }
         await interaction.deferReply();
         const label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
-        const replaced       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        const replaced       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
         const ipEnf = await banWithIp(playerId, server);
         enforceBansSweep().catch(() => {});   // player sweep after the punishment
         await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
@@ -6731,10 +6756,12 @@ async function onInteraction(interaction) {
         const allIps = rec?.ips  ?? [];
         const cIps   = rec?.cips ?? [];
         const alts   = rec?.alts ?? [];
-        const vpn    = loadVpnChecks();
-
-        // VPN/proxy verdict per known IP (confirmed IPs preferred, else all).
+        // VPN/proxy verdict per known IP (confirmed IPs preferred, else all). Actively run
+        // any missing checks now — owner command, worth the lookups. checkVpn caches, so
+        // already-checked IPs cost nothing, and it's a no-op when IPHUB_API_KEY is unset.
         const ipsToShow = (cIps.length ? cIps : allIps).slice(0, 12);
+        if (IPHUB_API_KEY) { try { await Promise.all(ipsToShow.map(ip => checkVpn(ip).catch(() => null))); } catch {} }
+        const vpn    = loadVpnChecks();
         const vpnLines = ipsToShow.map(ip => {
           const v = vpn[ip];
           if (!v) return `\`${ip}\` — *not checked*`;
@@ -6746,7 +6773,7 @@ async function onInteraction(interaction) {
           return `\`${ip}\` — ${verdict}${v.isp ? ` · ${v.isp}` : ""}${q}`;
         });
 
-        const tb       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
         const linkedId = discordIdForPavlov(playerId);
         const flags = [];
         if (rec?.flagged)            flags.push("IP/EOS **flagged** — next join is auto-banned");
@@ -6789,7 +6816,7 @@ async function onInteraction(interaction) {
         const balance  = readPlayerBalance(playerId);
         const wage     = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
-        const tb       = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
         const history  = getPlayerHistory(playerId);
         const lastSeen = getLastSeen(playerId);
         const donator  = isDonator(playerId);
