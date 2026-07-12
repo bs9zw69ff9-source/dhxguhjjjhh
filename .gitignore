@@ -1,21 +1,61 @@
 node_modules/
 .env
 
-# Runtime state (see FILES in index.js) — created automatically, not source
+# Process lock + logs
+bot.lock
 *.log
+
+# Atomic-write temp files
+*.tmp
+*.tmp.*
+*.corrupt-*
+
+# Runtime state (index.js FILES map) — created automatically, not source
 tempbans.json
 roles.json
 wages.json
 playtime.json
-hardban_registry.json
-hardban_notes.json
-warnings.json
 modlog.json
 faction_ranks.json
 faction_config.json
 faction_audit.json
+faction_backup.json
 menu_grants.json
-blacklist.json
-player_notes.json
+menu_panel.json
+menu_roles.json
+menu_links.json
 lastseen.json
+known_players.json
+user_blacklist.json
+user_unbarred.json
+autorotate.json
+mutes.json
+discord_links.json
+autoban_exempt.json
+casino_config.json
+casino_quota.json
+casino_pot.json
+update_log_state.json
+ban_reconcile_state.json
+autopost_state.json
+vpn_checks.json
+
+# Runtime state (ipBans.js)
+ip_registry.json
+ip_blacklist.json
+ip_flagged_names.json
+ip_flagged_ids.json
+ip_untracked.json
+ip_untracked_ids.json
+ip_cutoff.json
+ip_manual.json
+kd.json
+kill_log.json
+
+# Legacy runtime state (older bot versions)
+player_notes.json
+
+# Game-server side files sometimes written locally
 donator.txt
+blacklist.txt
+banlist.txt
