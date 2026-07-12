@@ -4144,10 +4144,10 @@ const commands = [
   new SlashCommandBuilder().setName("stats")
     .setDescription("Courier dossier: playtime, factions, balance, and mod history")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
-  // Owner-only deep inspection. Description is a zero-width space (Discord requires a
-  // non-empty description; validators are disabled at the top of the file). Not in /help.
+  // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
+  // requires a non-empty description — a zero-width one gets the whole PUT rejected.
   new SlashCommandBuilder().setName("inspect")
-    .setDescription("​")
+    .setDescription("Owner: full record for a courier — IPs, VPN checks, alts, flags")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("kd")
     .setDescription("Kill/death stats — a courier's K/D, or the leaderboard")
@@ -4224,17 +4224,6 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     logger.info("Bot", `${result.length} slash commands registered`);
   } catch (err) {
     logger.error("Bot", `Command registration failed: ${err.message}`);
-    // The PUT is atomic — one bad command fails ALL of them. /inspect uses a zero-width
-    // description; if Discord rejects it, retry without /inspect so the rest still come up.
-    try {
-      const reduced = mainCommands.filter(c => c.name !== "inspect");
-      if (reduced.length !== mainCommands.length) {
-        const result = await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: reduced });
-        logger.warn("Bot", `Re-registered ${result.length} commands WITHOUT /inspect — Discord rejected its description. Give /inspect a non-empty description to restore it.`);
-      }
-    } catch (err2) {
-      logger.error("Bot", `Fallback command registration also failed: ${err2.message}`);
-    }
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   postUpdateLogIfChanged().catch(err => logger.warn("UpdateLog", err.message));   // announce this deploy, if it's a new one
