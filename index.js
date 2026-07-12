@@ -2455,16 +2455,18 @@ async function checkVpn(ip) {
 // caches an IP's result forever, this naturally only ever acts once per IP - a
 // player reconnecting from an already-checked IP costs nothing and does nothing.
 async function checkVpnAndAlert(name, ip) {
-  if (!ip || !IPHUB_API_KEY) return;
+  if (!ip || !IPHUB_API_KEY) return null;
   const alreadyChecked = !!loadVpnChecks()[ip];
   const result = await checkVpn(ip).catch(() => null);
-  if (!result || !result.flagged || alreadyChecked) return;
+  if (!result) return null;
+  // Clean, or an IP we've already acted on — return the verdict for the feed, but don't ban.
+  if (!result.flagged || alreadyChecked) return result;
 
   // Masters and explicitly-unbanned players are never auto-actioned (matches onAutoBan).
   // Only master names bypass ALL enforcement; staff/donators are NOT exempt from this.
   if (isMasterName(name) || isAutobanExempt(name)) {
     logger.info("VPN", `Skipped VPN auto-ban for exempt/master ${name}`);
-    return;
+    return result;
   }
 
   const disputed = result.confirmed === false;   // IPHub flagged it, IPQS actively said clean
@@ -2478,7 +2480,7 @@ async function checkVpnAndAlert(name, ip) {
         { name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true },
       ).setFooter({ text: "Likely false positive — not banned" }));
     await logAction(embed);
-    return;
+    return result;
   }
 
   const label = result.confirmed === true ? "Confirmed VPN/proxy (IPHub + IPQS agree)" : "Flagged by IPHub (IPQS not configured to cross-check)";
@@ -2502,6 +2504,7 @@ async function checkVpnAndAlert(name, ip) {
     ), "Auto-ban · native RCON ban · all servers");
   await logBan(embed);
   postFeed(embed);
+  return result;
 }
 
 /* ---------------- update log ----------------
@@ -4266,7 +4269,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // the caps are already there if they hop to another server.
       try { syncPlayerLedger(name); } catch {}
       setTimeout(() => { try { syncPlayerLedger(name); } catch {} }, 5_000);
-      checkVpnAndAlert(name, ip).catch(err => logger.warn("VPN", `check failed for ${name}: ${err.message}`));
+      let vpnResult = null;
+      try { vpnResult = await checkVpnAndAlert(name, ip); }   // runs the check + auto-ban; returns the verdict for the feed
+      catch (err) { logger.warn("VPN", `check failed for ${name}: ${err.message}`); }
       if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
       const srvName = serverNameByLabel.get(String(server)) || "Server 1";
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
@@ -4286,6 +4291,16 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       }
       const lastActivity = Math.max(rec.lastSeen || 0, conns[0]?.ts || 0) || null;
 
+      // VPN/proxy verdict for the IP they connected from (from the check above).
+      const vpnField = !IPHUB_API_KEY               ? "Not configured (set IPHUB_API_KEY)"
+        : !vpnResult                                ? "Not checked"
+        : !vpnResult.flagged                        ? "Clean"
+        : vpnResult.confirmed === false             ? "IPHub flagged · IPQS disputes (likely false positive)"
+        : vpnResult.confirmed === true              ? "VPN/Proxy — IPHub + IPQS agree"
+        :                                             "Flagged by IPHub";
+      const vpnIsp    = vpnResult?.isp  ? ` · ${vpnResult.isp}` : "";
+      const vpnDetail = vpnResult?.ipqs ? ` · vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : "";
+
       const embed = clinical(new EmbedBuilder().setColor(CLIN.green)
         .setTitle(`Player Information: ${name}`)
         .setDescription(`${name} just connected on ${srvName}.`)
@@ -4299,6 +4314,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Server",          value: srvName,                             inline: true },
           { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist (auto-banned)"
             : "No matches", inline: false },
+          { name: "VPN / Proxy",     value: (vpnField + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
         ), "Connection log · Mojave Authority");
