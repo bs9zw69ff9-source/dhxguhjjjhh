@@ -2506,7 +2506,10 @@ client.on("interactionCreate", async (interaction) => {
         if (notes) { const ns = loadNotes(); ns[playerId] = [{ text: notes, by: interaction.user.tag, at: Date.now() }]; saveNotes(ns); }
         await sendRconBoth(`Ban ${playerId}`, server);
         if (linkedId) await sendRconBoth(`Ban ${linkedId}`, server);
-        saveBans(loadBans().filter(b => b.playerId !== playerId && b.playerId !== linkedId));
+        saveBans(loadBans().filter(b => {
+          const id = b.playerId.toLowerCase();
+          return id !== playerId.toLowerCase() && (!linkedId || id !== linkedId.toLowerCase());
+        }));
         writeModLog({ action: "hardban", playerId, linkedId, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("🔨  Hard Ban Issued — Persona Non Grata")
           .setDescription(`> *${randomQuote("hardban")}*\n\n${DIVIDER}`)

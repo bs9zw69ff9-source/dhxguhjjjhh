@@ -1,0 +1,21 @@
+node_modules/
+.env
+
+# Runtime state (see FILES in index.js) — created automatically, not source
+*.log
+tempbans.json
+roles.json
+wages.json
+playtime.json
+hardban_registry.json
+hardban_notes.json
+warnings.json
+modlog.json
+faction_ranks.json
+faction_config.json
+faction_audit.json
+menu_grants.json
+blacklist.json
+player_notes.json
+lastseen.json
+donator.txt
