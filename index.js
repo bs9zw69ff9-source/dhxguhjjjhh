@@ -960,6 +960,33 @@ function discoverPavlovBases() {
 const PAVLOV_BASES = discoverPavlovBases();   // resolved once at startup
 logger.info("Sync", `Syncing ${PAVLOV_BASES.length} install(s): ${PAVLOV_BASES.map(b => path.basename(b)).join(", ")}`);
 
+/* Startup sync sanity check — turn the silent no-op failure modes into a visible WARN
+   so "sync isn't working" is diagnosable from the log instead of guesswork. */
+(function checkSyncConfig() {
+  if (process.env.MODSAVE_SYNC === "off") {
+    logger.warn("Sync", "MODSAVE_SYNC=off — cross-install ModSave sync is DISABLED. Unset it in .env to enable.");
+    return;
+  }
+  if (PAVLOV_BASES.length < 2) {
+    logger.warn("Sync", `Only ${PAVLOV_BASES.length} install detected (${PAVLOV_BASES.map(b => path.basename(b)).join(", ") || "none"}) — cross-install sync is a NO-OP with fewer than 2. If you run multiple installs, set them explicitly: PAVLOV_BASES=/home/steam/pavlovserver,/home/steam/pavlovserver1,/home/steam/pavlovserver2`);
+  }
+  const mp = process.env.MODSAVE_PATH;
+  if (mp && !PAVLOV_BASES.some(b => mp === b || mp.startsWith(b + path.sep))) {
+    logger.warn("Sync", `MODSAVE_PATH (${mp}) is NOT under any install base — per-player balance writes will not be mirrored to other installs. Point it inside one of: ${PAVLOV_BASES.join(", ")}`);
+  }
+  // Probe write access to each install's ModSave dir; a permission failure here is a
+  // common silent cause (the bot user can't write into another install owned by steam).
+  for (const base of PAVLOV_BASES) {
+    const dir = path.join(base, "Pavlov", "Saved", "Config", "ModSave");   // = MODSAVE_REL (defined below; inlined to avoid TDZ)
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch (err) {
+      logger.warn("Sync", `ModSave dir not writable for ${path.basename(base)} (${dir}): ${err.code || err.message} — sync into this install will fail. Check ownership/permissions.`);
+    }
+  }
+})();
+
 // Given a path under one install, return it plus the equivalent path in every other install.
 function mirrorPaths(p) {
   const out = new Set([p]);
