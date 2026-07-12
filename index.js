@@ -2420,11 +2420,21 @@ const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
 function saveVpnCheck(ip, data) {
   return update(FILES.VPN_CHECKS, {}, (all) => { all[ip] = { ...data, checkedAt: Date.now() }; return all; });
 }
+// Exactly one VPN check per IP: cached forever once done, and concurrent checks of the
+// same not-yet-cached IP share a single in-flight lookup (no double API calls when two
+// players connect from the same new IP at once, or /inspect races the connection feed).
+const _vpnInFlight = new Map();   // ip -> Promise
 async function checkVpn(ip) {
   if (!ip || !IPHUB_API_KEY) return null;
   const cached = loadVpnChecks()[ip];
-  if (cached) return cached;   // checked once, ever - clean or flagged, the result stands for good
-
+  if (cached) return cached;                     // checked once, ever - the result stands for good
+  const inflight = _vpnInFlight.get(ip);
+  if (inflight) return inflight;                 // a check for this exact IP is already running - reuse it
+  const p = _doVpnCheck(ip).finally(() => _vpnInFlight.delete(ip));
+  _vpnInFlight.set(ip, p);
+  return p;
+}
+async function _doVpnCheck(ip) {
   let iphub;
   try {
     const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
