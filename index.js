@@ -2132,11 +2132,21 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
   // PERMANENT / VPN bans only: block the IP(s) at the OS firewall (opt-in, UFW_BLOCK).
+  let firewall = null;
   if (opts.permanent) {
     const ips = [...new Set([...(enf.ips || []), ...(opts.ip ? [opts.ip] : [])])];
-    firewallBlockIps(ips).catch(err => logger.warn("Firewall", `block failed for ${name}: ${err.message}`));
+    try { firewall = await firewallBlockIps(ips); }
+    catch (err) { logger.warn("Firewall", `block failed for ${name}: ${err.message}`); }
   }
-  return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0 };
+  return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall };
+}
+
+// Embed field summarising the ufw firewall action (null when the feature is off).
+function firewallField(fw) {
+  if (!fw || fw.off) return null;
+  return { name: "Firewall (ufw)", value: fw.blocked
+    ? `Blocked **${fw.blocked}** IP${fw.blocked !== 1 ? "s" : ""} — \`ufw deny from <ip>\``
+    : "No confirmed IP on record yet — nothing to block.", inline: false };
 }
 
 /* Force-ban + remove a player by USERNAME on every server — native RCON `Ban` + `Kick`,
@@ -2672,6 +2682,7 @@ async function checkVpnAndAlert(name, ip) {
       { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
       ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
       { name: "Enforced", value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
+      ...(firewallField(res?.firewall) ? [firewallField(res.firewall)] : []),
     ), "Auto-ban · native RCON ban · all servers");
   await logBan(embed);
   postFeed(embed);
@@ -5297,6 +5308,7 @@ async function onInteraction(interaction) {
           if (sus.wasDonator) writeModLog({ action: "donator-suspend", playerId, by: interaction.user.tag, restoreAt: sus.restoreAt });
         }
 
+        { const _fwf = firewallField(ipEnf?.firewall); if (_fwf) embed.addFields(_fwf); }
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
@@ -5428,6 +5440,7 @@ async function onInteraction(interaction) {
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
           .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} permanently banned **${playerId}** from ${serverLabel(server)} — ${reason}`));
         if (notes) embed.addFields({ name: "Notes", value: notes });
+        { const _fwf = firewallField(ipEnf?.firewall); if (_fwf) embed.addFields(_fwf); }
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
