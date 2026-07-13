@@ -2164,9 +2164,11 @@ async function banWithIp(playerId, server = "both", opts = {}) {
     return { ids: [], ips: [], alts: [], field: null, blacklist: { name, servers: 0 }, ok: false, master: true };
   }
   removeAutobanExempt(name).catch(() => {});   // a deliberate ban clears any unban exemption
-  // Native RCON Ban + Kick by USERNAME on every server. NO blacklist.txt.
+  // Order matters: ban first, then firewall-block the IP, THEN kick — so a caught
+  // player is barred and network-blocked BEFORE they're dropped from the server.
+  // Native RCON Ban by USERNAME on every server (no kick yet). NO blacklist.txt.
   let enforced = { servers: 0 };
-  try { enforced = await hardEnforce(name); }
+  try { enforced = await hardEnforce(name, { kick: false }); }
   catch (err) { logger.warn("Bans", `RCON ban failed for "${name}": ${err.message}`); }
   logger.info("Bans", `Native-banned "${name}" on ${enforced.servers}/${ACTIVE_SERVERS.length} server(s)`);
   scheduleBanRecheck(name);                     // 30s: blacklist.txt backup + re-enforce
@@ -2181,6 +2183,9 @@ async function banWithIp(playerId, server = "both", opts = {}) {
     try { firewall = await firewallBlockIps(ips); }
     catch (err) { logger.warn("Firewall", `block failed for ${name}: ${err.message}`); }
   }
+  // Now kick — they're banned + firewall-blocked, so this drop is the final step.
+  try { await hardEnforce(name, { banToo: false }); }
+  catch (err) { logger.warn("Bans", `RCON kick failed for "${name}": ${err.message}`); }
   return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall };
 }
 
@@ -2195,13 +2200,16 @@ function firewallField(fw) {
 /* Force-ban + remove a player by USERNAME on every server — native RCON `Ban` + `Kick`,
    NO blacklist.txt — logging the server's response to each so `pm2 logs` shows exactly
    what landed. Returns { servers } = how many servers accepted a command. */
-async function hardEnforce(name, { banToo = true } = {}) {
+async function hardEnforce(name, { banToo = true, kick = true } = {}) {
   const target = sanitizeId(name);
   if (!target) return { servers: 0 };
   preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
   let ok = 0;
   const perServer = async (srv) => {
-    const verbs = banToo ? [`Ban ${target}`, `Kick ${target}`] : [`Kick ${target}`];
+    const verbs = [];
+    if (banToo) verbs.push(`Ban ${target}`);
+    if (kick)   verbs.push(`Kick ${target}`);
+    if (!verbs.length) return;
     let served = false;
     for (const cmd of verbs) {
       try {
