@@ -2092,8 +2092,10 @@ async function firewallBlockIps(ips) {
   if (!valid.length) return { blocked: 0 };
   let blocked = 0;
   for (const ip of valid) {
-    const r = await _ufw(["deny", "from", ip]);
-    if (r.ok || /added|existing|skipping/i.test(r.out)) { blocked++; logger.info("Firewall", `ufw deny from ${ip}`); }
+    // INSERT at position 1, not append: ufw is first-match-wins, so a plain `deny from`
+    // added after an existing `allow <game port>` never fires. Top placement blocks first.
+    const r = await _ufw(["insert", "1", "deny", "from", ip]);
+    if (r.ok || /added|existing|skipping/i.test(r.out)) { blocked++; logger.info("Firewall", `ufw insert 1 deny from ${ip}`); }
     else logger.warn("Firewall", `ufw deny from ${ip} failed: ${r.err || r.out}`);
   }
   if (blocked) { const rl = await _ufw(["reload"]); if (!rl.ok) logger.warn("Firewall", `ufw reload failed: ${rl.err || rl.out}`); }
