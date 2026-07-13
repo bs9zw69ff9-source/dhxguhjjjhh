@@ -2554,6 +2554,8 @@ function logBan(embed) {
    Entirely optional - a no-op if IPHUB_API_KEY isn't set. */
 const IPHUB_API_KEY  = process.env.IPHUB_API_KEY || "";
 const IPQS_API_KEY   = process.env.IPQS_API_KEY  || "";
+const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional — higher ipinfo.io free quota
+const _regionName    = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
 const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
 function saveVpnCheck(ip, data) {
   return update(FILES.VPN_CHECKS, {}, (all) => { all[ip] = { ...data, checkedAt: Date.now() }; return all; });
@@ -2581,24 +2583,32 @@ async function _backfillGeo(ip, prev) {
   await saveVpnCheck(ip, result);
   return { ...result, checkedAt: Date.now() };
 }
-// Free, keyless IP geolocation (ipwho.is) — full city-level location with no API key, so
-// it never touches the small IPQS quota. Returns null on any failure.
+// IP geolocation via ipinfo.io — full city-level location. Works keyless (rate-limited);
+// set IPINFO_TOKEN for the larger free quota. Doesn't touch the IPHub/IPQS quotas.
 async function geoLookup(ip) {
   try {
-    const res = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`);
+    const url = `https://ipinfo.io/${encodeURIComponent(ip)}/json${IPINFO_TOKEN ? `?token=${IPINFO_TOKEN}` : ""}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
     const d = await res.json();
-    if (!d || d.success === false) return null;
+    if (!d || !d.ip || d.error || d.bogon) return null;   // error / private / reserved IP
+    const [lat, lon] = String(d.loc || "").split(",");
+    // ipinfo's `org` is "AS#### <ISP name>" — split into ASN + ISP.
+    let asn = null, isp = d.org || null;
+    const m = String(d.org || "").match(/^(AS\d+)\s+(.*)$/);
+    if (m) { asn = m[1]; isp = m[2]; }
+    // ipinfo returns a 2-letter country code; expand to a full name via built-in Intl.
+    let country = d.country || null;
+    if (country && _regionName) { try { country = _regionName.of(country) || d.country; } catch {} }
     return {
       city: d.city || null, region: d.region || null,
-      country: d.country || null, countryCode: d.country_code || null,
-      zip: d.postal || null,
-      isp: d.connection?.isp || d.connection?.org || null,
-      org: d.connection?.org || null, asn: d.connection?.asn ?? null,
-      timezone: d.timezone?.id || null,
-      lat: d.latitude ?? null, lon: d.longitude ?? null,
+      country, countryCode: d.country || null,
+      zip: d.postal || null, isp, org: isp, asn,
+      timezone: d.timezone || null,
+      lat: lat ? Number(lat) : null, lon: lon ? Number(lon) : null,
     };
   } catch (err) {
-    logger.warn("Geo", `ipwho.is lookup failed for ${ip}: ${err.message}`);
+    const msg = IPINFO_TOKEN ? String(err.message).split(IPINFO_TOKEN).join("***") : String(err.message);
+    logger.warn("Geo", `ipinfo.io lookup failed for ${ip}: ${msg}`);
     return null;
   }
 }
