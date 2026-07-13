@@ -3,7 +3,6 @@
 require("dotenv").config();
 const fs     = require("fs");
 const net    = require("net");
-const crypto = require("crypto");
 const path   = require("path");
 const { execFileSync, execFile, spawn } = require("child_process");
 const Database = require("better-sqlite3");
@@ -1527,18 +1526,11 @@ setInterval(() => {
   for (const [k, v] of rateLimits) if (v < cutoff) rateLimits.delete(k);
 }, 600_000);
 
-// ---- input sanitization ----
-function sanitizeId(raw) {
-  return String(raw ?? "")
-    .replace(/\s*\((?:manual entry|offline)\)/gi, "")   // strip autocomplete display labels
-    .replace(/\s*\[(?:s1|s2|s1\+s2)\]/gi, "")
-    .trim()
-    .replace(/[^a-zA-Z0-9_\-.]/g, "")
-    .slice(0, 64);
-}
-function sanitizeMessage(raw) {
-  return String(raw ?? "").replace(/[\r\n\t]/g, " ").replace(/[^\x20-\x7E]/g, "").slice(0, 200);
-}
+// ---- input sanitization + pure helpers (extracted to ./utils) ----
+const {
+  sanitizeId, sanitizeMessage, md5, formatTimeLeft,
+  parseDuration, easternClock, parseClockTime,
+} = require("./utils");
 
 // ---- role checks ----
 // Role test that survives a null member (DM invocation) and both member shapes:
@@ -1594,8 +1586,6 @@ function removeUserBlacklist(id) {
 }
 
 // ---- utility helpers ----
-function md5(text) { return crypto.createHash("md5").update(text).digest("hex"); }
-
 function formatKD(playerId) {
   let k = null;
   try { k = ipBans.getKD(playerId); } catch {}
@@ -1604,42 +1594,10 @@ function formatKD(playerId) {
   return `**${k.kills}** / **${k.deaths}**  ·  ${ratio}`;
 }
 
-function formatTimeLeft(expiresMs) {
-  const diff = expiresMs - Date.now();
-  if (diff <= 0) return "expired";
-  const s = Math.floor(diff / 1000);
-  const m = Math.floor(s / 60) % 60;
-  const h = Math.floor(s / 3600) % 24;
-  const d = Math.floor(s / 86400);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-/* ---- scheduled map rotation (Eastern time) ---- */
+/* ---- scheduled map rotation (Eastern time) ----
+   easternClock/parseClockTime live in ./utils (pure). */
 const loadAutoRotate = () => safeRead(FILES.AUTOROTATE, {});
 function setAutoRotate(cfg) { return safeWrite(FILES.AUTOROTATE, cfg); }
-// Current wall clock in America/New_York (Eastern — EST/EDT, DST-aware) as
-// { date: "YYYY-MM-DD", hm: "HH:MM" }.
-function easternClock(d = new Date()) {
-  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(d).map(x => [x.type, x.value]));
-  const hh = p.hour === "24" ? "00" : p.hour;   // some ICU builds emit 24 at midnight
-  return { date: `${p.year}-${p.month}-${p.day}`, hm: `${hh}:${p.minute}` };
-}
-// Parse "18:30", "6:30pm", "3pm", "0:00" -> normalized "HH:MM" (24h), or null.
-function parseClockTime(raw) {
-  const s = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "");
-  const m = s.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/);
-  if (!m) return null;
-  let hh = +m[1]; const mm = m[2] ? +m[2] : 0; const ap = m[3];
-  if (mm > 59) return null;
-  if (ap) { if (hh < 1 || hh > 12) return null; if (ap === "pm" && hh !== 12) hh += 12; if (ap === "am" && hh === 12) hh = 0; }
-  else if (hh > 23) return null;
-  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-}
 // Runs every minute: rotate the map when the scheduled Eastern time is hit (once/day).
 async function checkAutoRotate() {
   const cfg = loadAutoRotate();
@@ -2231,13 +2189,7 @@ const loadMutes = () => safeRead(FILES.MUTES, {});
 const getMute   = (name) => loadMutes()[String(name ?? "").toLowerCase()] || null;
 function setMute(name, data) { return update(FILES.MUTES, {}, (m) => { m[String(name).toLowerCase()] = data; return m; }); }
 function clearMute(name)     { return update(FILES.MUTES, {}, (m) => { delete m[String(name).toLowerCase()]; return m; }); }
-// "30s" "10m" "2h" "1d" (bare number = minutes) -> ms, or null.
-function parseDuration(raw) {
-  const m = String(raw ?? "").trim().toLowerCase().match(/^(\d+)\s*(s|m|h|d)?$/);
-  if (!m) return null;
-  const n = +m[1]; if (!n) return null;
-  return n * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2] || "m"]);
-}
+// parseDuration ("30s"/"10m"/"2h"/"1d" -> ms) lives in ./utils.
 // `Gag <username>` — a bare toggle, confirmed no True/False argument works at all
 // (tried both; neither did anything). So both of these send the exact same command -
 // correct only when the target's actual gag state is the opposite of what we want,
