@@ -2092,8 +2092,11 @@ async function firewallBlockIps(ips) {
   if (!valid.length) return { blocked: 0 };
   let blocked = 0;
   for (const ip of valid) {
-    // INSERT at position 1, not append: ufw is first-match-wins, so a plain `deny from`
-    // added after an existing `allow <game port>` never fires. Top placement blocks first.
+    // Delete any stale rule first, then INSERT at position 1. ufw is first-match-wins and
+    // `deny from` appends to the end, so a rule sitting below an `allow <game port>` never
+    // fires. Deleting + inserting at the top guarantees the block is evaluated first (and
+    // moves an already-appended rule up instead of "skipping existing").
+    await _ufw(["delete", "deny", "from", ip]);
     const r = await _ufw(["insert", "1", "deny", "from", ip]);
     if (r.ok || /added|existing|skipping/i.test(r.out)) { blocked++; logger.info("Firewall", `ufw insert 1 deny from ${ip}`); }
     else logger.warn("Firewall", `ufw deny from ${ip} failed: ${r.err || r.out}`);
@@ -2113,6 +2116,21 @@ async function firewallUnblockIps(ips) {
   }
   if (unblocked) { const rl = await _ufw(["reload"]); if (!rl.ok) logger.warn("Firewall", `ufw reload failed: ${rl.err || rl.out}`); }
   return { unblocked };
+}
+/* Re-apply firewall blocks for EVERY current permanent/VPN ban's confirmed IP(s), at
+   ufw position 1. Fixes rules that were previously appended (ineffective) and rebuilds
+   the block list after a restart. Temp bans are intentionally excluded. */
+async function firewallResyncAll() {
+  if (!UFW_BLOCK) return { off: true };
+  const perma = loadBans().filter(b => b.permanent || !b.expires);   // permanent + VPN auto-bans
+  const ips = new Set();
+  for (const b of perma) {
+    try { for (const ip of (ipBans.getConfirmedIPsForPlayer(b.playerId) || [])) ips.add(ip); } catch {}
+  }
+  if (!ips.size) { logger.info("Firewall", "Resync: no permanent-ban IPs on record to block"); return { blocked: 0 }; }
+  const r = await firewallBlockIps([...ips]);
+  logger.info("Firewall", `Resync: re-applied ${r.blocked}/${ips.size} permanent-ban IP(s) at ufw position 1`);
+  return r;
 }
 
 async function banWithIp(playerId, server = "both", opts = {}) {
@@ -4449,6 +4467,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   postUpdateLogIfChanged().catch(err => logger.warn("UpdateLog", err.message));   // announce this deploy, if it's a new one
+  // Re-apply ufw blocks for every current permanent/VPN ban IP at position 1 (self-heals
+  // any previously-appended rules). Delayed so it doesn't slow boot; off unless UFW_BLOCK.
+  if (UFW_BLOCK) setTimeout(() => { firewallResyncAll().catch(err => logger.warn("Firewall", `resync failed: ${err.message}`)); }, 15_000);
   // Watch EVERY install's Pavlov.log (server 1, 2, …) - derived from the discovered
   // installs, unioned with any explicit PAVLOV_LOGS, so server 2 is never missed.
   const ipLogFiles = [...new Set([
