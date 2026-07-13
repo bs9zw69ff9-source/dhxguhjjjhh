@@ -2465,22 +2465,45 @@ async function _doVpnCheck(ip) {
     return null;   // hard failure - don't cache, so it actually gets checked next time
   }
   const flagged = iphub?.block === 1;
-  let confirmed = null, ipqs = null;
-  if (flagged && IPQS_API_KEY) {
+  let confirmed = null, ipqs = null, q = null;
+  // Run IPQS for EVERY IP (not just flagged): one call returns full geolocation AND the
+  // VPN cross-check. IPHub only gives country, so IPQS is what makes the location "full".
+  if (IPQS_API_KEY) {
     try {
       const res  = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
       const data = await res.json();
       if (data?.success) {
+        q    = data;
         ipqs = { vpn: !!data.vpn, proxy: !!data.proxy, tor: !!data.tor, fraudScore: data.fraud_score ?? null };
-        confirmed = !!(data.vpn || data.proxy || data.tor);
+        if (flagged) confirmed = !!(data.vpn || data.proxy || data.tor);   // "dispute" only matters when IPHub flagged
       }
     } catch (err) {
       logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`);
     }
   }
-  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: iphub?.isp || null, ipqs };
+  // Full location — IPQS gives city/region; IPHub gives country as a fallback.
+  const geo = {
+    city:        q?.city        || null,
+    region:      q?.region      || null,
+    country:     iphub?.countryName || q?.country_code || null,
+    countryCode: iphub?.countryCode || q?.country_code || null,
+    zip:         q?.zip_code    || null,
+    isp:         iphub?.isp || q?.ISP || q?.organization || null,
+    org:         q?.organization || null,
+    timezone:    q?.timezone    || null,
+    lat:         q?.latitude ?? null,
+    lon:         q?.longitude ?? null,
+  };
+  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp, ipqs, geo };
   await saveVpnCheck(ip, result);
   return { ...result, checkedAt: Date.now() };
+}
+// Human-readable full location from a stored geo object (webhook feed / /inspect).
+function formatFullLocation(geo) {
+  if (!geo) return null;
+  const place = [geo.city, geo.region, geo.country].filter(Boolean).join(", ") + (geo.zip ? ` ${geo.zip}` : "");
+  const bits  = [place.trim() || geo.country || null, geo.isp || null, geo.timezone ? `TZ ${geo.timezone}` : null].filter(Boolean);
+  return bits.length ? bits.join("  ·  ") : null;
 }
 // Called from ipBans' onConfirm for every freshly-confirmed IP. Since checkVpn()
 // caches an IP's result forever, this naturally only ever acts once per IP - a
@@ -4385,6 +4408,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist (auto-banned)"
             : "No matches", inline: false },
           { name: "VPN / Proxy",     value: (vpnField + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
+          { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
         ), "Connection log · Mojave Authority");
