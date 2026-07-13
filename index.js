@@ -191,6 +191,7 @@ const FILES = {
   CASINO_POT: "./casino_pot.json",
   AUTOPOST_STATE: "./autopost_state.json",
   VPN_CHECKS: "./vpn_checks.json",
+  DONATOR_SUSPEND: "./donator_suspend.json",
 };
 
 // Bet limits and the global casino cooldown are all admin-tunable via /casino
@@ -218,6 +219,7 @@ const DEFAULTS = {
   [FILES.MUTES]:          "{}",
   [FILES.DISCORD_LINKS]:  "{}",
   [FILES.AUTOBAN_EXEMPT]: "{}",
+  [FILES.DONATOR_SUSPEND]: "{}",
   [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" }, null, 2),
   [FILES.CASINO_CONFIG]:  JSON.stringify(CASINO_CONFIG_DEFAULTS, null, 2),
 };
@@ -609,7 +611,7 @@ const PUNISHMENTS = [
   { name: "Harassment",                    value: "harassment",        ms: 1 * DAY_MS },
   { name: "ERP",                           value: "erp",               ms: 1 * DAY_MS },
   { name: "Sexually Explicit",             value: "sexually_explicit", ms: 7 * DAY_MS },
-  { name: "Donator Abuse",                 value: "donator_abuse",     ms: 7 * DAY_MS, note: "Also remove donator perks for 2 weeks (manual)." },
+  { name: "Donator Abuse",                 value: "donator_abuse",     ms: 7 * DAY_MS, donatorSuspendMs: 14 * DAY_MS },
   { name: "Other",                         value: "other",             custom: true },
 ];
 const PUNISH_BY_VALUE = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p]));
@@ -2841,6 +2843,36 @@ function removeDonator(playerId) {
   return { ok: writeDonatorFile(filtered), missing: false };
 }
 
+/* ---- timed donator-perk suspension (e.g. Donator Abuse punishment) ----
+   Pull a player's donator perks now and auto-restore them after `ms`. Keyed by
+   lowercased playerId; re-issuing resets the timer. Restore only re-adds players
+   who were actually donators when suspended (never grants perks they never had). */
+const loadDonatorSuspends = () => safeRead(FILES.DONATOR_SUSPEND, {});
+async function suspendDonator(playerId, ms, by) {
+  const wasDonator = isDonator(playerId);
+  if (wasDonator) removeDonator(playerId);                     // pull perks now
+  const restoreAt = Date.now() + ms;
+  // Only track a restore if they had perks to give back.
+  if (wasDonator) {
+    await update(FILES.DONATOR_SUSPEND, {}, (m) => { m[playerId.toLowerCase()] = { playerId, restoreAt, by, at: Date.now() }; return m; });
+  }
+  return { wasDonator, restoreAt };
+}
+async function processDonatorRestores() {
+  const susp = loadDonatorSuspends();
+  const now  = Date.now();
+  for (const [key, s] of Object.entries(susp)) {
+    if (!s || s.restoreAt > now) continue;
+    try {
+      addDonator(s.playerId);
+      logger.info("Donator", `Restored donator perks for ${s.playerId} — suspension served`);
+    } catch (e) { logger.warn("Donator", `Restore failed for ${s.playerId}: ${e.message}`); continue; }
+    await update(FILES.DONATOR_SUSPEND, {}, (m) => { delete m[key]; return m; });
+    try { await logBan(clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Donator Perks Restored")
+      .setDescription(`\`${s.playerId}\`'s donator perks were auto-restored — suspension served.`))); } catch {}
+  }
+}
+
 function getPlayerFactions(playerId) {
   const id = playerId.toLowerCase();
   let files;
@@ -3923,6 +3955,7 @@ async function rconHealthCheck() {
 // ---- intervals  - started from startintervals(), which runs only when the ----
 function startIntervals() {
 setInterval(processExpiredBans,      60_000);
+setInterval(processDonatorRestores,  60_000);   // auto-restore timed donator-perk suspensions
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
@@ -5104,6 +5137,17 @@ async function onInteraction(interaction) {
           .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} banned **${playerId}** from ${serverLabel(server)} ${sentence} — ${reason}${liftLine}`),
           replaced ? `Replaced earlier exile: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
         if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
+
+        // Timed donator-perk suspension (e.g. Donator Abuse): pull perks now, auto-restore later.
+        if (punish?.donatorSuspendMs) {
+          const sus   = await suspendDonator(playerId, punish.donatorSuspendMs, interaction.user.tag);
+          const weeks = Math.round(punish.donatorSuspendMs / (7 * DAY_MS));
+          const rTs   = Math.floor(sus.restoreAt / 1000);
+          embed.addFields({ name: "Donator Perks", value: sus.wasDonator
+            ? `Removed — auto-restored <t:${rTs}:R> (${weeks} week${weeks !== 1 ? "s" : ""}).`
+            : "Player wasn't a donator — nothing to remove." });
+          if (sus.wasDonator) writeModLog({ action: "donator-suspend", playerId, by: interaction.user.tag, restoreAt: sus.restoreAt });
+        }
 
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {

@@ -32,6 +32,7 @@ autorotate.json
 mutes.json
 discord_links.json
 autoban_exempt.json
+donator_suspend.json
 casino_config.json
 casino_quota.json
 casino_pot.json
