@@ -2719,29 +2719,6 @@ async function checkVpnAndAlert(name, ip) {
   return result;
 }
 
-/* ---------------- alt / ban-evasion detection rating ----------------
-   Confidence (0-100) that a connecting account is a banned player's alt / evader, from
-   the ipBans record + current ban list + VPN status. ≥85 auto-bans; ≥10 logs for review.
-   Shown in the connection webhook. `rec` is the ipBans.getRecord() shape. */
-function altDetectionScore(rec, name, ip) {
-  let score = 0; const reasons = [];
-  const ids = rec?.ids || [], cips = rec?.cips || [], alts = rec?.alts || [];
-  let bl = { ips: [], names: [], ids: [] };
-  try { bl = ipBans.getBlacklist(); } catch {}
-  const key = String(name || "").toLowerCase();
-  if (ids.some(id => bl.ids.includes(id)))                                { score += 90; reasons.push("account (EOS id) is blacklisted"); }
-  if (key && bl.names.includes(key))                                     { score += 90; reasons.push("username is blacklisted"); }
-  if ((ip && bl.ips.includes(ip)) || cips.some(c => bl.ips.includes(c))) { score += 85; reasons.push("connected from a blacklisted IP"); }
-  // Shares a CONFIRMED IP with a currently-banned account (strong alt signal).
-  const bannedSet  = new Set(loadBans().filter(b => b.permanent || (b.expires && b.expires > Date.now())).map(b => String(b.playerId).toLowerCase()));
-  const bannedAlts = alts.filter(a => bannedSet.has(String(a).toLowerCase()));
-  if (bannedAlts.length) { score += Math.min(80, 55 + (bannedAlts.length - 1) * 25); reasons.push(`shares a confirmed IP with banned: ${bannedAlts.slice(0, 3).join(", ")}`); }
-  else if (alts.length)  { score += Math.min(25, alts.length * 8);                   reasons.push(`shares a confirmed IP with ${alts.length} other account(s)`); }
-  // On a VPN/proxy (common for evaders).
-  try { const v = loadVpnChecks()[ip]; if (v?.flagged) { score += v.confirmed ? 12 : 6; reasons.push(v.confirmed ? "on a confirmed VPN/proxy" : "on a flagged IP"); } } catch {}
-  return { score: Math.min(100, Math.round(score)), reasons };
-}
-
 /* ---------------- update log ----------------
    On every startup, if the checked-out commit has moved since the last
    startup we recorded, post a short "here's what changed" embed to
@@ -4555,38 +4532,10 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       catch (err) { logger.warn("VPN", `check failed for ${name}: ${err.message}`); }
       // Even with the VPN keys unset, still fetch geolocation for the feed.
       if (!vpnResult && ip) { try { vpnResult = await checkVpn(ip); } catch {} }
-
-      // Alt / ban-evasion detection rating. Runs even without a webhook (for the actions).
-      const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
-      const alt = altDetectionScore(rec, name, ip);
-      if (!isMasterName(name) && !isAutobanExempt(name)) {
-        if (alt.score >= 85) {
-          const already = loadBans().some(b => _sameId(b.playerId, name) && (b.permanent || (b.expires && b.expires > Date.now())));
-          if (!already) {
-            try {
-              const res = await banWithIp(name, "both", { permanent: true, ip });
-              try { await upsertPermBan({ playerId: name, reason: "Ban evasion (alt detection)", moderator: "Alt detection (auto)" }); } catch {}
-              writeModLog({ action: "auto-altban", playerId: name, reason: `Alt ${alt.score}% — ${alt.reasons.join("; ")}`, by: "Alt detection (auto)" });
-              logger.warn("AltDetect", `Auto-banned ${name} — alt score ${alt.score}%: ${alt.reasons.join("; ")}`);
-              await logBan(clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Auto-Ban — Alt Detected")
-                .setDescription(`**${name}** flagged as a ban-evading alt at **${alt.score}%** confidence.`)
-                .addFields(
-                  { name: "Signals",  value: (alt.reasons.map(r => `• ${r}`).join("\n") || "—").slice(0, 1024), inline: false },
-                  { name: "Enforced", value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
-                  ...(firewallField(res?.firewall) ? [firewallField(res.firewall)] : []),
-                ), "Alt detection · auto-ban"));
-            } catch (e) { logger.warn("AltDetect", `auto-ban failed for ${name}: ${e.message}`); }
-          }
-        } else if (alt.score >= 10) {
-          writeModLog({ action: "alt-review", playerId: name, reason: `Alt ${alt.score}% — ${alt.reasons.join("; ")}` });
-          try { await logAction(clinical(new EmbedBuilder().setColor(NV.AMBER).setTitle("Possible Alt — Review")
-            .setDescription(`**${name}** — alt confidence **${alt.score}%** (below the 85% auto-ban threshold).`)
-            .addFields({ name: "Signals", value: (alt.reasons.map(r => `• ${r}`).join("\n") || "—").slice(0, 1024), inline: false }))); } catch {}
-        }
-      }
-
       if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
       const srvName = serverNameByLabel.get(String(server)) || "Server 1";
+      // everything Pavlov.log knows about this player (resolved by id inside ipBans)
+      const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
       const fmt = (ms) => { if (!ms) return "unknown"; try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19); } catch { return "unknown"; } };
 
       // recent connections - newest first; fold in this live join, dedupe near-duplicates
@@ -4627,7 +4576,6 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
             : "No matches", inline: false },
           { name: "VPN / Proxy",     value: (vpnField + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
           { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
-          { name: "Alt Detection",   value: (`**${alt.score}%** — ${alt.score >= 85 ? "auto-banned" : alt.score >= 10 ? "flagged for review" : "clear"}` + (alt.reasons.length ? `\n${alt.reasons.map(r => `• ${r}`).join("\n")}` : "")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
         ), "Connection log · Mojave Authority");
