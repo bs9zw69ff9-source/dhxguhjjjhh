@@ -320,6 +320,30 @@ function _rawWrite(file, data) {
   catch (err) { logger.error("IO", `DB write failed for ${file}: ${err.message}`); return false; }
 }
 
+/* Periodic SQLite -> JSON export. SQLite is the source of truth; this keeps the .json
+   files a current, human-readable backup (otherwise they'd be frozen at migration time).
+   Covers BOTH index.js and ipBans datasets since they share bot.db. Atomic (temp+rename).
+   Set DB_EXPORT_INTERVAL_MS=0 to disable. */
+const DB_EXPORT_INTERVAL_MS = process.env.DB_EXPORT_INTERVAL_MS !== undefined
+  ? Number(process.env.DB_EXPORT_INTERVAL_MS)
+  : 10 * 60 * 1000;
+function exportDbToJson() {
+  let n = 0;
+  try {
+    for (const { file, data } of db.prepare("SELECT file, data FROM kv").all()) {
+      try {
+        let pretty = data; try { pretty = JSON.stringify(JSON.parse(data), null, 2); } catch {}
+        const tmp = `${file}.exp.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, pretty);
+        fs.renameSync(tmp, file);              // atomic swap over the backup file
+        n++;
+      } catch (e) { logger.warn("DB", `JSON export failed for ${file}: ${e.message}`); }
+    }
+  } catch (e) { logger.warn("DB", `JSON export failed: ${e.message}`); return 0; }
+  logger.debug("DB", `Exported ${n} dataset(s) to JSON backups`);
+  return n;
+}
+
 const _clone = (v) => (typeof structuredClone === "function"
   ? structuredClone(v)
   : JSON.parse(JSON.stringify(v)));
@@ -4022,6 +4046,10 @@ async function rconHealthCheck() {
 function startIntervals() {
 setInterval(processExpiredBans,      60_000);
 setInterval(processDonatorRestores,  60_000);   // auto-restore timed donator-perk suspensions
+if (DB_EXPORT_INTERVAL_MS > 0) {
+  setInterval(exportDbToJson, DB_EXPORT_INTERVAL_MS);   // periodic SQLite -> JSON backup
+  setTimeout(exportDbToJson, 60_000);                   // one fresh snapshot shortly after startup
+}
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
@@ -4532,6 +4560,7 @@ async function shutdown(signal) {
   // means pm2 restarts can't kill an in-flight atomic write mid-rename.
   try { await Promise.allSettled([..._queues.values()]); } catch {}
   try { ipBans.flushAll(); } catch {}   // registry / K-D / kill-log throttled writes
+  try { if (DB_EXPORT_INTERVAL_MS > 0) exportDbToJson(); } catch {}   // fresh JSON backup on clean exit
   releaseSingleInstanceLock();
   logger.info("Bot", "Queues drained — exiting.");
   process.exit(0);
