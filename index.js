@@ -5,7 +5,7 @@ const fs     = require("fs");
 const net    = require("net");
 const crypto = require("crypto");
 const path   = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, execFile } = require("child_process");
 const Database = require("better-sqlite3");
 const ipBans = require("./ipBans");
 const {
@@ -2072,6 +2072,47 @@ function preserveBalanceAcrossKick(name) {
 // changes name AND IP is still caught. This is safe for temp bans because a served
 // temp ban is lifted on rejoin by autoBanDecision (and cleared outright by the 60s
 // expiry sweep), so the flag never outlives the ban.
+/* ---- OS-level firewall block (ufw) — PERMANENT / VPN-detection bans only ----
+   Opt-in via UFW_BLOCK=1. Runs `sudo ufw deny from <ip>` for each confirmed IP, then
+   `sudo ufw reload`. IPs are strictly validated and passed as argv (no shell), so there's
+   no injection surface. The bot must run as root, OR have passwordless sudo for ufw
+   (sudoers: `<botuser> ALL=(root) NOPASSWD: /usr/sbin/ufw`). Never used for temp bans. */
+const UFW_BLOCK = /^(1|true|yes|on)$/i.test(process.env.UFW_BLOCK || "");
+const _IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
+function _ufw(args) {
+  return new Promise((resolve) => {
+    execFile("sudo", ["ufw", ...args], { timeout: 10_000 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: `${stdout || ""}${stderr || ""}`.trim(), err: err?.message });
+    });
+  });
+}
+async function firewallBlockIps(ips) {
+  if (!UFW_BLOCK) return { blocked: 0, off: true };
+  const valid = [...new Set((ips || []).map(String).filter(ip => _IPV4_RE.test(ip)))];
+  if (!valid.length) return { blocked: 0 };
+  let blocked = 0;
+  for (const ip of valid) {
+    const r = await _ufw(["deny", "from", ip]);
+    if (r.ok || /added|existing|skipping/i.test(r.out)) { blocked++; logger.info("Firewall", `ufw deny from ${ip}`); }
+    else logger.warn("Firewall", `ufw deny from ${ip} failed: ${r.err || r.out}`);
+  }
+  if (blocked) { const rl = await _ufw(["reload"]); if (!rl.ok) logger.warn("Firewall", `ufw reload failed: ${rl.err || rl.out}`); }
+  return { blocked };
+}
+async function firewallUnblockIps(ips) {
+  if (!UFW_BLOCK) return { unblocked: 0, off: true };
+  const valid = [...new Set((ips || []).map(String).filter(ip => _IPV4_RE.test(ip)))];
+  if (!valid.length) return { unblocked: 0 };
+  let unblocked = 0;
+  for (const ip of valid) {
+    const r = await _ufw(["delete", "deny", "from", ip]);
+    if (r.ok) { unblocked++; logger.info("Firewall", `ufw delete deny from ${ip}`); }
+    else logger.warn("Firewall", `ufw delete deny from ${ip}: ${r.err || r.out}`);
+  }
+  if (unblocked) { const rl = await _ufw(["reload"]); if (!rl.ok) logger.warn("Firewall", `ufw reload failed: ${rl.err || rl.out}`); }
+  return { unblocked };
+}
+
 async function banWithIp(playerId, server = "both", opts = {}) {
   const name = sanitizeBanName(playerId);
   // Master names are never banned — no matter which path asks (command or auto-ban).
@@ -2090,6 +2131,11 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
+  // PERMANENT / VPN bans only: block the IP(s) at the OS firewall (opt-in, UFW_BLOCK).
+  if (opts.permanent) {
+    const ips = [...new Set([...(enf.ips || []), ...(opts.ip ? [opts.ip] : [])])];
+    firewallBlockIps(ips).catch(err => logger.warn("Firewall", `block failed for ${name}: ${err.message}`));
+  }
   return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0 };
 }
 
@@ -2323,7 +2369,11 @@ function unbanEverywhere(playerId) {
   let bl = { name, removed: 0 };
   try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
   let cleared = null;
-  try { cleared = ipBans.unblacklistPlayer(name); } catch {}
+  try {
+    cleared = ipBans.unblacklistPlayer(name);
+    // Release any OS firewall block on those IPs so the unban actually restores access.
+    if (UFW_BLOCK && cleared?.ips?.length) firewallUnblockIps(cleared.ips).catch(() => {});
+  } catch {}
   // Lift the native RCON ban too (auto-bans issue `Ban <username>`), by USERNAME.
   const _uname = sanitizeId(name);
   if (_uname) (async () => { for (const srv of ACTIVE_SERVERS) { try { await sendRcon(`Unban ${_uname}`, srv, 2500, 1); } catch {} } })().catch(() => {});
@@ -2606,7 +2656,7 @@ async function checkVpnAndAlert(name, ip) {
 
   const label = result.confirmed === true ? "Confirmed VPN/proxy (IPHub + IPQS agree)" : "Flagged by IPHub (IPQS not configured to cross-check)";
   let res;
-  try { res = await banWithIp(name, "both", { permanent: true }); }
+  try { res = await banWithIp(name, "both", { permanent: true, ip }); }
   catch (err) { logger.warn("VPN", `auto-ban failed for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
   try { await upsertPermBan({ playerId: name, reason: "VPN/proxy detected", moderator: "VPN detection (auto)" }); } catch {}
   writeModLog({ action: "auto-vpnban", playerId: name, reason: `VPN/proxy detected (${label})`, by: "VPN detection (auto)" });
@@ -4522,7 +4572,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const banMod    = "Ban evasion (auto)";   // never attribute an auto-ban to a person
       // Enforce with a native RCON Ban + Kick by username (banWithIp) + flag the exact
       // IP/EOS. Per-command server responses are logged so we can see what lands.
-      const res = await banWithIp(name, "both", { permanent: true });
+      const res = await banWithIp(name, "both", { permanent: true, ip });
       try { await upsertPermBan({ playerId: name, reason: banReason, moderator: banMod }); } catch {}   // show in /banlist with the real punishment
       writeModLog({ action: "auto-ipban", playerId: name, reason: `${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""})`, by: banMod });
       logger.warn("IPGuard", `Auto-banned ${name} — ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
