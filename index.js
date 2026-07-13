@@ -2446,55 +2446,76 @@ function saveVpnCheck(ip, data) {
 // players connect from the same new IP at once, or /inspect races the connection feed).
 const _vpnInFlight = new Map();   // ip -> Promise
 async function checkVpn(ip) {
-  if (!ip || !IPHUB_API_KEY) return null;
+  if (!ip) return null;                           // geolocation runs even without the VPN keys
   const cached = loadVpnChecks()[ip];
-  if (cached) return cached;                     // checked once, ever - the result stands for good
+  if (cached) return cached;                       // checked once, ever - the result stands for good
   const inflight = _vpnInFlight.get(ip);
-  if (inflight) return inflight;                 // a check for this exact IP is already running - reuse it
+  if (inflight) return inflight;                   // a check for this exact IP is already running - reuse it
   const p = _doVpnCheck(ip).finally(() => _vpnInFlight.delete(ip));
   _vpnInFlight.set(ip, p);
   return p;
 }
-async function _doVpnCheck(ip) {
-  let iphub;
+// Free, keyless IP geolocation (ipwho.is) — full city-level location with no API key, so
+// it never touches the small IPQS quota. Returns null on any failure.
+async function geoLookup(ip) {
   try {
-    const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
-    iphub = await res.json();
+    const res = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`);
+    const d = await res.json();
+    if (!d || d.success === false) return null;
+    return {
+      city: d.city || null, region: d.region || null,
+      country: d.country || null, countryCode: d.country_code || null,
+      zip: d.postal || null,
+      isp: d.connection?.isp || d.connection?.org || null,
+      org: d.connection?.org || null, asn: d.connection?.asn ?? null,
+      timezone: d.timezone?.id || null,
+      lat: d.latitude ?? null, lon: d.longitude ?? null,
+    };
   } catch (err) {
-    logger.warn("VPN", `IPHub lookup failed for ${ip}: ${err.message}`);
-    return null;   // hard failure - don't cache, so it actually gets checked next time
+    logger.warn("Geo", `ipwho.is lookup failed for ${ip}: ${err.message}`);
+    return null;
   }
-  const flagged = iphub?.block === 1;
-  let confirmed = null, ipqs = null, q = null;
-  // Run IPQS for EVERY IP (not just flagged): one call returns full geolocation AND the
-  // VPN cross-check. IPHub only gives country, so IPQS is what makes the location "full".
-  if (IPQS_API_KEY) {
+}
+async function _doVpnCheck(ip) {
+  // Geolocation first — free/keyless, for every IP regardless of the VPN keys.
+  const gwho = await geoLookup(ip);
+
+  // VPN detection — optional, only when IPHUB_API_KEY is set.
+  let iphub = null, iphubFailed = false, flagged = false, confirmed = null, ipqs = null;
+  if (IPHUB_API_KEY) {
     try {
-      const res  = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
-      const data = await res.json();
-      if (data?.success) {
-        q    = data;
-        ipqs = { vpn: !!data.vpn, proxy: !!data.proxy, tor: !!data.tor, fraudScore: data.fraud_score ?? null };
-        if (flagged) confirmed = !!(data.vpn || data.proxy || data.tor);   // "dispute" only matters when IPHub flagged
-      }
+      const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
+      iphub = await res.json();
     } catch (err) {
-      logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`);
+      logger.warn("VPN", `IPHub lookup failed for ${ip}: ${err.message}`);
+      iphubFailed = true;
+    }
+    flagged = iphub?.block === 1;
+    // IPQS only cross-checks IPHub-flagged IPs — its free tier is ~35/day, so spend it
+    // where it counts (disputing a flag), not on geolocation (ipwho.is covers that).
+    if (flagged && IPQS_API_KEY) {
+      try {
+        const res  = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
+        const data = await res.json();
+        if (data?.success) {
+          ipqs = { vpn: !!data.vpn, proxy: !!data.proxy, tor: !!data.tor, fraudScore: data.fraud_score ?? null };
+          confirmed = !!(data.vpn || data.proxy || data.tor);
+        }
+      } catch (err) {
+        logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`);
+      }
     }
   }
-  // Full location — IPQS gives city/region; IPHub gives country as a fallback.
-  const geo = {
-    city:        q?.city        || null,
-    region:      q?.region      || null,
-    country:     iphub?.countryName || q?.country_code || null,
-    countryCode: iphub?.countryCode || q?.country_code || null,
-    zip:         q?.zip_code    || null,
-    isp:         iphub?.isp || q?.ISP || q?.organization || null,
-    org:         q?.organization || null,
-    timezone:    q?.timezone    || null,
-    lat:         q?.latitude ?? null,
-    lon:         q?.longitude ?? null,
-  };
-  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp, ipqs, geo };
+
+  // Prefer the whois geo (city-level); fall back to IPHub's country when whois is down.
+  const geo = gwho || (iphub ? {
+    city: null, region: null, country: iphub.countryName || null, countryCode: iphub.countryCode || null,
+    zip: null, isp: iphub.isp || null, org: null, asn: null, timezone: null, lat: null, lon: null,
+  } : null);
+  if (!geo) return null;                           // no location at all - don't cache, retry next time
+  if (IPHUB_API_KEY && iphubFailed) return null;   // VPN enabled but IPHub down - retry to capture the flag
+
+  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp || null, ipqs, geo };
   await saveVpnCheck(ip, result);
   return { ...result, checkedAt: Date.now() };
 }
@@ -4365,6 +4386,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       let vpnResult = null;
       try { vpnResult = await checkVpnAndAlert(name, ip); }   // runs the check + auto-ban; returns the verdict for the feed
       catch (err) { logger.warn("VPN", `check failed for ${name}: ${err.message}`); }
+      // Even with the VPN keys unset, still fetch geolocation for the feed.
+      if (!vpnResult && ip) { try { vpnResult = await checkVpn(ip); } catch {} }
       if (!feedHook) return;   // IP connection feed only runs when CONNECT_WEBHOOK_URL is set
       const srvName = serverNameByLabel.get(String(server)) || "Server 1";
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
