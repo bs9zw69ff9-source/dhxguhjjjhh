@@ -594,19 +594,38 @@ function menuRoleTiers() {
   ];
 }
 
-const BAN_REASONS = [
-  { name: "RDM In The Strip",          value: "rdm_strip"   },
-  { name: "Spawn Killing Faction",     value: "sk_faction"  },
-  { name: "Spawn Killing Civ Spawn",   value: "sk_civ"      },
-  { name: "Slurs",                     value: "slurs"       },
-  { name: "Hard R",                    value: "hard_r"      },
-  { name: "Ban Evasion / Alt Account", value: "ban_evasion" },
-  { name: "Cheating / Exploiting",     value: "cheating"    },
-  { name: "Griefing",                  value: "griefing"    },
-  { name: "Harassment",                value: "harassment"  },
-  { name: "Other",                     value: "other"       },
+/* Punishment presets — each reason carries its own sentence, so a mod picks the
+   offence and the duration is applied automatically (no manually-typed date, except
+   "Other", which takes a custom unban date). Hard R is permanent. */
+const DAY_MS = 86_400_000;
+const PUNISHMENTS = [
+  { name: "MassRDM in Protected Zone",     value: "massrdm_protected", ms: 3 * DAY_MS },
+  { name: "Spawn Killing — Faction Spawn", value: "sk_faction",        ms: 5 * DAY_MS },
+  { name: "Spawn Killing — Civ Spawn",     value: "sk_civ",            ms: 7 * DAY_MS },
+  { name: "Hard R",                        value: "hard_r",            permanent: true },
+  { name: "Soft A",                        value: "soft_a",            ms: 3 * DAY_MS },
+  { name: "Slur",                          value: "slur",              ms: 1 * DAY_MS },
+  { name: "Exploiting",                    value: "exploiting",        ms: 2 * DAY_MS },
+  { name: "Harassment",                    value: "harassment",        ms: 1 * DAY_MS },
+  { name: "ERP",                           value: "erp",               ms: 1 * DAY_MS },
+  { name: "Sexually Explicit",             value: "sexually_explicit", ms: 7 * DAY_MS },
+  { name: "Donator Abuse",                 value: "donator_abuse",     ms: 7 * DAY_MS, note: "Also remove donator perks for 2 weeks (manual)." },
+  { name: "Other",                         value: "other",             custom: true },
 ];
-const BAN_REASON_LABELS = Object.fromEntries(BAN_REASONS.map(r => [r.value, r.name]));
+const PUNISH_BY_VALUE = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p]));
+// Human sentence for a punishment (embeds/logs): "Permanent", "1 Week", "3 Days", …
+function punishDurationLabel(p) {
+  if (!p || p.custom) return "Custom";
+  if (p.permanent) return "Permanent";
+  const d = Math.round(p.ms / DAY_MS);
+  return d % 7 === 0 ? `${d / 7} Week${d / 7 !== 1 ? "s" : ""}` : `${d} Day${d !== 1 ? "s" : ""}`;
+}
+// Slash-command choices, sentence shown in the label (Discord: ≤25 choices, ≤100 chars).
+const PUNISH_CHOICES = PUNISHMENTS.map(p => ({
+  name: `${p.name}${p.custom ? " (custom time)" : ` — ${punishDurationLabel(p)}`}`,
+  value: p.value,
+}));
+const BAN_REASON_LABELS = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p.name]));
 
 const BAN_DURATIONS = {
   "1h":  { ms: 3_600_000,          label: "1 Hour"   },
@@ -3992,11 +4011,11 @@ const commands = [
     .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
   new SlashCommandBuilder().setName("tempban")
-    .setDescription("Exile a courier for a set period")
+    .setDescription("Ban a courier — the punishment sets the duration (Hard R = permanent; Other = custom date)")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("date").setDescription("Unban date (YYYY-MM-DD) — lifts at 12pm Eastern that day").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("reason").setDescription("Punishment — sets the ban length automatically").setRequired(true).addChoices(...PUNISH_CHOICES))
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("reason").setDescription("Grounds for exile").setRequired(true).addChoices(...BAN_REASONS))
+    .addStringOption(o => o.setName("date").setDescription("Only for 'Other': unban date YYYY-MM-DD (lifts 12pm Eastern that day)").setRequired(false))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("unban")
     .setDescription("Lift a courier's exile")
@@ -4012,7 +4031,7 @@ const commands = [
     .setDescription("Admin — Permanently exile a courier")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...BAN_REASONS))
+    .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...PUNISH_CHOICES))
     .addStringOption(o => o.setName("notes").setDescription("Additional context"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("cleartempbans").setDescription("Admin — Clear all temporary exiles (confirmation required)"),
@@ -5039,37 +5058,60 @@ async function onInteraction(interaction) {
          TEMPBAN  ← deferReply added
          ───────────────────────────────────────────────────── */
       case "tempban": {
-        const playerId    = sanitizeBanName(interaction.options.getString("playerid"));
-        const dateStr     = interaction.options.getString("date");
-        const server      = interaction.options.getString("server");
-        const reasonKey   = interaction.options.getString("reason");
-        const reason      = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
+        const playerId  = sanitizeBanName(interaction.options.getString("playerid"));
+        const server    = interaction.options.getString("server");
+        const reasonKey = interaction.options.getString("reason");
+        const punish    = PUNISH_BY_VALUE[reasonKey];
+        const reason    = punish?.name ?? BAN_REASON_LABELS[reasonKey] ?? reasonKey;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be banned.`)], flags: MessageFlags.Ephemeral });
-        const expires = easternNoonUTC(dateStr);                 // lifts at 12pm Eastern on that date
-        if (!expires || expires <= Date.now()) {
-          return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
+
+        // The punishment sets the sentence; "Other" takes a manual unban date.
+        let expires = null, permanent = false, label = "";
+        if (punish?.permanent) {
+          permanent = true; label = "Permanent";
+        } else if (punish?.custom) {
+          const dateStr = interaction.options.getString("date");
+          if (!dateStr) return interaction.reply({ embeds: [errorEmbed("Date Required",
+            "For **Other**, add the `date` option (`YYYY-MM-DD`) — the ban lifts at 12pm Eastern that day.")], flags: MessageFlags.Ephemeral });
+          expires = easternNoonUTC(dateStr);
+          if (!expires || expires <= Date.now()) return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
             `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)}\`). The ban lifts at **12pm Eastern** that day.`)], flags: MessageFlags.Ephemeral });
+          label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
+        } else if (punish?.ms) {
+          expires = Date.now() + punish.ms; label = punishDurationLabel(punish);
+        } else {
+          return interaction.reply({ embeds: [errorEmbed("Unknown Punishment", "Pick a punishment from the list.")], flags: MessageFlags.Ephemeral });
         }
+
         await interaction.deferReply();
-        const label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
-        const replaced       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
-        const ipEnf = await banWithIp(playerId, server);
+        const replaced = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
+        const ipEnf = await banWithIp(playerId, server, permanent ? { permanent: true } : {});
         enforceBansSweep().catch(() => {});   // player sweep after the punishment
-        await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
-        writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
-        const ts = Math.floor(expires / 1000);
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Courier Exiled from the Mojave")
-          .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} banned **${playerId}** from ${serverLabel(server)} for **${label}** — ${reason}\nLifts <t:${ts}:F> (<t:${ts}:R>)`),
-          replaced ? `Replaced earlier exile: ${replaced.reason}` : "Auto-lifted when timer expires");
+        if (permanent) {
+          await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });
+          writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
+        } else {
+          await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
+          writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
+        }
+
+        const ts       = expires ? Math.floor(expires / 1000) : null;
+        const sentence = permanent ? "**permanently**" : `for **${label}**`;
+        const liftLine = permanent ? "" : `\nLifts <t:${ts}:F> (<t:${ts}:R>)`;
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
+          .setTitle(permanent ? "Permanent Exile Issued" : "Courier Exiled from the Mojave")
+          .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} banned **${playerId}** from ${serverLabel(server)} ${sentence} — ${reason}${liftLine}`),
+          replaced ? `Replaced earlier exile: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
+        if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
+
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
-          action: "Temporary Ban", color: NV.RUST_RED, playerId, reason,
-          fields: [
-            { name: "Duration", value: `**${label}**`,            inline: true },
-            { name: "Server",   value: serverLabel(server),       inline: true },
-            { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false },
-          ],
+          action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
+          fields: permanent
+            ? [ { name: "Sentence", value: "**Permanent**",    inline: true }, { name: "Server", value: serverLabel(server), inline: true } ]
+            : [ { name: "Duration", value: `**${label}**`,     inline: true }, { name: "Server", value: serverLabel(server), inline: true },
+                { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false } ],
         });
         const tbDmField = dmStatusField(tbDm, tbTarget);
         if (tbDmField) embed.addFields(tbDmField);
