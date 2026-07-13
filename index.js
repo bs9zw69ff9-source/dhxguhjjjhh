@@ -5,7 +5,7 @@ const fs     = require("fs");
 const net    = require("net");
 const crypto = require("crypto");
 const path   = require("path");
-const { execFileSync, execFile } = require("child_process");
+const { execFileSync, execFile, spawn } = require("child_process");
 const Database = require("better-sqlite3");
 const ipBans = require("./ipBans");
 const {
@@ -2072,11 +2072,12 @@ function preserveBalanceAcrossKick(name) {
 // changes name AND IP is still caught. This is safe for temp bans because a served
 // temp ban is lifted on rejoin by autoBanDecision (and cleared outright by the 60s
 // expiry sweep), so the flag never outlives the ban.
-/* ---- OS-level firewall block (ufw) — PERMANENT / VPN-detection bans only ----
-   Opt-in via UFW_BLOCK=1. Runs `sudo ufw deny from <ip>` for each confirmed IP, then
-   `sudo ufw reload`. IPs are strictly validated and passed as argv (no shell), so there's
-   no injection surface. The bot must run as root, OR have passwordless sudo for ufw
-   (sudoers: `<botuser> ALL=(root) NOPASSWD: /usr/sbin/ufw`). Never used for temp bans. */
+/* ---- OS-level firewall block (ufw) — applied to EVERY ban ----
+   Opt-in via UFW_BLOCK=1. On a ban: `sudo ufw insert 1 deny from <ip>` for each confirmed
+   IP (top of the list; ufw is first-match-wins). On unban: locate the rule number(s) via
+   `sudo ufw status numbered` and `sudo ufw delete <n>` (answering the "Proceed" prompt with
+   `y`). IPs are strictly validated and passed as argv (no shell). The bot must run as root,
+   OR have passwordless sudo for ufw (sudoers: `<user> ALL=(root) NOPASSWD: /usr/sbin/ufw`). */
 const UFW_BLOCK = /^(1|true|yes|on)$/i.test(process.env.UFW_BLOCK || "");
 const _IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
 function _ufw(args) {
@@ -2086,6 +2087,21 @@ function _ufw(args) {
     });
   });
 }
+// Same as _ufw but feeds `input` to stdin — for `ufw delete <n>` which prompts "Proceed
+// with operation (y|n)?". We answer "y".
+function _ufwInput(args, input) {
+  return new Promise((resolve) => {
+    let out = "";
+    try {
+      const p = spawn("sudo", ["ufw", ...args], { timeout: 10_000 });
+      p.stdout.on("data", d => { out += d; });
+      p.stderr.on("data", d => { out += d; });
+      p.on("error", (err) => resolve({ ok: false, out: (out + err.message).trim() }));
+      p.on("close", (code) => resolve({ ok: code === 0, out: out.trim() }));
+      try { if (input != null) p.stdin.write(input); p.stdin.end(); } catch {}
+    } catch (err) { resolve({ ok: false, out: err.message }); }
+  });
+}
 async function firewallBlockIps(ips) {
   if (!UFW_BLOCK) return { blocked: 0, off: true };
   const valid = [...new Set((ips || []).map(String).filter(ip => _IPV4_RE.test(ip)))];
@@ -2093,9 +2109,7 @@ async function firewallBlockIps(ips) {
   let blocked = 0;
   for (const ip of valid) {
     // Delete any stale rule first, then INSERT at position 1. ufw is first-match-wins and
-    // `deny from` appends to the end, so a rule sitting below an `allow <game port>` never
-    // fires. Deleting + inserting at the top guarantees the block is evaluated first (and
-    // moves an already-appended rule up instead of "skipping existing").
+    // `deny from` appends to the end, so a rule below an `allow <game port>` never fires.
     await _ufw(["delete", "deny", "from", ip]);
     const r = await _ufw(["insert", "1", "deny", "from", ip]);
     if (r.ok || /added|existing|skipping/i.test(r.out)) { blocked++; logger.info("Firewall", `ufw insert 1 deny from ${ip}`); }
@@ -2110,26 +2124,35 @@ async function firewallUnblockIps(ips) {
   if (!valid.length) return { unblocked: 0 };
   let unblocked = 0;
   for (const ip of valid) {
-    const r = await _ufw(["delete", "deny", "from", ip]);
-    if (r.ok) { unblocked++; logger.info("Firewall", `ufw delete deny from ${ip}`); }
-    else logger.warn("Firewall", `ufw delete deny from ${ip}: ${r.err || r.out}`);
+    // Locate every rule number whose source is this IP, delete highest-first (deleting a
+    // rule renumbers the ones below it), answering the confirmation prompt with `y`.
+    const st = await _ufw(["status", "numbered"]);
+    const ipRe = new RegExp(`(^|\\s)${ip.replace(/\./g, "\\.")}(\\s|$)`);
+    const nums = String(st.out || "").split("\n")
+      .map(l => { const m = l.match(/^\[\s*(\d+)\]/); return (m && ipRe.test(l)) ? Number(m[1]) : null; })
+      .filter(n => n != null).sort((a, b) => b - a);
+    for (const n of nums) {
+      const r = await _ufwInput(["delete", String(n)], "y\n");
+      if (r.ok) { unblocked++; logger.info("Firewall", `ufw delete ${n} (deny from ${ip})`); }
+      else logger.warn("Firewall", `ufw delete ${n} failed: ${r.out}`);
+    }
   }
   if (unblocked) { const rl = await _ufw(["reload"]); if (!rl.ok) logger.warn("Firewall", `ufw reload failed: ${rl.err || rl.out}`); }
   return { unblocked };
 }
-/* Re-apply firewall blocks for EVERY current permanent/VPN ban's confirmed IP(s), at
-   ufw position 1. Fixes rules that were previously appended (ineffective) and rebuilds
-   the block list after a restart. Temp bans are intentionally excluded. */
+/* Re-apply firewall blocks for EVERY currently-active ban's confirmed IP(s) at ufw
+   position 1 — rebuilds the block list after a restart and heals any stale rules. */
 async function firewallResyncAll() {
   if (!UFW_BLOCK) return { off: true };
-  const perma = loadBans().filter(b => b.permanent || !b.expires);   // permanent + VPN auto-bans
+  const now = Date.now();
+  const active = loadBans().filter(b => b.permanent || !b.expires || b.expires > now);   // perm + active temp
   const ips = new Set();
-  for (const b of perma) {
+  for (const b of active) {
     try { for (const ip of (ipBans.getConfirmedIPsForPlayer(b.playerId) || [])) ips.add(ip); } catch {}
   }
-  if (!ips.size) { logger.info("Firewall", "Resync: no permanent-ban IPs on record to block"); return { blocked: 0 }; }
+  if (!ips.size) { logger.info("Firewall", "Resync: no active-ban IPs on record to block"); return { blocked: 0 }; }
   const r = await firewallBlockIps([...ips]);
-  logger.info("Firewall", `Resync: re-applied ${r.blocked}/${ips.size} permanent-ban IP(s) at ufw position 1`);
+  logger.info("Firewall", `Resync: re-applied ${r.blocked}/${ips.size} active-ban IP(s) at ufw position 1`);
   return r;
 }
 
@@ -2151,9 +2174,9 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
-  // PERMANENT / VPN bans only: block the IP(s) at the OS firewall (opt-in, UFW_BLOCK).
+  // Block the IP(s) at the OS firewall on EVERY ban (opt-in, UFW_BLOCK). Removed on unban.
   let firewall = null;
-  if (opts.permanent) {
+  {
     const ips = [...new Set([...(enf.ips || []), ...(opts.ip ? [opts.ip] : [])])];
     try { firewall = await firewallBlockIps(ips); }
     catch (err) { logger.warn("Firewall", `block failed for ${name}: ${err.message}`); }
@@ -4477,8 +4500,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   }
   seedKnownPlayers();   // backfill the offline-autocomplete registry from existing data
   postUpdateLogIfChanged().catch(err => logger.warn("UpdateLog", err.message));   // announce this deploy, if it's a new one
-  // Re-apply ufw blocks for every current permanent/VPN ban IP at position 1 (self-heals
-  // any previously-appended rules). Delayed so it doesn't slow boot; off unless UFW_BLOCK.
+  // Re-apply ufw blocks for every currently-active ban's IP at position 1 (self-heals any
+  // previously-appended rules). Delayed so it doesn't slow boot; off unless UFW_BLOCK.
   if (UFW_BLOCK) setTimeout(() => { firewallResyncAll().catch(err => logger.warn("Firewall", `resync failed: ${err.message}`)); }, 15_000);
   // Watch EVERY install's Pavlov.log (server 1, 2, …) - derived from the discovered
   // installs, unioned with any explicit PAVLOV_LOGS, so server 2 is never missed.
