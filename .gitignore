@@ -1,6 +1,11 @@
 node_modules/
 .env
 
+# SQLite database (bot.db) + WAL sidecars — runtime state
+bot.db
+bot.db-wal
+bot.db-shm
+
 # Process lock + logs
 bot.lock
 *.log

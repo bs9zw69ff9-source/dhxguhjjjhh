@@ -32,6 +32,7 @@
 "use strict";
 const fs   = require("fs");
 const path = require("path");
+const Database = require("better-sqlite3");
 
 /* ---------------- CONFIG ---------------- */
 const REGISTRY_PATH  = path.join(__dirname, "ip_registry.json");
@@ -99,25 +100,38 @@ const skipId   = id => !id || /INVALID/i.test(id) || /localhost-/i.test(id);    
 const labelFor = f => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
 const mtimeOf  = f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
 const exists   = f => { try { return fs.existsSync(f); } catch { return false; } };
+/* ---------------- storage: SQLite (shared bot.db); JSON files kept as backup ----------------
+   All ipBans state now lives in the shared SQLite DB (same bot.db index.js uses). Each old
+   per-file JSON is imported ONCE on first read and its .json file is left in place as a
+   backup snapshot. Keyed by basename so the key is stable regardless of the absolute path. */
+const _db = new Database(path.join(__dirname, "bot.db"));
+_db.pragma("journal_mode = WAL");
+_db.pragma("busy_timeout = 5000");
+_db.exec("CREATE TABLE IF NOT EXISTS kv (file TEXT PRIMARY KEY, data TEXT NOT NULL)");
+const _kvGet = _db.prepare("SELECT data FROM kv WHERE file = ?");
+const _kvSet = _db.prepare("INSERT INTO kv(file,data) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET data=excluded.data");
+const _kvKey = p => path.basename(p);
 function loadJSON(p, fallback) {
-  try { return JSON.parse(fs.readFileSync(p, "utf8")); }
-  catch (err) {
-    if (err.code === "ENOENT") {   // create the file with the fallback so it exists going forward
-      try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(fallback === undefined ? {} : fallback, null, 2)); } catch {}
-    } else {
-      // Corrupt/truncated JSON (crash mid-write, disk hiccup): keep the evidence
-      // instead of silently overwriting it with fresh state on the next save.
-      const bak = `${p}.corrupt-${Date.now()}`;
-      try { fs.renameSync(p, bak); console.error(`[ipBans] ${path.basename(p)} was corrupt — moved to ${path.basename(bak)}, starting fresh`); } catch {}
+  const key = _kvKey(p);
+  const row = _kvGet.get(key);
+  if (row !== undefined) { try { return JSON.parse(row.data); } catch { return fallback; } }
+  // Not in the DB yet — import the JSON backup file if present, else seed the fallback.
+  try {
+    const raw = fs.readFileSync(p, "utf8");
+    const val = JSON.parse(raw);
+    _kvSet.run(key, raw);                       // one-time data transfer
+    return val;
+  } catch (err) {
+    if (err.code !== "ENOENT") {                // corrupt file — preserve the evidence, start fresh
+      try { const bak = `${p}.corrupt-${Date.now()}`; fs.renameSync(p, bak); console.error(`[ipBans] ${path.basename(p)} was corrupt — moved to ${path.basename(bak)}, starting fresh`); } catch {}
     }
+    _kvSet.run(key, JSON.stringify(fallback === undefined ? {} : fallback));
     return fallback;
   }
 }
-// Atomic save: temp file + rename, so a crash mid-write can never truncate state.
 function saveJSON(p, data) {
-  const tmp = `${p}.tmp.${process.pid}`;
-  try { fs.writeFileSync(tmp, JSON.stringify(data, null, 2)); fs.renameSync(tmp, p); }
-  catch (e) { try { fs.unlinkSync(tmp); } catch {} console.error(`[ipBans] save ${path.basename(p)}:`, e.message); }
+  try { _kvSet.run(_kvKey(p), JSON.stringify(data)); }
+  catch (e) { console.error(`[ipBans] db save ${_kvKey(p)}:`, e.message); }
 }
 
 /* ---------------- STATE ---------------- */

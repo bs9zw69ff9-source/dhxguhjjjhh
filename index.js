@@ -6,6 +6,7 @@ const net    = require("net");
 const crypto = require("crypto");
 const path   = require("path");
 const { execFileSync } = require("child_process");
+const Database = require("better-sqlite3");
 const ipBans = require("./ipBans");
 const {
   Client,
@@ -224,27 +225,47 @@ const DEFAULTS = {
   [FILES.CASINO_CONFIG]:  JSON.stringify(CASINO_CONFIG_DEFAULTS, null, 2),
 };
 
-for (const [file, def] of Object.entries(DEFAULTS)) {
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, def);
-    logger.info("Init", `Created ${file}`);
-  }
-}
+// ---- storage: SQLite (bot.db) with a one-time import from the JSON files ----
+// Every dataset that used to be a JSON file is now a row in bot.db. The .json files are left
+// untouched as a backup snapshot from migration time. safeRead/safeWrite/update and all the
+// typed loaders are unchanged — only the low-level _rawRead/_rawWrite below now hit SQLite.
+const db = new Database(path.join(__dirname, "bot.db"));
+db.pragma("journal_mode = WAL");
+db.pragma("busy_timeout = 5000");
+db.exec("CREATE TABLE IF NOT EXISTS kv (file TEXT PRIMARY KEY, data TEXT NOT NULL)");
+const _kvGet = db.prepare("SELECT data FROM kv WHERE file = ?");
+const _kvSet = db.prepare("INSERT INTO kv(file,data) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET data=excluded.data");
+const _kvHas = (file) => _kvGet.get(file) !== undefined;
 
-// ---- atomic file i/o  +  in-memory cache  +  mutation serialization ----
+// One-time full data transfer: import every existing JSON data file into the DB (the JSON
+// files stay as a backup), then seed defaults for anything still missing.
+let _migrated = 0;
+for (const file of Object.values(FILES)) {
+  if (_kvHas(file)) continue;
+  if (fs.existsSync(file)) {
+    try { const raw = fs.readFileSync(file, "utf8"); JSON.parse(raw); _kvSet.run(file, raw); _migrated++; continue; }
+    catch (e) { logger.warn("DB", `Could not migrate ${file}: ${e.message}`); }
+  }
+  if (DEFAULTS[file] !== undefined) _kvSet.run(file, DEFAULTS[file]);
+}
+if (_migrated) logger.info("DB", `Migrated ${_migrated} JSON dataset(s) into bot.db (JSON files kept as backup)`);
+
+// ---- read/write through SQLite  +  in-memory cache  +  mutation serialization ----
 const _cache  = new Map(); // file -> parsed value
 const _queues = new Map(); // file -> Promise (tail of the per-file chain)
 
 function _rawRead(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch (err) {
-    if (err.code === "ENOENT") {            // missing -> create it with the fallback so it exists going forward
-      ensureFile(file, JSON.stringify(fallback === undefined ? {} : fallback, null, 2));
-      return fallback;
-    }
-    logger.warn("IO", `Read failed for ${file}: ${err.message}`);
-    return fallback;
+  const row = _kvGet.get(file);
+  if (row !== undefined) {
+    try { return JSON.parse(row.data); }
+    catch (err) { logger.warn("IO", `DB parse failed for ${file}: ${err.message}`); return fallback; }
   }
+  // Not in the DB yet — import the JSON backup if present, else seed the fallback.
+  if (fs.existsSync(file)) {
+    try { const raw = fs.readFileSync(file, "utf8"); const val = JSON.parse(raw); _kvSet.run(file, raw); return val; } catch {}
+  }
+  _kvSet.run(file, JSON.stringify(fallback === undefined ? {} : fallback));
+  return fallback;
 }
 
 // Keep files the bot writes into the Steam/Pavlov tree owned by `steam`, not root.
@@ -295,16 +316,8 @@ function ensureFile(fp, defaultContent = "") {
 }
 
 function _rawWrite(file, data) {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-    fs.renameSync(tmp, file);
-    return true;
-  } catch (err) {
-    logger.error("IO", `Write failed for ${file}: ${err.message}`);
-    try { fs.unlinkSync(tmp); } catch {}
-    return false;
-  }
+  try { _kvSet.run(file, JSON.stringify(data)); return true; }
+  catch (err) { logger.error("IO", `DB write failed for ${file}: ${err.message}`); return false; }
 }
 
 const _clone = (v) => (typeof structuredClone === "function"
