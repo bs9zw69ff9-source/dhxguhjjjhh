@@ -2446,14 +2446,23 @@ function saveVpnCheck(ip, data) {
 // players connect from the same new IP at once, or /inspect races the connection feed).
 const _vpnInFlight = new Map();   // ip -> Promise
 async function checkVpn(ip) {
-  if (!ip) return null;                           // geolocation runs even without the VPN keys
+  if (!ip) return null;                            // geolocation runs even without the VPN keys
   const cached = loadVpnChecks()[ip];
-  if (cached) return cached;                       // checked once, ever - the result stands for good
+  if (cached?.geo) return cached;                  // fully cached (already has geolocation)
   const inflight = _vpnInFlight.get(ip);
   if (inflight) return inflight;                   // a check for this exact IP is already running - reuse it
-  const p = _doVpnCheck(ip).finally(() => _vpnInFlight.delete(ip));
+  // Entry cached before geolocation existed → backfill geo only (keep the VPN verdict);
+  // otherwise run the full check. This heals old "unknown"-location cache entries.
+  const p = (cached ? _backfillGeo(ip, cached) : _doVpnCheck(ip)).finally(() => _vpnInFlight.delete(ip));
   _vpnInFlight.set(ip, p);
   return p;
+}
+async function _backfillGeo(ip, prev) {
+  const geo = await geoLookup(ip);
+  if (!geo) return prev;                           // geo still unavailable — keep the old entry, retry next time
+  const result = { ...prev, geo, isp: geo.isp || prev.isp || null };
+  await saveVpnCheck(ip, result);
+  return { ...result, checkedAt: Date.now() };
 }
 // Free, keyless IP geolocation (ipwho.is) — full city-level location with no API key, so
 // it never touches the small IPQS quota. Returns null on any failure.
