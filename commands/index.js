@@ -1870,7 +1870,7 @@ module.exports = function createCommands(ctx) {
           writeModLog({ action: "givecaps", playerId, amount: tier.amount, reason: "Mercenary payment", by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Mercenary Payment Issued")
             .setDescription(`> *"Credits now. No strings attached."*\n\n${interaction.user} paid **${playerId}** **${tier.amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**.`)
-            .setFooter({ text: randomQuote("credits") }).setTimestamp();
+            .setFooter({ text: randomQuote("caps") }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
@@ -1959,7 +1959,7 @@ module.exports = function createCommands(ctx) {
         const nextTs = wage?.lastPaidAt ? Math.floor((wage.lastPaidAt + WAGE_INTERVAL_MS) / 1000) : null;
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Player Ledger")
           .setDescription(`**${playerId}** has **${balance.toLocaleString()} credits**. ${wTier ? `Payroll: ${wTier.label} (+${wTier.amount}/wk)${nextTs ? `, next <t:${nextTs}:R>` : ""}.` : "Not enrolled in payroll."}`)
-          .setFooter({ text: randomQuote("credits") }).setTimestamp();
+          .setFooter({ text: randomQuote("caps") }).setTimestamp();
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
@@ -1977,7 +1977,7 @@ module.exports = function createCommands(ctx) {
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Credits Given")
           .setDescription(`${interaction.user} gave **${playerId}** **+${amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**. ${reason}`)
-          .setFooter({ text: randomQuote("credits") }).setTimestamp();
+          .setFooter({ text: randomQuote("caps") }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
