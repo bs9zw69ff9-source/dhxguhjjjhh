@@ -6,7 +6,10 @@
    ctx (a plain object of the bot's shared functions/state built in index.js), so
    this file has no forward wiring of its own.
 
-   Usage:  const {
+   Usage:  const { onInteraction } = require("./commands")(ctx);
+*/
+module.exports = function createCommands(ctx) {
+  const {
   ALL_RANK_NAMES, ActionRowBuilder, DIVIDER, EmbedBuilder, LINK_APPROVER_ROLE, MessageFlags,
   ModalBuilder, NV, TextInputBuilder, TextInputStyle, adminOnlyEmbed, blacklistedEmbed,
   brand, checkRateLimit, client, commandPlayerCandidates, commands, deniedEmbed,
