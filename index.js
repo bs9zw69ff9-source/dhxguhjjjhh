@@ -1501,12 +1501,16 @@ function commitSubjectsBetween(from, to) {
 /* The update log is a PUBLIC changelog — it must never leak private info.
    redactPrivateInfo (in ./utils, unit-tested) scrubs IPs and long ids. */
 // Scrub every text surface of an embed (title/description/fields/footer) in place.
+// Mutates embed.data directly — NOT via setTitle/etc, whose validators can throw
+// and leave private text un-scrubbed. Nothing here can throw, so it can't fail open.
 function redactEmbedPrivateInfo(embed) {
   try {
-    const d = embed.data ?? {};
-    if (d.title)       embed.setTitle(redactPrivateInfo(d.title));
-    if (d.description) embed.setDescription(redactPrivateInfo(d.description));
-    if (d.footer?.text) embed.setFooter({ ...d.footer, text: redactPrivateInfo(d.footer.text) });
+    const d = embed?.data;
+    if (!d) return embed;
+    if (d.title)        d.title       = redactPrivateInfo(d.title);
+    if (d.description)  d.description = redactPrivateInfo(d.description);
+    if (d.author?.name) d.author.name = redactPrivateInfo(d.author.name);
+    if (d.footer?.text) d.footer.text = redactPrivateInfo(d.footer.text);
     if (Array.isArray(d.fields)) for (const f of d.fields) {
       if (f.name)  f.name  = redactPrivateInfo(f.name);
       if (f.value) f.value = redactPrivateInfo(f.value);
@@ -1545,7 +1549,10 @@ async function postUpdateLogIfChanged() {
   if (!subjects.length) { logger.warn("UpdateLog", `No commit log between ${state.lastCommit.slice(0, 7)} and ${commit.slice(0, 7)} - skipping (rebase/force-push?).`); return; }
 
   const SHOWN = 10;
-  const lines = subjects.slice(-SHOWN).map(s => `- ${s}`);
+  // Redact at the SOURCE — scrub each commit subject before it ever enters the
+  // embed, so the public changelog can't leak an IP/id even if the embed-level
+  // pass hit an edge case. (redactEmbedPrivateInfo below is the belt-and-braces.)
+  const lines = subjects.slice(-SHOWN).map(s => `- ${redactPrivateInfo(s)}`);
   if (subjects.length > SHOWN) lines.unshift(`- …and ${subjects.length - SHOWN} earlier change${subjects.length - SHOWN === 1 ? "" : "s"}`);
 
   logger.info("UpdateLog", `Posting ${subjects.length} change(s) since ${state.lastCommit.slice(0, 7)}.`);

@@ -54,11 +54,14 @@ test("easternClock returns YYYY-MM-DD and HH:MM shapes", () => {
   assert.match(hm, /^\d{2}:\d{2}$/);
 });
 
-test("redactPrivateInfo scrubs IPv4/IPv6/long ids, keeps normal text", () => {
+test("redactPrivateInfo scrubs IPv4/IPv6/ids/snowflakes/paths, keeps normal text", () => {
   assert.equal(u.redactPrivateInfo("block 86.166.107.200 now"), "block [ip redacted] now");
   assert.ok(!/db8|8329/.test(u.redactPrivateInfo("from 2001:db8::ff00:42:8329")));
   assert.ok(!/fe80/.test(u.redactPrivateInfo("link fe80:: local")));
   assert.ok(!/0002f0a3/.test(u.redactPrivateInfo("id 0002f0a3b96e4c5d8899aabbccddeeff")));
-  const clean = "refactor: split handler · v3.2.2 at 18:30 e24ecfe https://github.com/x";
+  assert.ok(!/1014251293159731310/.test(u.redactPrivateInfo("owner 1014251293159731310")));   // Discord snowflake
+  assert.ok(!/home\/steam|root\/pavlov/.test(u.redactPrivateInfo("wrote /home/steam/x and /root/pavlov-bot/y")));
+  // normal changelog text survives: hashes, versions, times, urls, small numbers
+  const clean = "refactor: split handler · v3.2.2 at 18:30 e24ecfe https://github.com/x (top 15, 7 days)";
   assert.equal(u.redactPrivateInfo(clean), clean);
 });

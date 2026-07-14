@@ -64,15 +64,19 @@ function parseClockTime(raw) {
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
-/* Scrub IPs and long ids from text bound for PUBLIC surfaces (update log).
-   IPv4 octet-bounded; IPv6 by colon-count (handles :: compression — over-matches
-   clock ranges like 12:30:45, acceptable for a public changelog); 24+ hex chars
-   (tokens, EOS ids). Short git hashes, versions, times and URLs pass through. */
+/* Scrub anything private from text bound for PUBLIC surfaces (the update log).
+   Covers: IPv4 (octet-bounded); IPv6 by colon-count (handles :: compression —
+   over-matches clock ranges like 12:30:45, fine for a changelog); 24+ hex chars
+   (tokens, EOS ids); Discord snowflake IDs (17-20 digit runs — user/channel/guild
+   ids); and absolute /home/<user> or /root paths (server layout). Short git
+   hashes, version numbers, clock times and URLs pass through untouched. */
 function redactPrivateInfo(text) {
   return String(text ?? "")
     .replace(/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, "[ip redacted]")
     .replace(/(?<![\w:.])[0-9a-f:]{3,}(?![\w:])/gi, (m) => (m.match(/:/g) || []).length >= 2 ? "[ip redacted]" : m)
-    .replace(/\b[0-9a-f]{24,}\b/gi, "[id redacted]");
+    .replace(/\b[0-9a-f]{24,}\b/gi, "[id redacted]")
+    .replace(/\b\d{17,20}\b/g, "[id redacted]")
+    .replace(/\/(?:home\/[^\s/]+|root)(?=\/|\b)/g, "[path redacted]");
 }
 
 module.exports = {
