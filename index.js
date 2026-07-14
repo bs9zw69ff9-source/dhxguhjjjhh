@@ -1498,10 +1498,38 @@ function commitSubjectsBetween(from, to) {
     return out.split("\n").map(s => s.trim()).filter(Boolean);
   } catch { return []; }
 }
+/* The update log is a PUBLIC changelog — it must never leak private info. Commit
+   subjects can name IPs (e.g. a firewall/master-IP change), so scrub IPv4/IPv6
+   addresses (and anything token-looking) from every line before it's posted. */
+function redactPrivateInfo(text) {
+  return String(text ?? "")
+    // IPv4 (octet-bounded so version strings like 12.11.1.2 of a lib still match — better safe)
+    .replace(/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, "[ip redacted]")
+    // IPv6: any hex-and-colon run with 2+ colons — handles :: compression ("2001:db8::1",
+    // "::1", "fe80::"). Over-matches clock times like 12:30:45; fine for a public changelog.
+    .replace(/(?<![\w:.])[0-9a-f:]{3,}(?![\w:])/gi, (m) => (m.match(/:/g) || []).length >= 2 ? "[ip redacted]" : m)
+    // long hex/base64-looking blobs (tokens, EOS ids) — 24+ chars of hexish
+    .replace(/\b[0-9a-f]{24,}\b/gi, "[id redacted]");
+}
+// Scrub every text surface of an embed (title/description/fields/footer) in place.
+function redactEmbedPrivateInfo(embed) {
+  try {
+    const d = embed.data ?? {};
+    if (d.title)       embed.setTitle(redactPrivateInfo(d.title));
+    if (d.description) embed.setDescription(redactPrivateInfo(d.description));
+    if (d.footer?.text) embed.setFooter({ ...d.footer, text: redactPrivateInfo(d.footer.text) });
+    if (Array.isArray(d.fields)) for (const f of d.fields) {
+      if (f.name)  f.name  = redactPrivateInfo(f.name);
+      if (f.value) f.value = redactPrivateInfo(f.value);
+    }
+  } catch {}
+  return embed;
+}
 async function postToUpdateLogChannel(embed) {
   try {
     const ch = await client.channels.fetch(UPDATE_LOG_CHANNEL);
     if (!ch?.isTextBased()) { logger.warn("UpdateLog", `Channel ${UPDATE_LOG_CHANNEL} wasn't found or isn't text-based - check UPDATE_LOG_CHANNEL and that the bot can see it.`); return; }
+    redactEmbedPrivateInfo(embed);   // public changelog: no IPs / tokens, ever
     await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
     logger.info("UpdateLog", "Posted.");
   } catch (err) {
