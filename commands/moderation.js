@@ -191,11 +191,20 @@ module.exports = (ctx) => {
         const windowMs = { "24h": 86_400_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 }[period] || 0;
         const cutoff = windowMs ? Date.now() - windowMs : 0;
         const label  = { "24h": "last 24 hours", "7d": "last 7 days", "30d": "last 30 days" }[period] || "all time";
+        // Moderation/enforcement actions ONLY — bans, kicks, mutes, unbans, ban-list
+        // clears, firewall, manual RCON bans. Deliberately excludes economy (caps/
+        // wages/casino), faction ops, donator, linking, announcements, map rotation.
+        const MOD_ACTIONS = new Set([
+          "permban", "tempban", "kick", "flush-kick", "mute", "unmute", "unban",
+          "cleartempbans", "clearallbans", "firewall-block", "firewall-unblock",
+          "manual-rcon", "permanent ban",
+        ]);
         // Only human staff — skip automated actors (VPN auto-ban, expiry sweep, system, IP-Guard).
         const AUTO = /^(vpn detection|system|auto|ip-?guard|sentence served|\(auto\))/i;
         const tally = new Map();   // by -> { total, actions: {} }
         for (const e of loadModLog()) {
           if (cutoff && (e.at || 0) < cutoff) continue;
+          if (!MOD_ACTIONS.has(String(e.action ?? "").trim().toLowerCase())) continue;   // moderation actions only
           const by = String(e.by ?? "").trim();
           if (!by || AUTO.test(by)) continue;
           if (!tally.has(by)) tally.set(by, { total: 0, actions: {} });
@@ -207,7 +216,7 @@ module.exports = (ctx) => {
         if (!ranked.length) {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Leaderboard — No Activity")
-              .setDescription(`No staff moderation actions on record for the **${label}**.`).setTimestamp()
+              .setDescription(`No staff moderation actions (bans, kicks, mutes) on record for the **${label}**.`).setTimestamp()
           ], flags: MessageFlags.Ephemeral });
         }
         const grand = ranked.reduce((s, [, t]) => s + t.total, 0);
@@ -221,8 +230,8 @@ module.exports = (ctx) => {
         });
         const embed = brand(new EmbedBuilder().setColor(NV.AMBER)
           .setTitle(`Staff Leaderboard — ${label.replace(/^\w/, c => c.toUpperCase())}`)
-          .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${DIVIDER}\n${lines.join("\n")}`)
-          .setFooter({ text: "Mod log · automated actions excluded" }).setTimestamp());
+          .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** moderation action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${DIVIDER}\n${lines.join("\n")}`)
+          .setFooter({ text: "Mod log · bans/kicks/mutes only · automated actions excluded" }).setTimestamp());
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
 

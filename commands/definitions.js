@@ -49,7 +49,7 @@ const commands = [
     .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
   new SlashCommandBuilder().setName("staffleaderboard")
-    .setDescription("Admin — Rank staff by moderation actions taken")
+    .setDescription("Admin — Rank staff by moderation actions (bans/kicks/mutes)")
     .addStringOption(o => o.setName("period").setDescription("Time window (default: all time)")
       .addChoices(
         { name: "All time",     value: "all" },
