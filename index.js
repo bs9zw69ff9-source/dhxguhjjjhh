@@ -1737,188 +1737,57 @@ function logBan(embed) {
     .catch(err => logger.warn("Log", `Failed to post ban log: ${err.message}`));
 }
 
-/* ---------------- VPN / proxy detection ----------------
-   IPHub is the free baseline check, run on a given IP exactly ONCE, ever. Only when
-   IPHub flags it (block==1: hosting/proxy/non-residential) do we spend an
-   IPQualityScore lookup to cross-reference it - IPQS is more accurate but its free
-   tier is far more limited than IPHub's, so it's reserved for the flagged subset
-   instead of running on every connection. The result is cached per-IP permanently -
-   once an IP is checked, it's never re-queried against either API again: a clean
-   result means that IP is trusted for good, a confirmed VPN means it's already been
-   acted on. The check is keyed on the IP itself, not the account or EOS id - a clean
-   IP is clean no matter who connects from it next.
-   A confirmed VPN/proxy auto-bans the connecting player (native RCON Ban+Kick, IP+EOS
-   flagged same as any other ban). If IPHub flags but IPQS explicitly disputes it
-   (checked, came back clean), that's treated as a likely false positive and only
-   logged, not banned - the whole point of the cross-check. If IPQS isn't configured,
-   an IPHub flag alone is enough to ban.
-   Entirely optional - a no-op if IPHUB_API_KEY isn't set. */
-const IPHUB_API_KEY  = process.env.IPHUB_API_KEY || "";
-const IPQS_API_KEY   = process.env.IPQS_API_KEY  || "";
-const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional — higher ipinfo.io free quota
-const _regionName    = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
-const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
-function saveVpnCheck(ip, data) {
-  return update(FILES.VPN_CHECKS, {}, (all) => { all[ip] = { ...data, checkedAt: Date.now() }; return all; });
-}
-// Exactly one VPN check per IP: cached forever once done, and concurrent checks of the
-// same not-yet-cached IP share a single in-flight lookup (no double API calls when two
-// players connect from the same new IP at once, or /inspect races the connection feed).
-const _vpnInFlight = new Map();   // ip -> Promise
-async function checkVpn(ip) {
-  if (!ip) return null;                            // geolocation runs even without the VPN keys
-  const cached = loadVpnChecks()[ip];
-  if (cached?.geo) return cached;                  // fully cached (already has geolocation)
-  const inflight = _vpnInFlight.get(ip);
-  if (inflight) return inflight;                   // a check for this exact IP is already running - reuse it
-  // Entry cached before geolocation existed → backfill geo only (keep the VPN verdict);
-  // otherwise run the full check. This heals old "unknown"-location cache entries.
-  const p = (cached ? _backfillGeo(ip, cached) : _doVpnCheck(ip)).finally(() => _vpnInFlight.delete(ip));
-  _vpnInFlight.set(ip, p);
-  return p;
-}
-async function _backfillGeo(ip, prev) {
-  const geo = await geoLookup(ip);
-  if (!geo) return prev;                           // geo still unavailable — keep the old entry, retry next time
-  const result = { ...prev, geo, isp: geo.isp || prev.isp || null };
-  await saveVpnCheck(ip, result);
-  return { ...result, checkedAt: Date.now() };
-}
-// IP geolocation via ipinfo.io — full city-level location. Works keyless (rate-limited);
-// set IPINFO_TOKEN for the larger free quota. Doesn't touch the IPHub/IPQS quotas.
-async function geoLookup(ip) {
-  try {
-    const url = `https://ipinfo.io/${encodeURIComponent(ip)}/json${IPINFO_TOKEN ? `?token=${IPINFO_TOKEN}` : ""}`;
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    const d = await res.json();
-    if (!d || !d.ip || d.error || d.bogon) return null;   // error / private / reserved IP
-    const [lat, lon] = String(d.loc || "").split(",");
-    // ipinfo's `org` is "AS#### <ISP name>" — split into ASN + ISP.
-    let asn = null, isp = d.org || null;
-    const m = String(d.org || "").match(/^(AS\d+)\s+(.*)$/);
-    if (m) { asn = m[1]; isp = m[2]; }
-    // ipinfo returns a 2-letter country code; expand to a full name via built-in Intl.
-    let country = d.country || null;
-    if (country && _regionName) { try { country = _regionName.of(country) || d.country; } catch {} }
-    return {
-      city: d.city || null, region: d.region || null,
-      country, countryCode: d.country || null,
-      zip: d.postal || null, isp, org: isp, asn,
-      timezone: d.timezone || null,
-      lat: lat ? Number(lat) : null, lon: lon ? Number(lon) : null,
-    };
-  } catch (err) {
-    const msg = IPINFO_TOKEN ? String(err.message).split(IPINFO_TOKEN).join("***") : String(err.message);
-    logger.warn("Geo", `ipinfo.io lookup failed for ${ip}: ${msg}`);
-    return null;
-  }
-}
-async function _doVpnCheck(ip) {
-  // Geolocation first — free/keyless, for every IP regardless of the VPN keys.
-  const gwho = await geoLookup(ip);
-
-  // VPN detection — optional, only when IPHUB_API_KEY is set.
-  let iphub = null, iphubFailed = false, flagged = false, confirmed = null, ipqs = null;
-  if (IPHUB_API_KEY) {
-    try {
-      const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
-      iphub = await res.json();
-    } catch (err) {
-      logger.warn("VPN", `IPHub lookup failed for ${ip}: ${err.message}`);
-      iphubFailed = true;
-    }
-    flagged = iphub?.block === 1;
-    // IPQS only cross-checks IPHub-flagged IPs — its free tier is ~35/day, so spend it
-    // where it counts (disputing a flag), not on geolocation (ipwho.is covers that).
-    if (flagged && IPQS_API_KEY) {
-      try {
-        const res  = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
-        const data = await res.json();
-        if (data?.success) {
-          ipqs = { vpn: !!data.vpn, proxy: !!data.proxy, tor: !!data.tor, fraudScore: data.fraud_score ?? null };
-          confirmed = !!(data.vpn || data.proxy || data.tor);
-        }
-      } catch (err) {
-        logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`);
-      }
-    }
-  }
-
-  // Prefer the whois geo (city-level); fall back to IPHub's country when whois is down.
-  const geo = gwho || (iphub ? {
-    city: null, region: null, country: iphub.countryName || null, countryCode: iphub.countryCode || null,
-    zip: null, isp: iphub.isp || null, org: null, asn: null, timezone: null, lat: null, lon: null,
-  } : null);
-  if (!geo) return null;                           // no location at all - don't cache, retry next time
-  if (IPHUB_API_KEY && iphubFailed) return null;   // VPN enabled but IPHub down - retry to capture the flag
-
-  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp || null, ipqs, geo };
-  await saveVpnCheck(ip, result);
-  return { ...result, checkedAt: Date.now() };
-}
-// Human-readable full location from a stored geo object (webhook feed / /inspect).
-function formatFullLocation(geo) {
-  if (!geo) return null;
-  const place = [geo.city, geo.region, geo.country].filter(Boolean).join(", ") + (geo.zip ? ` ${geo.zip}` : "");
-  const bits  = [place.trim() || geo.country || null, geo.isp || null, geo.timezone ? `TZ ${geo.timezone}` : null].filter(Boolean);
-  return bits.length ? bits.join("  ·  ") : null;
-}
-// Called from ipBans' onConfirm for every freshly-confirmed IP. Since checkVpn()
-// caches an IP's result forever, this naturally only ever acts once per IP - a
-// player reconnecting from an already-checked IP costs nothing and does nothing.
-async function checkVpnAndAlert(name, ip) {
-  if (!ip || !IPHUB_API_KEY) return null;
-  const alreadyChecked = !!loadVpnChecks()[ip];
-  const result = await checkVpn(ip).catch(() => null);
-  if (!result) return null;
-  // Clean, or an IP we've already acted on — return the verdict for the feed, but don't ban.
-  if (!result.flagged || alreadyChecked) return result;
-
-  // Masters and explicitly-unbanned players are never auto-actioned (matches onAutoBan).
-  // Only master names bypass ALL enforcement; staff/donators are NOT exempt from this.
-  if (isMasterName(name) || isAutobanExempt(name)) {
-    logger.info("VPN", `Skipped VPN auto-ban for exempt/master ${name}`);
-    return result;
-  }
-
-  const disputed = result.confirmed === false;   // IPHub flagged it, IPQS actively said clean
-  if (disputed) {
-    const embed = brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-      .setTitle("VPN Flag Disputed — No Action")
-      .setDescription(`${DIVIDER}\n**${name}** connected from an IP IPHub flagged, but IPQS checked it and disagreed.\n${DIVIDER}`)
-      .addFields(
-        { name: "ISP",         value: result.isp || "unknown",        inline: true },
-        { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
-        { name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true },
-      ).setFooter({ text: "Likely false positive — not banned" }));
-    await logAction(embed);
-    return result;
-  }
-
-  const label = result.confirmed === true ? "Confirmed VPN/proxy (IPHub + IPQS agree)" : "Flagged by IPHub (IPQS not configured to cross-check)";
-  let res;
-  try { res = await banWithIp(name, "both", { permanent: true, ip }); }
-  catch (err) { logger.warn("VPN", `auto-ban failed for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
-  try { await upsertPermBan({ playerId: name, reason: "VPN/proxy detected", moderator: "VPN detection (auto)" }); } catch {}
-  writeModLog({ action: "auto-vpnban", playerId: name, reason: `VPN/proxy detected (${label})`, by: "VPN detection (auto)" });
-  logger.warn("VPN", `Auto-banned ${name} — ${label}, ip ${ip}`);
-  const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
-    .setTitle("Auto-Ban — VPN/Proxy Detected")
-    .setDescription(`${hero(randomQuote("autoban"))}`)
-    .addFields(
-      { name: "Courier", value: `\`${name}\``, inline: true },
-      { name: "IP",      value: `\`${ip}\``,   inline: true },
-      { name: "Status",  value: label,          inline: false },
-      { name: "ISP",         value: result.isp || "unknown",        inline: true },
-      { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
-      ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
-      { name: "Enforced", value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
-      ...(firewallField(res?.firewall) ? [firewallField(res.firewall)] : []),
-    ), "Auto-ban · native RCON ban · all servers");
-  await logBan(embed);
-  postFeed(embed);
-  return result;
-}
+// ---- moderation/vpn: IPHub/IPQS proxy detection + geolocation + auto-ban (extracted to ./moderation/vpn) ----
+const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
+  ACTIVE_SERVERS, ALL_FACTIONS, ActionRowBuilder, ActivityType, BAN_DURATIONS, BAN_REASON_LABELS,
+  BAN_RECONCILE_MIN_INTERVAL_MS, BLACKLIST_IDS, BOT_AUTHOR, BOT_COPYRIGHT, BOT_START_MS, BOT_VERSION,
+  BRAND_NAME, BUILD_ID, ButtonBuilder, ButtonStyle, CASINO_CONFIG_DEFAULTS, CLIN,
+  CURRENT_LOG_LEVEL, Client, ComponentType, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DAY_MS,
+  DB_EXPORT_INTERVAL_MS, DIVIDER, DONATOR_FILE, EXTRA_FACTION_FILES, EmbedBuilder, FACTION_BOT,
+  FACTION_DEFAULT_CAP, FACTION_RANKS, FACTION_ROLES_PATH, FACTION_SPAWN_MAP, FILES, GLYPH,
+  GatewayIntentBits, KILLFEED_CHANNEL, LEADERBOARD_INTERVAL_MS, LEADERBOARD_TOP_N, LINK_APPROVER_ROLE, LINK_REQUEST_CHANNEL,
+  LOCK_FILE, LOG_FILE, LOG_LEVEL, MASTER_NAMES, MENUS, MENU_PANEL_CHANNEL,
+  MENU_ROLE_DEFAULTS, MODSAVE_REL, MODSAVE_SYNC_INTERVAL_MS, MODSAVE_SYNC_SKIP, MessageFlags, ModalBuilder,
+  NV, OWNER_IDS, PAVLOV_BASES, PAVLOV_BASE_1, PLAYERLIST_CHANNEL, PLAYERLIST_INTERVAL_MS,
+  PLAYTIME_LB_CHANNEL, PUNISHMENTS, PUNISH_BY_VALUE, PUNISH_CHOICES, PermissionFlagsBits, QUOTES,
+  RCON_BLACKLIST_ROLE_ID, RCON_HEALTH_INTERVAL_MS, REST, RULE, RoleSelectMenuBuilder, Routes,
+  SPAWN_FILE_MAP, STAFF_MENU_ID, SlashCommandBuilder, StringSelectMenuBuilder, TextInputBuilder, TextInputStyle,
+  UFW_BLOCK, UNBARRED_IDS, UPDATE_LOG_CHANNEL, WAGE_INTERVAL_MS, WAGE_TIERS, WebhookClient,
+  _IPV4_RE, __dirname, _blAllCache, _hasRole, _modLogIndexCache, _reconcileBusy,
+  _sameId, _sweepBusy, acquireSingleInstanceLock, addUserBlacklist, adminOnlyEmbed, applyMuteOnJoin,
+  atomicCopyPreservingMtime, atomicWriteFile, autoBanDecision, awaitOwnedComponent, banWithIp, bar,
+  blacklistAdd, blacklistAll, blacklistAllCached, blacklistHas, blacklistPathFor, blacklistRemove,
+  blacklistStatus, blacklistedEmbed, brand, brandIcon, cell, checkAutoRotate,
+  checkRateLimit, chunkFields, clampEmbed, clearMute, client, clinical,
+  commandPlayerCandidates, confirmDialog, countFactionRank, customEmoji, deniedEmbed, disableValidators,
+  discoverPavlovBases, easternClock, embedToText, emptyIdEmbed, enforceBansSweep, ensureFactionFiles,
+  ensureFile, errorEmbed, execFile, execFileSync, exportDbToJson, factionClient,
+  factionLeaderOnlyEmbed, factionLeaderStrictEmbed, fclient, feedHook, firewallBlockIps, firewallField,
+  firewallResyncAll, firewallUnblockIps, fixAutoBanReasons, formatKD, formatPlaytime, formatTimeLeft,
+  formatUptime, fs, gagEverywhere, getFactionCap, getFactionDefaultRank, getFactionRank,
+  getFactionRankBadge, getFactionRankCap, getFactionRankCaps, getFactionRankConfig, getFactionRankOrder, getKnownPlayerChoices,
+  getLastSeen, getMute, getPlayerHistory, getPlayerRanks, getServerConfig, hardEnforce,
+  hasAdminRole, hasFactionLeaderRole, hasModRole, hasServer2, hasServer3, healTreeOwnership,
+  hero, importBlacklistToBans, intendedOwner, ipBans, isBlacklisted, isMasterName,
+  isOwner, isPidAlive, isPlayerOnline, isRealBan, listFilesRec, loadAutoRotate,
+  loadBans, loadCasinoConfig, loadFactionAudit, loadFactionConfig, loadFactionRanks, loadKnownPlayers,
+  loadLastSeen, loadMenuGrants, loadMenuRoles, loadModLog, loadMutes, loadPlaytime,
+  loadRoles, loadWages, log, logAction, logBan, logger,
+  looksLikeLedgerEntry, matchTreeOwner, md5, menuRoleTiers, meter, mirrorPaths,
+  modOnlyEmbed, ownerOnlyEmbed, paginate, parseClockTime, parseDuration, parseRcon,
+  patchInteractionOutput, path, pip, postFeed, postKillFeed, preserveBalanceAcrossKick,
+  punishDurationLabel, randomQuote, rankBadge, rankHasRoom, rankWeight, rateLimitEmbed,
+  rateLimits, readBlacklist, reconcileBans, reconcileBlacklists, recordKnownPlayers, recordLastSeen,
+  releaseSingleInstanceLock, removeBans, removeFactionRank, removeUserBlacklist, safeRead, safeWrite,
+  sanitizeBanName, sanitizeId, sanitizeMessage, saveCasinoConfig, savePlaytime, saveRoles,
+  saveUnbarred, saveUserBlacklist, saveWages, scheduleBanRecheck, seedKnownPlayers, sendRcon,
+  sendRconBoth, sendRconRaw, serverEmoji, serverLabel, setAutoRotate, setFactionCap,
+  setFactionRank, setFactionRankCap, setMenuRole, setMute, sourceBanFor, spawn,
+  splitPages, successEmbed, syncAllModSave, syncPlayerLedger, textify, textifyChunks,
+  unbanEverywhere, ungagEverywhere, update, upsertPermBan, upsertTempBan, validateConfig,
+  warningEmbed, wouldWipeBalance, writeFactionAudit, writeGameFile, writeGameFileSingle, writeModLog,
+  isAutobanExempt: (...a) => isAutobanExempt(...a),
+});
 
 /* ---------------- update log ----------------
    On every startup, if the checked-out commit has moved since the last
