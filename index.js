@@ -3989,6 +3989,16 @@ const commands = [
   new SlashCommandBuilder().setName("inspect")
     .setDescription("Owner: full record for a courier — IPs, VPN checks, alts, flags")
     .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+  // Owner-only manual OS-firewall (ufw) control — block/unblock an IP by hand,
+  // independent of any ban. Gated in the handler; requires UFW_BLOCK=1.
+  new SlashCommandBuilder().setName("firewall")
+    .setDescription("Owner: block or unblock an IP at the OS firewall (ufw)")
+    .addSubcommand(s => s.setName("block")
+      .setDescription("Block an IP at the firewall — sudo ufw insert 1 deny from <ip>")
+      .addStringOption(o => o.setName("ip").setDescription("IPv4 address to block").setRequired(true)))
+    .addSubcommand(s => s.setName("unblock")
+      .setDescription("Remove a firewall block for an IP — sudo ufw delete <rule>")
+      .addStringOption(o => o.setName("ip").setDescription("IPv4 address to unblock").setRequired(true))),
   new SlashCommandBuilder().setName("kd")
     .setDescription("Kill/death stats — a courier's K/D, or the leaderboard")
     .addStringOption(o => o.setName("playerid").setDescription("Courier (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
@@ -6692,6 +6702,50 @@ async function onInteraction(interaction) {
             { name: "Flags / status", value: flags.length ? flags.map(f => `• ${f}`).join("\n") : "*none*",     inline: false },
           )
           .setFooter({ text: "Owner inspection · sensitive — do not share" }).setTimestamp();
+        return interaction.editReply({ embeds: [embed] });
+      }
+
+      /* ─────────────────────────────────────────────────────
+         FIREWALL — owner-only manual ufw block/unblock of an IP,
+         independent of any ban. Needs UFW_BLOCK=1 (root/sudo ufw).
+         ───────────────────────────────────────────────────── */
+      case "firewall": {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        const sub = interaction.options.getSubcommand();
+        const ip  = String(interaction.options.getString("ip") ?? "").trim();
+        if (!_IPV4_RE.test(ip)) return interaction.reply({ embeds: [warningEmbed("Invalid IP", `\`${ip || "(empty)"}\` is not a valid IPv4 address.`)], flags: MessageFlags.Ephemeral });
+        if (!UFW_BLOCK) return interaction.reply({ embeds: [warningEmbed("Firewall Disabled", "OS firewall blocking is off. Set **UFW_BLOCK=1** (and run the bot as root, or give it passwordless `sudo ufw`) to enable it.")], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // sensitive: exposes an IP
+
+        if (sub === "block") {
+          let res; try { res = await firewallBlockIps([ip]); } catch (err) { res = { blocked: 0, error: err.message }; }
+          writeModLog({ action: "firewall-block", playerId: ip, reason: "manual firewall block", by: interaction.user.tag });
+          logger.info("Firewall", `Manual block of ${ip} by ${interaction.user.tag} — blocked ${res.blocked}`);
+          const ok = res.blocked > 0;
+          const embed = clinical(new EmbedBuilder().setColor(ok ? CLIN.red : NV.AMBER)
+            .setTitle(ok ? "Firewall — IP Blocked" : "Firewall — Block Not Applied")
+            .setDescription(`${DIVIDER}\n${ok ? `\`${ip}\` is now denied at the OS firewall.` : `Could not block \`${ip}\`.${res.error ? ` (${res.error})` : ""}`}\n${DIVIDER}`)
+            .addFields(
+              { name: "IP",     value: `\`${ip}\``, inline: true },
+              { name: "Rule",   value: "`ufw insert 1 deny from <ip>`", inline: true },
+              { name: "Result", value: ok ? `Blocked **${res.blocked}** rule(s)` : "No rule added", inline: true },
+            ), "Manual firewall control · owner");
+          return interaction.editReply({ embeds: [embed] });
+        }
+
+        // sub === "unblock"
+        let res; try { res = await firewallUnblockIps([ip]); } catch (err) { res = { unblocked: 0, error: err.message }; }
+        writeModLog({ action: "firewall-unblock", playerId: ip, reason: "manual firewall unblock", by: interaction.user.tag });
+        logger.info("Firewall", `Manual unblock of ${ip} by ${interaction.user.tag} — removed ${res.unblocked}`);
+        const ok = res.unblocked > 0;
+        const embed = clinical(new EmbedBuilder().setColor(ok ? CLIN.green : NV.AMBER)
+          .setTitle(ok ? "Firewall — Block Removed" : "Firewall — No Block Found")
+          .setDescription(`${DIVIDER}\n${ok ? `\`${ip}\` is no longer denied at the OS firewall.` : `No firewall rule for \`${ip}\` was found to remove.${res.error ? ` (${res.error})` : ""}`}\n${DIVIDER}`)
+          .addFields(
+            { name: "IP",     value: `\`${ip}\``, inline: true },
+            { name: "Rule",   value: "`ufw delete <rule>`", inline: true },
+            { name: "Result", value: ok ? `Removed **${res.unblocked}** rule(s)` : "Nothing to remove", inline: true },
+          ), "Manual firewall control · owner");
         return interaction.editReply({ embeds: [embed] });
       }
 
