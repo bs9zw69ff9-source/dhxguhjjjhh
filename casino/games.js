@@ -20,8 +20,8 @@ const JACKPOT_WIN_CHANCE  = 0.15;
 // ~1-in-8 chance of any win. Tune here (or move to casino_config.json later).
 const SLOT_SYMBOLS = [
   { key: "Scrap",   emoji: "🔩", weight: 45, mult: 3  },
-  { key: "Caps",    emoji: "💰", weight: 30, mult: 6  },
-  { key: "RadAway", emoji: "☢️", weight: 18, mult: 14 },
+  { key: "Credits",    emoji: "💰", weight: 30, mult: 6  },
+  { key: "Hazard",  emoji: "☢️", weight: 18, mult: 14 },
   { key: "Jackpot", emoji: "💎", weight: 7,  mult: 55 },
 ];
 function spinSlotReel() {

@@ -21,7 +21,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   logger.info("Bot", `${client.user.tag} online — v${BOT_VERSION}`);
   try {
     client.user.setPresence({
-      activities: [{ name: "over the Mojave from the Lucky 38  ·  /help", type: ActivityType.Watching }],
+      activities: [{ name: "over the server  ·  /help", type: ActivityType.Watching }],
       status: "online",
     });
   } catch (err) {
@@ -137,7 +137,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
-        ), "Connection log · Mojave Authority");
+        ), "Connection log · the bot");
       postFeed(embed);
     },
     // Fired on every live PvP kill (ipBans already filters out suicides/environmental

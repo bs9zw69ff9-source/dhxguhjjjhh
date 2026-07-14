@@ -41,9 +41,9 @@ function rankLabel(i) {
 function buildLeaderboardEmbed() {
   const entries = buildLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.GOLD)
-    .setTitle(`New Vegas Caps — Top ${LEADERBOARD_TOP_N}`);
+    .setTitle(`Richest Players — Top ${LEADERBOARD_TOP_N}`);
   if (!entries) return brand(embed.setColor(NV.RUST_RED)
-    .setDescription(`${hero("Vault records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
+    .setDescription(`${hero("Economy records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
     { footer: { text: `Updated every 30s` } });
   if (!entries.length) return brand(embed.setColor(NV.IRRAD_GREEN)
     .setDescription(`${hero("No ledgers found.")}\nNo cap records on file yet.`),
@@ -51,10 +51,10 @@ function buildLeaderboardEmbed() {
   const top = entries[0]?.balance || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
-    return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} caps${meter}`;
+    return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} credits${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("War never changes. But caps? Caps fluctuate.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} caps** across **${entries.totalPlayers ?? entries.length}** ledgers\n${DIVIDER}\n${body}`),
+    `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} credits** across **${entries.totalPlayers ?? entries.length}** ledgers\n${DIVIDER}\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
@@ -93,9 +93,9 @@ function buildPlaytimeLeaderboardData() {
 function buildPlaytimeLeaderboardEmbed() {
   const entries = buildPlaytimeLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
-    .setTitle(`Most Active Couriers — Top ${LEADERBOARD_TOP_N}`);
+    .setTitle(`Most Active Players — Top ${LEADERBOARD_TOP_N}`);
   if (!entries.length) return brand(embed
-    .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while couriers are online (sampled every 60s).`),
+    .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while players are online (sampled every 60s).`),
     { footer: { text: `Updated every 30s` } });
   const top = entries[0]?.minutes || 1;
   // Grand total across EVERY tracked player (not just the top N shown).
@@ -107,7 +107,7 @@ function buildPlaytimeLeaderboardEmbed() {
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("Time served in the Mojave.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** couriers\n${DIVIDER}\n${body}`),
+    `${hero("Time served in the server.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** players\n${DIVIDER}\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
@@ -141,7 +141,7 @@ function buildPlayerListEmbed() {
   };
   const total = allCachedPlayers().length;
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Live Player List")
-    .setDescription(hero(`**${total}** courier${total !== 1 ? "s" : ""} roaming the Mojave right now.`));
+    .setDescription(hero(`**${total}** player${total !== 1 ? "s" : ""} online right now.`));
   for (const srv of ACTIVE_SERVERS) {
     const list = [...playerCache[srv]].sort((a, b) => a.localeCompare(b));
     embed.addFields({ name: `${serverLabel(srv)} (${list.length})`, value: fmt(list), inline: true });

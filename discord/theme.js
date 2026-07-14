@@ -1,6 +1,8 @@
-/* ---------------- discord/theme: Fallout: New Vegas visual system ----------------
+/* ---------------- discord/theme: visual system (RP-neutral) ----------------
    Extracted from index.js. Holds the colour palette, flavour quotes, glyphs, the
    embed "brand" stamp, and every shared embed builder (success/error/denied/…).
+   Theme-neutral by design so the bot fits ANY RP server: the display name comes
+   from BOT_NAME (env), and the quotes are generic RP-moderation flavour.
    The only outside coupling is Discord's EmbedBuilder plus the bot's avatar/version
    for the brand footer — injected as a lazy client accessor + buildId so this loads
    before the Discord client exists and resolves the avatar at send time.
@@ -12,111 +14,109 @@
 const { EmbedBuilder } = require("discord.js");
 
 module.exports = function createTheme({ getClient, buildId }) {
-  // ---- fallout: new vegas theme ----
+  // ---- colour palette (exported as NV for backwards compatibility) ----
   const NV = {
     AMBER:       0xFFB000,
     GOLD:        0xD4A017,
-    IRRAD_GREEN: 0x39FF14,
-    NCR_TAN:     0xC8A96E,
-    LEGION_RED:  0x8B0000,
-    RUST_RED:    0xC0392B,
-    DEAD_GREY:   0x4A4A4A,
-    BLUE_VATS:   0x1B4F8A,
+    IRRAD_GREEN: 0x39FF14,   // bright green — success / online
+    NCR_TAN:     0xC8A96E,   // tan — neutral accent
+    LEGION_RED:  0x8B0000,   // dark red — bans / blocks
+    RUST_RED:    0xC0392B,   // red — errors
+    DEAD_GREY:   0x4A4A4A,   // grey — disabled / void
+    BLUE_VATS:   0x1B4F8A,   // blue — info
     DEEP_BLACK:  0x0D0D0D,
   };
 
-  /* Ban / IP embed accents — Fallout: New Vegas palette. */
+  /* Ban / IP embed accents. */
   const CLIN = {
-    red:   0x8B0000,   // LEGION_RED  - ban / block / active
-    green: 0x39FF14,   // IRRAD_GREEN - cleared / lifted / no bans
-    grey:  0xFFB000,   // AMBER       - neutral info (lists, checks, connection log)
+    red:   0x8B0000,   // dark red    - ban / block / active
+    green: 0x39FF14,   // bright green - cleared / lifted / no bans
+    grey:  0xFFB000,   // amber        - neutral info (lists, checks, connection log)
   };
 
   const QUOTES = {
     ban:     [
-      '"You\'re banned from the Lucky 38. Mr. House\'s orders."',
-      '"You\'ve made an enemy of the Mojave. Enjoy the wasteland."',
-      '"Even in the wasteland, there are rules. You broke them."',
-      '"The Securitrons don\'t forgive. Neither do we."',
-      '"The game was rigged from the start — and you just lost."',
-      '"Should\'ve learned to use your head instead of swinging it. Now you\'re exiled."',
-      '"Out into the Divide with you. Don\'t look back."',
-      '"The Courier always rings twice. You won\'t ring again."',
-      '"Patrolling the Mojave almost makes you wish for a ban this clean."',
-      '"The King is dead, and so is your access. Thank you. Thank you very much."',
+      '"Banned. The rules were posted; you walked past them."',
+      '"You made your choices. This one was made for you."',
+      '"Every server has a line. You crossed it."',
+      '"Access revoked. Actions have consequences."',
+      '"The door is closed, and it locks from our side."',
+      '"You gambled on nobody watching. The house was watching."',
+      '"Out you go. Take the lesson with you."',
+      '"Your name goes in the book — the one nobody wants to be in."',
     ],
     unban:   [
-      '"Every soul deserves a second chance in the Mojave. Don\'t waste yours."',
-      '"The gates of the Strip open once more. Don\'t make us regret it."',
-      '"Exile lifted. Welcome back to New Vegas — try not to shoot anyone."',
-      '"Begin again. The Mojave forgives, this once."',
-      '"Your slate\'s wiped cleaner than a Vault-Tec ad. Walk the line."',
-      '"Mr. House has reconsidered. Don\'t squander his mercy."',
+      '"Everyone deserves a second chance. Don\'t waste yours."',
+      '"The gates open once more. Don\'t make us regret it."',
+      '"Exile lifted. Welcome back — play it straight this time."',
+      '"Begin again. The slate is clean, this once."',
+      '"Reinstated. Walk the line."',
+      '"The ban is lifted. The memory isn\'t."',
     ],
     warn:    [
       '"Consider this a warning, friend. We\'re watching."',
-      '"The Strip has eyes everywhere. Don\'t test us again."',
-      '"One more strike and the Securitrons handle it personally."',
-      '"Toe the line, courier — the NCR keeps ledgers, and so do we."',
-      '"That\'s one mark on your Pip-Boy. Collect enough and you\'re Legion bait."',
+      '"There are eyes everywhere. Don\'t test us again."',
+      '"One more strike and it\'s handled personally."',
+      '"Toe the line — we keep ledgers, and yours has a mark."',
+      '"That\'s one on the record. Collect enough and you\'re done."',
       '"We\'ve got your number, and it\'s climbing. Slow down."',
     ],
     caps:    [
-      '"War never changes. But caps? Caps are forever."',
-      '"The House always collects. Today, it pays."',
-      '"A courier without caps is just a wanderer."',
-      '"In the Mojave, caps are the only truth that matters."',
-      '"Bottle caps: the only currency the Brotherhood can\'t confiscate."',
+      '"Fortunes change. Ledgers remember."',
+      '"The economy always collects. Today, it pays."',
+      '"Wealth is just influence you can count."',
+      '"Every balance tells a story."',
+      '"Currency is the only rumor everyone believes."',
     ],
     system:  [
-      '"All systems nominal. Securitron network active."',
-      '"Maintenance cycle complete. The Strip never sleeps."',
-      '"Mr. House is watching. Always watching."',
-      '"RobCo terminals online. Vault door sealed."',
-      '"Reticulating splines across the Mojave wasteland..."',
+      '"All systems nominal. Monitoring active."',
+      '"Maintenance cycle complete. The server never sleeps."',
+      '"Always watching. Always logging."',
+      '"Terminals online. Perimeter sealed."',
+      '"Reticulating splines..."',
     ],
     wages:   [
-      '"The House always pays its debts — eventually."',
-      '"Caps distributed. The economy of the Mojave endures."',
-      '"A fair day\'s work for a fair day\'s pay. Even in the apocalypse."',
-      '"Payday on the Strip. Don\'t spend it all at the Atomic Wrangler."',
+      '"The house always pays its debts — eventually."',
+      '"Wages distributed. The economy endures."',
+      '"A fair day\'s work for a fair day\'s pay."',
+      '"Payday. Don\'t spend it all in one place."',
     ],
     announce: [
-      '"Attention all couriers on the Strip..."',
-      '"Message from the Mojave Authority..."',
-      '"Broadcast from the Lucky 38..."',
-      '"This is Mr. New Vegas, and boy, do I have news for you..."',
-      '"Radio New Vegas, cutting through the static..."',
+      '"Attention all players..."',
+      '"Message from the administration..."',
+      '"Broadcast from headquarters..."',
+      '"Now hear this — news from the top..."',
+      '"Cutting through the static with an announcement..."',
     ],
     faction: [
-      '"Allegiances in the Mojave are written in blood and caps."',
+      '"Allegiances are written in blood and coin."',
       '"Every faction needs soldiers. Every soldier needs orders."',
-      '"The wasteland belongs to those who organise."',
+      '"The server belongs to those who organise."',
       '"Rank is earned. Loyalty is proven."',
-      '"NCR, Legion, or House — pick your banner and bleed for it."',
+      '"Pick your banner and stand by it."',
     ],
     kick:    [
       '"Get out. Don\'t make us ask twice."',
-      '"Shown the door, courier. Mind the radroaches on your way out."',
-      '"You\'re not welcome at the Tops tonight. Beat it."',
-      '"Ejected. Take a walk down the Long 15 and cool off."',
+      '"Shown the door. Mind the step on your way out."',
+      '"You\'re not welcome tonight. Beat it."',
+      '"Ejected. Take a walk and cool off."',
     ],
     connect: [
-      '"A courier strides into the Mojave."',
-      '"Boots on the Strip. The Securitrons log every arrival."',
-      '"Another wanderer steps off the Long 15."',
-      '"Vault door opens. Someone\'s come to play."',
+      '"A new arrival steps in."',
+      '"Boots on the ground. Every arrival is logged."',
+      '"Another wanderer joins the fray."',
+      '"The doors open. Someone\'s come to play."',
     ],
     autoban: [
-      '"A barred courier tried to slip back into the Mojave. Denied."',
-      '"The Securitrons remember every face. Yours wasn\'t welcome."',
-      '"Ban evasion detected. The House does not tolerate cheats."',
-      '"Nice try. The Mojave has a long memory and a longer reach."',
+      '"A barred player tried to slip back in. Denied."',
+      '"We remember every face. Yours wasn\'t welcome."',
+      '"Ban evasion detected. Cheats are not tolerated."',
+      '"Nice try. Long memory, longer reach."',
     ],
     casino:  [
       '"The house always wins. Eventually."',
-      '"Mr. House built the Tops on losing streaks just like yours."',
-      '"Fortune favors the bold — and the House favors the odds."',
+      '"Casinos are built on losing streaks just like yours."',
+      '"Fortune favors the bold — and the house favors the odds."',
       '"Every chip on this table has a story. Most of them end badly."',
       '"Luck is just another word for a spin no one\'s rigged yet."',
     ],
@@ -129,7 +129,9 @@ module.exports = function createTheme({ getClient, buildId }) {
   // ---- embed builders ----
   const DIVIDER = "────────────────────────────";
   const RULE    = "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌";
-  const BRAND_NAME = "Mojave Authority";
+  // Display name stamped on every embed. Set BOT_NAME in .env to skin the bot
+  // for your RP ("Mojave Authority", "LSPD Command", …). Neutral default.
+  const BRAND_NAME = process.env.BOT_NAME || "Server Authority";
   // One tasteful, monochrome glyph set — status accents on titles, no cartoon emoji.
   const GLYPH = { ok: "✓", bad: "✕", warn: "⚠", deny: "⊘", info: "▸", dot: "•", up: "●", down: "○", caps: "◈", rank: "◆" };
 
@@ -192,7 +194,7 @@ module.exports = function createTheme({ getClient, buildId }) {
   /* A blockquote-styled hero line used at the top of feature embeds. */
   function hero(quoteText) { return `> *${quoteText}*`; }
 
-  /* Ban / IP embeds: stamp them with the full Mojave Authority branding (author
+  /* Ban / IP embeds: stamp them with the full bot branding (author
      header, avatar, timestamp) + an optional footer — same look as everything else. */
   function clinical(embed, footer) {
     return brand(embed, footer ? { footer } : {});
@@ -208,7 +210,7 @@ module.exports = function createTheme({ getClient, buildId }) {
     return brand(new EmbedBuilder().setColor(NV.RUST_RED)
       .setTitle(`${GLYPH.bad}  ${title}`)
       .setDescription(String(description)),
-      { footer: { text: "Incident logged · Securitron network active" } });
+      { footer: { text: "Incident logged · monitoring active" } });
   }
   function warningEmbed(title, description) {
     return brand(new EmbedBuilder().setColor(NV.AMBER)
@@ -233,8 +235,8 @@ module.exports = function createTheme({ getClient, buildId }) {
       "Contact an administrator if you believe this is a mistake");
   }
   function emptyIdEmbed() {
-    return warningEmbed("Courier ID Required",
-      "Enter a valid **Courier ID** or username.\n-# Start typing in the player field — autocomplete surfaces anyone online, and manual IDs work for offline players.");
+    return warningEmbed("Player ID Required",
+      "Enter a valid **Player ID** or username.\n-# Start typing in the player field — autocomplete surfaces anyone online, and manual IDs work for offline players.");
   }
   function rateLimitEmbed() {
     return warningEmbed("Slow Down", "You're issuing commands too quickly — wait a moment and try again.");

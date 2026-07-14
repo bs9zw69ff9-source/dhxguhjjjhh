@@ -1,7 +1,7 @@
 {
-  "name": "mojave-authority-bot",
+  "name": "pavlov-rp-moderation-bot",
   "version": "3.2.2",
-  "description": "Fallout: New Vegas–themed Discord moderation bot for Pavlov VR servers",
+  "description": "Theme-neutral Discord moderation bot for Pavlov VR RP servers",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

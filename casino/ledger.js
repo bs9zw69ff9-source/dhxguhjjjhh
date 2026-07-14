@@ -98,12 +98,12 @@ async function casinoIntake(interaction) {
   }
   const bet = interaction.options.getInteger("bet");
   if (bet < cfg.minBet || bet > cfg.maxBet) {
-    await interaction.reply({ embeds: [errorEmbed("Bad Bet", `Bet must be between **${cfg.minBet.toLocaleString()}** and **${cfg.maxBet.toLocaleString()}** caps.`)], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [errorEmbed("Bad Bet", `Bet must be between **${cfg.minBet.toLocaleString()}** and **${cfg.maxBet.toLocaleString()}** credits.`)], flags: MessageFlags.Ephemeral });
     return null;
   }
   const balance = readPlayerBalance(playerId) ?? 0;
   if (bet > balance) {
-    await interaction.reply({ embeds: [errorEmbed("Insufficient Caps", `You only have **${balance.toLocaleString()}** caps.`)], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [errorEmbed("Insufficient Credits", `You only have **${balance.toLocaleString()}** credits.`)], flags: MessageFlags.Ephemeral });
     return null;
   }
   return { cfg, playerId, bet, balance };

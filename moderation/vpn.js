@@ -178,7 +178,7 @@ async function checkVpnAndAlert(name, ip) {
     .setTitle("Auto-Ban — VPN/Proxy Detected")
     .setDescription(`${hero(randomQuote("autoban"))}`)
     .addFields(
-      { name: "Courier", value: `\`${name}\``, inline: true },
+      { name: "Player", value: `\`${name}\``, inline: true },
       { name: "IP",      value: `\`${ip}\``,   inline: true },
       { name: "Status",  value: label,          inline: false },
       { name: "ISP",         value: result.isp || "unknown",        inline: true },

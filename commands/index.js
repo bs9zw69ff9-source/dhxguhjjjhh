@@ -298,10 +298,10 @@ module.exports = function createCommands(ctx) {
         const embed = new EmbedBuilder().setColor(color)
           .setTitle("Command Roster")
           .setDescription(
-            `> *War never changes — but the rules of the Strip, those we enforce.*\n\n` +
+            `> *War never changes — but the rules of the server, those we enforce.*\n\n` +
             `### ${GLYPH.rank}  Your Access\n${badge}\n` +
             `-# Mod ${mStr}  ${GLYPH.dot}  Admin ${aStr}  ${GLYPH.dot}  Faction ${fStr}\n` +
-            `-# Autocomplete works in every Courier ID and Rank field.`
+            `-# Autocomplete works in every Player ID and Rank field.`
           )
           .addFields(
             { name: "Public",
@@ -315,7 +315,7 @@ module.exports = function createCommands(ctx) {
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
                 "`/unban <id> <server>` — Lift exile",
                 "`/announce <msg> <server> <target>` — RCON Notify a player or All",
-                "`/givecaps <id> <amount> [reason]` — Give caps to a courier",
+                "`/givecaps <id> <amount> [reason]` — Give credits to a player",
                 "`/faction transfer <id> <from> <to> [rank]` — Move player between factions",
               ].join("\n") },
             { name: "Faction Leader",
@@ -385,7 +385,7 @@ module.exports = function createCommands(ctx) {
         const okBy  = ACTIVE_SERVERS.map((s, i) => pings[i].status === "fulfilled" && !!parseRcon(pings[i].value)?.Successful);
         const okCount = okBy.filter(Boolean).length;
         const color = okCount === ACTIVE_SERVERS.length ? NV.IRRAD_GREEN : okCount > 0 ? NV.AMBER : NV.RUST_RED;
-        const headline = okCount === ACTIVE_SERVERS.length ? "All systems nominal — Securitron network active."
+        const headline = okCount === ACTIVE_SERVERS.length ? "All systems nominal — monitoring active."
           : okCount > 0 ? "Partial connectivity — a server is unreachable."
           : "All servers unreachable — check RCON config.";
         const wsPing = Math.max(0, client.ws.ping);
@@ -486,7 +486,7 @@ module.exports = function createCommands(ctx) {
         if (!matches.length) {
           return interaction.editReply({ embeds: [
             brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("No Matches Found")
-              .setDescription(`${hero(`No couriers matching "${query}" are online.`)}\n*Try a shorter search term.*`))
+              .setDescription(`${hero(`No players matching "${query}" are online.`)}\n*Try a shorter search term.*`))
           ]});
         }
         const lines = matches.map((m) => {
@@ -515,7 +515,7 @@ module.exports = function createCommands(ctx) {
           try { await sendRcon(`Kick ${playerId}`, srv, 2500, 1); } catch {}
         }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
-        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Courier Ejected from the Strip")
+        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Ejected from the server")
           .setDescription(`> *${randomQuote("kick")}*\n\n${interaction.user} kicked **${playerId}** from ${serverLabel(server)} — ${reason}`)
           .setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
@@ -553,7 +553,7 @@ module.exports = function createCommands(ctx) {
         enforceBansSweep().catch(() => {});      // player sweep after the punishment
         writeModLog({ action: "mute", playerId, reason, duration: durStr, by: interaction.user.tag });
         const ts = Math.floor(expires / 1000);
-        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Courier Silenced")
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Player Silenced")
           .setDescription(`${interaction.user} muted **${playerId}** for **${durStr}** (expires <t:${ts}:R>) — ${reason}`)
           .setFooter({ text: "Re-gagged every join until it expires — then unmuted on their next join" }).setTimestamp());
         await logAction(embed);
@@ -570,7 +570,7 @@ module.exports = function createCommands(ctx) {
         // incorrectly mute them instead of harmlessly no-op'ing like the old form did.
         if (had) ungagEverywhere(playerId);
         writeModLog({ action: "unmute", playerId, by: interaction.user.tag });
-        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Courier Unsilenced")
+        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Player Unsilenced")
           .setDescription(had ? `${interaction.user} lifted the mute on \`${playerId}\` and ungagged them.` : `\`${playerId}\` had no active mute — nothing to lift.`)
           .setTimestamp());
         await logAction(embed);
@@ -650,7 +650,7 @@ module.exports = function createCommands(ctx) {
         const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a}: ${n}`).join(" · ");
         const lines = matches.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
-          const detail = e.reason ? ` — ${e.reason}` : e.amount ? ` — ${e.amount > 0 ? "+" : ""}${e.amount} caps` : e.faction ? ` — ${e.faction}` : "";
+          const detail = e.reason ? ` — ${e.reason}` : e.amount ? ` — ${e.amount > 0 ? "+" : ""}${e.amount} credits` : e.faction ? ` — ${e.faction}` : "";
           const who    = e.playerId ? ` · ${e.playerId}` : "";
           return `\`${e.action}\`${who}${detail} · <t:${ts}:R>`;
         });
@@ -708,7 +708,7 @@ module.exports = function createCommands(ctx) {
         const sentence = permanent ? "**permanently**" : `for **${label}**`;
         const liftLine = permanent ? "" : `\nLifts <t:${ts}:F> (<t:${ts}:R>)`;
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
-          .setTitle(permanent ? "Permanent Exile Issued" : "Courier Exiled from the Mojave")
+          .setTitle(permanent ? "Permanent Exile Issued" : "Player Exiled from the server")
           .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} banned **${playerId}** from ${serverLabel(server)} ${sentence} — ${reason}${liftLine}`),
           replaced ? `Replaced earlier exile: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
         if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
@@ -756,7 +756,7 @@ module.exports = function createCommands(ctx) {
         const ipLifted = c && (c.ips + c.names) > 0
           ? `Cleared ${c.ips} IP(s) and ${c.names} username flag(s).`
           : "Nothing was flagged for this player.";
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Lifted — Welcome Back to the Strip")
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Lifted — Welcome Back to the server")
           .setDescription(`> *${randomQuote("unban")}*\n\n${interaction.user} pardoned **${playerId}**. ${removed ? "Temp ban record cleared." : "No temp ban record."} ${bl.removed ? `Removed from blacklist.txt on ${bl.removed} install(s).` : "Was not on blacklist.txt."} ${ipLifted}`));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -822,7 +822,7 @@ module.exports = function createCommands(ctx) {
         }
         if (!hits.length) {
           const cleanE = clinical(new EmbedBuilder().setColor(_cbRec?.flagged ? CLIN.grey : CLIN.green).setTitle("No Exile Found")
-            .setDescription(`${hero("This courier walks free.")}\n\`${playerId}\` has no active ban.`));
+            .setDescription(`${hero("This player walks free.")}\n\`${playerId}\` has no active ban.`));
           if (_cbRec?.flagged) cleanE.addFields({ name: "Evasion Watch", value: "Matches an active IP/EOS flag — next join is auto-banned.", inline: false });
           if (isAutobanExempt(playerId)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned — auto-bans will never re-catch this name.", inline: false });
           if (_cbCtx.length) cleanE.addFields(..._cbCtx);
@@ -886,7 +886,7 @@ module.exports = function createCommands(ctx) {
         });
         if (!go) return;
         // Exempt every name FIRST (like /unban) so enforceBansSweep can't re-ban a
-        // courier mid-clear before their record is removed by removeBans() below.
+        // player mid-clear before their record is removed by removeBans() below.
         await update(FILES.AUTOBAN_EXEMPT, {}, (m) => {
           for (const b of bans) m[String(b.playerId).toLowerCase()] = { name: b.playerId, at: Date.now(), by: interaction.user.tag };
           return m;
@@ -911,18 +911,18 @@ module.exports = function createCommands(ctx) {
         // gather every banned name: bot temp bans + blacklist.txt on both installs
         const names = [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()].map(s => String(s).trim()).filter(Boolean))];
         if (!names.length) {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The wasteland is at peace.")}\nNothing to clear — no bans on record.`))] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The server is at peace.")}\nNothing to clear — no bans on record.`))] });
         }
 
         const preview = names.slice(0, 30).map(n => `- \`${n}\``).join("\n") + (names.length > 30 ? `\n...and ${names.length - 30} more` : "");
         const go = await confirmDialog(interaction, {
           title: "Unban EVERYONE?",
-          body: `Removes **${names.length}** courier(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`,
+          body: `Removes **${names.length}** player(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`,
           confirmLabel: `Unban all ${names.length}`,
         });
         if (!go) return;
         // Exempt every name FIRST (like /unban) so enforceBansSweep can't re-ban a
-        // courier mid-clear before their record is removed by removeBans() below.
+        // player mid-clear before their record is removed by removeBans() below.
         await update(FILES.AUTOBAN_EXEMPT, {}, (m) => {
           for (const n of names) m[String(n).toLowerCase()] = { name: n, at: Date.now(), by: interaction.user.tag };
           return m;
@@ -1002,7 +1002,7 @@ module.exports = function createCommands(ctx) {
           if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Donator Added")
-            .setDescription(`> *"A generous soul joins the ranks of the Strip's patrons."*\n\n${interaction.user} added **${playerId}** to the donator file.`)
+            .setDescription(`> *"A generous soul joins the ranks of the server's patrons."*\n\n${interaction.user} added **${playerId}** to the donator file.`)
             .setFooter({ text: DONATOR_FILE }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -1160,7 +1160,7 @@ module.exports = function createCommands(ctx) {
 
         const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
           .setTitle("Mass Menu Revocation")
-          .setDescription(`${hero("Cleared menu access for every courier on both servers.")}\n\`ClearMenuAccess\` · \`ClearAccessManagers\` — **${holders.length}** grant(s) cleared.`)
+          .setDescription(`${hero("Cleared menu access for every player on both servers.")}\n\`ClearMenuAccess\` · \`ClearAccessManagers\` — **${holders.length}** grant(s) cleared.`)
           .setTimestamp());
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -1267,7 +1267,7 @@ module.exports = function createCommands(ctx) {
           .addOptions(
             { label: "Blacklist IP / username", value: "blacklist_ip", description: "Auto-ban anyone matching an IP or username" },
             { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs and usernames" },
-            { label: "View alt accounts",       value: "view_alts",      description: "A courier's known alt accounts (shared IP)" },
+            { label: "View alt accounts",       value: "view_alts",      description: "A player's known alt accounts (shared IP)" },
             { label: "Bar a Discord user",     value: "user_bl_add",    description: "Block a Discord user from ALL bot commands" },
             { label: "Un-bar a Discord user",  value: "user_bl_remove", description: "Restore a Discord user's command access" },
             { label: "List barred Discord users", value: "user_bl_list", description: "Show Discord users barred from commands" },
@@ -1280,7 +1280,7 @@ module.exports = function createCommands(ctx) {
             { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset" },
             { label: "Save faction whitelists", value: "save_factions", description: "Snapshot all faction spawn + rank files" },
             { label: "Load faction whitelists", value: "load_factions", description: "Restore the last snapshot (overwrites current)" },
-            { label: "Wipe ALL money",          value: "wipe_money",    description: "Set every player's caps to 0 (irreversible)" },
+            { label: "Wipe ALL money",          value: "wipe_money",    description: "Set every player's credits to 0 (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Configure — Hidden Commands"));
         await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
@@ -1294,7 +1294,7 @@ module.exports = function createCommands(ctx) {
         // actions that need text input -> open a modal
         if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove", "wipe_money", "load_factions"].includes(choice)) {
           const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user", wipe_money: "Wipe ALL money", load_factions: "Restore faction whitelists" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Courier username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", wipe_money: "Type WIPE to confirm", load_factions: "Type LOAD to confirm" };
+          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Player username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", wipe_money: "Type WIPE to confirm", load_factions: "Type LOAD to confirm" };
           const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
           const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
           await sel.showModal(modal);
@@ -1449,7 +1449,7 @@ module.exports = function createCommands(ctx) {
           const preview = counts.filter(c => c.count).map(c => `- **${c.faction}**: ${c.count} member${c.count !== 1 ? "s" : ""}`).join("\n");
           const go = await confirmDialog(interaction, {
             title: faction ? `Wipe ${faction}'s whitelist?` : "Wipe ALL faction whitelists?",
-            body: `Clears membership and every rank file${faction ? "" : ", for every faction"} — **${total}** courier${total !== 1 ? "s" : ""} total.\nA pre-wipe snapshot of each file is kept in \`${FACTION_BAK_DIR}\`.\n\n${preview}`,
+            body: `Clears membership and every rank file${faction ? "" : ", for every faction"} — **${total}** player${total !== 1 ? "s" : ""} total.\nA pre-wipe snapshot of each file is kept in \`${FACTION_BAK_DIR}\`.\n\n${preview}`,
             confirmLabel: faction ? `Wipe ${faction}` : "Wipe ALL",
           });
           if (!go) return;
@@ -1463,7 +1463,7 @@ module.exports = function createCommands(ctx) {
           writeModLog({ action: "faction-wipe", faction: faction || "ALL", count: wipedMembers, by: interaction.user.tag });
           const embed = successEmbed(
             faction ? `${faction} Whitelist Wiped` : "All Faction Whitelists Wiped",
-            `Cleared **${wipedMembers}** courier${wipedMembers !== 1 ? "s" : ""} across **${wipedFactions}** faction${wipedFactions !== 1 ? "s" : ""}.`);
+            `Cleared **${wipedMembers}** player${wipedMembers !== 1 ? "s" : ""} across **${wipedFactions}** faction${wipedFactions !== 1 ? "s" : ""}.`);
           await logAction(embed);
           return interaction.editReply({ embeds: [embed], components: [], keepEmbeds: true });
         }
@@ -1706,11 +1706,11 @@ module.exports = function createCommands(ctx) {
             return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
               `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
           }
-          // One faction per courier - block if they're already in a different faction.
+          // One faction per player - block if they're already in a different faction.
           const otherFactions = (getPlayerFactions(playerId) || []).filter(f => f !== faction);
           if (otherFactions.length) {
             return interaction.reply({ embeds: [errorEmbed("Already in a Faction",
-              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A courier can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], flags: MessageFlags.Ephemeral });
+              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A player can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], flags: MessageFlags.Ephemeral });
           }
           const lines = readFactionFile(spawn);
           if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], flags: MessageFlags.Ephemeral });
@@ -1866,11 +1866,11 @@ module.exports = function createCommands(ctx) {
         if (!tier.weekly) {
           const current = readPlayerBalance(playerId) ?? 0;
           const newBal  = current + tier.amount;
-          if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", `Could not deposit **${tier.amount} caps** to \`${playerId}\`. Check \`MODSAVE_PATH\`.`)], flags: MessageFlags.Ephemeral });
+          if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", `Could not deposit **${tier.amount} credits** to \`${playerId}\`. Check \`MODSAVE_PATH\`.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "givecaps", playerId, amount: tier.amount, reason: "Mercenary payment", by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Mercenary Payment Issued")
-            .setDescription(`> *"Caps now. No strings attached."*\n\n${interaction.user} paid **${playerId}** **${tier.amount.toLocaleString()} caps** — new balance **${newBal.toLocaleString()} caps**.`)
-            .setFooter({ text: randomQuote("caps") }).setTimestamp();
+            .setDescription(`> *"Credits now. No strings attached."*\n\n${interaction.user} paid **${playerId}** **${tier.amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**.`)
+            .setFooter({ text: randomQuote("credits") }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
@@ -1891,8 +1891,8 @@ module.exports = function createCommands(ctx) {
         wages.push({ playerId, tier: tierKey, addedBy: interaction.user.tag, addedAt: Date.now(), lastPaidAt: null, updatedAt: null, updatedBy: null });
         saveWages(wages);
         const bal = readPlayerBalance(playerId);
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Courier Added to Payroll")
-          .setDescription(`> *"A fair day's work for a fair day's pay."*\n\n${interaction.user} enrolled **${playerId}** as **${tier.label}** (+${tier.amount} caps/week). Balance: ${bal !== null ? `${bal.toLocaleString()} caps` : "*no ledger*"}. First payout within 7 days.`)
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Player Added to Payroll")
+          .setDescription(`> *"A fair day's work for a fair day's pay."*\n\n${interaction.user} enrolled **${playerId}** as **${tier.label}** (+${tier.amount} credits/week). Balance: ${bal !== null ? `${bal.toLocaleString()} credits` : "*no ledger*"}. First payout within 7 days.`)
           .setFooter({ text: randomQuote("wages") }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -1911,7 +1911,7 @@ module.exports = function createCommands(ctx) {
         const tier = WAGE_TIERS[removed.tier];
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Removed from Payroll").setDescription(`${DIVIDER}`)
           .addFields(
-            { name: "Courier",value: `\`${playerId}\``,                                          inline: true },
+            { name: "Player",value: `\`${playerId}\``,                                          inline: true },
             { name: "Was",    value: `${tier?.label ?? removed.tier} (+${tier?.amount ?? "?"}/wk)`, inline: true },
             { name: "By",    value: `${interaction.user}`,                                       inline: true },
             { name: "Note",  value: "Existing balance unchanged. No further weekly payouts.",    inline: false },
@@ -1925,7 +1925,7 @@ module.exports = function createCommands(ctx) {
          ───────────────────────────────────────────────────── */
       case "wagelist": {
         const wages = loadWages().filter(w => WAGE_TIERS[w.tier]?.weekly);
-        if (!wages.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Payroll — Empty").setDescription('> *"No couriers on the books yet."*\n\nUse `/addwage` to enrol someone.').setTimestamp()], flags: MessageFlags.Ephemeral });
+        if (!wages.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Payroll — Empty").setDescription('> *"No players on the books yet."*\n\nUse `/addwage` to enrol someone.').setTimestamp()], flags: MessageFlags.Ephemeral });
         const totalPay = wages.reduce((s, w) => s + (WAGE_TIERS[w.tier]?.amount ?? 0), 0);
         const tierSummary = Object.entries(WAGE_TIERS).filter(([, t]) => t.weekly)
           .map(([k, t]) => { const n = wages.filter(w => w.tier === k).length; return n ? `${t.label}: **${n}**` : null; }).filter(Boolean).join("  ·  ");
@@ -1933,9 +1933,9 @@ module.exports = function createCommands(ctx) {
           const tier  = WAGE_TIERS[w.tier] ?? { label: w.tier, amount: "?" };
           const bal   = readPlayerBalance(w.playerId);
           const next  = w.lastPaidAt ? Math.floor((w.lastPaidAt + WAGE_INTERVAL_MS) / 1000) : null;
-          return `\`${String(i + 1).padStart(2, "0")}\`  **${w.playerId}**  ·  ${tier.label} *(+${tier.amount}/wk)*  ·  ${bal !== null ? `${bal.toLocaleString()} caps` : "*no ledger*"}${next ? `  ·  next <t:${next}:R>` : ""}`;
+          return `\`${String(i + 1).padStart(2, "0")}\`  **${w.playerId}**  ·  ${tier.label} *(+${tier.amount}/wk)*  ·  ${bal !== null ? `${bal.toLocaleString()} credits` : "*no ledger*"}${next ? `  ·  next <t:${next}:R>` : ""}`;
         });
-        const header = `> *"The House always pays its debts."*\n\n${DIVIDER}\n**${wages.length}** enrolled  ·  ${tierSummary}  ·  **${totalPay.toLocaleString()} caps/week total**`;
+        const header = `> *"The House always pays its debts."*\n\n${DIVIDER}\n**${wages.length}** enrolled  ·  ${tierSummary}  ·  **${totalPay.toLocaleString()} credits/week total**`;
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Payroll — The House's Ledger")
             .setDescription(`${header}\n${DIVIDER}\n${pageLines.join("\n")}`)
@@ -1950,16 +1950,16 @@ module.exports = function createCommands(ctx) {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const fp = getPlayerFilePath(playerId);
-        if (!fp) return interaction.reply({ embeds: [errorEmbed("Vault Offline", "`MODSAVE_PATH` not set in `.env`.")], flags: MessageFlags.Ephemeral });
+        if (!fp) return interaction.reply({ embeds: [errorEmbed("Economy Offline", "`MODSAVE_PATH` not set in `.env`.")], flags: MessageFlags.Ephemeral });
         if (!fs.existsSync(fp)) return interaction.reply({ embeds: [warningEmbed("No Ledger Found", `\`${playerId}\` has no ledger yet.\nThey must join the server first, or be assigned a wage with \`/addwage\`.`)], flags: MessageFlags.Ephemeral });
         const balance = readPlayerBalance(playerId);
         if (balance === null) return interaction.reply({ embeds: [errorEmbed("Ledger Corrupted", `Could not parse ledger for \`${playerId}\`.\nPath: \`${fp}\``)], flags: MessageFlags.Ephemeral });
         const wage   = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
         const wTier  = wage ? (WAGE_TIERS[wage.tier] ?? { label: wage.tier, amount: "?", weekly: true }) : null;
         const nextTs = wage?.lastPaidAt ? Math.floor((wage.lastPaidAt + WAGE_INTERVAL_MS) / 1000) : null;
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Courier Ledger")
-          .setDescription(`**${playerId}** has **${balance.toLocaleString()} caps**. ${wTier ? `Payroll: ${wTier.label} (+${wTier.amount}/wk)${nextTs ? `, next <t:${nextTs}:R>` : ""}.` : "Not enrolled in payroll."}`)
-          .setFooter({ text: randomQuote("caps") }).setTimestamp();
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Player Ledger")
+          .setDescription(`**${playerId}** has **${balance.toLocaleString()} credits**. ${wTier ? `Payroll: ${wTier.label} (+${wTier.amount}/wk)${nextTs ? `, next <t:${nextTs}:R>` : ""}.` : "Not enrolled in payroll."}`)
+          .setFooter({ text: randomQuote("credits") }).setTimestamp();
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       }
 
@@ -1975,9 +1975,9 @@ module.exports = function createCommands(ctx) {
         const newBal  = current + amount;
         if (!writePlayerBalance(playerId, newBal)) return interaction.reply({ embeds: [errorEmbed("Ledger Write Failed", "Check `MODSAVE_PATH`.")], flags: MessageFlags.Ephemeral });
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Caps Given")
-          .setDescription(`${interaction.user} gave **${playerId}** **+${amount.toLocaleString()} caps** — new balance **${newBal.toLocaleString()} caps**. ${reason}`)
-          .setFooter({ text: randomQuote("caps") }).setTimestamp();
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Credits Given")
+          .setDescription(`${interaction.user} gave **${playerId}** **+${amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**. ${reason}`)
+          .setFooter({ text: randomQuote("credits") }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
       }
@@ -2000,8 +2000,8 @@ module.exports = function createCommands(ctx) {
         writeModLog({ action: "adjustcaps", playerId, amount, reason, by: interaction.user.tag });
         const pos = amount >= 0;
         const embed = new EmbedBuilder().setColor(pos ? NV.IRRAD_GREEN : NV.RUST_RED)
-          .setTitle(`Caps ${pos ? "Credited" : "Debited"}`)
-          .setDescription(`${interaction.user} ${pos ? "credited" : "debited"} **${playerId}** **${pos ? "+" : ""}${amount.toLocaleString()} caps** — new balance **${newBal.toLocaleString()} caps**. ${reason}`)
+          .setTitle(`Credits ${pos ? "Credited" : "Debited"}`)
+          .setDescription(`${interaction.user} ${pos ? "credited" : "debited"} **${playerId}** **${pos ? "+" : ""}${amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**. ${reason}`)
           .setFooter({ text: "Manual cap adjustment · logged" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
@@ -2029,7 +2029,7 @@ module.exports = function createCommands(ctx) {
           body: `### [ ${reels.map(r => r.emoji).join("  |  ")} ]`,
           bet, balance: newBalance,
           resultLabel: payout ? "Payout" : "Result",
-          resultValue: payout ? `**+${payout.toLocaleString()} caps** (${mult}x)` : "**Lost the wager**",
+          resultValue: payout ? `**+${payout.toLocaleString()} credits** (${mult}x)` : "**Lost the wager**",
         });
         return interaction.reply({ embeds: [embed] });
       }
@@ -2051,7 +2051,7 @@ module.exports = function createCommands(ctx) {
           body: `🪙 The coin lands on **${result === "heads" ? "🦅 Heads" : "🔢 Tails"}**. You called **${call}**.`,
           bet, balance: newBalance,
           resultLabel: win ? "Payout" : "Result",
-          resultValue: win ? `**+${payout.toLocaleString()} caps**` : "**Lost the wager**",
+          resultValue: win ? `**+${payout.toLocaleString()} credits**` : "**Lost the wager**",
         });
         return interaction.reply({ embeds: [embed] });
       }
@@ -2083,7 +2083,7 @@ module.exports = function createCommands(ctx) {
             .addFields(
               { name: "Your Hand",   value: `${formatHand(player)}\nValue: **${playerValue}**`,                     inline: false },
               { name: "Dealer Hand", value: `${formatHand(dealer, reveal ? Infinity : 1)}\nValue: **${dealerValue}**`, inline: false },
-              { name: "Wager",       value: `**${bet.toLocaleString()} caps**`,                                     inline: true },
+              { name: "Wager",       value: `**${bet.toLocaleString()} credits**`,                                     inline: true },
             ).setFooter({ text: footer }));
         };
 
@@ -2105,7 +2105,7 @@ module.exports = function createCommands(ctx) {
             }
             if (btn.customId === "bj_double") {
               const d = await debitCaps(playerId, bet);
-              if (!d.ok) { await btn.update({ embeds: [renderEmbed("Blackjack", "Not enough caps to double — Hit or Stand.", false)], components: [renderRow(true)] }); continue; }
+              if (!d.ok) { await btn.update({ embeds: [renderEmbed("Blackjack", "Not enough credits to double — Hit or Stand.", false)], components: [renderRow(true)] }); continue; }
               bet *= 2;
               player.push(draw());
               if (handValue(player).total > 21) bust = true;
@@ -2135,9 +2135,9 @@ module.exports = function createCommands(ctx) {
         writeModLog({ action: "blackjack", playerId, bet, outcome, payout, by: interaction.user.tag });
 
         const title      = { blackjack: "Blackjack!", win: "You Win", push: "Push", lose: "Dealer Wins" }[outcome];
-        const resultLine = outcome === "push" ? "**Bet refunded**" : payout ? `**+${(payout - bet).toLocaleString()} caps**` : "**Lost the wager**";
+        const resultLine = outcome === "push" ? "**Bet refunded**" : payout ? `**+${(payout - bet).toLocaleString()} credits**` : "**Lost the wager**";
         const finalEmbed = renderEmbed(title, randomQuote("casino"), true);
-        finalEmbed.addFields({ name: "Result", value: resultLine, inline: true }, { name: "Balance", value: `**${newBalance.toLocaleString()} caps**`, inline: true });
+        finalEmbed.addFields({ name: "Result", value: resultLine, inline: true }, { name: "Balance", value: `**${newBalance.toLocaleString()} credits**`, inline: true });
         if (pNatural || dNatural) return interaction.reply({ embeds: [finalEmbed] });
         return interaction.editReply({ embeds: [finalEmbed], components: [] });
       }
@@ -2164,7 +2164,7 @@ module.exports = function createCommands(ctx) {
           body: `### Ball lands on ${ROULETTE_COLOR_EMOJI[result.color]} ${result.landed} (${colorWord})\nYour bet: **${betLabel}**`,
           bet, balance: newBalance,
           resultLabel: result.win ? "Payout" : "Result",
-          resultValue: result.win ? `**+${payout.toLocaleString()} caps** (${result.mult}x)` : "**Lost the wager**",
+          resultValue: result.win ? `**+${payout.toLocaleString()} credits** (${result.mult}x)` : "**Lost the wager**",
         });
         return interaction.reply({ embeds: [embed] });
       }
@@ -2193,7 +2193,7 @@ module.exports = function createCommands(ctx) {
             body: "🐓 You threw your rooster against the house's champion.",
             bet, balance: newBalance,
             resultLabel: win ? "Payout" : "Result",
-            resultValue: win ? `**+${payout.toLocaleString()} caps**` : "**Lost the wager**",
+            resultValue: win ? `**+${payout.toLocaleString()} credits**` : "**Lost the wager**",
           });
           return interaction.reply({ embeds: [embed] });
         }
@@ -2204,7 +2204,7 @@ module.exports = function createCommands(ctx) {
         }
         const oppBalance = readPlayerBalance(oppName) ?? 0;
         if (oppBalance < bet) {
-          return interaction.reply({ embeds: [errorEmbed("Opponent Can't Cover It", `${opponent} doesn't have **${bet.toLocaleString()}** caps.`)], flags: MessageFlags.Ephemeral });
+          return interaction.reply({ embeds: [errorEmbed("Opponent Can't Cover It", `${opponent} doesn't have **${bet.toLocaleString()}** credits.`)], flags: MessageFlags.Ephemeral });
         }
 
         const row = new ActionRowBuilder().addComponents(
@@ -2212,7 +2212,7 @@ module.exports = function createCommands(ctx) {
           new ButtonBuilder().setCustomId("cf_decline").setLabel("Decline").setStyle(ButtonStyle.Secondary),
         );
         await interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`${GAME_ICON.cockfight}  Cockfight Challenge`)
-          .setDescription(`${DIVIDER}\n${interaction.user} challenges ${opponent} to a cockfight for **${bet.toLocaleString()} caps** each.\n${DIVIDER}\n-# Expires in 60s.`))], components: [row] });
+          .setDescription(`${DIVIDER}\n${interaction.user} challenges ${opponent} to a cockfight for **${bet.toLocaleString()} credits** each.\n${DIVIDER}\n-# Expires in 60s.`))], components: [row] });
         const msg = await interaction.fetchReply();
         const accept = await awaitOwnedComponent(msg, opponent.id, Date.now() + 60_000, "This challenge isn't addressed to you.");
         if (!accept) return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle(`${GAME_ICON.cockfight}  Challenge Expired`).setDescription(`${opponent} didn't respond in time.`))], components: [] });
@@ -2226,7 +2226,7 @@ module.exports = function createCommands(ctx) {
         if (!d1.ok || !d2.ok) {
           if (d1.ok) await creditCaps(playerId, bet);
           if (d2.ok) await creditCaps(oppName, bet);
-          return interaction.editReply({ embeds: [errorEmbed("Fight Cancelled", "One of you no longer has enough caps.")], components: [] });
+          return interaction.editReply({ embeds: [errorEmbed("Fight Cancelled", "One of you no longer has enough credits.")], components: [] });
         }
         const challengerWins = Math.random() < 0.5;
         const rake   = Math.ceil(bet * 2 * 0.05);   // 5% house cut of the pot - goes to the jackpot, not nowhere
@@ -2239,9 +2239,9 @@ module.exports = function createCommands(ctx) {
         const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${GAME_ICON.cockfight}  The Fight Is Over`)
           .setDescription(`${DIVIDER}\n🐓 ${winnerMention}'s bird wins the pit!\n${DIVIDER}`)
           .addFields(
-            { name: "Prize Pool",       value: `**${(bet * 2).toLocaleString()} caps**`, inline: true },
-            { name: "House Cut → 🎉 Jackpot", value: `**${rake.toLocaleString()} caps**`,      inline: true },
-            { name: "Winner Takes",     value: `**${prize.toLocaleString()} caps**`,     inline: true },
+            { name: "Prize Pool",       value: `**${(bet * 2).toLocaleString()} credits**`, inline: true },
+            { name: "House Cut → 🎉 Jackpot", value: `**${rake.toLocaleString()} credits**`,      inline: true },
+            { name: "Winner Takes",     value: `**${prize.toLocaleString()} credits**`,     inline: true },
           ).setFooter({ text: randomQuote("casino") }));
         return interaction.editReply({ embeds: [embed], components: [] });
       }
@@ -2260,7 +2260,7 @@ module.exports = function createCommands(ctx) {
         const renderEmbed = (title, footer) => brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`${GAME_ICON.russianroulette}  ${title}`)
           .setDescription(`${DIVIDER}\n🔫 1-in-6 chance each pull. Surviving all six pulls cashes out automatically.\n${DIVIDER}`)
           .addFields(
-            { name: "Wager",              value: `**${bet.toLocaleString()} caps**`, inline: true },
+            { name: "Wager",              value: `**${bet.toLocaleString()} credits**`, inline: true },
             { name: "Pulls Survived",     value: `**${pull}** / ${RUSSIAN_ROULETTE_MULTS.length}`, inline: true },
             { name: "Current Multiplier", value: pull ? `**${RUSSIAN_ROULETTE_MULTS[pull - 1]}x**` : "—", inline: true },
           ).setFooter({ text: footer }));
@@ -2286,9 +2286,9 @@ module.exports = function createCommands(ctx) {
         writeModLog({ action: "russianroulette", playerId, bet, pulls: pull, died, payout, by: interaction.user.tag });
 
         const title      = died ? "💥 BANG." : pull === 0 ? "Walked Away" : "Cashed Out";
-        const resultLine = died ? "**Lost the wager**" : payout > bet ? `**+${(payout - bet).toLocaleString()} caps**` : "**Bet refunded**";
+        const resultLine = died ? "**Lost the wager**" : payout > bet ? `**+${(payout - bet).toLocaleString()} credits**` : "**Bet refunded**";
         const finalEmbed = renderEmbed(title, randomQuote("casino"));
-        finalEmbed.addFields({ name: "Result", value: resultLine, inline: true }, { name: "Balance", value: `**${newBalance.toLocaleString()} caps**`, inline: true });
+        finalEmbed.addFields({ name: "Result", value: resultLine, inline: true }, { name: "Balance", value: `**${newBalance.toLocaleString()} credits**`, inline: true });
         return interaction.editReply({ embeds: [finalEmbed], components: [] });
       }
 
@@ -2310,7 +2310,7 @@ module.exports = function createCommands(ctx) {
         }
         const balance = readPlayerBalance(playerId) ?? 0;
         if (balance < JACKPOT_MIN_BALANCE) {
-          return interaction.reply({ embeds: [errorEmbed("Not Enough Caps", `You need at least **${JACKPOT_MIN_BALANCE.toLocaleString()}** caps to shoot for the jackpot. You have **${balance.toLocaleString()}**.`)], flags: MessageFlags.Ephemeral });
+          return interaction.reply({ embeds: [errorEmbed("Not Enough Credits", `You need at least **${JACKPOT_MIN_BALANCE.toLocaleString()}** credits to shoot for the jackpot. You have **${balance.toLocaleString()}**.`)], flags: MessageFlags.Ephemeral });
         }
         const pot = currentPot();
         if (pot <= 0) {
@@ -2319,7 +2319,7 @@ module.exports = function createCommands(ctx) {
 
         const go = await confirmDialog(interaction, {
           title: "Bet your ENTIRE bank on the jackpot?",
-          body: `You have **${balance.toLocaleString()}** caps. Win, and you take the **${pot.toLocaleString()}**-cap pot plus your bet back. Lose, and your entire balance goes into the pot for the next challenger.\n\nWin chance: **${Math.round(JACKPOT_WIN_CHANCE * 100)}%**`,
+          body: `You have **${balance.toLocaleString()}** credits. Win, and you take the **${pot.toLocaleString()}**-cap pot plus your bet back. Lose, and your entire balance goes into the pot for the next challenger.\n\nWin chance: **${Math.round(JACKPOT_WIN_CHANCE * 100)}%**`,
           confirmLabel: "Bet it all",
         });
         if (!go) return;
@@ -2340,9 +2340,9 @@ module.exports = function createCommands(ctx) {
           const embed = brand(new EmbedBuilder().setColor(NV.GOLD).setTitle(`${GAME_ICON.jackpot}  JACKPOT!`)
             .setDescription(`${DIVIDER}\n${interaction.user} just won the entire pot!\n${DIVIDER}`)
             .addFields(
-              { name: "Wagered",     value: `**${wager.toLocaleString()} caps**`,     inline: true },
-              { name: "Pot Won",     value: `**${won.toLocaleString()} caps**`,       inline: true },
-              { name: "New Balance", value: `**${newBalance.toLocaleString()} caps**`, inline: true },
+              { name: "Wagered",     value: `**${wager.toLocaleString()} credits**`,     inline: true },
+              { name: "Pot Won",     value: `**${won.toLocaleString()} credits**`,       inline: true },
+              { name: "New Balance", value: `**${newBalance.toLocaleString()} credits**`, inline: true },
             ).setFooter({ text: randomQuote("casino") }));
           await logAction(embed);
           return interaction.editReply({ embeds: [embed], components: [] });
@@ -2353,11 +2353,11 @@ module.exports = function createCommands(ctx) {
         const newPot = currentPot();
         writeModLog({ action: "jackpot-lose", playerId, wager, by: interaction.user.tag });
         const embed = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`${GAME_ICON.jackpot}  Busted`)
-          .setDescription(`${DIVIDER}\nThe house takes it all. Your **${wager.toLocaleString()}** caps are added to the pot.\n${DIVIDER}`)
+          .setDescription(`${DIVIDER}\nThe house takes it all. Your **${wager.toLocaleString()}** credits are added to the pot.\n${DIVIDER}`)
           .addFields(
-            { name: "Lost",    value: `**${wager.toLocaleString()} caps**`, inline: true },
-            { name: "New Pot", value: `**${newPot.toLocaleString()} caps**`, inline: true },
-            { name: "Balance", value: `**${newBalance.toLocaleString()} caps**`, inline: true },
+            { name: "Lost",    value: `**${wager.toLocaleString()} credits**`, inline: true },
+            { name: "New Pot", value: `**${newPot.toLocaleString()} credits**`, inline: true },
+            { name: "Balance", value: `**${newBalance.toLocaleString()} credits**`, inline: true },
           ).setFooter({ text: randomQuote("casino") }));
         return interaction.editReply({ embeds: [embed], components: [] });
       }
@@ -2370,11 +2370,11 @@ module.exports = function createCommands(ctx) {
             .setDescription(`${DIVIDER}`)
             .addFields(
               { name: "Status",     value: cfg.enabled ? "**Open**" : "**Closed**",              inline: true },
-              { name: "Min Bet",    value: `**${cfg.minBet.toLocaleString()}** caps`,             inline: true },
-              { name: "Max Bet",    value: `**${cfg.maxBet.toLocaleString()}** caps`,             inline: true },
+              { name: "Min Bet",    value: `**${cfg.minBet.toLocaleString()}** credits`,             inline: true },
+              { name: "Max Bet",    value: `**${cfg.maxBet.toLocaleString()}** credits`,             inline: true },
               { name: "Cooldown",   value: `**${(cfg.cooldownMs / 1000).toFixed(1)}s** between gambles`, inline: true },
               { name: "Gamble Cap", value: `**${GAMBLE_QUOTA_MAX}** per **${GAMBLE_QUOTA_WINDOW_MS / 3_600_000}h**`, inline: true },
-              { name: "🎉 Jackpot Pot", value: `**${currentPot().toLocaleString()}** caps`,       inline: true },
+              { name: "🎉 Jackpot Pot", value: `**${currentPot().toLocaleString()}** credits`,       inline: true },
             ));
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
@@ -2392,7 +2392,7 @@ module.exports = function createCommands(ctx) {
           if (min > max) return interaction.reply({ embeds: [errorEmbed("Invalid Limits", "Min bet can't exceed max bet.")], flags: MessageFlags.Ephemeral });
           saveCasinoConfig({ ...cfg, minBet: min, maxBet: max });
           writeModLog({ action: "casino-setlimits", min, max, by: interaction.user.tag });
-          const embed = successEmbed("Casino Updated", `Bet range set to **${min.toLocaleString()}**–**${max.toLocaleString()}** caps.`);
+          const embed = successEmbed("Casino Updated", `Bet range set to **${min.toLocaleString()}**–**${max.toLocaleString()}** credits.`);
           await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
@@ -2424,7 +2424,7 @@ module.exports = function createCommands(ctx) {
         const lines = top.map((e, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${e.name}**  ·  ${e.kills}/${e.deaths}  ·  **${e.ratio.toFixed(2)}** K/D`);
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.AMBER).setTitle("K/D Leaderboard")
-            .setDescription(`> *"Only the deadliest walk the Strip."*\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setDescription(`> *"Only the deadliest walk the server."*\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Sorted by K/D ratio" }), { perPage: 20 });
       }
 
@@ -2568,10 +2568,10 @@ module.exports = function createCommands(ctx) {
         let ipRec = null; try { ipRec = ipBans.getRecord(playerId); } catch {}
 
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`Courier Dossier — ${playerId}`)
+          .setTitle(`Player Dossier — ${playerId}`)
           .setDescription(
-            tb ? hero(tb.permanent || !tb.expires ? "Permanently exiled from the Mojave." : `Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
-            online ? hero("Currently active on the Strip.") :
+            tb ? hero(tb.permanent || !tb.expires ? "Permanently exiled from the server." : `Currently serving exile — ${formatTimeLeft(tb.expires)} remaining.`) :
+            online ? hero("Currently active on the server.") :
             hero("Offline — last tracked playtime shown.")
           )
           .addFields(
@@ -2586,7 +2586,7 @@ module.exports = function createCommands(ctx) {
           );
 
         if (balance !== null) {
-          embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} caps**${wTier ? `  ·  Payroll: ${wTier.label} (+${wTier.amount}/wk)` : "  ·  Not on payroll"}`, inline: false });
+          embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} credits**${wTier ? `  ·  Payroll: ${wTier.label} (+${wTier.amount}/wk)` : "  ·  Not on payroll"}`, inline: false });
         }
         if (tb) {
           embed.addFields({ name: "Active Exile", value: tb.permanent || !tb.expires

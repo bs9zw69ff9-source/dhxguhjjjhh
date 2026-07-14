@@ -1,4 +1,4 @@
-// Mojave Authority - our Pavlov VR moderation bot for the New Vegas RP servers.
+// Pavlov VR moderation bot for RP servers (theme-neutral; skin via BOT_NAME).
 // (c) 2026 bs9zw69ff9-source. Private project, please don't redistribute.
 require("dotenv").config();
 const fs     = require("fs");
@@ -264,7 +264,7 @@ function getPlayerHistory(playerId) {
   return _modLogIndexCache.get(playerId.toLowerCase()) ?? [];
 }
 
-// ---- player notes  (freeform staff notes on any courier - serialized) ----
+// ---- player notes  (freeform staff notes on any player - serialized) ----
 
 // ---- last-seen tracking  (updated from the player-cache refresh loop) ----
 function recordLastSeen(names, now = Date.now()) {
@@ -832,7 +832,7 @@ function syncPlayerLedger(name, pathsOverride = null) {
     if (wouldWipeBalance(content, p)) continue; // same 0-wipe guard as the blanket sync
     if (atomicCopyPreservingMtime(p, content, newest.mtime)) synced++;
   }
-  if (synced) logger.info("Sync", `Caps ledger for ${name} → ${synced} install(s)`);
+  if (synced) logger.info("Sync", `Credits ledger for ${name} → ${synced} install(s)`);
   return synced;
 }
 
@@ -1010,7 +1010,7 @@ function healTreeOwnership() {
   } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
 }
 
-// ---- fallout: new vegas theme + visual system + embed builders ----
+// ---- visual theme + embed builders (RP-neutral) ----
 // Extracted to ./discord/theme.js. getClient is lazy so this module loads before
 // the Discord client exists; the avatar/version footer resolve at send time.
 const {
@@ -1320,9 +1320,9 @@ function preserveBalanceAcrossKick(name) {
         // caps a rejoining player legitimately spent within the 25s window.
         if (after == null || after === 0) {
           writePlayerBalance(name, before);
-          logger.info("Caps", `Restored ${name}'s caps after kick: ${after ?? "missing"} -> ${before}`);
+          logger.info("Credits", `Restored ${name}'s credits after kick: ${after ?? "missing"} -> ${before}`);
         }
-      } catch (e) { logger.warn("Caps", `balance restore failed for ${name}: ${e.message}`); }
+      } catch (e) { logger.warn("Credits", `balance restore failed for ${name}: ${e.message}`); }
     }, delay);
   }
 }
@@ -1983,9 +1983,9 @@ function casinoResultEmbed({ icon, title, color, body, bet, resultLabel, resultV
   return brand(new EmbedBuilder().setColor(color).setTitle(`${icon}  ${title}`)
     .setDescription(`${DIVIDER}\n${body}\n${DIVIDER}`)
     .addFields(
-      { name: "Wager",     value: `**${bet.toLocaleString()} caps**`,     inline: true },
+      { name: "Wager",     value: `**${bet.toLocaleString()} credits**`,     inline: true },
       { name: resultLabel, value: resultValue,                            inline: true },
-      { name: "Balance",   value: `**${balance.toLocaleString()} caps**`, inline: true },
+      { name: "Balance",   value: `**${balance.toLocaleString()} credits**`, inline: true },
     ).setFooter({ text: randomQuote("casino") }).setTimestamp());
 }
 
@@ -2099,8 +2099,8 @@ async function processExpiredBans() {
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
       await logBan(
-        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Sentence Served — Courier Released")
-          .setDescription(`> *"Every soul deserves a second chance in the Mojave."*\n\n**${ban.playerId}** served **${ban.durationLabel ?? "Unknown"}** for ${ban.reason} — originally banned by ${ban.moderator}.`),
+        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Sentence Served — Player Released")
+          .setDescription(`> *"Every soul deserves a second chance in the server."*\n\n**${ban.playerId}** served **${ban.durationLabel ?? "Unknown"}** for ${ban.reason} — originally banned by ${ban.moderator}.`),
           "Exile expired — access restored automatically")
       );
     } catch (err) {
@@ -2146,7 +2146,7 @@ async function processWagePayout() {
   logger.info("Wages", `Payout: ${results.paid.length} paid, ${results.skipped.length} skipped, ${results.failed.length} failed`);
   if (!results.paid.length && !results.failed.length) return;
   const lines = [
-    ...results.paid.map(r   => `\`${r.playerId}\`  ·  **${r.tier}**  →  **${r.newBal.toLocaleString()} caps** *(+${r.amount})*`),
+    ...results.paid.map(r   => `\`${r.playerId}\`  ·  **${r.tier}**  →  **${r.newBal.toLocaleString()} credits** *(+${r.amount})*`),
     ...results.failed.map(r => `\`${r.playerId}\`  ·  **${r.tier}**  —  *ledger write failed*`),
   ];
   const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Wages Disbursed")
@@ -2211,7 +2211,7 @@ async function ensureMenuPanel() {
   const saved = safeRead(FILES.MENU_PANEL, {});
   if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("RCON Menu Access")
-    .setDescription(`${hero("Tools for those the NCR trusts.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
+    .setDescription(`${hero("Tools for trusted staff.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("menu_start").setLabel("Get Menu").setStyle(ButtonStyle.Success));
   try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
@@ -2478,19 +2478,19 @@ const commands = [
     .setDescription("Search for a player by partial name across both servers")
     .addStringOption(o => o.setName("name").setDescription("Partial or full player name").setRequired(true)),
   new SlashCommandBuilder().setName("kick")
-    .setDescription("Eject a courier from the server")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .setDescription("Eject a player from the server")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Reason for ejection"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("mute")
-    .setDescription("In-game mute (gag) a courier for a set time — re-applied every join until it expires")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .setDescription("In-game mute (gag) a player for a set time — re-applied every join until it expires")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("duration").setDescription("How long — e.g. 30s, 10m, 2h, 1d").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for the mute")),
   new SlashCommandBuilder().setName("unmute")
-    .setDescription("Lift a courier's in-game mute now")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+    .setDescription("Lift a player's in-game mute now")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("flush")
     .setDescription("Randomly kick one online player from a server")
     .addStringOption(serverOption),
@@ -2498,25 +2498,25 @@ const commands = [
     .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
   new SlashCommandBuilder().setName("tempban")
-    .setDescription("Ban a courier — the punishment sets the duration (Hard R = permanent; Other = custom date)")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true))
+    .setDescription("Ban a player — the punishment sets the duration (Hard R = permanent; Other = custom date)")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("reason").setDescription("Punishment — sets the ban length automatically").setRequired(true).addChoices(...PUNISH_CHOICES))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("date").setDescription("Only for 'Other': unban date YYYY-MM-DD (lifts 12pm Eastern that day)").setRequired(false))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("unban")
-    .setDescription("Lift a courier's exile")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID to pardon").setRequired(true).setAutocomplete(true))
+    .setDescription("Lift a player's exile")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID to pardon").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("checkban")
-    .setDescription("Check if a courier is currently exiled")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .setDescription("Check if a player is currently exiled")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("banlist")
     .setDescription("List all active bans"),
   new SlashCommandBuilder().setName("permban")
-    .setDescription("Admin — Permanently exile a courier")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .setDescription("Admin — Permanently exile a player")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...PUNISH_CHOICES))
     .addStringOption(o => o.setName("notes").setDescription("Additional context"))
@@ -2526,10 +2526,10 @@ const commands = [
     .setDescription("Admin — Manage the donator whitelist file")
     .addSubcommand(s => s.setName("add")
       .setDescription("Add a player to the donator file")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("remove")
       .setDescription("Remove a player from the donator file")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all players in the donator file")),
   new SlashCommandBuilder().setName("setroles")
@@ -2541,16 +2541,16 @@ const commands = [
     .setDescription("Mod — Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("target").setDescription("Who to notify: a specific courier, or All").setRequired(true).setAutocomplete(true)),
+    .addStringOption(o => o.setName("target").setDescription("Who to notify: a specific player, or All").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("givemenu")
-    .setDescription("Admin — Grant RCON menu access to a courier")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .setDescription("Admin — Grant RCON menu access to a player")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("menu").setDescription("Menu to grant").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("stripmenu")
-    .setDescription("Admin — Revoke ALL RCON menu access from a courier")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .setDescription("Admin — Revoke ALL RCON menu access from a player")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("stripmenuall")
     .setDescription("Owner — Clear ALL menu access from every player (both servers)"),
@@ -2580,24 +2580,24 @@ const commands = [
     .setDescription("Manage faction whitelists, ranks, and rosters")
     .addSubcommand(s => s.setName("add")
       .setDescription("Add a player to a faction whitelist")
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("rank").setDescription("Starting rank (faction-specific, default is lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("remove")
       .setDescription("Remove a player from a faction whitelist")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("rank")
       .setDescription("Faction Leader — Add or remove a rank for a member (a member can hold several)")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the faction first)").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("rank").setDescription("Rank to add (faction-specific)").setRequired(true).setAutocomplete(true))
       .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
     .addSubcommand(s => s.setName("transfer")
       .setDescription("Mod — Transfer a player from one faction to another")
       .addStringOption(o => o.setName("from_faction").setDescription("Current faction").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("to_faction").setDescription("Destination faction").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Courier ID (pick the current faction first)").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the current faction first)").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("rank").setDescription("Rank in new faction (default: lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a faction with their ranks")
@@ -2634,40 +2634,40 @@ const commands = [
     .addSubcommand(s => s.setName("off").setDescription("Turn off the scheduled map rotation"))
     .addSubcommand(s => s.setName("status").setDescription("Show the current rotation schedule")),
   new SlashCommandBuilder().setName("addwage")
-    .setDescription("Enrol a courier in payroll or issue a one-time mercenary payment")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
+    .setDescription("Enrol a player in payroll or issue a one-time mercenary payment")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("tier").setDescription("Payment tier").setRequired(true)
       .addChoices(
-        { name: "Low Rank  — 400 caps/week",       value: "low_rank"  },
-        { name: "Mid Rank  — 500 caps/week",       value: "mid_rank"  },
-        { name: "High Rank — 650 caps/week",       value: "high_rank" },
-        { name: "Mercenary — 200 caps (one-time)", value: "mercenary" }
+        { name: "Low Rank  — 400 credits/week",       value: "low_rank"  },
+        { name: "Mid Rank  — 500 credits/week",       value: "mid_rank"  },
+        { name: "High Rank — 650 credits/week",       value: "high_rank" },
+        { name: "Mercenary — 200 credits (one-time)", value: "mercenary" }
       )),
   new SlashCommandBuilder().setName("removewage")
-    .setDescription("Remove a courier from the weekly payroll")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder().setName("wagelist").setDescription("View all couriers on the weekly payroll"),
+    .setDescription("Remove a player from the weekly payroll")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("wagelist").setDescription("View all players on the weekly payroll"),
   new SlashCommandBuilder().setName("checkbalance")
-    .setDescription("Check a courier's caps balance")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+    .setDescription("Check a player's credits balance")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("givecaps")
-    .setDescription("Give caps to a courier (faction leader / mod command)")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Caps to give").setRequired(true).setMinValue(1).setMaxValue(10000))
+    .setDescription("Give credits to a player (faction leader / mod command)")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("amount").setDescription("Credits to give").setRequired(true).setMinValue(1).setMaxValue(10000))
     .addStringOption(o => o.setName("reason").setDescription("Reason (shown in logs)")),
   new SlashCommandBuilder().setName("adjustcaps")
-    .setDescription("Admin — Manually add or subtract caps from a courier's ledger")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Caps to add (positive) or subtract (negative)").setRequired(true))
+    .setDescription("Admin — Manually add or subtract credits from a player's ledger")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
+    .addIntegerOption(o => o.setName("amount").setDescription("Credits to add (positive) or subtract (negative)").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for adjustment (logged)")),
   new SlashCommandBuilder().setName("stats")
-    .setDescription("Courier dossier: playtime, factions, balance, and mod history")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID").setRequired(true).setAutocomplete(true)),
+    .setDescription("Player dossier: playtime, factions, balance, and mod history")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
   // requires a non-empty description — a zero-width one gets the whole PUT rejected.
   new SlashCommandBuilder().setName("inspect")
-    .setDescription("Owner: full record for a courier — IPs, VPN checks, alts, flags")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier ID or username").setRequired(true).setAutocomplete(true)),
+    .setDescription("Owner: full record for a player — IPs, VPN checks, alts, flags")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)),
   // Owner-only manual OS-firewall (ufw) control — block/unblock an IP by hand,
   // independent of any ban. Gated in the handler; requires UFW_BLOCK=1.
   new SlashCommandBuilder().setName("firewall")
@@ -2679,23 +2679,23 @@ const commands = [
       .setDescription("Remove a firewall block for an IP — sudo ufw delete <rule>")
       .addStringOption(o => o.setName("ip").setDescription("IPv4 address to unblock").setRequired(true))),
   new SlashCommandBuilder().setName("kd")
-    .setDescription("Kill/death stats — a courier's K/D, or the leaderboard")
-    .addStringOption(o => o.setName("playerid").setDescription("Courier (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
+    .setDescription("Kill/death stats — a player's K/D, or the leaderboard")
+    .addStringOption(o => o.setName("playerid").setDescription("Player (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
   /* ── CASINO ─────────────────────────────────────────── */
   new SlashCommandBuilder().setName("slots")
-    .setDescription("Pull the slot machine — wager caps for a shot at the jackpot")
-    .addIntegerOption(o => o.setName("bet").setDescription("Caps to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
+    .setDescription("Pull the slot machine — wager credits for a shot at the jackpot")
+    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
   new SlashCommandBuilder().setName("coinflip")
     .setDescription("Call it — heads or tails, double or nothing")
-    .addIntegerOption(o => o.setName("bet").setDescription("Caps to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
+    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
     .addStringOption(o => o.setName("call").setDescription("Your call").setRequired(true)
       .addChoices({ name: "Heads", value: "heads" }, { name: "Tails", value: "tails" })),
   new SlashCommandBuilder().setName("blackjack")
     .setDescription("Play a hand of blackjack against the dealer")
-    .addIntegerOption(o => o.setName("bet").setDescription("Caps to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
+    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
   new SlashCommandBuilder().setName("roulette")
     .setDescription("Place a bet on the wheel")
-    .addIntegerOption(o => o.setName("bet").setDescription("Caps to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
+    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
     .addStringOption(o => o.setName("space").setDescription("Outside bet (ignored if a number is given)")
       .addChoices(
         { name: "Red (2x)",            value: "red"    },
@@ -2710,14 +2710,14 @@ const commands = [
       ))
     .addIntegerOption(o => o.setName("number").setDescription("Straight-up bet on a single number 0-36 (36x, overrides space)").setMinValue(0).setMaxValue(36)),
   new SlashCommandBuilder().setName("cockfight")
-    .setDescription("Wager caps on a duel — challenge another courier, or the house")
-    .addIntegerOption(o => o.setName("bet").setDescription("Caps to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
-    .addUserOption(o => o.setName("opponent").setDescription("Challenge this courier instead of the house")),
+    .setDescription("Wager credits on a duel — challenge another player, or the house")
+    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
+    .addUserOption(o => o.setName("opponent").setDescription("Challenge this player instead of the house")),
   new SlashCommandBuilder().setName("russianroulette")
     .setDescription("Push your luck — pull the trigger for a rising multiplier, or cash out")
-    .addIntegerOption(o => o.setName("bet").setDescription("Caps to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
+    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
   new SlashCommandBuilder().setName("jackpot")
-    .setDescription(`Bet your ENTIRE balance for a shot at the casino jackpot (min ${JACKPOT_MIN_BALANCE.toLocaleString()} caps)`),
+    .setDescription(`Bet your ENTIRE balance for a shot at the casino jackpot (min ${JACKPOT_MIN_BALANCE.toLocaleString()} credits)`),
   new SlashCommandBuilder().setName("casino")
     .setDescription("Admin — Configure the casino")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
