@@ -48,6 +48,15 @@ const commands = [
   new SlashCommandBuilder().setName("staffactivity")
     .setDescription("Admin — All moderation actions taken by a staff member")
     .addUserOption(o => o.setName("staff").setDescription("Staff member to audit").setRequired(true)),
+  new SlashCommandBuilder().setName("staffleaderboard")
+    .setDescription("Admin — Rank staff by moderation actions taken")
+    .addStringOption(o => o.setName("period").setDescription("Time window (default: all time)")
+      .addChoices(
+        { name: "All time",     value: "all" },
+        { name: "Last 30 days", value: "30d" },
+        { name: "Last 7 days",  value: "7d" },
+        { name: "Last 24 hours", value: "24h" },
+      )),
   new SlashCommandBuilder().setName("tempban")
     .setDescription("Ban a player — the punishment sets the duration (Hard R = permanent; Other = custom date)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))

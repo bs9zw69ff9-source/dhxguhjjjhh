@@ -218,7 +218,7 @@ module.exports = function createCommands(ctx) {
                            "slots", "coinflip", "blackjack", "roulette", "cockfight", "russianroulette", "jackpot"];
   const MOD_COMMANDS   = ["kick", "flush", "tempban", "unban", "mute", "unmute", "announce", "givecaps"];
   const FL_COMMANDS    = ["addwage", "removewage", "faction"];
-  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "casino"];
+  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "staffleaderboard", "casino"];
 
   const name = interaction.commandName;
 

@@ -4,7 +4,7 @@
 module.exports = (ctx) => {
   const {
   BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES,
-  IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE,
+  IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
   addAutobanExempt, banWithIp, blacklistHas, brand, checkVpn, clearMute,
   clinical, confirmDialog, discordIdForPavlov, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
   easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallField,
@@ -181,6 +181,49 @@ module.exports = (ctx) => {
             .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log" }).setTimestamp(),
           { perPage: 12, ephemeral: true });
+        },
+
+  /* ─────────────────────────────────────────────────────
+         STAFFLEADERBOARD — rank staff by moderation actions
+         ───────────────────────────────────────────────────── */
+  "staffleaderboard": async (interaction, name) => {
+        const period = interaction.options.getString("period") || "all";
+        const windowMs = { "24h": 86_400_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 }[period] || 0;
+        const cutoff = windowMs ? Date.now() - windowMs : 0;
+        const label  = { "24h": "last 24 hours", "7d": "last 7 days", "30d": "last 30 days" }[period] || "all time";
+        // Only human staff — skip automated actors (VPN auto-ban, expiry sweep, system, IP-Guard).
+        const AUTO = /^(vpn detection|system|auto|ip-?guard|sentence served|\(auto\))/i;
+        const tally = new Map();   // by -> { total, actions: {} }
+        for (const e of loadModLog()) {
+          if (cutoff && (e.at || 0) < cutoff) continue;
+          const by = String(e.by ?? "").trim();
+          if (!by || AUTO.test(by)) continue;
+          if (!tally.has(by)) tally.set(by, { total: 0, actions: {} });
+          const t = tally.get(by);
+          t.total++;
+          t.actions[e.action] = (t.actions[e.action] || 0) + 1;
+        }
+        const ranked = [...tally.entries()].sort((a, b) => b[1].total - a[1].total);
+        if (!ranked.length) {
+          return interaction.reply({ embeds: [
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Leaderboard — No Activity")
+              .setDescription(`No staff moderation actions on record for the **${label}**.`).setTimestamp()
+          ], flags: MessageFlags.Ephemeral });
+        }
+        const grand = ranked.reduce((s, [, t]) => s + t.total, 0);
+        const topN  = ranked.slice(0, 15);
+        const max   = topN[0][1].total || 1;
+        const lines = topN.map(([by, t], i) => {
+          const marker  = `\`${i < 3 ? "◆" : "#"}${String(i + 1).padStart(2)}\``;
+          const meter   = i < 5 ? `  \`${bar(t.total, max, 8)}\`` : "";
+          const top3    = Object.entries(t.actions).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([a, n]) => `${a} ${n}`).join(", ");
+          return `${marker}  **${by}**  ·  **${t.total}** action${t.total !== 1 ? "s" : ""}${meter}\n-# ${top3}`;
+        });
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER)
+          .setTitle(`Staff Leaderboard — ${label.replace(/^\w/, c => c.toUpperCase())}`)
+          .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${DIVIDER}\n${lines.join("\n")}`)
+          .setFooter({ text: "Mod log · automated actions excluded" }).setTimestamp());
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
 
   /* ─────────────────────────────────────────────────────
