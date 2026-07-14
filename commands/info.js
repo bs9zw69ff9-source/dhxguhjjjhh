@@ -12,6 +12,7 @@ module.exports = (ctx) => {
   ipBans, isDonator, loadBans, loadPlaytime, loadRoles, loadWages,
   log, paginate, parseRcon, playerCache, readPlayerBalance, refreshPlayerCache,
   sanitizeId, sendRcon, serverLabel, spawn, update,
+  ACTIVE_SERVERS,
   } = ctx;
 
   return {

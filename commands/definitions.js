@@ -4,6 +4,7 @@
 module.exports = function(ctx) {
   const {
   ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, JACKPOT_MIN_BALANCE, PermissionFlagsBits, SlashCommandBuilder,
+  PUNISH_CHOICES, MENUS,
   } = ctx;
 
 // ---- slash command definitions ----

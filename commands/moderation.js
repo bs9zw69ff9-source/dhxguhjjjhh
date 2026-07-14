@@ -16,6 +16,7 @@ module.exports = (ctx) => {
   sanitizeId, sendRcon, serverLabel, setMute, successEmbed, suspendDonator,
   unbanEverywhere, ungagEverywhere, update, upsertPermBan, upsertTempBan, warningEmbed,
   writeModLog,
+  blacklistAll, ACTIVE_SERVERS,
   } = ctx;
 
   return {

@@ -14,6 +14,7 @@ module.exports = function(ctx) {
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
+  MASTER_NAMES,
   } = ctx;
 
 // ---- ready ----

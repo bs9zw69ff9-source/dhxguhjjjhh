@@ -15,6 +15,7 @@ module.exports = (ctx) => {
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel, setAutoRotate,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,
   wipeAllMoney, writeModLog,
+  BLACKLIST_IDS,
   } = ctx;
 
   return {

@@ -9,6 +9,7 @@ module.exports = function(ctx) {
   fs, getModsavePath, hero, loadPlaytime, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
+  playerCache,
   } = ctx;
 
 // ---- leaderboard ----

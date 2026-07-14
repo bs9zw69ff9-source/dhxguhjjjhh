@@ -2153,6 +2153,7 @@ const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildP
   fs, getModsavePath, hero, loadPlaytime, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
+  playerCache,
 });
 
 /* Find the Discord user to DM for a Pavlov username, by matching the guild member
@@ -2448,6 +2449,7 @@ function autoBackupFactions() {
 // ---- commands/definitions: every slash-command builder (registration payload) (extracted to ./commands/definitions) ----
 const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./commands/definitions")({
   ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, JACKPOT_MIN_BALANCE, PermissionFlagsBits, SlashCommandBuilder,
+  PUNISH_CHOICES, MENUS,
 });
 
 // ---- events: clientReady handler + ipBans join/leave/kill/auto-ban callbacks (extracted to ./events) ----
@@ -2463,6 +2465,7 @@ const {  } = require("./events")({
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
+  MASTER_NAMES,
 });
 
 // ---- graceful shutdown ----
@@ -2521,6 +2524,7 @@ const { onInteraction } = require("./commands")({
   successEmbed, suspendDonator, textify, unbanEverywhere, ungagEverywhere, update,
   upsertPermBan, upsertTempBan, warningEmbed, wipeAllMoney, wipeFaction, writeFactionAudit,
   writeFactionFile, writeModLog, writePlayerBalance,
+  blacklistAll,
 });
 
 client.on("interactionCreate", onInteraction);
