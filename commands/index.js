@@ -31,7 +31,7 @@ module.exports = function createCommands(ctx) {
   getFactionRankOrder, getLastSeen, getMute, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handValue, handleMenuPanelSubmit, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt, isBlackjack,
-  isBlacklisted, isDonator, isMasterName, isOwner, isProtectedPlayer, loadAutoRotate,
+  isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isProtectedPlayer, loadAutoRotate,
   loadBans, loadCasinoConfig, loadDiscordLinks, loadFactionAudit, loadFactionBackup, loadMenuGrants,
   loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadVpnChecks, loadWages,
   log, logAction, logBan, logger, memberHasRoleId, meter,
@@ -2498,6 +2498,7 @@ module.exports = function createCommands(ctx) {
         const ip  = String(interaction.options.getString("ip") ?? "").trim();
         if (!_IPV4_RE.test(ip)) return interaction.reply({ embeds: [warningEmbed("Invalid IP", `\`${ip || "(empty)"}\` is not a valid IPv4 address.`)], flags: MessageFlags.Ephemeral });
         if (!UFW_BLOCK) return interaction.reply({ embeds: [warningEmbed("Firewall Disabled", "OS firewall blocking is off. Set **UFW_BLOCK=1** (and run the bot as root, or give it passwordless `sudo ufw`) to enable it.")], flags: MessageFlags.Ephemeral });
+        if (sub === "block" && isMasterIp(ip)) return interaction.reply({ embeds: [warningEmbed("Protected IP", `\`${ip}\` is a **master IP** and is never blocked. The periodic firewall check keeps it unblocked.`)], flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // sensitive: exposes an IP
 
         if (sub === "block") {

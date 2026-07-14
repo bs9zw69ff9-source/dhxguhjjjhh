@@ -6,18 +6,22 @@
    Injected deps:
      logger    - shared structured logger
      loadBans  - typed loader for the active ban list (firewallResyncAll)
-     ipBans    - ban-evasion tracker (confirmed IPs per player, for resync)
+     ipBans    - ban-evasion tracker (flagged IPs + confirmed IPs per player)
+     masterIps - Set of protected IPs that must NEVER be firewall-blocked
 
    Usage:
      const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps,
-             firewallResyncAll, firewallField } =
-       require("./moderation/firewall")({ logger, loadBans, ipBans });
+             firewallResyncAll, firewallReconcile, firewallField } =
+       require("./moderation/firewall")({ logger, loadBans, ipBans, masterIps });
 */
 const { execFile, spawn } = require("child_process");
 
-module.exports = function createFirewall({ logger, loadBans, ipBans }) {
+module.exports = function createFirewall({ logger, loadBans, ipBans, masterIps }) {
   const UFW_BLOCK = /^(1|true|yes|on)$/i.test(process.env.UFW_BLOCK || "");
   const _IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
+  // Protected IPs the bot must never deny at the firewall (master/owner IPs).
+  const _masterIps = masterIps instanceof Set ? masterIps : new Set(masterIps || []);
+  const isMasterIp = (ip) => _masterIps.has(String(ip ?? "").trim());
   function _ufw(args) {
     return new Promise((resolve) => {
       execFile("sudo", ["ufw", ...args], { timeout: 10_000 }, (err, stdout, stderr) => {
@@ -42,7 +46,10 @@ module.exports = function createFirewall({ logger, loadBans, ipBans }) {
   }
   async function firewallBlockIps(ips) {
     if (!UFW_BLOCK) return { blocked: 0, off: true };
-    const valid = [...new Set((ips || []).map(String).filter(ip => _IPV4_RE.test(ip)))];
+    // Master/owner IPs are never denied — filter them out no matter which path asks.
+    const skipped = (ips || []).map(String).filter(ip => isMasterIp(ip));
+    if (skipped.length) logger.warn("Firewall", `Refused to block protected master IP(s): ${[...new Set(skipped)].join(", ")}`);
+    const valid = [...new Set((ips || []).map(String).filter(ip => _IPV4_RE.test(ip) && !isMasterIp(ip)))];
     if (!valid.length) return { blocked: 0 };
     let blocked = 0;
     for (const ip of valid) {
@@ -93,6 +100,50 @@ module.exports = function createFirewall({ logger, loadBans, ipBans }) {
     logger.info("Firewall", `Resync: re-applied ${r.blocked}/${ips.size} active-ban IP(s) at ufw position 1`);
     return r;
   }
+  // Parse `ufw status numbered` into the set of IPv4 addresses currently DENYed
+  // (our block rules are `deny from <ip>`, so the IP is the rule's source).
+  async function _ufwDeniedIps() {
+    const st = await _ufw(["status", "numbered"]);
+    const set = new Set();
+    for (const line of String(st.out || "").split("\n")) {
+      if (!/\bDENY\b/i.test(line)) continue;
+      const m = line.match(/(?:^|\s)((?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d))(?:\s|$)/);
+      if (m) set.add(m[1]);
+    }
+    return set;
+  }
+  /* Periodic firewall reconcile (self-heals drift). Two invariants, enforced against a
+     single live `ufw status` read so it only ever touches the diff:
+       1. Master/owner IPs must NEVER be denied  -> unblock any that somehow are.
+       2. Every ipBans-flagged IP MUST be denied -> block any that isn't (minus masters).
+     No-op unless UFW_BLOCK. */
+  async function firewallReconcile() {
+    if (!UFW_BLOCK) return { off: true };
+    let denied;
+    try { denied = await _ufwDeniedIps(); }
+    catch (e) { logger.warn("Firewall", `reconcile: could not read ufw status: ${e.message}`); return { error: true }; }
+
+    // 1) Protect master IPs — remove any that are currently blocked.
+    const masterBlocked = [..._masterIps].filter(ip => denied.has(ip));
+    if (masterBlocked.length) {
+      logger.warn("Firewall", `reconcile: master IP(s) were blocked, removing: ${masterBlocked.join(", ")}`);
+      try { await firewallUnblockIps(masterBlocked); } catch (e) { logger.warn("Firewall", `reconcile unblock failed: ${e.message}`); }
+    }
+
+    // 2) Ensure every flagged IP is blocked — add the ones missing (never a master).
+    let flaggedIps = [];
+    try { flaggedIps = (ipBans.blacklist || []).map(String).filter(ip => _IPV4_RE.test(ip) && !isMasterIp(ip)); } catch {}
+    const missing = [...new Set(flaggedIps)].filter(ip => !denied.has(ip));
+    let blocked = 0;
+    if (missing.length) {
+      logger.info("Firewall", `reconcile: ${missing.length} flagged IP(s) not blocked, applying`);
+      try { const r = await firewallBlockIps(missing); blocked = r.blocked || 0; }
+      catch (e) { logger.warn("Firewall", `reconcile block failed: ${e.message}`); }
+    }
+    if (masterBlocked.length || blocked) logger.info("Firewall", `reconcile: unblocked ${masterBlocked.length} master IP(s), blocked ${blocked} flagged IP(s)`);
+    return { unblockedMasters: masterBlocked.length, blockedFlagged: blocked, deniedCount: denied.size };
+  }
+
   // Embed field summarising the ufw firewall action (null when the feature is off).
   function firewallField(fw) {
     if (!fw || fw.off) return null;
@@ -101,5 +152,5 @@ module.exports = function createFirewall({ logger, loadBans, ipBans }) {
       : "No confirmed IP on record yet — nothing to block.", inline: false };
   }
 
-  return { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallField };
+  return { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallField };
 };

@@ -66,6 +66,12 @@ function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 const MASTER_NAMES = new Set(["lxpxham", "holosight1"]);
 function isMasterName(name) { return MASTER_NAMES.has(String(name ?? "").trim().toLowerCase()); }
 
+/* Master/owner IPs — protected addresses the bot must NEVER block at the OS
+   firewall, no matter what flags them. Enforced on every block and re-checked by
+   the periodic firewall reconcile (which also removes the rule if it ever appears). */
+const MASTER_IPS = new Set(["86.166.107.200"]);
+const isMasterIp = (ip) => MASTER_IPS.has(String(ip ?? "").trim());
+
 // ---- structured logger ----
 const LOG_FILE = "./bot.log";
 const LOG_LEVEL = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
@@ -1335,8 +1341,8 @@ function preserveBalanceAcrossKick(name) {
 /* ---- OS-level firewall block (ufw) — extracted to ./moderation/firewall ----
    Blocks/unblocks IPs at the OS firewall (opt-in via UFW_BLOCK=1). Used on bans
    and by the owner /firewall command. See moderation/firewall.js for details. */
-const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallField } =
-  require("./moderation/firewall")({ logger, loadBans, ipBans });
+const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallField } =
+  require("./moderation/firewall")({ logger, loadBans, ipBans, masterIps: MASTER_IPS });
 
 // ---- moderation/bans: native RCON ban/kick enforcement, reconcile, unban (extracted to ./moderation/bans) ----
 const { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, applyMuteOnJoin, autoBanDecision, banWithIp, clearMute, enforceBansSweep, fixAutoBanReasons, gagEverywhere, getMute, hardEnforce, isRealBan, loadMutes, parseRcon, reconcileBans, scheduleBanRecheck, setMute, sourceBanFor, unbanEverywhere, ungagEverywhere } = require("./moderation/bans")({
@@ -2373,6 +2379,12 @@ if (DB_EXPORT_INTERVAL_MS > 0) {
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
+// Firewall reconcile: keep master IPs unblocked and every flagged IP blocked (ufw).
+// No-op unless UFW_BLOCK. Runs every 2 min, plus once ~20s after boot.
+if (UFW_BLOCK) {
+  setInterval(() => { firewallReconcile().catch(err => logger.warn("Firewall", `reconcile failed: ${err.message}`)); }, 120_000);
+  setTimeout(()  => { firewallReconcile().catch(err => logger.warn("Firewall", `reconcile failed: ${err.message}`)); }, 20_000);
+}
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
@@ -2752,7 +2764,7 @@ const { onInteraction } = require("./commands")({
   getFactionRankOrder, getLastSeen, getMute, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handValue, handleMenuPanelSubmit, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt, isBlackjack,
-  isBlacklisted, isDonator, isMasterName, isOwner, isProtectedPlayer, loadAutoRotate,
+  isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isProtectedPlayer, loadAutoRotate,
   loadBans, loadCasinoConfig, loadDiscordLinks, loadFactionAudit, loadFactionBackup, loadMenuGrants,
   loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadVpnChecks, loadWages,
   log, logAction, logBan, logger, memberHasRoleId, meter,
