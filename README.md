@@ -123,6 +123,40 @@ SQLite round-trip in an isolated temp dir, faction rank registry, ipBans) plus a
 static wiring check of every module's `ctx` contract. No Discord token or network
 is needed to run them.
 
+## Backups (off-site, via rclone)
+
+`scripts/backup.sh` takes a **consistent** snapshot of `bot.db` (WAL-safe — it
+uses the bot's own better-sqlite3 online backup, so it's fine to run while the
+bot is writing), gzips it alongside the JSON exports, uploads both to a cloud
+remote with [`rclone`](https://rclone.org), and prunes old backups. Run it from
+system cron so it keeps working even when the bot is down.
+
+```bash
+# 1. install rclone and configure a remote (Backblaze B2 / S3 / R2 / Drive / …)
+curl https://rclone.org/install.sh | sudo bash
+rclone config                                    # creates a remote, e.g. "b2"
+
+# 2. point the script at your remote (backup.env is git-ignored)
+cp scripts/backup.env.example backup.env
+# edit backup.env -> RCLONE_REMOTE=b2:my-bucket/pavlov-bot-backups
+
+# 3. schedule it (hourly)
+( crontab -l 2>/dev/null; echo "0 * * * * $(pwd)/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1" ) | crontab -
+```
+
+**Restore:**
+
+```bash
+pm2 stop pavlov-bot
+rclone lsf b2:my-bucket/pavlov-bot-backups                    # list, pick a file
+rclone copy b2:my-bucket/pavlov-bot-backups/botdb-YYYYMMDD-HHMMSS.db.gz /tmp/
+gunzip -c /tmp/botdb-YYYYMMDD-HHMMSS.db.gz > bot.db
+rm -f bot.db-wal bot.db-shm                                   # drop stale WAL
+pm2 start pavlov-bot
+```
+
+Retention defaults to 30 days (`RETENTION_DAYS` in `backup.env`).
+
 ## Deployment
 
 The intended flow is a git checkout on the host:
