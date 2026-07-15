@@ -3,8 +3,8 @@
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
   const {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, DIVIDER, DONATOR_FILE,
-  EmbedBuilder, LINK_REQUEST_CHANNEL, MENUS, MessageFlags, ModalBuilder, NV,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, DIVIDER, DONATOR_FILE, GLYPH, CLIN,
+  EmbedBuilder, LINK_REQUEST_CHANNEL, MENUS, MessageFlags, ModalBuilder, NV, clinical, firewallStatus,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, addDonator, addMenuGrant, addUserBlacklist,
   adminOnlyEmbed, banWithIp, bar, brand, client, commands,
   deniedEmbed, discordIdForPavlov, easternClock, emptyIdEmbed, errorEmbed, hasAdminRole,
@@ -347,26 +347,43 @@ module.exports = (ctx) => {
   "configure": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
 
-        const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Select a hidden command…")
+        // Grouped by area (emoji-prefixed) — Discord select menus have no native
+        // optgroups, so the emoji + ordering carry the sections visually.
+        const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Choose an owner action…")
           .addOptions(
-            { label: "Blacklist IP / username", value: "blacklist_ip", description: "Auto-ban anyone matching an IP or username" },
-            { label: "View blacklist",          value: "view_blacklist", description: "Show all blacklisted IPs and usernames" },
-            { label: "View alt accounts",       value: "view_alts",      description: "A player's known alt accounts (shared IP)" },
-            { label: "Bar a Discord user",     value: "user_bl_add",    description: "Block a Discord user from ALL bot commands" },
-            { label: "Un-bar a Discord user",  value: "user_bl_remove", description: "Restore a Discord user's command access" },
-            { label: "List barred Discord users", value: "user_bl_list", description: "Show Discord users barred from commands" },
-            { label: "Ignore a username",      value: "ignore_add",    description: "Stop tracking a player's IPs" },
-            { label: "Un-ignore a username",   value: "ignore_remove", description: "Resume tracking a player" },
-            { label: "List ignored usernames", value: "ignore_list",   description: "Show the ignore list" },
-            { label: "Clear flagged usernames", value: "clear_names",  description: "Stop all 'blacklisted username' auto-bans" },
-            { label: "Clear all flagged IPs",  value: "clear_flags",   description: "Stop every IP auto-ban (keep history)" },
-            { label: "Clear a specific IP",    value: "clear_ip",      description: "Un-flag + remove one IP" },
-            { label: "Wipe ALL IP data",       value: "clear_all",     description: "Full registry + flag reset" },
-            { label: "Save faction whitelists", value: "save_factions", description: "Snapshot all faction spawn + rank files" },
-            { label: "Load faction whitelists", value: "load_factions", description: "Restore the last snapshot (overwrites current)" },
-            { label: "Wipe ALL money",          value: "wipe_money",    description: "Set every player's credits to 0 (irreversible)" },
+            // ── IP enforcement ──
+            { label: "Blacklist IP / username",   value: "blacklist_ip",   emoji: "🚫", description: "Auto-ban anyone matching an IP or username" },
+            { label: "View blacklist",            value: "view_blacklist", emoji: "📋", description: "All blacklisted IPs, usernames and account IDs" },
+            { label: "View alt accounts",         value: "view_alts",      emoji: "🕵️", description: "A player's known alts (shared confirmed IP)" },
+            { label: "Clear a specific IP",       value: "clear_ip",       emoji: "🧹", description: "Un-flag + remove one IP" },
+            { label: "Clear flagged usernames",   value: "clear_names",    emoji: "🧹", description: "Stop all 'blacklisted username' auto-bans" },
+            { label: "Clear all flagged IPs",     value: "clear_flags",    emoji: "🧹", description: "Stop every IP auto-ban (keep history)" },
+            { label: "Wipe ALL IP data",          value: "clear_all",      emoji: "💥", description: "Full registry + flag reset (irreversible)" },
+            // ── firewall ──
+            { label: "Firewall — blocked IPs",    value: "firewall_status", emoji: "🔥", description: "Every IP currently denied at the OS firewall" },
+            // ── discord access ──
+            { label: "Bar a Discord user",        value: "user_bl_add",    emoji: "⛔", description: "Block a Discord user from ALL bot commands" },
+            { label: "Un-bar a Discord user",     value: "user_bl_remove", emoji: "✅", description: "Restore a Discord user's command access" },
+            { label: "List barred Discord users", value: "user_bl_list",   emoji: "📋", description: "Show Discord users barred from commands" },
+            // ── IP tracking ──
+            { label: "Ignore a username",         value: "ignore_add",     emoji: "🙈", description: "Stop tracking a player's IPs" },
+            { label: "Un-ignore a username",      value: "ignore_remove",  emoji: "👁️", description: "Resume tracking a player" },
+            { label: "List ignored usernames",    value: "ignore_list",    emoji: "📋", description: "Show the ignore list" },
+            // ── factions ──
+            { label: "Save faction whitelists",   value: "save_factions",  emoji: "💾", description: "Snapshot all faction spawn + rank files" },
+            { label: "Load faction whitelists",   value: "load_factions",  emoji: "♻️", description: "Restore the last snapshot (overwrites current)" },
+            // ── economy ──
+            { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Set every player's credits to 0 (irreversible)" },
           );
-        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Configure — Hidden Commands"));
+        const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Owner Control Panel")
+          .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below — destructive ones ask you to confirm first.\n${DIVIDER}\n` +
+            `🚫 **IP Enforcement** — blacklist, alts, clear flags\n` +
+            `🔥 **Firewall** — view blocked IPs\n` +
+            `⛔ **Discord Access** — bar / un-bar users\n` +
+            `👁️ **IP Tracking** — ignore lists\n` +
+            `💾 **Factions** — save / load whitelists\n` +
+            `💰 **Economy** — wipe money`)
+          .setFooter({ text: "Owner only · sensitive · menu closes after 60s" }));
         await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
         const msg = await interaction.fetchReply();
 
@@ -441,6 +458,22 @@ module.exports = (ctx) => {
           const e = brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp());
           await logAction(e);
           return sub.reply({ embeds: [e], flags: MessageFlags.Ephemeral });
+        }
+
+        // view every firewall-blocked IP (async ufw call -> defer then edit)
+        if (choice === "firewall_status") {
+          await sel.deferUpdate().catch(() => {});
+          let st; try { st = await firewallStatus(); } catch (e) { st = { error: e.message }; }
+          if (st?.off)   return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall — Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable)."))], components: [] });
+          if (st?.error) return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall — Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``))], components: [] });
+          const denied = st.denied || [];
+          const listed = denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3600) || "*No IPs are currently denied at the firewall.*";
+          const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked:** ${st.mastersBlocked.map(i => `\`${i}\``).join(", ")} — reconcile will clear them.` : "")
+            + (st.flaggedNotBlocked?.length ? `\n⚠ **${st.flaggedNotBlocked.length} flagged IP(s) not yet blocked** — reconcile will re-apply.` : "");
+          const e = brand(new EmbedBuilder().setColor(denied.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle("Firewall — Blocked IPs")
+            .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) · **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${DIVIDER}\n${listed}`)
+            .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }).setTimestamp());
+          return interaction.editReply({ embeds: [e], components: [] });
         }
 
         // view the blacklist (IPs / usernames)

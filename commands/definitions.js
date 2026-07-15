@@ -237,7 +237,9 @@ const commands = [
       .addStringOption(o => o.setName("ip").setDescription("IPv4 address to block").setRequired(true)))
     .addSubcommand(s => s.setName("unblock")
       .setDescription("Remove a firewall block for an IP — sudo ufw delete <rule>")
-      .addStringOption(o => o.setName("ip").setDescription("IPv4 address to unblock").setRequired(true))),
+      .addStringOption(o => o.setName("ip").setDescription("IPv4 address to unblock").setRequired(true)))
+    .addSubcommand(s => s.setName("status")
+      .setDescription("Show every IP currently blocked at the firewall — sudo ufw status numbered")),
   new SlashCommandBuilder().setName("kd")
     .setDescription("Kill/death stats — a player's K/D, or the leaderboard")
     .addStringOption(o => o.setName("playerid").setDescription("Player (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),

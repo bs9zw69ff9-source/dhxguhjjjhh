@@ -1341,7 +1341,7 @@ function preserveBalanceAcrossKick(name) {
 /* ---- OS-level firewall block (ufw) — extracted to ./moderation/firewall ----
    Blocks/unblocks IPs at the OS firewall (opt-in via UFW_BLOCK=1). Used on bans
    and by the owner /firewall command. See moderation/firewall.js for details. */
-const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallField } =
+const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallStatus, firewallField } =
   require("./moderation/firewall")({ logger, loadBans, ipBans, masterIps: MASTER_IPS });
 
 // ---- moderation/bans: native RCON ban/kick enforcement, reconcile, unban (extracted to ./moderation/bans) ----
@@ -2510,7 +2510,7 @@ const { onInteraction } = require("./commands")({
   currentPot, dashboardSnapshots, debitCaps, deniedEmbed, discordIdForPavlov, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, drainPot, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
-  firewallField, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
+  firewallField, firewallStatus, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, freshDeck, fs, gagEverywhere, gambleQuotaLimitEmbed, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
   getFactionRankOrder, getLastSeen, getMute, getOnlinePlayers, getPlayerChoices, getPlayerFactions,

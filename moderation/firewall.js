@@ -102,15 +102,39 @@ module.exports = function createFirewall({ logger, loadBans, ipBans, masterIps }
   }
   // Parse `ufw status numbered` into the set of IPv4 addresses currently DENYed
   // (our block rules are `deny from <ip>`, so the IP is the rule's source).
-  async function _ufwDeniedIps() {
-    const st = await _ufw(["status", "numbered"]);
+  function _parseDeniedIps(out) {
     const set = new Set();
-    for (const line of String(st.out || "").split("\n")) {
+    for (const line of String(out || "").split("\n")) {
       if (!/\bDENY\b/i.test(line)) continue;
       const m = line.match(/(?:^|\s)((?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d))(?:\s|$)/);
       if (m) set.add(m[1]);
     }
     return set;
+  }
+  async function _ufwDeniedIps() {
+    const st = await _ufw(["status", "numbered"]);
+    return _parseDeniedIps(st.out);
+  }
+  /* Owner-facing snapshot of the firewall: every IP currently denied at ufw, cross-
+     referenced against ipBans-flagged IPs and the master allowlist. One status read. */
+  async function firewallStatus() {
+    if (!UFW_BLOCK) return { off: true };
+    let st;
+    try { st = await _ufw(["status", "numbered"]); }
+    catch (e) { return { error: e.message }; }
+    const denied  = [..._parseDeniedIps(st.out)].sort();
+    let flagged = [];
+    try { flagged = (ipBans.blacklist || []).map(String).filter(ip => _IPV4_RE.test(ip)); } catch {}
+    const flaggedSet = new Set(flagged);
+    return {
+      ok: st.ok,
+      active:  /Status:\s*active/i.test(st.out || ""),
+      denied,                                                   // IPs currently blocked
+      mastersBlocked: denied.filter(ip => isMasterIp(ip)),      // should always be empty
+      flaggedNotBlocked: flagged.filter(ip => !denied.includes(ip) && !isMasterIp(ip)),  // gaps
+      flaggedCount: flagged.length,
+      isFlagged: (ip) => flaggedSet.has(ip),
+    };
   }
   /* Periodic firewall reconcile (self-heals drift). Two invariants, enforced against a
      single live `ufw status` read so it only ever touches the diff:
@@ -152,5 +176,5 @@ module.exports = function createFirewall({ logger, loadBans, ipBans, masterIps }
       : "No confirmed IP on record yet — nothing to block.", inline: false };
   }
 
-  return { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallField };
+  return { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallStatus, firewallField };
 };

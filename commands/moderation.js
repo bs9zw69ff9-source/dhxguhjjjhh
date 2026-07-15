@@ -3,11 +3,11 @@
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
   const {
-  BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES,
+  BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES, GLYPH,
   IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
   addAutobanExempt, banWithIp, blacklistHas, brand, checkVpn, clearMute,
   clinical, confirmDialog, discordIdForPavlov, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
-  easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallField,
+  easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallField, firewallStatus,
   firewallUnblockIps, formatTimeLeft, gagEverywhere, getMute, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
   isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, log,
@@ -612,9 +612,28 @@ module.exports = (ctx) => {
   "firewall": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const sub = interaction.options.getSubcommand();
+        if (!UFW_BLOCK) return interaction.reply({ embeds: [warningEmbed("Firewall Disabled", "OS firewall blocking is off. Set **UFW_BLOCK=1** (and run the bot as root, or give it passwordless `sudo ufw`) to enable it.")], flags: MessageFlags.Ephemeral });
+
+        // ── status: list every blocked IP (no IP arg) ──────────────────────
+        if (sub === "status") {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // sensitive: exposes IPs
+          let st; try { st = await firewallStatus(); } catch (err) { st = { error: err.message }; }
+          if (st?.error) return interaction.editReply({ embeds: [errorEmbed("Firewall — Status Unavailable", `Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``)] });
+          const denied = st.denied || [];
+          const list = denied.length
+            ? denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3800)
+            : "*No IPs are currently denied at the firewall.*";
+          const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked (should never happen):** ${st.mastersBlocked.map(i => `\`${i}\``).join(", ")} — the reconcile will clear them.` : "")
+            + (st.flaggedNotBlocked?.length ? `\n⚠ **Flagged but NOT blocked:** ${st.flaggedNotBlocked.length} IP(s) — reconcile will re-apply.` : "");
+          const embed = clinical(new EmbedBuilder().setColor(denied.length ? CLIN.red : CLIN.green)
+            .setTitle("Firewall — Blocked IPs")
+            .setDescription(`${DIVIDER}\n**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied at the OS firewall (ufw ${st.active ? "**active**" : "inactive"}). **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${DIVIDER}\n${list}`)
+            .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }).setTimestamp());
+          return interaction.editReply({ embeds: [embed] });
+        }
+
         const ip  = String(interaction.options.getString("ip") ?? "").trim();
         if (!_IPV4_RE.test(ip)) return interaction.reply({ embeds: [warningEmbed("Invalid IP", `\`${ip || "(empty)"}\` is not a valid IPv4 address.`)], flags: MessageFlags.Ephemeral });
-        if (!UFW_BLOCK) return interaction.reply({ embeds: [warningEmbed("Firewall Disabled", "OS firewall blocking is off. Set **UFW_BLOCK=1** (and run the bot as root, or give it passwordless `sudo ufw`) to enable it.")], flags: MessageFlags.Ephemeral });
         if (sub === "block" && isMasterIp(ip)) return interaction.reply({ embeds: [warningEmbed("Protected IP", `\`${ip}\` is a **master IP** and is never blocked. The periodic firewall check keeps it unblocked.`)], flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // sensitive: exposes an IP
 
