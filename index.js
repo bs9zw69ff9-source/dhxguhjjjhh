@@ -492,7 +492,7 @@ const DASHBOARD_INTERVAL_MS   = 30 * 1000;
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 /* Channel a short changelog posts to whenever the bot restarts on a new commit
    (override with UPDATE_LOG_CHANNEL). */
-const UPDATE_LOG_CHANNEL      = process.env.UPDATE_LOG_CHANNEL || "1520598949667410021";
+const UPDATE_LOG_CHANNEL      = process.env.UPDATE_LOG_CHANNEL || "1526601109362446377";
 /* Channel every live PvP kill posts to, one clean line per kill
    (override with KILLFEED_CHANNEL). */
 const KILLFEED_CHANNEL        = process.env.KILLFEED_CHANNEL || "1525801322262167623";
