@@ -384,122 +384,122 @@ module.exports = (ctx) => {
             `💾 **Factions** — save / load whitelists\n` +
             `💰 **Economy** — wipe money`)
           .setFooter({ text: "Owner only · sensitive · menu closes after 60s" }));
-        await interaction.reply({ embeds: [panel], components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
-        const msg = await interaction.fetchReply();
-
-        let sel;
-        try { sel = await msg.awaitMessageComponent({ componentType: ComponentType.StringSelect, time: 60_000, filter: i => i.user.id === interaction.user.id }); }
-        catch { return interaction.editReply({ components: [] }).catch(() => {}); }
-        const choice = sel.values[0];
-
-        // actions that need text input -> open a modal
-        if (["ignore_add", "ignore_remove", "clear_ip", "blacklist_ip", "view_alts", "user_bl_add", "user_bl_remove", "wipe_money", "load_factions"].includes(choice)) {
-          const titleByChoice = { ignore_add: "Ignore a username", ignore_remove: "Un-ignore a username", clear_ip: "Clear a specific IP", blacklist_ip: "Blacklist IP / username", view_alts: "View alt accounts", user_bl_add: "Bar a Discord user", user_bl_remove: "Un-bar a Discord user", wipe_money: "Wipe ALL money", load_factions: "Restore faction whitelists" };
-          const labelByChoice = { ignore_add: "Username", ignore_remove: "Username", clear_ip: "IP address", blacklist_ip: "IP or username", view_alts: "Player username", user_bl_add: "Discord user ID", user_bl_remove: "Discord user ID", wipe_money: "Type WIPE to confirm", load_factions: "Type LOAD to confirm" };
-          const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(labelByChoice[choice]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
-          const modal = new ModalBuilder().setCustomId("cfg_modal").setTitle(titleByChoice[choice]).addComponents(new ActionRowBuilder().addComponents(input));
-          await sel.showModal(modal);
-          let sub;
-          try { sub = await sel.awaitModalSubmit({ time: 120_000, filter: i => i.user.id === interaction.user.id && i.customId === "cfg_modal" }); }
-          catch { return; }
-          const val = sub.fields.getTextInputValue("cfg_val").trim();
-          let desc, color = NV.IRRAD_GREEN;
+        // ── all action logic in one place; returns a branded result embed ──
+        const audit = (embed) => { logAction(embed).catch(() => {}); return embed; };
+        async function runAction(choice, val) {
           if (choice === "view_alts") {
-            let alts = [];
-            try { alts = ipBans.getAltNamesOf(val); } catch {}
-            const list = alts.length
-              ? alts.map(n => `• **${n}**`).join("\n").slice(0, 4000)
-              : "*No known alt accounts (no other account shares a confirmed IP).*";
-            const eAlt = brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN)
-              .setTitle(`Alt Accounts — ${val}`)
+            let alts = []; try { alts = ipBans.getAltNamesOf(val); } catch {}
+            const list = alts.length ? alts.map(n => `• **${n}**`).join("\n").slice(0, 4000) : "*No known alt accounts (no other account shares a confirmed IP).*";
+            return brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle(`Alt Accounts — ${val}`)
               .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
               .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
-            return sub.reply({ embeds: [eAlt], flags: MessageFlags.Ephemeral });
           }
           if (choice === "blacklist_ip") {
-            await sub.deferReply({ flags: MessageFlags.Ephemeral });
-            const r = ipBans.flagTarget(val);            // IPv4 detected by shape; else a username
-            // Ban (blacklist.txt + kick + IP-flag) the username itself and every on-record
-            // account matching the target, so an in-game player is removed immediately.
+            const r = ipBans.flagTarget(val);
             const toBan = new Set();
             if (r.kind === "username" && r.value) toBan.add(r.value);
             for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) toBan.add(nm); }
             for (const nm of toBan) { try { await banWithIp(nm, "both", { permanent: true }); await upsertPermBan({ playerId: nm, reason: "Blacklisted via /configure", moderator: interaction.user.tag }); } catch {} }
-            color = NV.LEGION_RED;
-            desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
+            const desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet — future connections will be caught.`);
-            const e1 = brand(new EmbedBuilder().setColor(color).setTitle("Blacklisted").setDescription(hero(desc)).setTimestamp());
-            await logAction(e1);
-            return sub.editReply({ embeds: [e1] });
+            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklisted").setDescription(hero(desc)).setTimestamp()));
           }
           if (choice === "wipe_money") {
-            await sub.deferReply({ flags: MessageFlags.Ephemeral });
-            if (val.toUpperCase() !== "WIPE") return sub.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped."))] });
+            if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped.").setTimestamp());
             const r = wipeAllMoney();
-            const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped")
-              .setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`)).setTimestamp());
-            await logAction(e);
-            return sub.editReply({ embeds: [e] });
+            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`)).setTimestamp()));
           }
           if (choice === "load_factions") {
-            await sub.deferReply({ flags: MessageFlags.Ephemeral });
-            if (val.toUpperCase() !== "LOAD") return sub.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored."))] });
+            if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored.").setTimestamp());
             const r = loadFactionBackup();
-            const e = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored")
-              .setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found — use **Save faction whitelists** first." : `Load failed: ${r.error}`))).setTimestamp());
-            await logAction(e);
-            return sub.editReply({ embeds: [e] });
+            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found — use **Save faction whitelists** first." : `Load failed: ${r.error}`))).setTimestamp()));
           }
-          if (choice === "user_bl_add")        { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `<@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
-          else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `<@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
-          else if (choice === "ignore_add")    { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
-          else if (choice === "ignore_remove") { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `**${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
-          else                               { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
-          const e = brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp());
-          await logAction(e);
-          return sub.reply({ embeds: [e], flags: MessageFlags.Ephemeral });
+          if (["user_bl_add", "user_bl_remove", "ignore_add", "ignore_remove", "clear_ip"].includes(choice)) {
+            let desc, color = NV.IRRAD_GREEN;
+            if (choice === "user_bl_add")         { const uid = val.replace(/\D/g, ""); const added = uid && addUserBlacklist(uid); color = NV.LEGION_RED; desc = added ? `<@${uid}> (\`${uid}\`) is barred from ALL bot commands.` : `\`${uid || val}\` was already barred or isn't a valid ID.`; }
+            else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `<@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
+            else if (choice === "ignore_add")     { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
+            else if (choice === "ignore_remove")  { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `**${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
+            else                                  { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
+            return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp()));
+          }
+          if (choice === "firewall_status") {
+            let st; try { st = await firewallStatus(); } catch (e) { st = { error: e.message }; }
+            if (st?.off)   return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall — Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable).").setTimestamp());
+            if (st?.error) return brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall — Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``).setTimestamp());
+            const denied = st.denied || [];
+            const listed = denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3600) || "*No IPs are currently denied at the firewall.*";
+            const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked:** ${st.mastersBlocked.map(x => `\`${x}\``).join(", ")} — reconcile will clear them.` : "")
+              + (st.flaggedNotBlocked?.length ? `\n⚠ **${st.flaggedNotBlocked.length} flagged IP(s) not yet blocked** — reconcile will re-apply.` : "");
+            return brand(new EmbedBuilder().setColor(denied.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle("Firewall — Blocked IPs")
+              .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) · **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${DIVIDER}\n${listed}`)
+              .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }).setTimestamp());
+          }
+          if (choice === "view_blacklist") {
+            const b = ipBans.getBlacklist();
+            const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  ·  ").slice(0, 1024) : "*none*";
+            return brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklist")
+              .addFields(
+                { name: `IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
+                { name: `Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
+                { name: `Account IDs (${(b.ids || []).length})`, value: fmt(b.ids || []), inline: false },
+              ).setTimestamp());
+          }
+          if (choice === "ignore_list")  { const n = ipBans.getUntracked(); return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Ignored Usernames").setDescription(n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked.").setTimestamp()); }
+          if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Barred Discord Users").setDescription(ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands.").setTimestamp()); }
+          let desc, color = NV.AMBER;
+          if (choice === "clear_names")  { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
+          else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
+          else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
+          else if (choice === "save_factions") { const r = saveFactionBackup(); desc = r.ok ? `Snapshot saved — **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
+          else { desc = "Unknown action."; }
+          return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp()));
         }
 
-        // view every firewall-blocked IP (async ufw call -> defer then edit)
-        if (choice === "firewall_status") {
-          await sel.deferUpdate().catch(() => {});
-          let st; try { st = await firewallStatus(); } catch (e) { st = { error: e.message }; }
-          if (st?.off)   return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall — Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable)."))], components: [] });
-          if (st?.error) return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall — Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``))], components: [] });
-          const denied = st.denied || [];
-          const listed = denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3600) || "*No IPs are currently denied at the firewall.*";
-          const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked:** ${st.mastersBlocked.map(i => `\`${i}\``).join(", ")} — reconcile will clear them.` : "")
-            + (st.flaggedNotBlocked?.length ? `\n⚠ **${st.flaggedNotBlocked.length} flagged IP(s) not yet blocked** — reconcile will re-apply.` : "");
-          const e = brand(new EmbedBuilder().setColor(denied.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle("Firewall — Blocked IPs")
-            .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) · **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${DIVIDER}\n${listed}`)
-            .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }).setTimestamp());
-          return interaction.editReply({ embeds: [e], components: [] });
-        }
+        const MODAL = { ignore_add: ["Ignore a username", "Username"], ignore_remove: ["Un-ignore a username", "Username"], clear_ip: ["Clear a specific IP", "IP address"], blacklist_ip: ["Blacklist IP / username", "IP or username"], view_alts: ["View alt accounts", "Player username"], user_bl_add: ["Bar a Discord user", "Discord user ID"], user_bl_remove: ["Un-bar a Discord user", "Discord user ID"], wipe_money: ["Wipe ALL money", "Type WIPE to confirm"], load_factions: ["Restore faction whitelists", "Type LOAD to confirm"] };
+        const menuRow = () => new ActionRowBuilder().addComponents(menu);
+        const navRow  = () => new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("cfg_back").setLabel("Back to menu").setEmoji("◀️").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("cfg_close").setLabel("Close").setEmoji("✖️").setStyle(ButtonStyle.Danger),
+        );
 
-        // view the blacklist (IPs / usernames)
-        if (choice === "view_blacklist") {
-          const b = ipBans.getBlacklist();
-          const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  ·  ").slice(0, 1024) : "*none*";
-          const e = brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklist")
-            .addFields(
-              { name: `IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
-              { name: `Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
-              { name: `Account IDs (${(b.ids || []).length})`, value: fmt(b.ids || []), inline: false },
-            ).setTimestamp());
-          return sel.update({ embeds: [e], components: [] });
-        }
+        await interaction.reply({ embeds: [panel], components: [menuRow()], flags: MessageFlags.Ephemeral });
+        const msg = await interaction.fetchReply();
+        const IDLE = 180_000;
 
-        // direct actions (no input)
-        let desc, color = NV.AMBER, audit = true;
-        if (choice === "ignore_list")      { const n = ipBans.getUntracked(); desc = n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked."; audit = false; }
-        else if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; desc = ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands."; audit = false; }
-        else if (choice === "clear_names") { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
-        else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
-        else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
-        else if (choice === "save_factions") { const r = saveFactionBackup(); color = NV.AMBER; desc = r.ok ? `Snapshot saved — **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
-        const e = brand(new EmbedBuilder().setColor(color).setTitle("Configure").setDescription(hero(desc)).setTimestamp());
-        if (audit) await logAction(e);
-        return sel.update({ embeds: [e], components: [] });
+        // Persistent control panel: keep serving actions until Close / idle timeout.
+        for (;;) {
+          let sel;
+          try { sel = await msg.awaitMessageComponent({ componentType: ComponentType.StringSelect, time: IDLE, filter: i => i.user.id === interaction.user.id }); }
+          catch { return interaction.editReply({ components: [] }).catch(() => {}); }   // idle -> disable
+          const choice = sel.values[0];
+
+          let result;
+          if (MODAL[choice]) {
+            const [title, label] = MODAL[choice];
+            const input = new TextInputBuilder().setCustomId("cfg_val").setLabel(label).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64);
+            const modal = new ModalBuilder().setCustomId("cfg_modal_" + choice).setTitle(title).addComponents(new ActionRowBuilder().addComponents(input));
+            try { await sel.showModal(modal); } catch { continue; }
+            let sub;
+            try { sub = await sel.awaitModalSubmit({ time: 120_000, filter: i => i.user.id === interaction.user.id && i.customId === "cfg_modal_" + choice }); }
+            catch { continue; }   // cancelled -> menu is still up, loop
+            await sub.deferUpdate().catch(() => {});
+            try { result = await runAction(choice, sub.fields.getTextInputValue("cfg_val").trim()); }
+            catch (e) { result = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Action Failed").setDescription(`\`\`\`${e.message}\`\`\``)); }
+          } else {
+            await sel.deferUpdate().catch(() => {});
+            try { result = await runAction(choice); }
+            catch (e) { result = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Action Failed").setDescription(`\`\`\`${e.message}\`\`\``)); }
+          }
+
+          await interaction.editReply({ embeds: [result], components: [navRow()] }).catch(() => {});
+          let nav;
+          try { nav = await msg.awaitMessageComponent({ componentType: ComponentType.Button, time: IDLE, filter: i => i.user.id === interaction.user.id && ["cfg_back", "cfg_close"].includes(i.customId) }); }
+          catch { return interaction.editReply({ components: [] }).catch(() => {}); }   // idle -> leave result, disable
+          await nav.deferUpdate().catch(() => {});
+          if (nav.customId === "cfg_close") return interaction.editReply({ components: [] }).catch(() => {});
+          await interaction.editReply({ embeds: [panel], components: [menuRow()] }).catch(() => {});   // Back -> restore menu
+        }
         },
 
   /* ─────────────────────────────────────────────────────
