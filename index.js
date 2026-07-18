@@ -60,6 +60,23 @@ const OWNER_IDS = new Set([
 ]);
 function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 
+// ---- super owner  (the very top of the hierarchy) ----
+// A super owner outranks everyone. Their moderation actions can't be overridden by
+// anyone else; they can override anyone. (Also members of OWNER_IDS above, so every
+// existing owner-gated check still passes for them.)
+const SUPER_OWNER_IDS = new Set([
+  "1014251293159731310",
+]);
+function isSuperOwner(userId) { return SUPER_OWNER_IDS.has(String(userId)); }
+
+/* Staff command hierarchy: super owner > owner > admin > mod. A lower tier can never
+   override (unban / unmute / clear) a moderation action issued by a higher tier.
+   The tier logic lives in a pure, unit-tested module — we inject the role predicates. */
+const { commandTier: _commandTier, commandTierName, canOverride } = require("./moderation/hierarchy");
+function commandTier(member) {
+  return _commandTier(member, { isSuperOwner, isOwner, hasAdminRole, hasModRole });
+}
+
 /* Master in-game names — the people who run the servers. They are never banned,
    never IP-logged, and are handed a menu automatically on every join. Matched by
    USERNAME (case-insensitive), since that's what RCON and the logs give us. */
@@ -192,8 +209,8 @@ function upsertTempBan(entry) {
 }
 /** Record a PERMANENT ban in the same ban JSON (no expiry). Upserts by playerId,
     so it supersedes any existing temp ban for that player. */
-function upsertPermBan({ playerId, reason, moderator, server }) {
-  return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", server: server || "both", at: Date.now(), permanent: true });
+function upsertPermBan({ playerId, reason, moderator, moderatorRank, moderatorId, server }) {
+  return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", moderatorRank, moderatorId, server: server || "both", at: Date.now(), permanent: true });
 }
 /** One-time/startup import: pull any names already in blacklist.txt into the ban JSON
     (as permanent entries) so /banlist — which reads the JSON — shows pre-existing bans. */
@@ -2511,7 +2528,7 @@ const { onInteraction } = require("./commands")({
   getFactionRankOrder, getLastSeen, getMute, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handValue, handleMenuPanelSubmit, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt, isBlackjack,
-  isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isProtectedPlayer, loadAutoRotate,
+  isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer, loadAutoRotate,
   loadBans, loadCasinoConfig, loadDiscordLinks, loadFactionAudit, loadFactionBackup, loadMenuGrants,
   loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadVpnChecks, loadWages,
   log, logAction, logBan, logger, memberHasRoleId, meter,

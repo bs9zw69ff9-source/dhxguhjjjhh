@@ -81,6 +81,28 @@ blacklisted. Master in-game names (`MASTER_NAMES`) and a master IP allowlist
 (`MASTER_IPS`) are likewise code-only — master names are never banned/tracked,
 and master IPs are never firewall-blocked (a periodic reconcile enforces this).
 
+### Staff hierarchy
+
+A staff tier ladder governs who may **override** (lift/undo) whose moderation
+actions — `SUPER_OWNER_IDS` in `index.js` sits above `OWNER_IDS`:
+
+**Super Owner → Owner → Admin → Mod**
+
+Each moderation action records the tier of the staffer who issued it, and a lower
+tier can never override a higher tier's action:
+
+- A **Super Owner** can override anything.
+- An **Owner** cannot override a Super Owner's ban/mute.
+- An **Admin** cannot override a Super Owner's or Owner's.
+- A **Mod** cannot override a Super Owner's, Owner's, or Admin's.
+
+Equal tiers can override each other. This is enforced on `/unban`, `/unmute`,
+re-banning an already-banned player, and the bulk `/cleartempbans` / `/clearallbans`
+(which skip protected higher-tier bans). The tier rules are a pure, unit-tested
+module — [`moderation/hierarchy.js`](moderation/hierarchy.js). Bans/mutes made before
+this feature carry no tier and stay overridable by anyone, so nothing is retroactively
+locked.
+
 ## Commands
 
 | Tier | Commands |

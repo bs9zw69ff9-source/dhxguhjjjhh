@@ -5,7 +5,8 @@ module.exports = (ctx) => {
   const {
   BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES, GLYPH,
   IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
-  addAutobanExempt, banWithIp, blacklistHas, brand, checkVpn, clearMute,
+  addAutobanExempt, banWithIp, blacklistHas, brand, canOverride, checkVpn, clearMute,
+  commandTier, commandTierName,
   clinical, confirmDialog, discordIdForPavlov, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
   easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
   firewallUnblockIps, formatTimeLeft, gagEverywhere, getMute, getOnlinePlayers, hasModRole,
@@ -69,7 +70,7 @@ module.exports = (ctx) => {
         // /mute to extend the duration) would flip it back OFF instead of extending it.
         const alreadyMuted = getMute(playerId);
         const stillActive  = alreadyMuted && alreadyMuted.expires > Date.now();
-        await setMute(playerId, { name: playerId, expires, reason, moderator: interaction.user.tag, at: Date.now() });
+        await setMute(playerId, { name: playerId, expires, reason, moderator: interaction.user.tag, moderatorRank: commandTier(interaction.member), moderatorId: interaction.user.id, at: Date.now() });
         if (!stillActive) gagEverywhere(playerId);   // gag now if they're online and not already gagged
         enforceBansSweep().catch(() => {});      // player sweep after the punishment
         writeModLog({ action: "mute", playerId, reason, duration: durStr, by: interaction.user.tag });
@@ -85,6 +86,12 @@ module.exports = (ctx) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         const had = getMute(playerId);
+        // Hierarchy: a lower tier can't lift a mute set by a higher tier.
+        const actorTier = commandTier(interaction.member);
+        if (had && !canOverride(actorTier, had.moderatorRank)) {
+          return interaction.reply({ embeds: [warningEmbed("Outranked",
+            `\`${playerId}\` was muted by a **${commandTierName(had.moderatorRank)}**. As **${commandTierName(actorTier)}**, you can't lift a higher tier's mute.`)], flags: MessageFlags.Ephemeral });
+        }
         await clearMute(playerId);
         // Only toggle if we believe they're actually gagged right now - Gag is a bare
         // toggle with no True/False, so calling it on someone who isn't muted would
@@ -266,14 +273,20 @@ module.exports = (ctx) => {
         }
 
         await interaction.deferReply();
+        const actorTier = commandTier(interaction.member);
         const replaced = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
+        // Hierarchy: don't let a lower tier replace/override a higher tier's existing ban.
+        if (replaced && !canOverride(actorTier, replaced.moderatorRank)) {
+          return interaction.editReply({ embeds: [warningEmbed("Outranked",
+            `**${playerId}** is already banned by a **${commandTierName(replaced.moderatorRank)}**. As **${commandTierName(actorTier)}**, you can't change a higher tier's ban.`)] });
+        }
         const ipEnf = await banWithIp(playerId, server, permanent ? { permanent: true } : {});
         enforceBansSweep().catch(() => {});   // player sweep after the punishment
         if (permanent) {
-          await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });
+          await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, moderatorRank: actorTier, moderatorId: interaction.user.id, server });
           writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         } else {
-          await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, server });
+          await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, moderatorRank: actorTier, moderatorId: interaction.user.id, server });
           writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         }
 
@@ -318,6 +331,13 @@ module.exports = (ctx) => {
         const playerId = sanitizeBanName(interaction.options.getString("playerid"));
         const server   = interaction.options.getString("server");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        // Hierarchy: a lower tier can't lift a ban issued by a higher tier.
+        const existingBan = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
+        const actorTier = commandTier(interaction.member);
+        if (existingBan && !canOverride(actorTier, existingBan.moderatorRank)) {
+          return interaction.reply({ embeds: [warningEmbed("Outranked",
+            `**${playerId}** was banned by a **${commandTierName(existingBan.moderatorRank)}**. As **${commandTierName(actorTier)}**, you can't lift a higher tier's ban.`)], flags: MessageFlags.Ephemeral });
+        }
         await interaction.deferReply();
         const removed = loadBans().some(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         await addAutobanExempt(playerId, interaction.user.tag);            // exempt FIRST so no sweep can fire mid-unban
@@ -446,12 +466,18 @@ module.exports = (ctx) => {
          CLEARTEMPBANS
          ───────────────────────────────────────────────────── */
   "cleartempbans": async (interaction, name) => {
-        const bans = loadBans().filter(b => !b.permanent && b.expires);   // temp bans only, leave permanent bans in place
-        if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear", "No active temporary exiles to remove.")], flags: MessageFlags.Ephemeral });
+        const actorTier = commandTier(interaction.member);
+        const allTemp = loadBans().filter(b => !b.permanent && b.expires);   // temp bans only, leave permanent bans in place
+        // Hierarchy: only clear temp bans this tier is allowed to override; leave
+        // higher-tier bans in place and tell the mod how many were protected.
+        const bans = allTemp.filter(b => canOverride(actorTier, b.moderatorRank));
+        const protectedCount = allTemp.length - bans.length;
+        if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear",
+          protectedCount ? `No temp exiles you can clear — **${protectedCount}** are protected (issued by a higher tier).` : "No active temporary exiles to remove.")], flags: MessageFlags.Ephemeral });
         const preview = bans.map(b => `- \`${b.playerId}\` - *${b.reason}*`).join("\n").slice(0, 3500);
         const go = await confirmDialog(interaction, {
           title: "Clear all temporary bans?",
-          body: `This lifts **${bans.length}** temp exile${bans.length !== 1 ? "s" : ""} and unbans on both servers.\n\n${preview}`,
+          body: `This lifts **${bans.length}** temp exile${bans.length !== 1 ? "s" : ""} and unbans on both servers.${protectedCount ? `\n\n**${protectedCount}** higher-tier ban${protectedCount !== 1 ? "s" : ""} will be left in place.` : ""}\n\n${preview}`,
           confirmLabel: `Clear ${bans.length}`,
         });
         if (!go) return;
@@ -478,16 +504,22 @@ module.exports = (ctx) => {
   "clearallbans": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const actorTier = commandTier(interaction.member);
         // gather every banned name: bot temp bans + blacklist.txt on both installs
-        const names = [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()].map(s => String(s).trim()).filter(Boolean))];
+        const banByName = new Map(loadBans().map(b => [String(b.playerId).toLowerCase(), b]));
+        const allNames = [...new Set([...loadBans().map(b => b.playerId), ...blacklistAll()].map(s => String(s).trim()).filter(Boolean))];
+        // Hierarchy: don't clear bans issued by a higher tier (e.g. an owner can't wipe
+        // a super owner's ban). blacklist.txt-only names carry no tier → clearable.
+        const names = allNames.filter(n => canOverride(actorTier, banByName.get(n.toLowerCase())?.moderatorRank));
+        const protectedCount = allNames.length - names.length;
         if (!names.length) {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The server is at peace.")}\nNothing to clear — no bans on record.`))] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The server is at peace.")}\n${protectedCount ? `Nothing you can clear — **${protectedCount}** ban(s) are protected (issued by a higher tier).` : "Nothing to clear — no bans on record."}`))] });
         }
 
         const preview = names.slice(0, 30).map(n => `- \`${n}\``).join("\n") + (names.length > 30 ? `\n...and ${names.length - 30} more` : "");
         const go = await confirmDialog(interaction, {
           title: "Unban EVERYONE?",
-          body: `Removes **${names.length}** player(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.\n\n${preview}`,
+          body: `Removes **${names.length}** player(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.${protectedCount ? `\n\n**${protectedCount}** higher-tier ban${protectedCount !== 1 ? "s" : ""} will be left in place.` : ""}\n\n${preview}`,
           confirmLabel: `Unban all ${names.length}`,
         });
         if (!go) return;
