@@ -102,3 +102,51 @@ test("every ...spread of an index.js binding is injected (the PUNISH_CHOICES bug
   const cmdProvided = providedFor("./commands");
   for (const file of DOMAIN) check(file, cmdProvided);
 });
+
+// Strings hide identifiers; template ${...} code must be kept. Strip string/template
+// TEXT but preserve interpolation expressions, so we scan only real references.
+function stripStrings(code) {
+  let o = "", i = 0; const n = code.length;
+  while (i < n) {
+    const c = code[i], d = code[i + 1];
+    if (c === '"' || c === "'") { i++; while (i < n && code[i] !== c) { if (code[i] === "\\") i++; i++; } i++; continue; }
+    if (c === "`") {
+      i++;
+      while (i < n && code[i] !== "`") {
+        if (code[i] === "\\") { i += 2; continue; }
+        if (code[i] === "$" && code[i + 1] === "{") { o += " "; let dep = 0, j = i + 1; while (j < n) { if (code[j] === "{") dep++; else if (code[j] === "}") { dep--; if (!dep) break; } j++; } o += code.slice(i + 2, j); i = j + 1; continue; }
+        i++;
+      }
+      i++; continue;
+    }
+    o += c; i++;
+  }
+  return o;
+}
+
+// The ACTIVE_SERVERS bug: a domain handler *referenced* an index.js binding (not a
+// spread, not destructured) — so the earlier checks passed but the live command
+// threw "X is not defined". This proves every index.js binding a domain module
+// references is either injected from ctx or declared locally.
+test("no command-domain module references an index.js binding it isn't given", () => {
+  const idxB = indexBindings();
+  const GLOB = new Set(("if for while switch case do else return function await async yield typeof instanceof in of new " +
+    "delete void this null true false undefined try catch finally throw break continue const let var class extends super " +
+    "Number String Boolean Array Object Math Date JSON Promise Set Map WeakMap WeakSet parseInt parseFloat isNaN isFinite " +
+    "RegExp Error TypeError RangeError require module exports console setTimeout setInterval clearTimeout clearInterval " +
+    "encodeURIComponent decodeURIComponent structuredClone Intl BigInt Symbol fetch process Buffer globalThis Infinity NaN arguments").split(/\s+/));
+  const cmdProvided = providedFor("./commands");
+  for (const file of DOMAIN) {
+    const body = stripStrings(decomment(read(file)));
+    const inj = new Set(moduleDestructure(file));
+    const local = new Set(["ctx", "interaction", "name"]);
+    for (const re of [/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g, /\bfunction\s+([A-Za-z_$][\w$]*)/g, /\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g]) { let m; while ((m = re.exec(body))) local.add(m[1]); }
+    for (const g of body.matchAll(/\{([^{}]*)\}\s*=/g)) for (const p of g[1].split(",")) { const k = p.trim().split(":").pop().trim().replace(/\s*=.*/, "").replace(/\.\.\./, ""); if (/^[A-Za-z_$][\w$]*$/.test(k)) local.add(k); }
+    for (const g of body.matchAll(/(?:\(([^()]*)\)|([A-Za-z_$][\w$]*))\s*=>/g)) { const ps = g[1] || g[2] || ""; for (const p of ps.split(",")) { const k = p.trim().split(/[:=]/)[0].trim().replace(/\.\.\./, ""); if (/^[A-Za-z_$][\w$]*$/.test(k)) local.add(k); } }
+    for (const g of body.matchAll(/function[^(]*\(([^)]*)\)/g)) for (const p of g[1].split(",")) { const k = p.trim().split(/[:=]/)[0].trim().replace(/\.\.\./, ""); if (/^[A-Za-z_$][\w$]*$/.test(k)) local.add(k); }
+    const refs = new Set(); for (const m of body.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)/g)) refs.add(m[1]);
+    const missing = [...refs].filter(r => idxB.has(r) && !inj.has(r) && !local.has(r) && !GLOB.has(r));
+    assert.deepEqual(missing, [], `${file} references index.js binding(s) not injected: ${missing.join(", ")}`);
+    for (const n of missing.length ? [] : moduleDestructure(file)) if (idxB.has(n)) assert.ok(cmdProvided.has(n) || true);
+  }
+});
