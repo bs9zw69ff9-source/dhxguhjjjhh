@@ -44,7 +44,7 @@ module.exports = function createWebServer(ctx) {
   const PORT     = Number(process.env.WEB_PORT) || 8080;
   const HOST     = process.env.WEB_HOST || "0.0.0.0";
   const PASSWORD = process.env.WEB_ADMIN_PASSWORD || "";
-  const SITE     = process.env.WEB_SITE_NAME || "Server Dashboard";
+  const SITE     = process.env.WEB_SITE_NAME || "NuclearRP";
   // When behind a reverse proxy (nginx), the socket IP is always 127.0.0.1, which
   // would collapse per-IP login throttling into one global bucket. Set WEB_TRUST_PROXY=1
   // to read the real client IP from the proxy's X-Forwarded-For header instead. Only

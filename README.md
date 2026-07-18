@@ -186,7 +186,7 @@ No domain? A free DuckDNS subdomain works with Let's Encrypt out of the box. Use
 instead of the config above.
 
 1. Sign in at [duckdns.org](https://www.duckdns.org), create a subdomain (e.g.
-   `mydash`), and copy your **token**.
+   `nuclearrp`), and copy your **token**.
 2. Set the subdomain's IP to this VPS's public IP — paste it into the DuckDNS box,
    or (if the VPS IP is dynamic) install the updater cron from the bottom of the
    example config.
@@ -198,13 +198,13 @@ instead of the config above.
    ```bash
    sudo apt install -y nginx certbot python3-certbot-nginx
    sudo cp scripts/nginx-dashboard-duckdns.conf.example /etc/nginx/sites-available/dashboard
-   sudo sed -i 's/YOURSUB.duckdns.org/mydash.duckdns.org/g' /etc/nginx/sites-available/dashboard
+   sudo sed -i 's/YOURSUB.duckdns.org/nuclearrp.duckdns.org/g' /etc/nginx/sites-available/dashboard
    sudo ln -s /etc/nginx/sites-available/dashboard /etc/nginx/sites-enabled/
    sudo nginx -t && sudo systemctl reload nginx
-   sudo certbot --nginx -d mydash.duckdns.org
+   sudo certbot --nginx -d nuclearrp.duckdns.org
    ```
 
-   Dashboard is then at `https://mydash.duckdns.org`, auto-renewing like any other
+   Dashboard is then at `https://nuclearrp.duckdns.org`, auto-renewing like any other
    Let's Encrypt cert.
 
 ## Development
