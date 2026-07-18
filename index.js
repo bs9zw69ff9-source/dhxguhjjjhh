@@ -2555,17 +2555,6 @@ if (require.main === module) {
   startIntervals();
   client.login(process.env.DISCORD_TOKEN);
   if (factionClient) factionClient.login(process.env.FACTION_BOT_TOKEN).catch(e => logger.error("FactionBot", `login failed: ${e.message}`));
-  // Optional in-process web dashboard + password-gated moderation panel (opt-in: WEB_ENABLE=1).
-  try {
-    require("./web/server")({
-      logger, ACTIVE_SERVERS, serverLabel, getOnlinePlayers, loadBans, loadModLog,
-      firewallStatus, banWithIp, unbanEverywhere, removeBans, addAutobanExempt,
-      upsertPermBan, upsertTempBan, enforceBansSweep, writeModLog, sendRcon,
-      preserveBalanceAcrossKick, setMute, clearMute, getMute, gagEverywhere,
-      ungagEverywhere, sanitizeBanName, sanitizeId, isMasterName, parseDuration,
-      formatUptime, BOT_START_MS,
-    }).start();
-  } catch (err) { logger.error("Web", `failed to start dashboard: ${err.message}`); }
 }
 
 module.exports = {
