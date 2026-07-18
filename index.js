@@ -1341,8 +1341,8 @@ function preserveBalanceAcrossKick(name) {
 /* ---- OS-level firewall block (ufw) — extracted to ./moderation/firewall ----
    Blocks/unblocks IPs at the OS firewall (opt-in via UFW_BLOCK=1). Used on bans
    and by the owner /firewall command. See moderation/firewall.js for details. */
-const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallResyncAll, firewallReconcile, firewallStatus, firewallField } =
-  require("./moderation/firewall")({ logger, loadBans, ipBans, masterIps: MASTER_IPS });
+const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallStatus } =
+  require("./moderation/firewall")({ logger, ipBans, masterIps: MASTER_IPS });
 
 // ---- moderation/bans: native RCON ban/kick enforcement, reconcile, unban (extracted to ./moderation/bans) ----
 const { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, applyMuteOnJoin, autoBanDecision, banWithIp, clearMute, enforceBansSweep, fixAutoBanReasons, gagEverywhere, getMute, hardEnforce, isRealBan, loadMutes, parseRcon, reconcileBans, scheduleBanRecheck, setMute, sourceBanFor, unbanEverywhere, ungagEverywhere } = require("./moderation/bans")({
@@ -1471,7 +1471,7 @@ function logBan(embed) {
 // ---- moderation/vpn: IPHub/IPQS proxy detection + geolocation + auto-ban (extracted to ./moderation/vpn) ----
 const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
   ACTIVE_SERVERS, CLIN, DIVIDER, EmbedBuilder, FILES, NV,
-  banWithIp, brand, clinical, firewallField, hero, isMasterName,
+  banWithIp, brand, clinical, hero, isMasterName,
   logAction, logBan, logger, postFeed, randomQuote, safeRead,
   update, upsertPermBan, writeModLog, isAutobanExempt: (...a) => isAutobanExempt(...a),
 });
@@ -2404,12 +2404,7 @@ if (DB_EXPORT_INTERVAL_MS > 0) {
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
-// Firewall reconcile: keep master IPs unblocked and every flagged IP blocked (ufw).
-// No-op unless UFW_BLOCK. Runs every 2 min, plus once ~20s after boot.
-if (UFW_BLOCK) {
-  setInterval(() => { firewallReconcile().catch(err => logger.warn("Firewall", `reconcile failed: ${err.message}`)); }, 120_000);
-  setTimeout(()  => { firewallReconcile().catch(err => logger.warn("Firewall", `reconcile failed: ${err.message}`)); }, 20_000);
-}
+// (ufw is manual-only via /firewall — no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
@@ -2465,7 +2460,7 @@ const {  } = require("./events")({
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   applyMuteOnJoin, autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, ensureMenuPanel, feedHook,
-  firewallResyncAll, fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
+  fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
   mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged, randomQuote,
@@ -2510,7 +2505,7 @@ const { onInteraction } = require("./commands")({
   currentPot, dashboardSnapshots, debitCaps, deniedEmbed, discordIdForPavlov, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, drainPot, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
-  firewallField, firewallStatus, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
+  firewallStatus, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, freshDeck, fs, gagEverywhere, gambleQuotaLimitEmbed, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
   getFactionRankOrder, getLastSeen, getMute, getOnlinePlayers, getPlayerChoices, getPlayerFactions,

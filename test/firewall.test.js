@@ -15,8 +15,7 @@ test("UFW_BLOCK off: every op is a safe no-op", async () => {
   assert.equal(fw.UFW_BLOCK, false);
   assert.deepEqual(await fw.firewallBlockIps(["9.9.9.9"]), { blocked: 0, off: true });
   assert.deepEqual(await fw.firewallUnblockIps(["9.9.9.9"]), { unblocked: 0, off: true });
-  assert.deepEqual(await fw.firewallResyncAll(), { off: true });
-  assert.deepEqual(await fw.firewallReconcile(), { off: true });
+  assert.deepEqual(await fw.firewallStatus(), { off: true });
 });
 
 test("_IPV4_RE: octet-bounded validation", () => {
@@ -44,11 +43,14 @@ test("master IPs are filtered from blocking even with UFW on", async () => {
   delete process.env.UFW_BLOCK;
 });
 
-test("firewallField summarises block results", () => {
+test("firewall exposes only the command-only surface (no auto-apply hooks)", () => {
   const fw = mk();
-  assert.equal(fw.firewallField(null), null);
-  assert.equal(fw.firewallField({ off: true }), null);
-  assert.match(fw.firewallField({ blocked: 1 }).value, /Blocked \*\*1\*\* IP /);
-  assert.match(fw.firewallField({ blocked: 2 }).value, /Blocked \*\*2\*\* IPs/);
-  assert.match(fw.firewallField({ blocked: 0 }).value, /nothing to block/i);
+  // ufw is manual-only via /firewall now: the ban/resync/reconcile auto-appliers
+  // and the embed field helper were removed.
+  assert.equal(typeof fw.firewallBlockIps, "function");
+  assert.equal(typeof fw.firewallUnblockIps, "function");
+  assert.equal(typeof fw.firewallStatus, "function");
+  assert.equal(fw.firewallResyncAll, undefined);
+  assert.equal(fw.firewallReconcile, undefined);
+  assert.equal(fw.firewallField, undefined);
 });

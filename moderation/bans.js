@@ -3,8 +3,8 @@
    (a plain object built in index.js). Usage: require("./moderation/bans")(ctx). */
 module.exports = function(ctx) {
   const {
-  ACTIVE_SERVERS, FILES, UFW_BLOCK, _sameId, blacklistAdd, blacklistRemove,
-  firewallBlockIps, firewallUnblockIps, getOnlinePlayers, ipBans, isAutobanExempt, isMasterName,
+  ACTIVE_SERVERS, FILES, _sameId, blacklistAdd, blacklistRemove,
+  getOnlinePlayers, ipBans, isAutobanExempt, isMasterName,
   loadBans, logger, preserveBalanceAcrossKick, removeAutobanExempt, safeRead, safeWrite,
   sanitizeBanName, sanitizeId, sendRcon, update,
   } = ctx;
@@ -17,11 +17,11 @@ async function banWithIp(playerId, server = "both", opts = {}) {
     return { ids: [], ips: [], alts: [], field: null, blacklist: { name, servers: 0 }, ok: false, master: true };
   }
   removeAutobanExempt(name).catch(() => {});   // a deliberate ban clears any unban exemption
-  // Order matters: ban first, then firewall-block the IP, THEN kick — so a caught
-  // player is barred and network-blocked BEFORE they're dropped from the server.
-  // Native RCON Ban by USERNAME on every server (no kick yet). NO blacklist.txt.
+  // Native RCON Ban + Kick by USERNAME on every server. NO blacklist.txt.
+  // NOTE: the OS firewall (ufw) is deliberately NOT touched here — ufw deny/allow
+  // is a manual owner action via /firewall, never applied automatically on a ban.
   let enforced = { servers: 0 };
-  try { enforced = await hardEnforce(name, { kick: false }); }
+  try { enforced = await hardEnforce(name); }
   catch (err) { logger.warn("Bans", `RCON ban failed for "${name}": ${err.message}`); }
   logger.info("Bans", `Native-banned "${name}" on ${enforced.servers}/${ACTIVE_SERVERS.length} server(s)`);
   scheduleBanRecheck(name);                     // 30s: blacklist.txt backup + re-enforce
@@ -29,17 +29,7 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   let enf;
   try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
   catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
-  // Block the IP(s) at the OS firewall on EVERY ban (opt-in, UFW_BLOCK). Removed on unban.
-  let firewall = null;
-  {
-    const ips = [...new Set([...(enf.ips || []), ...(opts.ip ? [opts.ip] : [])])];
-    try { firewall = await firewallBlockIps(ips); }
-    catch (err) { logger.warn("Firewall", `block failed for ${name}: ${err.message}`); }
-  }
-  // Now kick — they're banned + firewall-blocked, so this drop is the final step.
-  try { await hardEnforce(name, { banToo: false }); }
-  catch (err) { logger.warn("Bans", `RCON kick failed for "${name}": ${err.message}`); }
-  return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall };
+  return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall: null };
 }
 
 
@@ -271,11 +261,9 @@ function unbanEverywhere(playerId) {
   let bl = { name, removed: 0 };
   try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
   let cleared = null;
-  try {
-    cleared = ipBans.unblacklistPlayer(name);
-    // Release any OS firewall block on those IPs so the unban actually restores access.
-    if (UFW_BLOCK && cleared?.ips?.length) firewallUnblockIps(cleared.ips).catch(() => {});
-  } catch {}
+  // NOTE: the OS firewall (ufw) is NOT touched on unban — any ufw deny is an
+  // owner-managed manual rule, removed only via /firewall unblock.
+  try { cleared = ipBans.unblacklistPlayer(name); } catch {}
   // Lift the native RCON ban too (auto-bans issue `Ban <username>`), by USERNAME.
   const _uname = sanitizeId(name);
   if (_uname) (async () => { for (const srv of ACTIVE_SERVERS) { try { await sendRcon(`Unban ${_uname}`, srv, 2500, 1); } catch {} } })().catch(() => {});

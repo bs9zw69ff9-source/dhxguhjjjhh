@@ -7,7 +7,7 @@ module.exports = (ctx) => {
   IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
   addAutobanExempt, banWithIp, blacklistHas, brand, checkVpn, clearMute,
   clinical, confirmDialog, discordIdForPavlov, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
-  easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallField, firewallStatus,
+  easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
   firewallUnblockIps, formatTimeLeft, gagEverywhere, getMute, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
   isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, log,
@@ -296,8 +296,6 @@ module.exports = (ctx) => {
             : "Player wasn't a donator — nothing to remove." });
           if (sus.wasDonator) writeModLog({ action: "donator-suspend", playerId, by: interaction.user.tag, restoreAt: sus.restoreAt });
         }
-
-        { const _fwf = firewallField(ipEnf?.firewall); if (_fwf) embed.addFields(_fwf); }
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
@@ -429,7 +427,6 @@ module.exports = (ctx) => {
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
           .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} permanently banned **${playerId}** from ${serverLabel(server)} — ${reason}`));
         if (notes) embed.addFields({ name: "Notes", value: notes });
-        { const _fwf = firewallField(ipEnf?.firewall); if (_fwf) embed.addFields(_fwf); }
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,

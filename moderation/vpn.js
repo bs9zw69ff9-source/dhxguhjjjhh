@@ -4,7 +4,7 @@
 module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, CLIN, DIVIDER, EmbedBuilder, FILES, NV,
-  banWithIp, brand, clinical, firewallField, hero, isAutobanExempt,
+  banWithIp, brand, clinical, hero, isAutobanExempt,
   isMasterName, logAction, logBan, logger, postFeed, randomQuote,
   safeRead, update, upsertPermBan, writeModLog,
   } = ctx;
@@ -185,7 +185,6 @@ async function checkVpnAndAlert(name, ip) {
       { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
       ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
       { name: "Enforced", value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
-      ...(firewallField(res?.firewall) ? [firewallField(res.firewall)] : []),
     ), "Auto-ban · native RCON ban · all servers");
   await logBan(embed);
   postFeed(embed);

@@ -7,7 +7,7 @@ module.exports = function(ctx) {
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   applyMuteOnJoin, autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, ensureMenuPanel, feedHook,
-  firewallResyncAll, fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
+  fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
   mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged, randomQuote,
@@ -39,7 +39,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   postUpdateLogIfChanged().catch(err => logger.warn("UpdateLog", err.message));   // announce this deploy, if it's a new one
   // Re-apply ufw blocks for every currently-active ban's IP at position 1 (self-heals any
   // previously-appended rules). Delayed so it doesn't slow boot; off unless UFW_BLOCK.
-  if (UFW_BLOCK) setTimeout(() => { firewallResyncAll().catch(err => logger.warn("Firewall", `resync failed: ${err.message}`)); }, 15_000);
+  // (ufw is manual-only via /firewall — no automatic resync of ban IPs on startup)
   // Watch EVERY install's Pavlov.log (server 1, 2, …) - derived from the discovered
   // installs, unioned with any explicit PAVLOV_LOGS, so server 2 is never missed.
   const ipLogFiles = [...new Set([
