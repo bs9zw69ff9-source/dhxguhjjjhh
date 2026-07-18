@@ -140,6 +140,33 @@ test("blank duration = permanent ban, duration = tempban", async () => {
   assert.ok(calls.some((c) => c[0] === "upsertTempBan"));
 });
 
+test("per-IP login throttle uses X-Forwarded-For when WEB_TRUST_PROXY is on", async () => {
+  // Separate instance on its own port with proxy trust enabled.
+  const P2 = 8232;
+  Object.assign(process.env, { WEB_PORT: String(P2), WEB_TRUST_PROXY: "1" });
+  const s2 = createWebServer(ctx).start();
+  const post = (fwd) => new Promise((resolve) => {
+    const data = new URLSearchParams({ password: "wrong" }).toString();
+    const r = http.request(`http://127.0.0.1:${P2}/login`, { method: "POST", headers: {
+      "Content-Type": "application/x-www-form-urlencoded", "Content-Length": Buffer.byteLength(data),
+      "X-Forwarded-For": fwd,
+    } }, (res) => { res.on("data", () => {}); res.on("end", () => resolve(res.statusCode)); });
+    r.write(data); r.end();
+  });
+  try {
+    // Six failures from one forwarded IP should lock THAT ip (429), while a
+    // different forwarded IP is still allowed (401, not locked).
+    let last = 0;
+    for (let i = 0; i < 7; i++) last = await post("203.0.113.9");
+    assert.equal(last, 429, "attacker IP gets locked out");
+    const other = await post("198.51.100.4");
+    assert.equal(other, 401, "a different client IP is not affected");
+  } finally {
+    Object.assign(process.env, { WEB_PORT: String(PORT) }); delete process.env.WEB_TRUST_PROXY;
+    s2.close();
+  }
+});
+
 test("kick sends RCON, unban clears everywhere, logout invalidates session", async () => {
   const cookie = await loginCookie();
   const csrf = await csrfFor(cookie);

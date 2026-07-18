@@ -138,6 +138,47 @@ Keep the port firewalled or behind a reverse proxy — expose it deliberately. I
 `WEB_ENABLE` is unset the server never starts; if the password is unset the admin
 panel stays locked.
 
+### HTTPS via nginx + Let's Encrypt
+
+Run the app on localhost and let nginx terminate TLS on a real domain — the Node
+server is never exposed directly. A ready config lives at
+[`scripts/nginx-dashboard.conf.example`](scripts/nginx-dashboard.conf.example).
+
+1. Point a DNS `A` record (e.g. `dash.example.com`) at the VPS, then set in `.env`:
+
+   ```
+   WEB_ENABLE=1
+   WEB_HOST=127.0.0.1        # localhost only — reachable through nginx, not directly
+   WEB_PORT=8080
+   WEB_SECURE_COOKIE=1       # Secure flag on the session cookie (HTTPS)
+   WEB_TRUST_PROXY=1         # read the real client IP from X-Forwarded-For
+   WEB_ADMIN_PASSWORD=…      # a strong password
+   ```
+   ```bash
+   pm2 restart pavlov-bot
+   ```
+
+2. Only 80/443 need to be open — **do not** open 8080:
+
+   ```bash
+   sudo ufw allow 'Nginx Full'
+   ```
+
+3. Install nginx + certbot, drop in the config (edit the domain first), and issue
+   the certificate:
+
+   ```bash
+   sudo apt install -y nginx certbot python3-certbot-nginx
+   sudo cp scripts/nginx-dashboard.conf.example /etc/nginx/sites-available/dashboard
+   sudo sed -i 's/dash.example.com/YOUR.DOMAIN/g' /etc/nginx/sites-available/dashboard
+   sudo ln -s /etc/nginx/sites-available/dashboard /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   sudo certbot --nginx -d YOUR.DOMAIN     # fills in the cert paths + auto-renews
+   ```
+
+   certbot installs a systemd timer that renews automatically. Your dashboard is
+   then at `https://YOUR.DOMAIN`.
+
 ## Development
 
 ```bash

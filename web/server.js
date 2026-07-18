@@ -45,6 +45,12 @@ module.exports = function createWebServer(ctx) {
   const HOST     = process.env.WEB_HOST || "0.0.0.0";
   const PASSWORD = process.env.WEB_ADMIN_PASSWORD || "";
   const SITE     = process.env.WEB_SITE_NAME || "Server Dashboard";
+  // When behind a reverse proxy (nginx), the socket IP is always 127.0.0.1, which
+  // would collapse per-IP login throttling into one global bucket. Set WEB_TRUST_PROXY=1
+  // to read the real client IP from the proxy's X-Forwarded-For header instead. Only
+  // enable this when a trusted proxy actually sets that header — otherwise a client
+  // could spoof it.
+  const TRUST_PROXY = /^(1|true|yes|on)$/i.test(process.env.WEB_TRUST_PROXY || "");
   const SESSION_TTL_MS = 2 * 60 * 60 * 1000;                 // 2h idle
   const COOKIE   = "sid";
   const VALID_SERVERS = new Set(["both", ...ACTIVE_SERVERS]);
@@ -55,7 +61,10 @@ module.exports = function createWebServer(ctx) {
   const MAX_FAILS = 6, LOCK_MS = 10 * 60 * 1000;
 
   function clientIp(req) {
-    // Trust the socket by default; behind a reverse proxy the operator can front it.
+    if (TRUST_PROXY) {
+      const xff = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+      if (xff) return xff;   // leftmost = original client (nginx appends downstream)
+    }
     return (req.socket && req.socket.remoteAddress) || "?";
   }
   function newSession() {
