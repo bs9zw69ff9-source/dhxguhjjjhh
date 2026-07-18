@@ -179,6 +179,34 @@ server is never exposed directly. A ready config lives at
    certbot installs a systemd timer that renews automatically. Your dashboard is
    then at `https://YOUR.DOMAIN`.
 
+#### DuckDNS (free subdomain, no domain purchase)
+
+No domain? A free DuckDNS subdomain works with Let's Encrypt out of the box. Use
+[`scripts/nginx-dashboard-duckdns.conf.example`](scripts/nginx-dashboard-duckdns.conf.example)
+instead of the config above.
+
+1. Sign in at [duckdns.org](https://www.duckdns.org), create a subdomain (e.g.
+   `mydash`), and copy your **token**.
+2. Set the subdomain's IP to this VPS's public IP — paste it into the DuckDNS box,
+   or (if the VPS IP is dynamic) install the updater cron from the bottom of the
+   example config.
+3. Use the same `.env` settings as above (`WEB_HOST=127.0.0.1`,
+   `WEB_SECURE_COOKIE=1`, `WEB_TRUST_PROXY=1`, …) and `pm2 restart pavlov-bot`.
+4. Open only 80/443: `sudo ufw allow 'Nginx Full'`.
+5. Install the config and issue the cert (HTTP-01 — no DNS plugin needed):
+
+   ```bash
+   sudo apt install -y nginx certbot python3-certbot-nginx
+   sudo cp scripts/nginx-dashboard-duckdns.conf.example /etc/nginx/sites-available/dashboard
+   sudo sed -i 's/YOURSUB.duckdns.org/mydash.duckdns.org/g' /etc/nginx/sites-available/dashboard
+   sudo ln -s /etc/nginx/sites-available/dashboard /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   sudo certbot --nginx -d mydash.duckdns.org
+   ```
+
+   Dashboard is then at `https://mydash.duckdns.org`, auto-renewing like any other
+   Let's Encrypt cert.
+
 ## Development
 
 ```bash
