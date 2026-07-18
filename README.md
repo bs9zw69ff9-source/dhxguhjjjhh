@@ -111,6 +111,33 @@ as a human-readable backup and are refreshed periodically from the DB. `ipBans.j
 shares the same database. Everything runtime (`bot.db*`, the `.json` state files,
 logs) is **git-ignored** — it's state, not source.
 
+## Web dashboard + moderation panel
+
+An **opt-in** web UI runs inside the bot process (Node core `http` only — no extra
+dependencies). It has two parts:
+
+- **Public dashboard** (`/`) — read-only live status: servers online, player counts,
+  active-ban totals, uptime, and a recent-activity feed. Aggregate only; it does not
+  expose player names, moderator names, IPs, or Discord IDs.
+- **Admin panel** (`/admin`) — password-gated, limited to **moderation** actions:
+  kick, tempban, permban, unban, mute, unmute, plus read views (ban list, online
+  players, firewall status). It calls the exact same functions as the Discord
+  commands, so behaviour is identical.
+
+Security: a single shared password (`WEB_ADMIN_PASSWORD`) is compared in constant
+time and rate-limited per IP; a successful login gets a server-side, idle-expiring
+session behind an `HttpOnly; SameSite=Strict` cookie (add `WEB_SECURE_COOKIE=1`
+under HTTPS). Every action carries a per-session CSRF token, and master names can
+never be actioned.
+
+```bash
+WEB_ENABLE=1 WEB_ADMIN_PASSWORD='choose-a-strong-one' WEB_PORT=8080   # in .env
+```
+
+Keep the port firewalled or behind a reverse proxy — expose it deliberately. If
+`WEB_ENABLE` is unset the server never starts; if the password is unset the admin
+panel stays locked.
+
 ## Development
 
 ```bash
