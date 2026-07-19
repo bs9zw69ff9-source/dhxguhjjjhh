@@ -141,7 +141,7 @@ module.exports = (ctx) => {
             ? "One server may not support `Notify`. Message logged here regardless."
             : "Server gave no acknowledgement — your Pavlov build may not support `Notify`. Message logged here only.";
         const embed = new EmbedBuilder().setColor(allOk ? NV.BLUE_VATS : NV.NCR_TAN).setTitle("Broadcast Sent")
-          .setDescription(`> *${randomQuote("announce")}*\n\n> ${message}\n\n${interaction.user} broadcast to ${isAll ? "**all players**" : `\`${target}\``} on ${serverLabel(server)}. ${deliveryNote}`)
+          .setDescription(`> ${message}\n\n${interaction.user} broadcast to ${isAll ? "**all players**" : `\`${target}\``} on ${serverLabel(server)}. ${deliveryNote}`)
           .setFooter({ text: "RCON Notify broadcast" }).setTimestamp();
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });

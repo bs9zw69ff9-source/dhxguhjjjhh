@@ -146,19 +146,16 @@ module.exports = function createTheme({ getClient, buildId }) {
   // list. `dot` stays a plain bullet (used as an inline separator in running text).
   const GLYPH = { ok: "✅", bad: "❌", warn: "⚠️", deny: "🚫", info: "ℹ️", dot: "•", up: "🟢", down: "🔴", caps: "💰", rank: "🏅" };
 
-  // ---- visual system  (consistent branding across every embed) ----
+  // ---- visual system  (clean, minimal embeds — see the reference help-menu look) ----
   function brandIcon() { try { return getClient()?.user?.displayAvatarURL?.({ size: 128 }) ?? null; } catch { return null; } }
 
-  /** Stamp an embed with the bot's identity: author header (+ avatar),
-      timestamp, thumbnail, and a subtle version footer unless one is set. */
+  /** Minimal stamp: no author header, no avatar/thumbnail, no default footer, no
+      timestamp — just the colour bar, title, and body (the clean help-menu look).
+      An explicitly passed footer (a short informative note) is kept as plain text;
+      any timestamp a call site set is stripped so every embed stays uniform. */
   function brand(embed, { thumb = false, footer } = {}) {
-    const icon = brandIcon();
-    embed.setAuthor(icon ? { name: BRAND_NAME, iconURL: icon } : { name: BRAND_NAME });
-    if (thumb && icon) embed.setThumbnail(icon);
-    const f = footer ? (typeof footer === "string" ? { text: footer } : footer) : { text: `${BRAND_NAME} · ${buildId}` };
-    if (icon && !f.iconURL) f.iconURL = icon;
-    embed.setFooter(f);
-    embed.setTimestamp();
+    if (footer) embed.setFooter(typeof footer === "string" ? { text: footer } : footer);
+    try { if (embed.data) delete embed.data.timestamp; } catch {}
     clampEmbed(embed);
     return embed;
   }
@@ -202,8 +199,9 @@ module.exports = function createTheme({ getClient, buildId }) {
   // Fixed-width cell for lining up columns inside a monospace code block.
   const cell = (v, w) => { const s = String(v); return s.length > w ? s.slice(0, w - 1) + "…" : s.padEnd(w); };
 
-  /* A blockquote-styled hero line used at the top of feature embeds. */
-  function hero(quoteText) { return `> *${quoteText}*`; }
+  /* Intro line at the top of feature embeds — plain text in the clean style
+     (was a blockquote-italic "hero quote" in the old theme). */
+  function hero(quoteText) { return String(quoteText); }
 
   /* Ban / IP embeds: stamp them with the full bot branding (author
      header, avatar, timestamp) + an optional footer — same look as everything else. */

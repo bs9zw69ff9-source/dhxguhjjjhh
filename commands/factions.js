@@ -197,7 +197,7 @@ module.exports = (ctx) => {
           writeModLog({ action: "faction-add", playerId, faction, rank, by: interaction.user.tag });
           const rankFile = getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a";
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(`Added to ${faction}`)
-            .setDescription(`> *${randomQuote("faction")}*\n\n${interaction.user} added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} — ${lines.length}/${cap} in the roster.`)
+            .setDescription(`${interaction.user} added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} — ${lines.length}/${cap} in the roster.`)
             .setFooter({ text: "Main spawn file + rank file updated · audit logged" }).setTimestamp();
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });

@@ -38,7 +38,7 @@ module.exports = (ctx) => {
         }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Ejected from the server")
-          .setDescription(`> *${randomQuote("kick")}*\n\n${interaction.user} kicked **${playerId}** from ${serverLabel(server)} — ${reason}`)
+          .setDescription(`${interaction.user} kicked **${playerId}** from ${serverLabel(server)} — ${reason}`)
           .setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
@@ -242,7 +242,7 @@ module.exports = (ctx) => {
         const liftLine = permanent ? "" : `\nLifts <t:${ts}:F> (<t:${ts}:R>)`;
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
           .setTitle(permanent ? "Permanent Exile Issued" : "Player Exiled from the server")
-          .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} banned **${playerId}** from ${serverLabel(server)} ${sentence} — ${reason}${liftLine}`),
+          .setDescription(`${interaction.user} banned **${playerId}** from ${serverLabel(server)} ${sentence} — ${reason}${liftLine}`),
           replaced ? `Replaced earlier exile: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
         if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
 
@@ -295,7 +295,7 @@ module.exports = (ctx) => {
           ? `Cleared ${c.ips} IP(s) and ${c.names} username flag(s).`
           : "Nothing was flagged for this player.";
         const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Lifted — Welcome Back to the server")
-          .setDescription(`> *${randomQuote("unban")}*\n\n${interaction.user} pardoned **${playerId}**. ${removed ? "Temp ban record cleared." : "No temp ban record."} ${bl.removed ? `Removed from blacklist.txt on ${bl.removed} install(s).` : "Was not on blacklist.txt."} ${ipLifted}`));
+          .setDescription(`${interaction.user} pardoned **${playerId}**. ${removed ? "Temp ban record cleared." : "No temp ban record."} ${bl.removed ? `Removed from blacklist.txt on ${bl.removed} install(s).` : "Was not on blacklist.txt."} ${ipLifted}`));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -365,7 +365,7 @@ module.exports = (ctx) => {
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
-          .setDescription(`> *${randomQuote("ban")}*\n\n${interaction.user} permanently banned **${playerId}** from ${serverLabel(server)} — ${reason}`));
+          .setDescription(`${interaction.user} permanently banned **${playerId}** from ${serverLabel(server)} — ${reason}`));
         if (notes) embed.addFields({ name: "Notes", value: notes });
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {

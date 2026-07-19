@@ -3,13 +3,13 @@
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
   const {
-  ALL_FACTIONS, BLACKLIST_IDS, BOT_COPYRIGHT, DIVIDER,
+  DIVIDER,
   EmbedBuilder, GLYPH, MessageFlags, NV, bar,
   brand, cell,
   discordIdForPavlov, emptyIdEmbed, factionKillBreakdown, formatKD, formatPlaytime, formatTimeLeft,
-  getFactionRank, getFactionRankBadge, getFactionRankConfig, getLastSeen,
+  getFactionRank, getFactionRankBadge, getLastSeen,
   getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole, hero,
-  ipBans, isDonator, loadBans, loadPlaytime, loadRoles,
+  ipBans, isDonator, loadBans, loadPlaytime,
   log, paginate, parseRcon, playerCache, readPlayerBalance,
   loadServerStats, extractPlayerNames, easternClock,
   sanitizeId, sendRcon, serverLabel, spawn, update,
@@ -22,91 +22,42 @@ module.exports = (ctx) => {
          HELP
          ───────────────────────────────────────────────────── */
   "help": async (interaction, name) => {
-        const { modRoleId, adminRoleId, factionLeaderRoleId } = loadRoles();
         const isAdmin = hasAdminRole(interaction.member);
         const isMod   = hasModRole(interaction.member);
         const isFLead = hasFactionLeaderRole(interaction.member);
+        const access  = isAdmin ? "ADMIN" : isMod ? "MODERATOR" : isFLead ? "FACTION LEADER" : "PUBLIC";
+        const color   = isAdmin ? NV.AMBER : isMod ? NV.NCR_TAN : isFLead ? NV.GOLD : NV.BLUE_VATS;
 
-        let badge, color;
-        if (isAdmin)      { badge = "**ADMIN**";          color = NV.AMBER;     }
-        else if (isMod)   { badge = "**MODERATOR**";      color = NV.NCR_TAN;   }
-        else if (isFLead) { badge = "**FACTION LEADER**"; color = NV.GOLD;      }
-        else              { badge = "**PUBLIC ACCESS**";  color = NV.BLUE_VATS; }
-
-        const mStr = modRoleId           ? `<@&${modRoleId}>`           : "`not set`";
-        const aStr = adminRoleId         ? `<@&${adminRoleId}>`         : "`not set`";
-        const fStr = factionLeaderRoleId ? `<@&${factionLeaderRoleId}>` : "`not set`";
-
-        const rankSummaryLines = ALL_FACTIONS.map(f => {
-          const cfg = getFactionRankConfig(f);
-          const rankStr = cfg ? cfg.order.map(r => `${cfg.badges[r]} ${r}`).join(" → ") : "*no ranks*";
-          return `**${f}:** ${rankStr}`;
-        }).join("\n");
-
+        // Clean help-menu style: one flat list — `command` chip line, then a plain
+        // explanation line under it. Tier shown in parentheses; no fields, no footer.
+        const rows = [
+          ["`/serverinfo <server>`", "Live server info — map, mode, players, and network peak."],
+          ["`/checkban <player>` / `/stats <player>` / `/kd [player]`", "Ban status, full player dossier, or K/D stats and leaderboard."],
+          ["`/link add`", "Request a Discord ↔ in-game name link (staff approve it)."],
+          ["`/faction list <faction>` / `/faction playtime <faction>`", "Faction roster with ranks, or members ranked by playtime."],
+          ["`/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot`", "Casino games — play with your credits."],
+          ["`/kick <player> <server>` / `/flush <server>`", "Eject a player, or randomly kick one online player (mod)."],
+          ["`/tempban <player> <reason> <server>` / `/unban <player>`", "Ban — the punishment preset sets the length — or lift a ban (mod)."],
+          ["`/announce <message> <server> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
+          ["`/givecaps <player> <amount>` / `/link remove|list`", "Give credits; manage name links (mod)."],
+          ["`/faction add|remove <player> <faction>`", "Faction whitelist management (faction leader)."],
+          ["`/permban <player> <server> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
+          ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
+          ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],
+          ["`/donator add|remove|list <player>` / `/adjustcaps <player> <amount>`", "Manage the donator whitelist; adjust a player's ledger (admin)."],
+          ["`/setroles` / `/casino` / `/manual <command> <server>`", "Set tier roles, casino config, or send raw RCON (admin)."],
+          ["`/faction setrankcap <faction> <rank> <cap>`", "Cap members per rank — 0 = unlimited (admin)."],
+          ["`/configure` / `/firewall block|unblock|status`", "Owner control panel; manual OS-firewall (ufw) control (owner)."],
+          ["`/stripmenuall` / `/clearallbans` / `/faction wipe [faction]`", "Clear all menu access, unban everyone, or reset faction whitelists (owner)."],
+        ];
         const embed = new EmbedBuilder().setColor(color)
-          .setTitle("Command Roster")
+          .setTitle(`📚 ${process.env.BOT_NAME || "Server"} — Help Menu`)
           .setDescription(
-            `> *The rules of the server — we enforce them.*\n\n` +
-            `### ${GLYPH.rank}  Your Access\n${badge}\n` +
-            `-# Mod ${mStr}  ${GLYPH.dot}  Admin ${aStr}  ${GLYPH.dot}  Faction ${fStr}\n` +
-            `-# Autocomplete works in every Player ID and Rank field.`
-          )
-          .addFields(
-            { name: "Public",
-              value: "`/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link add`\n`/faction list` `/faction playtime`\nCasino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot`" },
-            { name: "Moderator",
-              value: [
-                "`/kick <id> <server> [reason]` — Eject",
-                "`/flush <server>` — Randomly kick one online player (staff & donators immune)",
-                "`/tempban <id> <reason> <server>` — Exile; the punishment preset sets the duration (Other takes a date)",
-                "`/unban <id> <server>` — Lift exile",
-                "`/announce <msg> <server> <target>` — RCON Notify a player or All",
-                "`/givecaps <id> <amount> [reason]` — Give credits to a player",
-              ].join("\n") },
-            { name: "Faction Leader",
-              value: [
-                "`/faction add <id> <faction> [rank]` — Whitelist player (optional starting rank)",
-                "`/faction remove <id> <faction>` — Remove from whitelist",
-                "`/faction list <faction>` — Roster with ranks (pages)",
-              ].join("\n") },
-            { name: "Admin",
-              value: [
-                "`/permban <id> <server> <reason>` — Permanent ban",
-                "`/cleartempbans` `/setroles`",
-                "`/staffactivity <staff>` — All mod actions by a staff member",
-                "`/staffleaderboard [period]` — Rank staff by moderation actions",
-                "`/givemenu` `/stripmenu` `/adjustcaps`",
-                "`/manual` — Raw RCON command",
-                "`/casino` — Casino config (bets, cooldown, on/off)",
-                "`/donator add|remove|list <id>` — Manage the donator whitelist file",
-                "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
-                "`/setrconroles [high_staff] [staff] [faction]` — Set which roles grant each RCON menu",
-                "`/link remove|list` — *Mod* — manage Discord ↔ Pavlov links (adds are public requests)",
-              ].join("\n") },
-            { name: "Owner",
-              value: [
-                "`/configure` — Control panel",
-                "`/firewall block|unblock|status` — Manual OS-firewall (ufw) control",
-                "`/stripmenuall` — Clear ALL menu access from everyone",
-                "`/clearallbans` — Unban everyone (clears blacklist.txt)",
-                "`/faction wipe [faction]` — Reset a faction's whitelist (or all)",
-              ].join("\n") },
-            { name: "Faction Ranks (per faction)",
-              value: rankSummaryLines },
-            { name: "Automation",
-              value: [
-                "Temp bans auto-lifted every **60s**",
-                "Leaderboards / live player list refreshed every **30s**",
-                "Peak player counts tracked automatically (daily + all-time)",
-                "VPN check on connect — confirmed hits are auto-banned",
-                "RCON health check every **5 min**",
-                "Rank changes update both the rank registry and the rank-specific spawn files automatically",
-                "`/kick` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
-                "Command blacklist is set via **`BLACKLIST_IDS`** in `.env` (restart to apply)",
-              ].join("\n") },
-          )
-          .setFooter({ text: BOT_COPYRIGHT });
-        brand(embed, { thumb: true });
+            `Here are the available commands — your access: **${access}**.\n` +
+            `Autocomplete works in every player and rank field.\n\n` +
+            rows.map(([cmd, desc]) => `${cmd}\n${desc}`).join("\n")
+          );
+        brand(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
 

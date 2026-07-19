@@ -16,13 +16,21 @@ test("BRAND_NAME defaults neutral and respects BOT_NAME", () => {
   delete process.env.BOT_NAME;
 });
 
-test("brand stamps author + versioned footer + timestamp", () => {
+test("brand is minimal: no author, no default footer, timestamps stripped", () => {
   const t = theme();
   const { EmbedBuilder } = require("discord.js");
-  const e = t.brand(new EmbedBuilder().setTitle("x"));
-  assert.equal(e.data.author.name, "Server Authority");
-  assert.match(e.data.footer.text, /v-test/);
-  assert.ok(e.data.timestamp);
+  const e = t.brand(new EmbedBuilder().setTitle("x").setTimestamp());
+  assert.equal(e.data.author, undefined, "no author header");
+  assert.equal(e.data.footer, undefined, "no default footer");
+  assert.equal(e.data.timestamp, undefined, "timestamp stripped for the clean look");
+  // an explicitly passed footer (informative note) is kept as plain text
+  const f = t.brand(new EmbedBuilder().setTitle("y"), { footer: "note" });
+  assert.equal(f.data.footer.text, "note");
+});
+
+test("hero is a plain intro line (no blockquote styling)", () => {
+  const t = theme();
+  assert.equal(t.hero("Welcome"), "Welcome");
 });
 
 test("clampEmbed enforces Discord hard limits", () => {
