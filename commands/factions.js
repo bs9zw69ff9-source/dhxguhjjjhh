@@ -5,12 +5,12 @@ module.exports = (ctx) => {
   const {
   ALL_FACTIONS, DIVIDER, EmbedBuilder, FACTION_BAK_DIR, MessageFlags, NV,
   SPAWN_FILE_MAP, addPlayerToRankFile, adminOnlyEmbed, bar, brand, confirmDialog,
-  countFactionRank, emptyIdEmbed, errorEmbed, formatPlaytime, getFactionCap,
+  countFactionRank, emptyIdEmbed, errorEmbed, factionLeaderStrictEmbed, formatPlaytime, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
-  getFactionRankOrder, getPlayerFactions, getPlayerRanks, hasAdminRole,
+  getFactionRankOrder, getPlayerFactions, getPlayerRanks, hasAdminRole, hasFactionLeaderRole,
   isOwner, loadPlaytime, logAction, logger, meter,
   ownerOnlyEmbed, paginate, path, randomQuote, rankBadge,
-  rankHasRoom, rankLabel, readFactionFile, removeFactionRank, removePlayerFromAllRankFiles,
+  rankHasRoom, rankLabel, readFactionFile, removeFactionRank, removePlayerFromAllRankFiles, removePlayerFromRankFile,
   sanitizeId, setFactionRank, setFactionRankCap, spawn, successEmbed,
   update, warningEmbed, wipeFaction, writeFactionAudit, writeFactionFile, writeModLog,
   } = ctx;
@@ -148,6 +148,58 @@ module.exports = (ctx) => {
               .setDescription(`${header}\n\n${pageLines.join("\n")}`)
               .setFooter({ text: "Playtime sampled every 60s while online" }),
             { perPage: 20 });
+        }
+
+        /* ── rank (Faction Leader ONLY) ── */
+        if (sub === "rank") {
+          if (!hasFactionLeaderRole(interaction.member)) {
+            return interaction.reply({ embeds: [factionLeaderStrictEmbed()], flags: MessageFlags.Ephemeral });
+          }
+          const playerId = sanitizeId(interaction.options.getString("playerid"));
+          const faction  = interaction.options.getString("faction");
+          const rank     = interaction.options.getString("rank");
+          const removing = interaction.options.getBoolean("remove") === true;
+          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+          const validRanks = getFactionRankOrder(faction);
+          if (!validRanks.includes(rank)) {
+            return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
+              `**${rank}** is not a rank in **${faction}**. Valid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}.`)], flags: MessageFlags.Ephemeral });
+          }
+          const spawn = SPAWN_FILE_MAP[faction];
+          const lines = readFactionFile(spawn);
+          if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read the roster file for **${faction}**.`)], flags: MessageFlags.Ephemeral });
+          if (!lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
+            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not in **${faction}**. Use \`/faction add\` first.`)], flags: MessageFlags.Ephemeral });
+          }
+          const had = getPlayerRanks(faction, playerId);
+          if (removing) {
+            if (!had.includes(rank)) {
+              return interaction.reply({ embeds: [warningEmbed("Rank Not Held", `\`${playerId}\` does not hold **${rank}** in **${faction}**. They hold: ${had.join(", ") || "none"}.`)], flags: MessageFlags.Ephemeral });
+            }
+            if (!removePlayerFromRankFile(faction, playerId, rank)) {
+              return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${rank}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
+            }
+          } else {
+            if (had.includes(rank)) {
+              return interaction.reply({ embeds: [warningEmbed("Already Holds Rank", `\`${playerId}\` already holds **${rank}** in **${faction}**. They hold: ${had.join(", ")}.`)], flags: MessageFlags.Ephemeral });
+            }
+            const room = rankHasRoom(faction, rank);   // a member can hold MULTIPLE ranks; cap is per rank file
+            if (!room.ok) {
+              return interaction.reply({ embeds: [errorEmbed("Rank Full",
+                `**${rank}** in **${faction}** is full (**${room.count}/${room.cap}**). Raise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
+            }
+            if (!addPlayerToRankFile(faction, playerId, rank)) {
+              return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${rank}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
+            }
+          }
+          const now = getPlayerRanks(faction, playerId);
+          await setFactionRank(faction, playerId, now[now.length - 1] ?? getFactionDefaultRank(faction));   // track highest as primary
+          writeFactionAudit({ action: "rank", faction, playerId, rank: removing ? `-${rank}` : rank, by: interaction.user.tag });
+          writeModLog({ action: removing ? "faction-unrank" : "faction-rank", playerId, faction, rank, by: interaction.user.tag });
+          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(removing ? "✅ Rank Removed" : "✅ Rank Added")
+            .setDescription(`**${interaction.user.username}** ${removing ? "removed" : "gave"} **${playerId}** the ${rankBadge(faction, rank)} **${rank}** rank in **${faction}**. They now hold: ${now.length ? now.map(r => `**${r}**`).join(", ") : "no ranks"}.`);
+          brand(embed); await logAction(embed);
+          return interaction.reply({ embeds: [embed] });
         }
 
         /* ── add ── */

@@ -109,7 +109,7 @@ locked.
 |------|----------|
 | 🌐 Public | `/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link` · casino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
-| ⚔️ Faction Leader | `/faction add\|remove\|setrankcap\|wipe` |
+| ⚔️ Faction Leader | `/faction add\|remove\|rank\|setrankcap\|wipe` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` `/casino` |
 | 👑 Owner | `/configure` (control panel) `/inspect` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` |
 

@@ -41,6 +41,7 @@ module.exports = (ctx) => {
           ["`/announce <message> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
           ["`/givecaps <player> <amount>` / `/link remove|list`", "Give credits; manage name links (mod)."],
           ["`/faction add|remove <player> <faction>`", "Faction whitelist management (faction leader)."],
+          ["`/faction rank <faction> <player> <rank>`", "Give or remove a member's rank - a member can hold several (faction leader)."],
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],

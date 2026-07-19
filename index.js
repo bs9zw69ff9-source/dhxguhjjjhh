@@ -367,7 +367,7 @@ function commandPlayerCandidates(interaction) {
                               return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAllCached()])];  // temp-banned + blacklist.txt (cached for autocomplete)
   if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
   if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
-  if (cmd === "faction" && sub === "remove") {
+  if (cmd === "faction" && (sub === "remove" || sub === "rank")) {
     const f = interaction.options.getString("faction");
     return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of that faction
   }
