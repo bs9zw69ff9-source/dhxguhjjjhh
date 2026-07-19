@@ -1650,7 +1650,21 @@ function setPlayerCacheFromData(server, data) {
   playerCache[server] = extractPlayerNames(data);
   playerCache.lastUpdated[server] = Date.now();
   recordKnownPlayers(playerCache[server]);   // remember everyone who's ever been seen
+  try { recordServerPeaks(); } catch {}      // all-time peak player tracking
   return true;
+}
+
+/* All-time peak concurrent players — per server and combined across every active
+   server. Recomputed from the live cache on each roster refresh; only writes when a
+   peak is newly exceeded, so it's cheap even at poll frequency. Peaks are monotonic. */
+const { reducePeaks } = require("./stats/peaks");
+const loadServerStats = () => safeRead(FILES.SERVER_STATS, {});
+function recordServerPeaks() {
+  const counts = {};
+  for (const s of ACTIVE_SERVERS) counts[s] = playerCache[s].length;
+  // Cheap pre-check against the in-memory cache; only take the write path on a new peak.
+  if (!reducePeaks(counts, safeRead(FILES.SERVER_STATS, {})).changed) return;
+  return update(FILES.SERVER_STATS, {}, (stats) => reducePeaks(counts, stats).stats);
 }
 
 async function refreshPlayerCache(server = "server1") {
@@ -2530,7 +2544,8 @@ const { onInteraction } = require("./commands")({
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt, isBlackjack,
   isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer, loadAutoRotate,
   loadBans, loadCasinoConfig, loadDiscordLinks, loadFactionAudit, loadFactionBackup, loadMenuGrants,
-  loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadVpnChecks, loadWages,
+  loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadServerStats, loadVpnChecks, loadWages,
+  extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
   modOnlyEmbed, ownerOnlyEmbed, paginate, parseClockTime, parseDuration, parseRcon,
   patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, punishDurationLabel, randomQuote,

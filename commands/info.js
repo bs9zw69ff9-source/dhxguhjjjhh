@@ -11,6 +11,7 @@ module.exports = (ctx) => {
   getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole, hero,
   ipBans, isDonator, loadBans, loadPlaytime, loadRoles, loadWages,
   log, paginate, parseRcon, playerCache, readPlayerBalance, refreshPlayerCache,
+  loadServerStats, extractPlayerNames,
   sanitizeId, sendRcon, serverLabel, spawn, update,
   ACTIVE_SERVERS,
   } = ctx;
@@ -172,38 +173,52 @@ module.exports = (ctx) => {
             ]);
             const listData = parseRcon(listRaw);
             const infoData = parseRcon(infoRaw);
+            // Derive the roster from the SAME RefreshList we just fetched, so the count
+            // and the names always agree and are live — the old code counted this fetch
+            // but drew names from the separately-polled cache, so they could disagree.
+            const roster = extractPlayerNames(listData);
             return {
               ok:         listData?.Successful ?? false,
-              players:    listData?.PlayerList?.length ?? 0,
+              players:    roster.length,
+              roster,
               mapLabel:   infoData?.MapLabel    ?? infoData?.ServerName ?? "*Unknown*",
               gameMode:   infoData?.GameMode    ?? "*Unknown*",
               serverName: infoData?.ServerName  ?? serverLabel(srv),
               maxPlayers: infoData?.MaxPlayers  ?? "?",
             };
-          } catch { return { ok: false, players: 0, mapLabel: "*Unreachable*", gameMode: "*Unreachable*", serverName: serverLabel(srv), maxPlayers: "?" }; }
+          } catch { return { ok: false, players: 0, roster: [], mapLabel: "*Unreachable*", gameMode: "*Unreachable*", serverName: serverLabel(srv), maxPlayers: "?" }; }
         };
         const servers = server === "both" ? ACTIVE_SERVERS : [server];
         const infos   = await Promise.all(servers.map(fetchInfo));
+        const stats   = loadServerStats();
         const embeds  = infos.map((info, i) => {
           const srv = servers[i];
           const maxN = Number(info.maxPlayers) || info.players || 1;
+          const peak = stats?.perServer?.[srv]?.peak ?? 0;
           const lines = [
             `${cell("status", 8)} ${info.ok ? `${GLYPH.up} online` : `${GLYPH.down} offline`}`,
             `${cell("map", 8)} ${info.mapLabel}`,
             `${cell("mode", 8)} ${info.gameMode}`,
             `${cell("players", 8)} ${bar(info.players, maxN, 10)} ${info.players}/${info.maxPlayers}`,
+            `${cell("peak", 8)} ${peak} all-time`,
           ];
           const e = new EmbedBuilder()
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
             .setTitle(info.serverName)
             .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-          const roster = [...(playerCache[srv] || [])].sort((a, b) => a.localeCompare(b));
+          const roster = [...(info.roster || [])].sort((a, b) => a.localeCompare(b));
           if (info.ok && roster.length) {
             const shown = roster.slice(0, 15).map(n => `\`${n}\``).join("  ");
             e.addFields({ name: `Online (${roster.length})`, value: (shown + (roster.length > 15 ? `  *+${roster.length - 15} more*` : "")).slice(0, 1024), inline: false });
           }
           return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
+        // Across-all-servers summary when showing more than one server.
+        if (servers.length > 1) {
+          const liveTotal = infos.reduce((s, x) => s + (x.ok ? x.players : 0), 0);
+          const peakAll   = stats?.combined?.peak ?? 0;
+          embeds[0].addFields({ name: "All Servers", value: `**${liveTotal}** online now  ·  **${peakAll}** all-time peak (combined)`, inline: false });
+        }
         return interaction.editReply({ embeds });
         },
 

@@ -45,6 +45,7 @@ update_log_state.json
 ban_reconcile_state.json
 autopost_state.json
 vpn_checks.json
+server_stats.json
 
 # Runtime state (ipBans.js)
 ip_registry.json

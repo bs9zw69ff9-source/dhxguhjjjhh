@@ -13,8 +13,8 @@ const prevCwd = process.cwd();
 process.chdir(tmp);
 const db = require(path.join(prevCwd, "database"))({ logger: noLog, baseDir: tmp });
 
-test("registry: 29 datasets, defaults seeded", () => {
-  assert.equal(Object.keys(db.FILES).length, 29);
+test("registry: 30 datasets, defaults seeded", () => {
+  assert.equal(Object.keys(db.FILES).length, 30);
   assert.deepEqual(db.safeRead(db.FILES.TEMPBAN, []), []);
   assert.deepEqual(db.safeRead(db.FILES.PLAYTIME, {}), {});
   const roles = db.safeRead(db.FILES.ROLES, {});
@@ -39,7 +39,7 @@ test("update: serialized read-modify-write", async () => {
 });
 
 test("exportDbToJson writes pretty backups to disk", () => {
-  // Only datasets with a seeded default (23 of 29) exist as kv rows on a fresh
+  // Only datasets with a seeded default (24 of 30) exist as kv rows on a fresh
   // db — the other 6 appear lazily on first read/write.
   const n = db.exportDbToJson();
   assert.ok(n >= 20, `expected >=20 exported, got ${n}`);
