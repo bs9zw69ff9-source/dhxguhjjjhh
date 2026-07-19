@@ -6,9 +6,9 @@ module.exports = (ctx) => {
   DIVIDER,
   EmbedBuilder, GLYPH, MessageFlags, NV,
   brand,
-  discordIdForPavlov, emptyIdEmbed, factionKillBreakdown, formatKD, formatPlaytime,
+  discordIdForPavlov, emptyIdEmbed, factionKillBreakdown, formatPlaytime,
   getFactionRank, getFactionRankBadge, getLastSeen,
-  getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole,
+  getPlayerFactions, hasAdminRole, hasFactionLeaderRole, hasModRole,
   ipBans, isDonator, loadBans, loadPlaytime,
   log, paginate, parseRcon, playerCache, readPlayerBalance,
   loadServerStats, extractPlayerNames, easternClock,
@@ -165,7 +165,6 @@ module.exports = (ctx) => {
         const online   = onS1 || onS2 || onS3;
         const balance  = readPlayerBalance(playerId);
         const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
-        const history  = getPlayerHistory(playerId);
         const lastSeen = getLastSeen(playerId);
         const donator  = isDonator(playerId);
 
@@ -184,18 +183,20 @@ module.exports = (ctx) => {
           : lastSeen ? `**${playerId}** is offline, last seen <t:${Math.floor(lastSeen / 1000)}:R>.`
           : `**${playerId}** is offline and has not been seen yet.`);
         const facts = [];
-        if (minutes !== null) facts.push(`they have **${formatPlaytime(minutes)}** of playtime`);
-        if (balance !== null) facts.push(`**${balance.toLocaleString()} credits** in their pocket`);
-        facts.push(`a K/D of **${formatKD(playerId)}**`);
-        if (ipRec?.logins) facts.push(`**${ipRec.logins}** sessions on record`);
-        if (facts.length) bits.push(`So far ${facts.join(", ")}.`);
+        if (minutes !== null) facts.push(`**${formatPlaytime(minutes)}** of playtime`);
+        if (balance !== null) facts.push(`**${balance.toLocaleString()} credits**`);
+        let kd = null; try { kd = ipBans.getKD(playerId); } catch {}
+        if (kd && (kd.kills + kd.deaths)) {
+          const ratio = (kd.deaths ? kd.kills / kd.deaths : kd.kills).toFixed(2);
+          facts.push(`a **${ratio}** K/D (${kd.kills}/${kd.deaths})`);
+        }
+        if (facts.length) bits.push(`They have ${facts.join(", ")}.`);
         bits.push(donator ? "They are a donator." : null);
-        bits.push(linkedId ? `Discord: <@${linkedId}>.` : "Their Discord is not linked.");
-        bits.push(facStr === null ? "Could not read the faction files." : facStr ? `Factions: ${facStr}.` : "They are not in any faction.");
+        bits.push(linkedId ? `Discord: <@${linkedId}>.` : null);
+        bits.push(facStr ? `Factions: ${facStr}.` : null);
         if (tb) bits.push(tb.permanent || !tb.expires
           ? `They are **permanently banned** (reason: \`${tb.reason}\`).`
           : `They are **banned** (reason: \`${tb.reason}\`), lifts <t:${Math.floor(tb.expires / 1000)}:R>.`);
-        if (history.length) bits.push(`They have **${history.length}** mod action${history.length !== 1 ? "s" : ""} on record.`);
         if (ipRec?.flagged && !tb) bits.push("They are flagged and will be auto-banned next time they join.");
         const fkills = factionKillBreakdown(playerId);
         if (fkills && Object.keys(fkills).length) {
