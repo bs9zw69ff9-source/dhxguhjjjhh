@@ -38,7 +38,7 @@ module.exports = (ctx) => {
         }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Kicked")
-          .setDescription(`${interaction.user} kicked **${playerId}** from ${serverLabel(server)} (reason: \`${reason}\`).`)
+          .setDescription(`**${interaction.user.username}** kicked **${playerId}** from ${serverLabel(server)} (reason: \`${reason}\`).`)
           .setFooter({ text: "Kick logged - no ban issued" });
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
@@ -80,7 +80,7 @@ module.exports = (ctx) => {
         try { await sendRcon(`Kick ${target}`, pick.srv, 2500, 1); kicked = true; } catch {}
         writeModLog({ action: "flush-kick", playerId: pick.name, server: pick.srv, by: interaction.user.tag });
         const embed = brand(new EmbedBuilder().setColor(kicked ? NV.AMBER : NV.NCR_TAN).setTitle("Flush - Random Kick")
-          .setDescription(`${interaction.user} flushed **${pick.name}** from ${serverLabel(pick.srv)} - picked at random from ${candidates.length} eligible of ${pool.length} online (staff & donators immune).`)
+          .setDescription(`**${interaction.user.username}** flushed **${pick.name}** from ${serverLabel(pick.srv)} - picked at random from ${candidates.length} eligible of ${pool.length} online (staff & donators immune).`)
           .setFooter({ text: kicked ? "Random kick - no ban issued" : "Kick command sent (no RCON confirmation)" }));
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -242,7 +242,7 @@ module.exports = (ctx) => {
         const liftLine = permanent ? "" : ` Lifts <t:${ts}:R>.`;
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
           .setTitle(permanent ? "Permanent Ban Issued" : "Player Banned")
-          .setDescription(`${interaction.user} banned **${playerId}** ${sentence} on ${serverLabel(server)} (reason: \`${reason}\`).${liftLine}`),
+          .setDescription(`**${interaction.user.username}** banned **${playerId}** ${sentence} on ${serverLabel(server)} (reason: \`${reason}\`).${liftLine}`),
           replaced ? `Replaced earlier ban: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
         if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
 
@@ -293,7 +293,7 @@ module.exports = (ctx) => {
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
         const ipLifted = c && (c.ips + c.names) > 0 ? " Their IP flags were cleared too." : "";
         const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Player Unbanned")
-          .setDescription(`${interaction.user} unbanned **${playerId}**.${removed || bl.removed ? "" : " They were not banned in the first place."}${ipLifted}`));
+          .setDescription(`**${interaction.user.username}** unbanned **${playerId}**.${removed || bl.removed ? "" : " They were not banned in the first place."}${ipLifted}`));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -363,7 +363,7 @@ module.exports = (ctx) => {
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Issued")
-          .setDescription(`${interaction.user} permanently banned **${playerId}** on ${serverLabel(server)} (reason: \`${reason}\`).`));
+          .setDescription(`**${interaction.user.username}** permanently banned **${playerId}** on ${serverLabel(server)} (reason: \`${reason}\`).`));
         if (notes) embed.addFields({ name: "Notes", value: notes });
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
@@ -412,7 +412,7 @@ module.exports = (ctx) => {
         const lines = [...ok.map(id => `\`${id}\``), ...fail.map(id => `\`${id}\` - failed, kept`)];
         await logBan(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Temp Bans Cleared")
           .setDescription(`**${ok.length}** released${fail.length ? `, **${fail.length}** failed` : ""}\n\n${lines.join("\n")}`.slice(0, 4000))
-          .addFields({ name: "By", value: `${interaction.user}`, inline: false })));
+          .addFields({ name: "By", value: `**${interaction.user.username}**`, inline: false })));
         return interaction.editReply({ embeds: [successEmbed("Temp Bans Cleared", `Released **${ok.length}**${fail.length ? `, **${fail.length}** failed` : ""}.`)], components: [], keepEmbeds: true });
         },
 
@@ -452,7 +452,7 @@ module.exports = (ctx) => {
         await removeBans(...names);
         writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
         await logBan(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Everyone Unbanned")
-          .setDescription(`${interaction.user} unbanned everyone (**${ok}** player${"s"}${failed ? `, ${failed} failed` : ""}).`)));
+          .setDescription(`**${interaction.user.username}** unbanned everyone (**${ok}** player${"s"}${failed ? `, ${failed} failed` : ""}).`)));
         return interaction.editReply({ embeds: [successEmbed("Everyone Unbanned", `Unbanned **${ok}**${failed ? `, **${failed}** failed` : ""}.`)], components: [], keepEmbeds: true });
         },
 
@@ -474,17 +474,17 @@ module.exports = (ctx) => {
                 .addFields(
                   { name: "Signal", value: `\`\`\`${command}\`\`\``, inline: false },
                   ...ACTIVE_SERVERS.map((s, i) => ({ name: `${serverLabel(s)} Response`, value: `\`\`\`${fmt(results[i])}\`\`\``, inline: false })),
-                  { name: "By", value: `${interaction.user}`, inline: false },
+                  { name: "By", value: `**${interaction.user.username}**`, inline: false },
                 )
             ]});
           }
           const result = await sendRcon(command, server);
           writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
           await logAction(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Manual RCON")
-            .setDescription(`${interaction.user} sent \`${command}\` to ${serverLabel(server)}.`));
+            .setDescription(`**${interaction.user.username}** sent \`${command}\` to ${serverLabel(server)}.`));
           return interaction.editReply({ embeds: [
             new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("RCON Transmission Complete")
-              .setDescription(`${interaction.user} sent this to ${serverLabel(server)}:\n\`\`\`${command}\`\`\`\n\`\`\`${(result.trim() || "no response").slice(0, 1000)}\`\`\``)
+              .setDescription(`**${interaction.user.username}** sent this to ${serverLabel(server)}:\n\`\`\`${command}\`\`\`\n\`\`\`${(result.trim() || "no response").slice(0, 1000)}\`\`\``)
               
           ]});
         } catch (err) {

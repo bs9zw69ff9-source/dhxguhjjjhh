@@ -1402,6 +1402,9 @@ function textify(payload) {
   if (!Array.isArray(rest.embeds) || !rest.embeds.length) return rest;
   const { first, extra } = textifyChunks(rest);
   if (extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
+  // Replies are plain text now, so a raw <@id> in the content would ping. Command
+  // replies should never ping anyone - mentions still render, they just don't notify.
+  if (!first.allowedMentions) first.allowedMentions = { parse: [] };
   return first;
 }
 function patchInteractionOutput(interaction) {
@@ -1414,11 +1417,12 @@ function patchInteractionOutput(interaction) {
       }
       const { keepEmbeds, ...rest } = payload;
       const { first, extra } = textifyChunks(rest);
+      if (!first.allowedMentions) first.allowedMentions = { parse: [] };   // never ping from a reply
       // update() edits one message in place - no follow-ups possible there.
       if (m === "update" && extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
       const res = await orig(first, ...args);
       if (m !== "update") {
-        for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch { break; } }
+        for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags, allowedMentions: { parse: [] } }); } catch { break; } }
       }
       return res;
     };
@@ -2229,7 +2233,7 @@ async function handleMenuPanelSubmit(interaction) {
       for (const m of MENUS) for (const srv of [...ACTIVE_SERVERS, "both"]) await removeMenuGrant(link.name, srv, m.value);
       await clearMenuLink(interaction.user.id);
       logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Removed (self)")
-        .setDescription(`${interaction.user} removed their own menu (was \`${link.name}\`).`)));
+        .setDescription(`**${interaction.user.username}** removed their own menu (was \`${link.name}\`).`)));
       return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Menu Removed")
         .setDescription(`Removed the menu from \`${link.name}\`. Press **Get Menu** again to re-claim.`))] });
     }
@@ -2259,7 +2263,7 @@ async function handleMenuPanelSubmit(interaction) {
     .setDescription(`Granted the **${meta.name}** menu to \`${name}\` on both servers. Open your in-game menu to use it.${tier.menu === "highstaff" ? "\nAlso granted Mod + Access Manager." : ""}`));
   // mirror to the mod log for an audit trail
   logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Self-Service")
-    .setDescription(`${interaction.user} self-granted **${meta.name}** to \`${name}\`.`)));
+    .setDescription(`**${interaction.user.username}** self-granted **${meta.name}** to \`${name}\`.`)));
   return interaction.editReply({ embeds: [embed] });
 }
 

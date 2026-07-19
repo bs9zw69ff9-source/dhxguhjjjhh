@@ -46,7 +46,7 @@ module.exports = (ctx) => {
         saveRoles(c);
         const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Faction → <@&${flRole.id}>`].filter(Boolean);
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Permissions Updated")
-          .setDescription(`${changes.join("\n")}\n\n— ${interaction.user}`).setFooter({ text: "Takes effect immediately" });
+          .setDescription(`${changes.join("\n")}\n\n— **${interaction.user.username}**`).setFooter({ text: "Takes effect immediately" });
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
@@ -86,7 +86,7 @@ module.exports = (ctx) => {
           if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Donator Added")
-            .setDescription(`> *"A generous soul joins the ranks of the server's patrons."*\n\n${interaction.user} added **${playerId}** to the donator file.`)
+            .setDescription(`> *"A generous soul joins the ranks of the server's patrons."*\n\n**${interaction.user.username}** added **${playerId}** to the donator file.`)
             .setFooter({ text: DONATOR_FILE });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -98,7 +98,7 @@ module.exports = (ctx) => {
           if (missing) return interaction.reply({ embeds: [warningEmbed("Not a Donator", `\`${playerId}\` is not in the donator file.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "donator-remove", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Donator Removed")
-            .setDescription(`${interaction.user} removed **${playerId}** from the donator file.`)
+            .setDescription(`**${interaction.user.username}** removed **${playerId}** from the donator file.`)
             .setFooter({ text: DONATOR_FILE });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -141,7 +141,7 @@ module.exports = (ctx) => {
             ? "One server may not support `Notify`. Message logged here regardless."
             : "Server gave no acknowledgement - your Pavlov build may not support `Notify`. Message logged here only.";
         const embed = new EmbedBuilder().setColor(allOk ? NV.BLUE_VATS : NV.NCR_TAN).setTitle("Broadcast Sent")
-          .setDescription(`> ${message}\n\n${interaction.user} broadcast to ${isAll ? "**all players**" : `\`${target}\``} on ${serverLabel(server)}. ${deliveryNote}`)
+          .setDescription(`> ${message}\n\n**${interaction.user.username}** broadcast to ${isAll ? "**all players**" : `\`${target}\``} on ${serverLabel(server)}. ${deliveryNote}`)
           .setFooter({ text: "RCON Notify broadcast" });
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -172,7 +172,7 @@ module.exports = (ctx) => {
         addMenuGrant(playerId, server, menuValue, menuId, interaction.user.tag);
         const embed = new EmbedBuilder().setColor(NV.AMBER)
           .setTitle("Menu Access Granted")
-          .setDescription(`${interaction.user} granted **${menuMeta?.name ?? menuValue}** to **${playerId}** on ${serverLabel(server)}.\n-# Recorded for tracking - not re-applied automatically on rejoin.`)
+          .setDescription(`**${interaction.user.username}** granted **${menuMeta?.name ?? menuValue}** to **${playerId}** on ${serverLabel(server)}.\n-# Recorded for tracking - not re-applied automatically on rejoin.`)
           ;
         if (menuValue === "highstaff") {
           embed.addFields({ name: "Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
@@ -208,7 +208,7 @@ module.exports = (ctx) => {
         }
         const embed = brand(new EmbedBuilder().setColor(NV.NCR_TAN)
           .setTitle("Menu Access Revoked")
-          .setDescription(`${interaction.user} revoked menu access from **${playerId}** on ${serverLabel(server)}.\n\`\`\`\n${applied.join("\n")}\n\`\`\``)
+          .setDescription(`**${interaction.user.username}** revoked menu access from **${playerId}** on ${serverLabel(server)}.\n\`\`\`\n${applied.join("\n")}\n\`\`\``)
           );
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -332,7 +332,7 @@ module.exports = (ctx) => {
           return interaction.reply({ embeds: [errorEmbed("Requests Unavailable", "The link-request channel is not reachable - tell an admin.")], flags: MessageFlags.Ephemeral });
         }
         const reqEmbed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Link Request - Pending")
-          .setDescription(`${interaction.user} (\`${interaction.user.id}\`) wants to link to \`${pavlov}\`.`)
+          .setDescription(`**${interaction.user.username}** (\`${interaction.user.id}\`) wants to link to \`${pavlov}\`.`)
           .setFooter({ text: "Approve or deny below" }));
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`linkreq_ok:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Accept").setStyle(ButtonStyle.Success),

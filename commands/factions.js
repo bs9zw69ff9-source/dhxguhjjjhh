@@ -41,7 +41,7 @@ module.exports = (ctx) => {
           const current = countFactionRank(faction, rank);
           const capStr  = cap > 0 ? `**${cap}**` : "**Unlimited**";
           const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Rank Cap Updated")
-            .setDescription(`${interaction.user} set **${faction}** ${rankBadge(faction, rank)}'s cap to ${capStr} (currently ${current}${cap > 0 ? `/${cap}${current > cap ? " - over cap!" : ""}` : ""}).`)
+            .setDescription(`**${interaction.user.username}** set **${faction}** ${rankBadge(faction, rank)}'s cap to ${capStr} (currently ${current}${cap > 0 ? `/${cap}${current > cap ? " - over cap!" : ""}` : ""}).`)
             .setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -197,7 +197,7 @@ module.exports = (ctx) => {
           writeModLog({ action: "faction-add", playerId, faction, rank, by: interaction.user.tag });
           const rankFile = getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a";
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(`Added to ${faction}`)
-            .setDescription(`${interaction.user} added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} - ${lines.length}/${cap} in the roster.`)
+            .setDescription(`**${interaction.user.username}** added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} - ${lines.length}/${cap} in the roster.`)
             .setFooter({ text: "Main spawn file + rank file updated - audit logged" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
@@ -227,7 +227,7 @@ module.exports = (ctx) => {
           writeModLog({ action: "faction-remove", playerId, faction, oldRank, by: interaction.user.tag });
           const cap = getFactionCap(faction);
           const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Removed from ${faction}`)
-            .setDescription(`${interaction.user} removed **${playerId}** from **${faction}** (was ${rankBadge(faction, oldRank)}) - ${lines.length}/${cap} in the roster.`)
+            .setDescription(`**${interaction.user.username}** removed **${playerId}** from **${faction}** (was ${rankBadge(faction, oldRank)}) - ${lines.length}/${cap} in the roster.`)
             .setFooter({ text: "Removed from spawn file and all rank files - audit logged" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });

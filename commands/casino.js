@@ -220,7 +220,7 @@ module.exports = (ctx) => {
           new ButtonBuilder().setCustomId("cf_decline").setLabel("Decline").setStyle(ButtonStyle.Secondary),
         );
         await interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`${GAME_ICON.cockfight}  Cockfight Challenge`)
-          .setDescription(`${interaction.user} challenges ${opponent} to a cockfight for **${bet.toLocaleString()} credits** each.\n-# Expires in 60s.`))], components: [row] });
+          .setDescription(`**${interaction.user.username}** challenges ${opponent} to a cockfight for **${bet.toLocaleString()} credits** each.\n-# Expires in 60s.`))], components: [row] });
         const msg = await interaction.fetchReply();
         const accept = await awaitOwnedComponent(msg, opponent.id, Date.now() + 60_000, "This challenge isn't addressed to you.");
         if (!accept) return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle(`${GAME_ICON.cockfight}  Challenge Expired`).setDescription(`${opponent} didn't respond in time.`))], components: [] });
@@ -346,7 +346,7 @@ module.exports = (ctx) => {
           const newBalance = readPlayerBalance(playerId) ?? 0;
           writeModLog({ action: "jackpot-win", playerId, wager, won, by: interaction.user.tag });
           const embed = brand(new EmbedBuilder().setColor(NV.GOLD).setTitle(`${GAME_ICON.jackpot}  JACKPOT!`)
-            .setDescription(`${interaction.user} just won the entire pot!`)
+            .setDescription(`**${interaction.user.username}** just won the entire pot!`)
             .addFields(
               { name: "Wagered",     value: `**${wager.toLocaleString()} credits**`,     inline: true },
               { name: "Pot Won",     value: `**${won.toLocaleString()} credits**`,       inline: true },

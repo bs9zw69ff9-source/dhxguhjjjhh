@@ -76,7 +76,7 @@ module.exports = function createCommands(ctx) {
       }
       const done = brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
         .setTitle(approve ? "Link Request - Approved" : "Link Request - Denied")
-        .setDescription(`${interaction.user} ${approve ? "approved" : "denied"} <@${uid}>'s request to link to \`${pavlov}\`.`)
+        .setDescription(`**${interaction.user.username}** ${approve ? "approved" : "denied"} <@${uid}>'s request to link to \`${pavlov}\`.`)
         );
       await interaction.update(textify({ content: "", embeds: [done], components: [] }));
       // DM the requester the outcome (best effort).
