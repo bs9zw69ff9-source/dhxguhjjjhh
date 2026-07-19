@@ -213,7 +213,7 @@ module.exports = (ctx) => {
         if (history.length) {
           embed.addFields({ name: "Mod Actions", value: `**${history.length}** on record`, inline: false });
         }
-        if (ipRec?.flagged && !tb) embed.addFields({ name: "Evasion Watch", value: "This account matches an active IP/EOS flag - next join is auto-banned.", inline: false });
+        if (ipRec?.flagged && !tb) embed.addFields({ name: "Flagged", value: "This player is flagged and will be auto-banned next time they join.", inline: false });
 
         // Faction kills - how many times this player has killed members of each
         // faction, cross-referenced from the live kill log against the spawn files.

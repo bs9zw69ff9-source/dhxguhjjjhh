@@ -158,20 +158,20 @@ const commands = [
   // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
   // requires a non-empty description - a zero-width one gets the whole PUT rejected.
   new SlashCommandBuilder().setName("inspect")
-    .setDescription("Owner: full record for a player - IPs, VPN checks, alts, flags")
+    .setDescription("Owner: full record for a player")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)),
   // Owner-only manual OS-firewall (ufw) control - block/unblock an IP by hand,
   // independent of any ban. Gated in the handler; requires UFW_BLOCK=1.
   new SlashCommandBuilder().setName("firewall")
-    .setDescription("Owner: block or unblock an IP at the OS firewall (ufw)")
+    .setDescription("Owner: manage the server firewall block list")
     .addSubcommand(s => s.setName("block")
-      .setDescription("Block an IP at the firewall - sudo ufw insert 1 deny from <ip>")
-      .addStringOption(o => o.setName("ip").setDescription("IPv4 address to block").setRequired(true)))
+      .setDescription("Add an address to the firewall block list")
+      .addStringOption(o => o.setName("ip").setDescription("Address to block").setRequired(true)))
     .addSubcommand(s => s.setName("unblock")
-      .setDescription("Remove a firewall block for an IP - sudo ufw delete <rule>")
-      .addStringOption(o => o.setName("ip").setDescription("IPv4 address to unblock").setRequired(true)))
+      .setDescription("Remove an address from the firewall block list")
+      .addStringOption(o => o.setName("ip").setDescription("Address to unblock").setRequired(true)))
     .addSubcommand(s => s.setName("status")
-      .setDescription("Show every IP currently blocked at the firewall - sudo ufw status numbered")),
+      .setDescription("Show the firewall block list")),
   new SlashCommandBuilder().setName("kd")
     .setDescription("Kill/death stats - a player's K/D, or the leaderboard")
     .addStringOption(o => o.setName("playerid").setDescription("Player (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),

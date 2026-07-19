@@ -266,7 +266,6 @@ module.exports = (ctx) => {
         });
         const tbDmField = dmStatusField(tbDm, tbTarget);
         if (tbDmField) embed.addFields(tbDmField);
-        if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -332,7 +331,7 @@ module.exports = (ctx) => {
         if (!hits.length) {
           const cleanE = clinical(new EmbedBuilder().setColor(_cbRec?.flagged ? CLIN.grey : CLIN.green).setTitle("Not Banned")
             .setDescription(`**${playerId}** is not banned.`));
-          if (_cbRec?.flagged) cleanE.addFields({ name: "Evasion Watch", value: "Matches an active IP/EOS flag - next join is auto-banned.", inline: false });
+          if (_cbRec?.flagged) cleanE.addFields({ name: "Flagged", value: "This player is flagged and will be auto-banned next time they join.", inline: false });
           if (isAutobanExempt(playerId)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned - auto-bans will never re-catch this name.", inline: false });
           if (_cbCtx.length) cleanE.addFields(..._cbCtx);
           return interaction.reply({ embeds: [cleanE] });
@@ -374,7 +373,6 @@ module.exports = (ctx) => {
         });
         const pbDmField = dmStatusField(pbDm, pbTarget);
         if (pbDmField) embed.addFields(pbDmField);
-        if (ipEnf?.field) embed.addFields(ipEnf.field);
         brand(embed); await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -436,7 +434,7 @@ module.exports = (ctx) => {
         const preview = names.slice(0, 30).map(n => `- \`${n}\``).join("\n") + (names.length > 30 ? `\n...and ${names.length - 30} more` : "");
         const go = await confirmDialog(interaction, {
           title: "Unban EVERYONE?",
-          body: `Removes **${names.length}** player(s) from blacklist.txt on both servers and lifts their IP/username flags. This cannot be undone.${protectedCount ? `\n\n**${protectedCount}** higher-tier ban${protectedCount !== 1 ? "s" : ""} will be left in place.` : ""}\n\n${preview}`,
+          body: `Unbans **${names.length}** player(s) everywhere and clears their flags. This cannot be undone.${protectedCount ? `\n\n**${protectedCount}** higher-tier ban${protectedCount !== 1 ? "s" : ""} will be left in place.` : ""}\n\n${preview}`,
           confirmLabel: `Unban all ${names.length}`,
         });
         if (!go) return;
