@@ -39,7 +39,7 @@ module.exports = (ctx) => {
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Ejected from the server")
           .setDescription(`${interaction.user} kicked **${playerId}** from ${serverLabel(server)} — ${reason}`)
-          .setFooter({ text: "Kick logged — no ban issued" }).setTimestamp();
+          .setFooter({ text: "Kick logged — no ban issued" });
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
           action: "Kick", color: NV.NCR_TAN, playerId, reason,
@@ -81,7 +81,7 @@ module.exports = (ctx) => {
         writeModLog({ action: "flush-kick", playerId: pick.name, server: pick.srv, by: interaction.user.tag });
         const embed = brand(new EmbedBuilder().setColor(kicked ? NV.AMBER : NV.NCR_TAN).setTitle("Flush — Random Kick")
           .setDescription(`${interaction.user} flushed **${pick.name}** from ${serverLabel(pick.srv)} — picked at random from ${candidates.length} eligible of ${pool.length} online (staff & donators immune).`)
-          .setFooter({ text: kicked ? "Random kick — no ban issued" : "Kick command sent (no RCON confirmation)" }).setTimestamp());
+          .setFooter({ text: kicked ? "Random kick — no ban issued" : "Kick command sent (no RCON confirmation)" }));
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -116,7 +116,7 @@ module.exports = (ctx) => {
         if (!matches.length) {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Activity — None")
-              .setDescription(`No moderation actions on record for ${staff}.`).setTimestamp()
+              .setDescription(`No moderation actions on record for ${staff}.`)
           ], flags: MessageFlags.Ephemeral });
         }
         // tally by action type
@@ -132,8 +132,8 @@ module.exports = (ctx) => {
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.AMBER)
             .setTitle(`Staff Activity — ${staff.tag}`)
-            .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
-            .setFooter({ text: "Mod log" }).setTimestamp(),
+            .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Mod log" }),
           { perPage: 12, ephemeral: true });
         },
 
@@ -170,7 +170,7 @@ module.exports = (ctx) => {
         if (!ranked.length) {
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Leaderboard — No Activity")
-              .setDescription(`No staff moderation actions (bans, kicks, mutes) on record for the **${label}**.`).setTimestamp()
+              .setDescription(`No staff moderation actions (bans, kicks, mutes) on record for the **${label}**.`)
           ], flags: MessageFlags.Ephemeral });
         }
         const grand = ranked.reduce((s, [, t]) => s + t.total, 0);
@@ -184,8 +184,8 @@ module.exports = (ctx) => {
         });
         const embed = brand(new EmbedBuilder().setColor(NV.AMBER)
           .setTitle(`Staff Leaderboard — ${label.replace(/^\w/, c => c.toUpperCase())}`)
-          .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** moderation action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${DIVIDER}\n${lines.join("\n")}`)
-          .setFooter({ text: "Mod log · bans/kicks/mutes only · automated actions excluded" }).setTimestamp());
+          .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** moderation action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${lines.join("\n")}`)
+          .setFooter({ text: "Mod log · bans/kicks/mutes only · automated actions excluded" }));
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
 
@@ -472,22 +472,22 @@ module.exports = (ctx) => {
             const fmt = (r) => r.status === "fulfilled" ? ((r.value.trim() || "no response").slice(0, 900)) : `unreachable: ${r.reason?.message || r.reason}`;
             writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
             return interaction.editReply({ embeds: [
-              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — All Servers").setDescription(`${DIVIDER}`)
+              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — All Servers")
                 .addFields(
                   { name: "Signal", value: `\`\`\`${command}\`\`\``, inline: false },
                   ...ACTIVE_SERVERS.map((s, i) => ({ name: `${serverLabel(s)} Response`, value: `\`\`\`${fmt(results[i])}\`\`\``, inline: false })),
                   { name: "By", value: `${interaction.user}`, inline: false },
-                ).setTimestamp()
+                )
             ]});
           }
           const result = await sendRcon(command, server);
           writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
           await logAction(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Manual RCON")
-            .setDescription(`${interaction.user} sent \`${command}\` to ${serverLabel(server)}.`).setTimestamp());
+            .setDescription(`${interaction.user} sent \`${command}\` to ${serverLabel(server)}.`));
           return interaction.editReply({ embeds: [
             new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("RCON Transmission Complete")
               .setDescription(`${interaction.user} sent this to ${serverLabel(server)}:\n\`\`\`${command}\`\`\`\n\`\`\`${(result.trim() || "no response").slice(0, 1000)}\`\`\``)
-              .setTimestamp()
+              
           ]});
         } catch (err) {
           return interaction.editReply({ embeds: [errorEmbed("RCON Failed", `Cannot reach **${serverLabel(server)}**.\n\`\`\`${err.message}\`\`\`\nCheck \`/ping\` for server status.`)] });
@@ -550,7 +550,7 @@ module.exports = (ctx) => {
             { name: "Ban",        value: tb ? (tb.permanent || !tb.expires ? `Permanent — ${tb.reason}` : `Temp — ${tb.reason} · until <t:${Math.floor(tb.expires / 1000)}:R>`) : "*none*", inline: false },
             { name: "Flags / status", value: flags.length ? flags.map(f => `• ${f}`).join("\n") : "*none*",     inline: false },
           )
-          .setFooter({ text: "Owner inspection · sensitive — do not share" }).setTimestamp();
+          .setFooter({ text: "Owner inspection · sensitive — do not share" });
         return interaction.editReply({ embeds: [embed] });
         },
 
@@ -576,8 +576,8 @@ module.exports = (ctx) => {
             + (st.flaggedNotBlocked?.length ? `\n⚠ **Flagged but NOT blocked:** ${st.flaggedNotBlocked.length} IP(s) — reconcile will re-apply.` : "");
           const embed = clinical(new EmbedBuilder().setColor(denied.length ? CLIN.red : CLIN.green)
             .setTitle("Firewall — Blocked IPs")
-            .setDescription(`${DIVIDER}\n**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied at the OS firewall (ufw ${st.active ? "**active**" : "inactive"}). **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${DIVIDER}\n${list}`)
-            .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }).setTimestamp());
+            .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied at the OS firewall (ufw ${st.active ? "**active**" : "inactive"}). **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${list}`)
+            .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }));
           return interaction.editReply({ embeds: [embed] });
         }
 
@@ -593,7 +593,7 @@ module.exports = (ctx) => {
           const ok = res.blocked > 0;
           const embed = clinical(new EmbedBuilder().setColor(ok ? CLIN.red : NV.AMBER)
             .setTitle(ok ? "Firewall — IP Blocked" : "Firewall — Block Not Applied")
-            .setDescription(`${DIVIDER}\n${ok ? `\`${ip}\` is now denied at the OS firewall.` : `Could not block \`${ip}\`.${res.error ? ` (${res.error})` : ""}`}\n${DIVIDER}`)
+            .setDescription(`${ok ? `\`${ip}\` is now denied at the OS firewall.` : `Could not block \`${ip}\`.${res.error ? ` (${res.error})` : ""}`}`)
             .addFields(
               { name: "IP",     value: `\`${ip}\``, inline: true },
               { name: "Rule",   value: "`ufw insert 1 deny from <ip>`", inline: true },
@@ -609,7 +609,7 @@ module.exports = (ctx) => {
         const ok = res.unblocked > 0;
         const embed = clinical(new EmbedBuilder().setColor(ok ? CLIN.green : NV.AMBER)
           .setTitle(ok ? "Firewall — Block Removed" : "Firewall — No Block Found")
-          .setDescription(`${DIVIDER}\n${ok ? `\`${ip}\` is no longer denied at the OS firewall.` : `No firewall rule for \`${ip}\` was found to remove.${res.error ? ` (${res.error})` : ""}`}\n${DIVIDER}`)
+          .setDescription(`${ok ? `\`${ip}\` is no longer denied at the OS firewall.` : `No firewall rule for \`${ip}\` was found to remove.${res.error ? ` (${res.error})` : ""}`}`)
           .addFields(
             { name: "IP",     value: `\`${ip}\``, inline: true },
             { name: "Rule",   value: "`ufw delete <rule>`", inline: true },

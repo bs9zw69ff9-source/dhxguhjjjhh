@@ -134,24 +134,24 @@ module.exports = (ctx) => {
           const ratio = (k.deaths ? k.kills / k.deaths : k.kills).toFixed(2);
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.AMBER).setTitle(`K/D — ${playerId}`)
-              .setDescription(`${DIVIDER}`)
+              
               .addFields(
                 { name: "Kills",  value: `**${k.kills}**`,  inline: true },
                 { name: "Deaths", value: `**${k.deaths}**`, inline: true },
                 { name: "Ratio",  value: `**${ratio}**`,    inline: true },
                 { name: "Playtime", value: (() => { const pt = loadPlaytime(); const key = Object.keys(pt).find(x => x.toLowerCase() === playerId.toLowerCase()); return key !== undefined ? formatPlaytime(pt[key]) : "*no record*"; })(), inline: true },
                 { name: "Faction",  value: (() => { const f = getPlayerFactions(playerId); return f && f.length ? f.join(", ") : "*none*"; })(), inline: true },
-              ).setFooter({ text: "Tracked from live kill logs while the bot is running" }).setTimestamp()
+              ).setFooter({ text: "Tracked from live kill logs while the bot is running" })
           ]});
         }
         // no player -> leaderboard
         let top = []; try { top = ipBans.topKD(100); } catch {}
-        if (!top.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("K/D Leaderboard").setDescription("No kill data tracked yet.").setTimestamp()] });
+        if (!top.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("K/D Leaderboard").setDescription("No kill data tracked yet.")] });
         await interaction.deferReply();
         const lines = top.map((e, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${e.name}**  ·  ${e.kills}/${e.deaths}  ·  **${e.ratio.toFixed(2)}** K/D`);
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.AMBER).setTitle("K/D Leaderboard")
-            .setDescription(`> *"Only the deadliest walk the server."*\n${DIVIDER}\n${pageLines.join("\n")}`)
+            .setDescription(`> *"Only the deadliest walk the server."*\n${pageLines.join("\n")}`)
             .setFooter({ text: "Sorted by K/D ratio" }), { perPage: 20 });
         },
 

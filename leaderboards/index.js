@@ -56,7 +56,7 @@ function buildLeaderboardEmbed() {
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} credits${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} credits** across **${entries.totalPlayers ?? entries.length}** ledgers\n${DIVIDER}\n${body}`),
+    `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} credits** across **${entries.totalPlayers ?? entries.length}** ledgers\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
@@ -109,7 +109,7 @@ function buildPlaytimeLeaderboardEmbed() {
     return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("Time served in the server.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** players\n${DIVIDER}\n${body}`),
+    `${hero("Time served in the server.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** players\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
@@ -150,7 +150,7 @@ function buildPlayerListEmbed() {
     const list = [...playerCache[srv]].sort((a, b) => a.localeCompare(b));
     embed.addFields({ name: `${serverLabel(srv)} (${list.length})`, value: fmt(list), inline: true });
   }
-  return brand(embed.setFooter({ text: "Updates every 30s" }).setTimestamp());
+  return brand(embed.setFooter({ text: "Updates every 30s" }));
 }
 async function postPlayerList() {
   if (!PLAYERLIST_CHANNEL) return;

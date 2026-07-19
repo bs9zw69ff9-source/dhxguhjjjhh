@@ -87,7 +87,7 @@ module.exports = (ctx) => {
           const pv = handValue(player), dv = handValue(dealer);
           const playerValue = pNatural ? "Blackjack" : `${pv.total}${pv.soft ? " (soft)" : ""}`;
           const dealerValue = reveal ? (dNatural ? "Blackjack" : `${dv.total}`) : "??";
-          return brand(new EmbedBuilder().setColor(NV.GOLD).setTitle(`${GAME_ICON.blackjack}  ${title}`).setDescription(DIVIDER)
+          return brand(new EmbedBuilder().setColor(NV.GOLD).setTitle(`${GAME_ICON.blackjack}  ${title}`)
             .addFields(
               { name: "Your Hand",   value: `${formatHand(player)}\nValue: **${playerValue}**`,                     inline: false },
               { name: "Dealer Hand", value: `${formatHand(dealer, reveal ? Infinity : 1)}\nValue: **${dealerValue}**`, inline: false },
@@ -220,7 +220,7 @@ module.exports = (ctx) => {
           new ButtonBuilder().setCustomId("cf_decline").setLabel("Decline").setStyle(ButtonStyle.Secondary),
         );
         await interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`${GAME_ICON.cockfight}  Cockfight Challenge`)
-          .setDescription(`${DIVIDER}\n${interaction.user} challenges ${opponent} to a cockfight for **${bet.toLocaleString()} credits** each.\n${DIVIDER}\n-# Expires in 60s.`))], components: [row] });
+          .setDescription(`${interaction.user} challenges ${opponent} to a cockfight for **${bet.toLocaleString()} credits** each.\n-# Expires in 60s.`))], components: [row] });
         const msg = await interaction.fetchReply();
         const accept = await awaitOwnedComponent(msg, opponent.id, Date.now() + 60_000, "This challenge isn't addressed to you.");
         if (!accept) return interaction.editReply({ embeds: [brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle(`${GAME_ICON.cockfight}  Challenge Expired`).setDescription(`${opponent} didn't respond in time.`))], components: [] });
@@ -245,7 +245,7 @@ module.exports = (ctx) => {
         writeModLog({ action: "cockfight-pvp", challenger: playerId, opponent: oppName, bet, winner: winnerName, rake, by: interaction.user.tag });
         const winnerMention = challengerWins ? interaction.user : opponent;
         const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${GAME_ICON.cockfight}  The Fight Is Over`)
-          .setDescription(`${DIVIDER}\n🐓 ${winnerMention}'s bird wins the pit!\n${DIVIDER}`)
+          .setDescription(`🐓 ${winnerMention}'s bird wins the pit!`)
           .addFields(
             { name: "Prize Pool",       value: `**${(bet * 2).toLocaleString()} credits**`, inline: true },
             { name: "House Cut → 🎉 Jackpot", value: `**${rake.toLocaleString()} credits**`,      inline: true },
@@ -266,7 +266,7 @@ module.exports = (ctx) => {
           new ButtonBuilder().setCustomId("rr_cashout").setLabel(pull > 0 ? `Cash Out (${RUSSIAN_ROULETTE_MULTS[pull - 1]}x)` : "Cash Out").setStyle(ButtonStyle.Secondary).setDisabled(!canAct || pull === 0),
         );
         const renderEmbed = (title, footer) => brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`${GAME_ICON.russianroulette}  ${title}`)
-          .setDescription(`${DIVIDER}\n🔫 1-in-6 chance each pull. Surviving all six pulls cashes out automatically.\n${DIVIDER}`)
+          .setDescription(`🔫 1-in-6 chance each pull. Surviving all six pulls cashes out automatically.`)
           .addFields(
             { name: "Wager",              value: `**${bet.toLocaleString()} credits**`, inline: true },
             { name: "Pulls Survived",     value: `**${pull}** / ${RUSSIAN_ROULETTE_MULTS.length}`, inline: true },
@@ -346,7 +346,7 @@ module.exports = (ctx) => {
           const newBalance = readPlayerBalance(playerId) ?? 0;
           writeModLog({ action: "jackpot-win", playerId, wager, won, by: interaction.user.tag });
           const embed = brand(new EmbedBuilder().setColor(NV.GOLD).setTitle(`${GAME_ICON.jackpot}  JACKPOT!`)
-            .setDescription(`${DIVIDER}\n${interaction.user} just won the entire pot!\n${DIVIDER}`)
+            .setDescription(`${interaction.user} just won the entire pot!`)
             .addFields(
               { name: "Wagered",     value: `**${wager.toLocaleString()} credits**`,     inline: true },
               { name: "Pot Won",     value: `**${won.toLocaleString()} credits**`,       inline: true },
@@ -361,7 +361,7 @@ module.exports = (ctx) => {
         const newPot = currentPot();
         writeModLog({ action: "jackpot-lose", playerId, wager, by: interaction.user.tag });
         const embed = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`${GAME_ICON.jackpot}  Busted`)
-          .setDescription(`${DIVIDER}\nThe house takes it all. Your **${wager.toLocaleString()}** credits are added to the pot.\n${DIVIDER}`)
+          .setDescription(`The house takes it all. Your **${wager.toLocaleString()}** credits are added to the pot.`)
           .addFields(
             { name: "Lost",    value: `**${wager.toLocaleString()} credits**`, inline: true },
             { name: "New Pot", value: `**${newPot.toLocaleString()} credits**`, inline: true },
@@ -375,7 +375,7 @@ module.exports = (ctx) => {
         const cfg = loadCasinoConfig();
         if (sub === "status") {
           const embed = brand(new EmbedBuilder().setColor(cfg.enabled ? NV.IRRAD_GREEN : NV.DEAD_GREY).setTitle("🎰  Casino Config")
-            .setDescription(`${DIVIDER}`)
+            
             .addFields(
               { name: "Status",     value: cfg.enabled ? "**Open**" : "**Closed**",              inline: true },
               { name: "Min Bet",    value: `**${cfg.minBet.toLocaleString()}** credits`,             inline: true },

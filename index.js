@@ -1517,7 +1517,7 @@ async function postUpdateLogIfChanged() {
     // instead of staying silent, so it's obvious the feature is actually wired up.
     logger.info("UpdateLog", `First run - now tracking from ${commit.slice(0, 7)}.`);
     return postToUpdateLogChannel(brand(new EmbedBuilder().setColor(NV.GOLD).setTitle("Update log online")
-      .setDescription(`${DIVIDER}\nI'll post here whenever I restart on a new commit.\n${DIVIDER}`)
+      .setDescription(`I'll post here whenever I restart on a new commit.`)
       .setFooter({ text: `${commit.slice(0, 7)} · v${BOT_VERSION}` })));
   }
   if (state.lastCommit === commit) { logger.info("UpdateLog", "Commit unchanged since last restart - nothing to post."); return; }
@@ -1534,7 +1534,7 @@ async function postUpdateLogIfChanged() {
 
   logger.info("UpdateLog", `Posting ${subjects.length} change(s) since ${state.lastCommit.slice(0, 7)}.`);
   return postToUpdateLogChannel(brand(new EmbedBuilder().setColor(NV.GOLD).setTitle("The bot just updated")
-    .setDescription(`${DIVIDER}\n${lines.join("\n")}\n${DIVIDER}`)
+    .setDescription(`${lines.join("\n")}`)
     .setFooter({ text: `${commit.slice(0, 7)} · v${BOT_VERSION}` })));
 }
 
@@ -1971,12 +1971,12 @@ const {
 // cockfight-vs-house) so every casino embed shares one title/field/footer layout.
 function casinoResultEmbed({ icon, title, color, body, bet, resultLabel, resultValue, balance }) {
   return brand(new EmbedBuilder().setColor(color).setTitle(`${icon}  ${title}`)
-    .setDescription(`${DIVIDER}\n${body}\n${DIVIDER}`)
+    .setDescription(`${body}`)
     .addFields(
       { name: "Wager",     value: `**${bet.toLocaleString()} credits**`,     inline: true },
       { name: resultLabel, value: resultValue,                            inline: true },
       { name: "Balance",   value: `**${balance.toLocaleString()} credits**`, inline: true },
-    ).setFooter({ text: randomQuote("casino") }).setTimestamp());
+    ).setFooter({ text: randomQuote("casino") }));
 }
 
 /* ---------------- modsave ban-message file (custom ban screen) ----------------

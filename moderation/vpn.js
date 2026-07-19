@@ -157,7 +157,7 @@ async function checkVpnAndAlert(name, ip) {
   if (disputed) {
     const embed = brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
       .setTitle("VPN Flag Disputed — No Action")
-      .setDescription(`${DIVIDER}\n**${name}** connected from an IP IPHub flagged, but IPQS checked it and disagreed.\n${DIVIDER}`)
+      .setDescription(`**${name}** connected from an IP IPHub flagged, but IPQS checked it and disagreed.`)
       .addFields(
         { name: "ISP",         value: result.isp || "unknown",        inline: true },
         { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },

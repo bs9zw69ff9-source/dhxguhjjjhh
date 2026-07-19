@@ -64,8 +64,8 @@ module.exports = function createCommands(ctx) {
       const already = loadDiscordLinks()[uid];
       if ((takenBy && takenBy !== uid) || already) {
         const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Link Request — Void")
-          .setDescription(`${DIVIDER}\n${already ? `<@${uid}> is already linked to \`${already.name}\`.` : `\`${pavlov}\` was claimed by <@${takenBy}> while this request was pending.`}\nNothing was changed.`)
-          .setTimestamp());
+          .setDescription(`${already ? `<@${uid}> is already linked to \`${already.name}\`.` : `\`${pavlov}\` was claimed by <@${takenBy}> while this request was pending.`}\nNothing was changed.`)
+          );
         return interaction.update(textify({ content: "", embeds: [stale], components: [] })).catch(() => {});
       }
     }
@@ -77,7 +77,7 @@ module.exports = function createCommands(ctx) {
       const done = brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
         .setTitle(approve ? "Link Request — Approved" : "Link Request — Denied")
         .setDescription(`${interaction.user} ${approve ? "approved" : "denied"} <@${uid}>'s request to link to \`${pavlov}\`.`)
-        .setTimestamp());
+        );
       await interaction.update(textify({ content: "", embeds: [done], components: [] }));
       // DM the requester the outcome (best effort).
       try {

@@ -31,12 +31,12 @@ module.exports = (ctx) => {
           const c = loadRoles();
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Configuration")
-              .setDescription(`> *Current role settings. Pass role options to update.*\n\nIf no roles are configured, all commands are unrestricted.\n\n${DIVIDER}`)
+              .setDescription(`> *Current role settings. Pass role options to update.*\n\nIf no roles are configured, all commands are unrestricted.\n`)
               .addFields(
                 { name: "Moderator",     value: c.modRoleId           ? `<@&${c.modRoleId}>`           : "`not set`", inline: true },
                 { name: "Admin",          value: c.adminRoleId         ? `<@&${c.adminRoleId}>`         : "`not set`", inline: true },
                 { name: "Faction Leader", value: c.factionLeaderRoleId ? `<@&${c.factionLeaderRoleId}>` : "`not set`", inline: true },
-              ).setFooter({ text: "Pass role options to /setroles to update" }).setTimestamp()
+              ).setFooter({ text: "Pass role options to /setroles to update" })
           ], flags: MessageFlags.Ephemeral });
         }
         const c = loadRoles();
@@ -46,7 +46,7 @@ module.exports = (ctx) => {
         saveRoles(c);
         const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Faction → <@&${flRole.id}>`].filter(Boolean);
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Permissions Updated")
-          .setDescription(`${changes.join("\n")}\n\n— ${interaction.user}`).setFooter({ text: "Takes effect immediately" }).setTimestamp();
+          .setDescription(`${changes.join("\n")}\n\n— ${interaction.user}`).setFooter({ text: "Takes effect immediately" });
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
@@ -65,14 +65,14 @@ module.exports = (ctx) => {
           if (!lines.length) {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Donator List — Empty")
-                .setDescription("No players are in the donator file yet.\n\nUse `/donator add` to enrol someone.").setTimestamp()
+                .setDescription("No players are in the donator file yet.\n\nUse `/donator add` to enrol someone.")
             ], flags: MessageFlags.Ephemeral });
           }
           const out = lines.map((id, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${id}**`);
           return paginate(interaction, out, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
               .setTitle(`Donators — ${lines.length}`)
-              .setDescription(`> *"The House remembers its most generous patrons."*\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+              .setDescription(`> *"The House remembers its most generous patrons."*\n\n${pageLines.join("\n")}`)
               .setFooter({ text: DONATOR_FILE }),
             { perPage: 20, ephemeral: true });
         }
@@ -87,7 +87,7 @@ module.exports = (ctx) => {
           writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Donator Added")
             .setDescription(`> *"A generous soul joins the ranks of the server's patrons."*\n\n${interaction.user} added **${playerId}** to the donator file.`)
-            .setFooter({ text: DONATOR_FILE }).setTimestamp();
+            .setFooter({ text: DONATOR_FILE });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
@@ -99,7 +99,7 @@ module.exports = (ctx) => {
           writeModLog({ action: "donator-remove", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Donator Removed")
             .setDescription(`${interaction.user} removed **${playerId}** from the donator file.`)
-            .setFooter({ text: DONATOR_FILE }).setTimestamp();
+            .setFooter({ text: DONATOR_FILE });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
@@ -142,7 +142,7 @@ module.exports = (ctx) => {
             : "Server gave no acknowledgement — your Pavlov build may not support `Notify`. Message logged here only.";
         const embed = new EmbedBuilder().setColor(allOk ? NV.BLUE_VATS : NV.NCR_TAN).setTitle("Broadcast Sent")
           .setDescription(`> ${message}\n\n${interaction.user} broadcast to ${isAll ? "**all players**" : `\`${target}\``} on ${serverLabel(server)}. ${deliveryNote}`)
-          .setFooter({ text: "RCON Notify broadcast" }).setTimestamp();
+          .setFooter({ text: "RCON Notify broadcast" });
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -173,7 +173,7 @@ module.exports = (ctx) => {
         const embed = new EmbedBuilder().setColor(NV.AMBER)
           .setTitle("Menu Access Granted")
           .setDescription(`${interaction.user} granted **${menuMeta?.name ?? menuValue}** to **${playerId}** on ${serverLabel(server)}.\n-# Recorded for tracking — not re-applied automatically on rejoin.`)
-          .setTimestamp();
+          ;
         if (menuValue === "highstaff") {
           embed.addFields({ name: "Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
         }
@@ -209,7 +209,7 @@ module.exports = (ctx) => {
         const embed = brand(new EmbedBuilder().setColor(NV.NCR_TAN)
           .setTitle("Menu Access Revoked")
           .setDescription(`${interaction.user} revoked menu access from **${playerId}** on ${serverLabel(server)}.\n\`\`\`\n${applied.join("\n")}\n\`\`\``)
-          .setTimestamp());
+          );
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -245,7 +245,7 @@ module.exports = (ctx) => {
         const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
           .setTitle("Mass Menu Revocation")
           .setDescription(`${hero("Cleared menu access for every player on both servers.")}\n\`ClearMenuAccess\` · \`ClearAccessManagers\` — **${holders.length}** grant(s) cleared.`)
-          .setTimestamp());
+          );
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -271,7 +271,7 @@ module.exports = (ctx) => {
             { name: "High Staff", value: m.highstaff ? `<@&${m.highstaff}>` : "*(unset)*", inline: true },
             { name: "Staff",       value: m.staff     ? `<@&${m.staff}>`     : "*(unset)*", inline: true },
             { name: "Faction",     value: m.faction   ? `<@&${m.faction}>`   : "*(unset)*", inline: true },
-          ).setFooter({ text: "Priority: High Staff > Staff > Faction" }).setTimestamp());
+          ).setFooter({ text: "Priority: High Staff > Staff > Faction" }));
         await logAction(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
@@ -293,7 +293,7 @@ module.exports = (ctx) => {
           const lines = ids.map(id => `<@${id}>  →  \`${links[id].name}\``);
           return paginate(interaction, lines, (pageLines) =>
             brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Discord ↔ Pavlov Links")
-              .setDescription(`${DIVIDER}\n${pageLines.join("\n")}`)), { perPage: 20, ephemeral: true });
+              .setDescription(`${pageLines.join("\n")}`)), { perPage: 20, ephemeral: true });
         }
 
         if (sub === "remove") {
@@ -333,7 +333,7 @@ module.exports = (ctx) => {
         }
         const reqEmbed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Link Request — Pending")
           .setDescription(`${interaction.user} (\`${interaction.user.id}\`) wants to link to \`${pavlov}\`.`)
-          .setFooter({ text: "Approve or deny below" }).setTimestamp());
+          .setFooter({ text: "Approve or deny below" }));
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`linkreq_ok:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Accept").setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`linkreq_no:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Deny").setStyle(ButtonStyle.Danger),
@@ -376,7 +376,7 @@ module.exports = (ctx) => {
             { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Set every player's credits to 0 (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Owner Control Panel")
-          .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below — destructive ones ask you to confirm first.\n${DIVIDER}\n` +
+          .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below — destructive ones ask you to confirm first.\n` +
             `🚫 **IP Enforcement** — blacklist, alts, clear flags\n` +
             `🔥 **Firewall** — view blocked IPs\n` +
             `⛔ **Discord Access** — bar / un-bar users\n` +
@@ -392,7 +392,7 @@ module.exports = (ctx) => {
             const list = alts.length ? alts.map(n => `• **${n}**`).join("\n").slice(0, 4000) : "*No known alt accounts (no other account shares a confirmed IP).*";
             return brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle(`Alt Accounts — ${val}`)
               .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
-              .setFooter({ text: "Alt links come from confirmed shared IPs" }).setTimestamp());
+              .setFooter({ text: "Alt links come from confirmed shared IPs" }));
           }
           if (choice === "blacklist_ip") {
             const r = ipBans.flagTarget(val);
@@ -402,17 +402,17 @@ module.exports = (ctx) => {
             for (const nm of toBan) { try { await banWithIp(nm, "both", { permanent: true }); await upsertPermBan({ playerId: nm, reason: "Blacklisted via /configure", moderator: interaction.user.tag }); } catch {} }
             const desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
               (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet — future connections will be caught.`);
-            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklisted").setDescription(hero(desc)).setTimestamp()));
+            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklisted").setDescription(hero(desc))));
           }
           if (choice === "wipe_money") {
-            if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped.").setTimestamp());
+            if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped."));
             const r = wipeAllMoney();
-            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`)).setTimestamp()));
+            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`))));
           }
           if (choice === "load_factions") {
-            if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored.").setTimestamp());
+            if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored."));
             const r = loadFactionBackup();
-            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found — use **Save faction whitelists** first." : `Load failed: ${r.error}`))).setTimestamp()));
+            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found — use **Save faction whitelists** first." : `Load failed: ${r.error}`)))));
           }
           if (["user_bl_add", "user_bl_remove", "ignore_add", "ignore_remove", "clear_ip"].includes(choice)) {
             let desc, color = NV.IRRAD_GREEN;
@@ -421,19 +421,19 @@ module.exports = (ctx) => {
             else if (choice === "ignore_add")     { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
             else if (choice === "ignore_remove")  { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `**${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
             else                                  { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
-            return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp()));
+            return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc))));
           }
           if (choice === "firewall_status") {
             let st; try { st = await firewallStatus(); } catch (e) { st = { error: e.message }; }
-            if (st?.off)   return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall — Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable).").setTimestamp());
-            if (st?.error) return brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall — Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``).setTimestamp());
+            if (st?.off)   return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall — Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable)."));
+            if (st?.error) return brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall — Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``));
             const denied = st.denied || [];
             const listed = denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3600) || "*No IPs are currently denied at the firewall.*";
             const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked:** ${st.mastersBlocked.map(x => `\`${x}\``).join(", ")} — reconcile will clear them.` : "")
               + (st.flaggedNotBlocked?.length ? `\n⚠ **${st.flaggedNotBlocked.length} flagged IP(s) not yet blocked** — reconcile will re-apply.` : "");
             return brand(new EmbedBuilder().setColor(denied.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle("Firewall — Blocked IPs")
-              .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) · **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${DIVIDER}\n${listed}`)
-              .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }).setTimestamp());
+              .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) · **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${listed}`)
+              .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }));
           }
           if (choice === "view_blacklist") {
             const b = ipBans.getBlacklist();
@@ -443,17 +443,17 @@ module.exports = (ctx) => {
                 { name: `IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
                 { name: `Usernames (${b.names.length})`, value: fmt(b.names), inline: false },
                 { name: `Account IDs (${(b.ids || []).length})`, value: fmt(b.ids || []), inline: false },
-              ).setTimestamp());
+              ));
           }
-          if (choice === "ignore_list")  { const n = ipBans.getUntracked(); return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Ignored Usernames").setDescription(n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked.").setTimestamp()); }
-          if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Barred Discord Users").setDescription(ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands.").setTimestamp()); }
+          if (choice === "ignore_list")  { const n = ipBans.getUntracked(); return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Ignored Usernames").setDescription(n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked.")); }
+          if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Barred Discord Users").setDescription(ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands.")); }
           let desc, color = NV.AMBER;
           if (choice === "clear_names")  { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
           else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
           else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
           else if (choice === "save_factions") { const r = saveFactionBackup(); desc = r.ok ? `Snapshot saved — **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
           else { desc = "Unknown action."; }
-          return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc)).setTimestamp()));
+          return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc))));
         }
 
         const MODAL = { ignore_add: ["Ignore a username", "Username"], ignore_remove: ["Un-ignore a username", "Username"], clear_ip: ["Clear a specific IP", "IP address"], blacklist_ip: ["Blacklist IP / username", "IP or username"], view_alts: ["View alt accounts", "Player username"], user_bl_add: ["Bar a Discord user", "Discord user ID"], user_bl_remove: ["Un-bar a Discord user", "Discord user ID"], wipe_money: ["Wipe ALL money", "Type WIPE to confirm"], load_factions: ["Restore faction whitelists", "Type LOAD to confirm"] };

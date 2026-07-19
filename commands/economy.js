@@ -25,7 +25,7 @@ module.exports = (ctx) => {
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Credits Given")
           .setDescription(`${interaction.user} gave **${playerId}** **+${amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**. ${reason}`)
-          .setFooter({ text: randomQuote("caps") }).setTimestamp();
+          .setFooter({ text: randomQuote("caps") });
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
         },
@@ -50,7 +50,7 @@ module.exports = (ctx) => {
         const embed = new EmbedBuilder().setColor(pos ? NV.IRRAD_GREEN : NV.RUST_RED)
           .setTitle(`Credits ${pos ? "Credited" : "Debited"}`)
           .setDescription(`${interaction.user} ${pos ? "credited" : "debited"} **${playerId}** **${pos ? "+" : ""}${amount.toLocaleString()} credits** — new balance **${newBal.toLocaleString()} credits**. ${reason}`)
-          .setFooter({ text: "Manual cap adjustment · logged" }).setTimestamp();
+          .setFooter({ text: "Manual cap adjustment · logged" });
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
         },

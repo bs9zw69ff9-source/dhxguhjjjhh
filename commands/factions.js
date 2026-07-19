@@ -42,7 +42,7 @@ module.exports = (ctx) => {
           const capStr  = cap > 0 ? `**${cap}**` : "**Unlimited**";
           const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Rank Cap Updated")
             .setDescription(`${interaction.user} set **${faction}** ${rankBadge(faction, rank)}'s cap to ${capStr} (currently ${current}${cap > 0 ? `/${cap}${current > cap ? " — over cap!" : ""}` : ""}).`)
-            .setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" }).setTimestamp();
+            .setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
@@ -93,7 +93,7 @@ module.exports = (ctx) => {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
                 .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
-                .setTimestamp()
+                
             ], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
@@ -110,7 +110,7 @@ module.exports = (ctx) => {
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
               .setTitle(`${faction} — Roster`)
-              .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+              .setDescription(`${header}\n\n${pageLines.join("\n")}`)
               .setFooter({ text: SPAWN_FILE_MAP[faction] }),
             { perPage: 20 });
         }
@@ -126,7 +126,7 @@ module.exports = (ctx) => {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
                 .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
-                .setTimestamp()
+                
             ], flags: MessageFlags.Ephemeral });
           }
           // Playtime keys are display-cased names — match members case-insensitively.
@@ -145,7 +145,7 @@ module.exports = (ctx) => {
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
               .setTitle(`${faction} — Playtime`)
-              .setDescription(`${header}\n\n${DIVIDER}\n${pageLines.join("\n")}`)
+              .setDescription(`${header}\n\n${pageLines.join("\n")}`)
               .setFooter({ text: "Playtime sampled every 60s while online" }),
             { perPage: 20 });
         }
@@ -198,7 +198,7 @@ module.exports = (ctx) => {
           const rankFile = getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a";
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(`Added to ${faction}`)
             .setDescription(`${interaction.user} added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} — ${lines.length}/${cap} in the roster.`)
-            .setFooter({ text: "Main spawn file + rank file updated · audit logged" }).setTimestamp();
+            .setFooter({ text: "Main spawn file + rank file updated · audit logged" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
@@ -228,7 +228,7 @@ module.exports = (ctx) => {
           const cap = getFactionCap(faction);
           const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Removed from ${faction}`)
             .setDescription(`${interaction.user} removed **${playerId}** from **${faction}** (was ${rankBadge(faction, oldRank)}) — ${lines.length}/${cap} in the roster.`)
-            .setFooter({ text: "Removed from spawn file and all rank files · audit logged" }).setTimestamp();
+            .setFooter({ text: "Removed from spawn file and all rank files · audit logged" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
