@@ -142,8 +142,10 @@ function buildPlayerListEmbed() {
     return out;
   };
   const total = allCachedPlayers().length;
+  const stats = safeRead(FILES.SERVER_STATS, {});
+  const today = dailyPeak(stats, easternClock().date);
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Live Player List")
-    .setDescription(hero(`**${total}** player${total !== 1 ? "s" : ""} online right now.`));
+    .setDescription(`${hero(`**${total}** player${total !== 1 ? "s" : ""} online right now.`)}\n-# Today's peak: **${today}**  ·  all-time: **${stats?.combined?.peak ?? 0}**`);
   for (const srv of ACTIVE_SERVERS) {
     const list = [...playerCache[srv]].sort((a, b) => a.localeCompare(b));
     embed.addFields({ name: `${serverLabel(srv)} (${list.length})`, value: fmt(list), inline: true });
