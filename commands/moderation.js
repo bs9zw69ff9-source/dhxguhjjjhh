@@ -30,6 +30,7 @@ module.exports = (ctx) => {
         const server   = "both"   /* server option removed - applies to all servers */;
         const reason   = interaction.options.getString("reason") ?? "No reason provided";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be kicked.`)], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         preserveBalanceAcrossKick(playerId);                     // don't let the kick wipe their caps
         // Kick by USERNAME (this gamemode matches names).
@@ -331,8 +332,9 @@ module.exports = (ctx) => {
         if (!hits.length) {
           const cleanE = clinical(new EmbedBuilder().setColor(_cbRec?.flagged ? CLIN.grey : CLIN.green).setTitle("Not Banned")
             .setDescription(`**${playerId}** is not banned.`));
-          if (_cbRec?.flagged) cleanE.addFields({ name: "Flagged", value: "This player is flagged and will be auto-banned next time they join.", inline: false });
-          if (isAutobanExempt(playerId)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned - auto-bans will never re-catch this name.", inline: false });
+          // Flag status is staff-only - telling an evader they are flagged tips them off.
+          if (_cbRec?.flagged && hasModRole(interaction.member)) cleanE.addFields({ name: "Flagged", value: "This player is flagged and will be auto-banned next time they join.", inline: false });
+          if (isAutobanExempt(playerId) && hasModRole(interaction.member)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned - auto-bans will never re-catch this name.", inline: false });
           if (_cbCtx.length) cleanE.addFields(..._cbCtx);
           return interaction.reply({ embeds: [cleanE] });
         }
@@ -461,28 +463,19 @@ module.exports = (ctx) => {
         const server  = "both"   /* server option removed - applies to all servers */;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
-          if (server === "both") {
-            // allSettled so one unreachable server doesn't fail the whole command
-            const results = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon(command, s)));
-            const fmt = (r) => r.status === "fulfilled" ? ((r.value.trim() || "no response").slice(0, 900)) : `unreachable: ${r.reason?.message || r.reason}`;
-            writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
-            return interaction.editReply({ embeds: [
-              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON - All Servers")
-                .addFields(
-                  { name: "Signal", value: `\`\`\`${command}\`\`\``, inline: false },
-                  ...ACTIVE_SERVERS.map((s, i) => ({ name: `${serverLabel(s)} Response`, value: `\`\`\`${fmt(results[i])}\`\`\``, inline: false })),
-                  { name: "By", value: `**${interaction.user.username}**`, inline: false },
-                )
-            ]});
-          }
-          const result = await sendRcon(command, server);
+          // allSettled so one unreachable server doesn't fail the whole command
+          const results = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon(command, s)));
+          const fmt = (r) => r.status === "fulfilled" ? ((r.value.trim() || "no response").slice(0, 900)) : `unreachable: ${r.reason?.message || r.reason}`;
           writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
-          await logAction(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Manual RCON")
-            .setDescription(`**${interaction.user.username}** sent \`${command}\` to ${serverLabel(server)}.`));
+          await logAction(brand(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Manual RCON")
+            .setDescription(`**${interaction.user.username}** sent \`${command}\` to all servers.`)));
           return interaction.editReply({ embeds: [
-            new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("RCON Transmission Complete")
-              .setDescription(`**${interaction.user.username}** sent this to ${serverLabel(server)}:\n\`\`\`${command}\`\`\`\n\`\`\`${(result.trim() || "no response").slice(0, 1000)}\`\`\``)
-              
+            new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON - All Servers")
+              .addFields(
+                { name: "Signal", value: `\`\`\`${command}\`\`\``, inline: false },
+                ...ACTIVE_SERVERS.map((s, i) => ({ name: `${serverLabel(s)} Response`, value: `\`\`\`${fmt(results[i])}\`\`\``, inline: false })),
+                { name: "By", value: `**${interaction.user.username}**`, inline: false },
+              )
           ]});
         } catch (err) {
           return interaction.editReply({ embeds: [errorEmbed("RCON Failed", `Cannot reach **${serverLabel(server)}**.\n\`\`\`${err.message}\`\`\`\nCheck \`/ping\` for server status.`)] });

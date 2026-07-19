@@ -73,7 +73,8 @@ function gambleQuotaLimitEmbed(resetAt) {
 
 /* Shared preflight for every gambling command: casino enabled, caller linked to
    a Pavlov identity, not rate-limited, under the 3-hour gamble quota, bet within
-   the configured bounds and no larger than the caller's balance. Replies and
+   the configured bounds and no larger than the caller's balance (quota is
+   consumed LAST, only when the gamble will actually run). Replies and
    returns null on any failure; otherwise returns { cfg, playerId, bet, balance }
    with nothing yet debited (and one gamble already counted against the quota). */
 async function casinoIntake(interaction) {
@@ -91,11 +92,8 @@ async function casinoIntake(interaction) {
     await interaction.reply({ embeds: [rateLimitEmbed()], flags: MessageFlags.Ephemeral });
     return null;
   }
-  const quota = checkGambleQuota(playerId);
-  if (!quota.ok) {
-    await interaction.reply({ embeds: [gambleQuotaLimitEmbed(quota.resetAt)], flags: MessageFlags.Ephemeral });
-    return null;
-  }
+  // Validate the bet FIRST - the quota is only consumed once the gamble is
+  // actually going to run, so a typo'd bet doesn't burn an attempt.
   const bet = interaction.options.getInteger("bet");
   if (bet < cfg.minBet || bet > cfg.maxBet) {
     await interaction.reply({ embeds: [errorEmbed("Bad Bet", `Bet must be between **${cfg.minBet.toLocaleString()}** and **${cfg.maxBet.toLocaleString()}** credits.`)], flags: MessageFlags.Ephemeral });
@@ -104,6 +102,11 @@ async function casinoIntake(interaction) {
   const balance = readPlayerBalance(playerId) ?? 0;
   if (bet > balance) {
     await interaction.reply({ embeds: [errorEmbed("Insufficient Credits", `You only have **${balance.toLocaleString()}** credits.`)], flags: MessageFlags.Ephemeral });
+    return null;
+  }
+  const quota = checkGambleQuota(playerId);
+  if (!quota.ok) {
+    await interaction.reply({ embeds: [gambleQuotaLimitEmbed(quota.resetAt)], flags: MessageFlags.Ephemeral });
     return null;
   }
   return { cfg, playerId, bet, balance };

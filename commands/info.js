@@ -159,10 +159,8 @@ module.exports = (ctx) => {
         const ptKey    = Object.keys(playtime).find(k => k.toLowerCase() === playerId.toLowerCase());
         const minutes  = ptKey !== undefined ? playtime[ptKey] : null;
         const factions = getPlayerFactions(playerId);
-        const onS1     = playerCache.server1.some(n => n.toLowerCase() === playerId.toLowerCase());
-        const onS2     = playerCache.server2.some(n => n.toLowerCase() === playerId.toLowerCase());
-        const onS3     = playerCache.server3.some(n => n.toLowerCase() === playerId.toLowerCase());
-        const online   = onS1 || onS2 || onS3;
+        const onServers = ACTIVE_SERVERS.filter(s => (playerCache[s] || []).some(n => n.toLowerCase() === playerId.toLowerCase()));
+        const online    = onServers.length > 0;
         const balance  = readPlayerBalance(playerId);
         const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
         const lastSeen = getLastSeen(playerId);
@@ -171,7 +169,7 @@ module.exports = (ctx) => {
         const facStr = factions === null ? null
           : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))} **${f}** (${getFactionRank(f, playerId)})`).join(", ");
 
-        const where = [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join(" and ");
+        const where = onServers.map(serverLabel).join(" and ");
         const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
         const linkedId = discordIdForPavlov(playerId);
         let ipRec = null; try { ipRec = ipBans.getRecord(playerId); } catch {}
@@ -197,7 +195,8 @@ module.exports = (ctx) => {
         if (tb) bits.push(tb.permanent || !tb.expires
           ? `They are **permanently banned** (reason: \`${tb.reason}\`).`
           : `They are **banned** (reason: \`${tb.reason}\`), lifts <t:${Math.floor(tb.expires / 1000)}:R>.`);
-        if (ipRec?.flagged && !tb) bits.push("They are flagged and will be auto-banned next time they join.");
+        // Flag status is staff-only - telling an evader they are flagged tips them off.
+        if (ipRec?.flagged && !tb && hasModRole(interaction.member)) bits.push("They are flagged and will be auto-banned next time they join.");
         const fkills = factionKillBreakdown(playerId);
         if (fkills && Object.keys(fkills).length) {
           const ordered = Object.entries(fkills).sort((a, b) => b[1].total - a[1].total);

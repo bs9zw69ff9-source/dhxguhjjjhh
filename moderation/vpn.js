@@ -135,12 +135,15 @@ function formatFullLocation(geo) {
   const bits  = [place.trim() || geo.country || null, geo.isp || null, geo.timezone ? `TZ ${geo.timezone}` : null].filter(Boolean);
   return bits.length ? bits.join("  -  ") : null;
 }
-// Called from ipBans' onConfirm for every freshly-confirmed IP. Since checkVpn()
-// caches an IP's result forever, this naturally only ever acts once per IP - a
-// player reconnecting from an already-checked IP costs nothing and does nothing.
+// Called from ipBans' onConfirm for every freshly-confirmed IP. The cached verdict
+// is reused (no repeat API calls), but the ACTION gate re-arms after a TTL - if the
+// first check happened while an exempt player was on the IP (so nothing was actioned),
+// the next player from that IP can still be actioned once the entry ages out.
+const VPN_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 async function checkVpnAndAlert(name, ip) {
   if (!ip || !IPHUB_API_KEY) return null;
-  const alreadyChecked = !!loadVpnChecks()[ip];
+  const prev = loadVpnChecks()[ip];
+  const alreadyChecked = !!prev && (Date.now() - (prev.checkedAt || 0) < VPN_ACTION_TTL_MS);
   const result = await checkVpn(ip).catch(() => null);
   if (!result) return null;
   // Clean, or an IP we've already acted on - return the verdict for the feed, but don't ban.

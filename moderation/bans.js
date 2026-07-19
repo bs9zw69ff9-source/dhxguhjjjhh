@@ -27,7 +27,9 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   scheduleBanRecheck(name);                     // 30s: blacklist.txt backup + re-enforce
   // Flag their EXACT confirmed IP(s) + EOS id so an alt/reconnect re-triggers the ban.
   let enf;
-  try { enf = ipBans.blacklistPlayer(name, { flagId: true }); }
+  // EOS-id flags are PERMANENT-ban only (ipBans contract): a temp ban flags the
+  // IPs but must not brand the account id forever.
+  try { enf = ipBans.blacklistPlayer(name, { flagId: opts.permanent === true }); }
   catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
   return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall: null };
 }

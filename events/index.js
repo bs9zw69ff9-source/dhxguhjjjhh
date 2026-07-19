@@ -7,8 +7,8 @@ module.exports = function(ctx) {
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, ensureMenuPanel, feedHook,
-  fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
-  hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
+  fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
+  healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
   mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged, randomQuote,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
@@ -187,9 +187,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       postFeed(banEmbed);       // also surface it in the connection feed
     },
   });
-  refreshPlayerCache("server1");
-  if (hasServer2) refreshPlayerCache("server2");
-  if (hasServer3) refreshPlayerCache("server3");
+  for (const s of ACTIVE_SERVERS) refreshPlayerCache(s);
   try { healTreeOwnership(); } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
   try { const r = syncAllModSave(); if (r.installs > 1 && !r.off) logger.info("Sync", `ModSave sync on startup - ${r.synced} file(s) propagated across ${r.installs} installs`); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); }
   try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }

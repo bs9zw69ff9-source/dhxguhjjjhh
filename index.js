@@ -2394,9 +2394,7 @@ setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 if (DASHBOARD_CHANNEL) setInterval(postDashboard, DASHBOARD_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
 setInterval(async () => {
-  await refreshPlayerCache("server1");
-  if (hasServer2) await refreshPlayerCache("server2");
-  if (hasServer3) await refreshPlayerCache("server3");
+  for (const s of ACTIVE_SERVERS) await refreshPlayerCache(s);
   tickPlaytime();
 }, 60_000);
 
@@ -2480,7 +2478,7 @@ const { onInteraction } = require("./commands")({
   blacklistedEmbed, brand, buildDashboardEmbed, buildFactionMembershipIndex, casinoIntake, casinoResultEmbed,
   cell, checkGambleQuota, checkRateLimit, checkVpn, client,
   clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank, creditCaps,
-  currentPot, dashboardSnapshots, debitCaps, deniedEmbed, discordIdForPavlov, dmPunishmentNotice,
+  currentPot, dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, discordIdForPavlov, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, drainPot, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
   firewallStatus, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
