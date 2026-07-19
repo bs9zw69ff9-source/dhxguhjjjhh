@@ -1360,16 +1360,29 @@ function embedToText(e) {
   const tidy  = (s) => String(s).split("\n")
     .filter(l => l.trim().startsWith("```") || !decor.test(l))
     .join("\n").replace(/\n{2,}/g, "\n").trim();
+  // Compact reply style: "✅ **Title** — description", fields as short
+  // "**Name:** value" lines, no headings, no footers.
+  const title = String(d.title ?? "").trim();
+  const desc  = tidy(d.description ?? "");
+  // Bold the title text but keep a leading emoji/glyph outside the bold.
+  let head = "";
+  if (title) {
+    const m = title.match(/^([^\p{L}\p{N}]+)\s*(.+)$/u);
+    head = m && m[2] ? `${m[1].trim()} **${m[2]}**` : `**${title}**`;
+  }
   const parts = [];
-  if (d.title) parts.push(`### ${d.title}`);               // real Discord heading
-  if (d.description) { const t = tidy(d.description); if (t) parts.push(t); }
+  if (head && desc) {
+    // Single short sentence -> one clean line; otherwise title line + body.
+    const oneLine = !desc.includes("\n") && !desc.startsWith("```") && (head.length + desc.length) <= 300;
+    parts.push(oneLine ? `${head} — ${desc}` : `${head}\n${desc}`);
+  } else if (head) parts.push(head);
+  else if (desc) parts.push(desc);
   for (const f of d.fields ?? []) {
     const name = String(f.name ?? "").trim();
     const val  = tidy(f.value ?? "");
     if (!name && !val) continue;
     parts.push(val.includes("\n") ? `**${name}**\n${val}` : `**${name}:** ${val}`);
   }
-  if (d.footer?.text) parts.push(`-# ${d.footer.text}`);   // Discord small-text markdown
   return parts.filter(Boolean).join("\n");
 }
 // payload {content?, embeds?, ...} -> { first: payload-without-embeds, extra: [overflow strings] }
@@ -1387,18 +1400,36 @@ function textifyChunks(payload) {
   const { embeds, ...rest } = payload;
   return { first: { ...rest, content: chunks[0] || "​" }, extra: chunks.slice(1) };
 }
-// One-message form for channel sends / edits / DMs (overflow truncated with a marker).
-// Embeds everywhere. textify() and patchInteractionOutput() are now pass-throughs:
-// the strip-a-keepEmbeds-flag is all that's left so premium-UI payloads keep working.
+// One-message form for interaction replies / edits / DMs: render every embed to a
+// short plain-text message (the clean reply style) and drop the embed. Components
+// (buttons/selects) pass through untouched. Overflow past one message is truncated
+// with a marker — command replies are expected to be short.
 function textify(payload) {
-  if (payload && typeof payload === "object" && payload.keepEmbeds) { const { keepEmbeds, ...rest } = payload; return rest; }
-  return payload;
+  if (!payload || typeof payload !== "object") return payload;
+  const { keepEmbeds, ...rest } = payload;   // legacy flag — conversion applies regardless
+  if (!Array.isArray(rest.embeds) || !rest.embeds.length) return rest;
+  const { first, extra } = textifyChunks(rest);
+  if (extra.length) first.content = `${first.content.slice(0, 1880)}\n-# …output shortened`;
+  return first;
 }
 function patchInteractionOutput(interaction) {
   for (const m of ["reply", "editReply", "followUp", "update"]) {
     const orig = typeof interaction[m] === "function" ? interaction[m].bind(interaction) : null;
     if (!orig) continue;
-    interaction[m] = (payload, ...args) => orig(textify(payload), ...args);
+    interaction[m] = async (payload, ...args) => {
+      if (!payload || typeof payload !== "object" || !Array.isArray(payload.embeds) || !payload.embeds.length) {
+        return orig(payload, ...args);
+      }
+      const { keepEmbeds, ...rest } = payload;
+      const { first, extra } = textifyChunks(rest);
+      // update() edits one message in place — no follow-ups possible there.
+      if (m === "update" && extra.length) first.content = `${first.content.slice(0, 1880)}\n-# …output shortened`;
+      const res = await orig(first, ...args);
+      if (m !== "update") {
+        for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch { break; } }
+      }
+      return res;
+    };
   }
 }
 
@@ -2534,6 +2565,7 @@ module.exports = {
   isAutobanExempt, addAutobanExempt, removeAutobanExempt,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
+  embedToText, textify, textifyChunks,
   // faction rank caps
   getFactionRankCap, getFactionRankCaps, setFactionRankCap, getFactionCap, setFactionCap,
   // faction file safety
