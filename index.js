@@ -1662,9 +1662,12 @@ const loadServerStats = () => safeRead(FILES.SERVER_STATS, {});
 function recordServerPeaks() {
   const counts = {};
   for (const s of ACTIVE_SERVERS) counts[s] = playerCache[s].length;
-  // Cheap pre-check against the in-memory cache; only take the write path on a new peak.
-  if (!reducePeaks(counts, safeRead(FILES.SERVER_STATS, {})).changed) return;
-  return update(FILES.SERVER_STATS, {}, (stats) => reducePeaks(counts, stats).stats);
+  const now = Date.now();
+  const date = easternClock().date;   // day key for the daily peak (bot's Eastern day)
+  // Cheap pre-check against the in-memory cache; only take the write path on a new peak
+  // or a day rollover (which resets the daily bucket).
+  if (!reducePeaks(counts, safeRead(FILES.SERVER_STATS, {}), now, date).changed) return;
+  return update(FILES.SERVER_STATS, {}, (stats) => reducePeaks(counts, stats, now, date).stats);
 }
 
 async function refreshPlayerCache(server = "server1") {
@@ -2191,7 +2194,7 @@ const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildP
   fs, getModsavePath, hero, loadPlaytime, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
-  playerCache,
+  playerCache, easternClock,
 });
 
 /* Find the Discord user to DM for a Pavlov username, by matching the guild member

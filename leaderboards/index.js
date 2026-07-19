@@ -9,8 +9,9 @@ module.exports = function(ctx) {
   fs, getModsavePath, hero, loadPlaytime, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
-  playerCache,
+  playerCache, easternClock,
   } = ctx;
+  const { dailyPeak } = require("../stats/peaks");
 
 // ---- leaderboard ----
 function buildLeaderboardData() {
@@ -236,11 +237,14 @@ function buildDashboardEmbed(snaps) {
   const anyUp    = snaps.some(s => s.up);
   const totalP   = snaps.reduce((a, s) => a + (s.up ? s.players : 0), 0);
   const totalMax = snaps.reduce((a, s) => a + (Number(s.max) || 0), 0);
-  const peak     = safeRead(FILES.SERVER_STATS, {})?.combined?.peak ?? 0;
+  const stats    = safeRead(FILES.SERVER_STATS, {});
+  const peak     = stats?.combined?.peak ?? 0;
+  const today    = dailyPeak(stats, easternClock().date);
   const gw       = Math.max(0, client.ws.ping);
   const lines = [
     "LIVE NETWORK STATUS",
-    `${totalP}/${totalMax} online · peak ${peak} · gw ${gw}ms`,
+    `${totalP}/${totalMax} online · gw ${gw}ms`,
+    `peak ${peak} all-time · ${today} today`,
     "──────────────────────────",
     ...snaps.map(hudRow),
   ];

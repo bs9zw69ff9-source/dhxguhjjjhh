@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { reducePeaks } = require("../stats/peaks");
+const { reducePeaks, dailyPeak } = require("../stats/peaks");
 
 test("records per-server and combined peaks from empty", () => {
   const { changed, stats } = reducePeaks({ server1: 5, server2: 3, server3: 0 }, {}, 1000);
@@ -47,4 +47,40 @@ test("does not mutate the input stats object", () => {
   const input = { perServer: { server1: { peak: 2, peakAt: 1 } }, combined: { peak: 2, peakAt: 1 } };
   reducePeaks({ server1: 9 }, input, 5);
   assert.equal(input.perServer.server1.peak, 2);   // original untouched
+});
+
+test("daily peak tracks the current day and resets on rollover", () => {
+  // Day 1: peak 5 combined.
+  let stats = reducePeaks({ server1: 5, server2: 0 }, {}, 1, "2026-07-19").stats;
+  assert.equal(stats.daily.date, "2026-07-19");
+  assert.equal(stats.daily.combined.peak, 5);
+  assert.equal(stats.combined.peak, 5);            // all-time also 5
+
+  // Same day, lower counts: daily unchanged, no write.
+  let r = reducePeaks({ server1: 2, server2: 0 }, stats, 2, "2026-07-19");
+  assert.equal(r.changed, false);
+  assert.equal(r.stats.daily.combined.peak, 5);
+
+  // Same day, new daily high 7.
+  stats = reducePeaks({ server1: 4, server2: 3 }, stats, 3, "2026-07-19").stats;
+  assert.equal(stats.daily.combined.peak, 7);
+
+  // Next day: daily resets (even though all-time stays), and the rollover persists.
+  r = reducePeaks({ server1: 1, server2: 0 }, stats, 4, "2026-07-20");
+  assert.equal(r.changed, true, "day rollover must be written");
+  assert.equal(r.stats.daily.date, "2026-07-20");
+  assert.equal(r.stats.daily.combined.peak, 1);    // fresh daily peak
+  assert.equal(r.stats.combined.peak, 7);          // all-time unchanged
+});
+
+test("daily tracking is skipped when no date is given (all-time only)", () => {
+  const { stats } = reducePeaks({ server1: 5 }, {}, 1);
+  assert.equal(stats.daily, undefined);
+});
+
+test("dailyPeak returns today's peak, or 0 for a stale/other day", () => {
+  const stats = reducePeaks({ server1: 6 }, {}, 1, "2026-07-19").stats;
+  assert.equal(dailyPeak(stats, "2026-07-19"), 6);
+  assert.equal(dailyPeak(stats, "2026-07-20"), 0);  // yesterday's bucket → 0 today
+  assert.equal(dailyPeak({}, "2026-07-19"), 0);
 });

@@ -11,7 +11,7 @@ module.exports = (ctx) => {
   getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole, hero,
   ipBans, isDonator, loadBans, loadPlaytime, loadRoles, loadWages,
   log, paginate, parseRcon, playerCache, readPlayerBalance, refreshPlayerCache,
-  loadServerStats, extractPlayerNames,
+  loadServerStats, extractPlayerNames, easternClock,
   sanitizeId, sendRcon, serverLabel, spawn, update,
   ACTIVE_SERVERS,
   } = ctx;
@@ -215,11 +215,12 @@ module.exports = (ctx) => {
           return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
         // Network total across every server: X / (combined capacity), plus the all-time
-        // combined peak — one figure, not per-server. Peak is also on the live dashboard.
+        // and today's combined peak — one figure, not per-server. Also on the live dashboard.
         const liveTotal = infos.reduce((s, x) => s + (x.ok ? x.players : 0), 0);
         const totalMax  = infos.reduce((s, x) => s + (Number(x.maxPlayers) || 24), 0);
         const peakAll   = stats?.combined?.peak ?? 0;
-        embeds[0].addFields({ name: "Network", value: `**${liveTotal}/${totalMax}** online now  ·  all-time peak **${peakAll}/${totalMax}**`, inline: false });
+        const today     = stats?.daily?.date === easternClock().date ? (stats.daily.combined?.peak ?? 0) : 0;
+        embeds[0].addFields({ name: "Network", value: `**${liveTotal}/${totalMax}** online now  ·  peak **${peakAll}** all-time  ·  **${today}** today`, inline: false });
         return interaction.editReply({ embeds });
         },
 
