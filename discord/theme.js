@@ -15,23 +15,33 @@ const { EmbedBuilder } = require("discord.js");
 
 module.exports = function createTheme({ getClient, buildId }) {
   // ---- colour palette (exported as NV for backwards compatibility) ----
+  // A bright, candy-vibrant set tuned to pop on Discord's dark theme while keeping
+  // each colour's *meaning* (success=green, error/ban=red, warn=amber, info=blue…).
+  // Every embed in the bot routes its setColor() through these keys, so this table
+  // is the single source of truth for the whole UI.
   const NV = {
-    AMBER:       0xFFB000,
-    GOLD:        0xD4A017,
-    IRRAD_GREEN: 0x39FF14,   // bright green — success / online
-    NCR_TAN:     0xC8A96E,   // tan — neutral accent
-    LEGION_RED:  0x8B0000,   // dark red — bans / blocks
-    RUST_RED:    0xC0392B,   // red — errors
-    DEAD_GREY:   0x4A4A4A,   // grey — disabled / void
-    BLUE_VATS:   0x1B4F8A,   // blue — info
-    DEEP_BLACK:  0x0D0D0D,
+    AMBER:       0xFBBF24,   // amber-400  — warnings / neutral highlight
+    GOLD:        0xFACC15,   // yellow-400 — economy / caps / winnings
+    IRRAD_GREEN: 0x4ADE80,   // green-400  — success / online / cleared
+    NCR_TAN:     0x38BDF8,   // sky-400    — neutral accent (bright + friendly)
+    LEGION_RED:  0xF43F5E,   // rose-500   — bans / blocks / denied
+    RUST_RED:    0xFB7185,   // rose-400   — errors (softer than a ban)
+    DEAD_GREY:   0x94A3B8,   // slate-400  — disabled / void
+    BLUE_VATS:   0x60A5FA,   // blue-400   — info
+    DEEP_BLACK:  0x1E293B,   // slate-800  — deep background accent
+    // sweet extra accents — reach for these to add variety (casino, factions, fun)
+    PURPLE:      0xA78BFA,   // violet-400
+    PINK:        0xF472B6,   // pink-400
+    TEAL:        0x2DD4BF,   // teal-400
+    CYAN:        0x22D3EE,   // cyan-400
+    ORANGE:      0xFB923C,   // orange-400
   };
 
   /* Ban / IP embed accents. */
   const CLIN = {
-    red:   0x8B0000,   // dark red    - ban / block / active
-    green: 0x39FF14,   // bright green - cleared / lifted / no bans
-    grey:  0xFFB000,   // amber        - neutral info (lists, checks, connection log)
+    red:   0xF43F5E,   // rose-500   - ban / block / active
+    green: 0x4ADE80,   // green-400  - cleared / lifted / no bans
+    grey:  0xFBBF24,   // amber-400  - neutral info (lists, checks, connection log)
   };
 
   const QUOTES = {
@@ -132,8 +142,9 @@ module.exports = function createTheme({ getClient, buildId }) {
   // Display name stamped on every embed. Set BOT_NAME in .env to skin the bot
   // for your RP ("Mojave Authority", "LSPD Command", …). Neutral default.
   const BRAND_NAME = process.env.BOT_NAME || "Server Authority";
-  // One tasteful, monochrome glyph set — status accents on titles, no cartoon emoji.
-  const GLYPH = { ok: "✓", bad: "✕", warn: "⚠", deny: "⊘", info: "▸", dot: "•", up: "●", down: "○", caps: "◈", rank: "◆" };
+  // Colourful status glyphs — a splash of colour on every title, status line and
+  // list. `dot` stays a plain bullet (used as an inline separator in running text).
+  const GLYPH = { ok: "✅", bad: "❌", warn: "⚠️", deny: "🚫", info: "ℹ️", dot: "•", up: "🟢", down: "🔴", caps: "💰", rank: "🏅" };
 
   // ---- visual system  (consistent branding across every embed) ----
   function brandIcon() { try { return getClient()?.user?.displayAvatarURL?.({ size: 128 }) ?? null; } catch { return null; } }
