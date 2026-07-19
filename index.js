@@ -33,8 +33,8 @@ const {
 try { disableValidators(); } catch {}
 
 /* ── Live connection feed ────────────────────────────────────────────
-   Posts a fresh message for every player join (name · ID · IP). Paste a
-   Discord channel webhook URL into CONNECT_WEBHOOK_URL — works out of the
+   Posts a fresh message for every player join (name - ID - IP). Paste a
+   Discord channel webhook URL into CONNECT_WEBHOOK_URL - works out of the
    box, no bot channel permissions needed. Use a PRIVATE admin channel: it
    exposes player IP addresses. */
 let feedHook = null;
@@ -50,7 +50,7 @@ const BOT_START_MS = Date.now();
 /* Authorship / build attribution. Surfaced in /help and /ping; protected by
    the LICENSE. Removing or altering it violates the license terms. */
 const BOT_AUTHOR    = "bs9zw69ff9-source";
-const BOT_COPYRIGHT = `2026 ${BOT_AUTHOR} · All rights reserved`;
+const BOT_COPYRIGHT = `2026 ${BOT_AUTHOR} - All rights reserved`;
 const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${new Date(BOT_START_MS).toISOString().slice(0, 10)}`;
 
 // ---- hardcoded owners  (super-users - top of every permission) ----
@@ -71,19 +71,19 @@ function isSuperOwner(userId) { return SUPER_OWNER_IDS.has(String(userId)); }
 
 /* Staff command hierarchy: super owner > owner > admin > mod. A lower tier can never
    override (unban / unmute / clear) a moderation action issued by a higher tier.
-   The tier logic lives in a pure, unit-tested module — we inject the role predicates. */
+   The tier logic lives in a pure, unit-tested module - we inject the role predicates. */
 const { commandTier: _commandTier, commandTierName, canOverride } = require("./moderation/hierarchy");
 function commandTier(member) {
   return _commandTier(member, { isSuperOwner, isOwner, hasAdminRole, hasModRole });
 }
 
-/* Master in-game names — the people who run the servers. They are never banned,
+/* Master in-game names - the people who run the servers. They are never banned,
    never IP-logged, and are handed a menu automatically on every join. Matched by
    USERNAME (case-insensitive), since that's what RCON and the logs give us. */
 const MASTER_NAMES = new Set(["lxpxham", "holosight1"]);
 function isMasterName(name) { return MASTER_NAMES.has(String(name ?? "").trim().toLowerCase()); }
 
-/* Master/owner IPs — protected addresses the bot must NEVER block at the OS
+/* Master/owner IPs - protected addresses the bot must NEVER block at the OS
    firewall, no matter what flags them. Enforced on every block and re-checked by
    the periodic firewall reconcile (which also removes the rule if it ever appears). */
 const MASTER_IPS = new Set(["86.166.107.200"]);
@@ -155,7 +155,7 @@ function isPidAlive(pid) {
 }
 function acquireSingleInstanceLock() {
   // Atomic exclusive-create (O_EXCL): if two copies start at the same instant, only one
-  // can win the create — there's no read-then-write TOCTOU window where both pass the
+  // can win the create - there's no read-then-write TOCTOU window where both pass the
   // liveness check and then both write. On EEXIST, decide whether the lock is stale.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -171,11 +171,11 @@ function acquireSingleInstanceLock() {
         logger.error("Bot", `Another instance is already running (pid ${pid}) in this directory. Refusing to start a second copy - stop it first (or delete ${LOCK_FILE} if you're sure it's stale).`);
         process.exit(1);
       }
-      // Stale lock (owner dead/crashed) or our own pid — remove it and retry the create.
+      // Stale lock (owner dead/crashed) or our own pid - remove it and retry the create.
       try { fs.unlinkSync(LOCK_FILE); } catch {}
     }
   }
-  logger.warn("Bot", `Could not acquire ${LOCK_FILE} after retry — continuing without a single-instance lock.`);
+  logger.warn("Bot", `Could not acquire ${LOCK_FILE} after retry - continuing without a single-instance lock.`);
 }
 function releaseSingleInstanceLock() {
   try { if (fs.readFileSync(LOCK_FILE, "utf8").trim() === String(process.pid)) fs.unlinkSync(LOCK_FILE); } catch {}
@@ -194,11 +194,11 @@ const {
 
 /* ---- Typed loaders / savers ---- */
 const loadBans          = () => safeRead(FILES.TEMPBAN,        []);
-/* Serialized temp-ban mutations — go through update() so concurrent commands
+/* Serialized temp-ban mutations - go through update() so concurrent commands
    and the 60s expiry sweep can't clobber each other's writes. */
 const _sameId = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 function upsertTempBan(entry) {
-  // Creating a ban record is a deliberate ban — it must clear any unban exemption,
+  // Creating a ban record is a deliberate ban - it must clear any unban exemption,
   // or an exempt player could hold a /banlist entry the sweeps refuse to enforce.
   try { removeAutobanExempt(entry.playerId).catch(() => {}); } catch {}
   return update(FILES.TEMPBAN, [], (bans) => {
@@ -213,7 +213,7 @@ function upsertPermBan({ playerId, reason, moderator, moderatorRank, moderatorId
   return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", moderatorRank, moderatorId, server: server || "both", at: Date.now(), permanent: true });
 }
 /** One-time/startup import: pull any names already in blacklist.txt into the ban JSON
-    (as permanent entries) so /banlist — which reads the JSON — shows pre-existing bans. */
+    (as permanent entries) so /banlist - which reads the JSON - shows pre-existing bans. */
 function importBlacklistToBans() {
   let names = [];
   try { names = blacklistAll(); } catch { return; }
@@ -333,7 +333,7 @@ function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
 
 /** One-time backfill of the registry from data the bot already has on disk,
     so offline autocomplete works immediately (not just for players seen since
-    deployment). Idempotent — recordKnownPlayers only writes new names. */
+    deployment). Idempotent - recordKnownPlayers only writes new names. */
 async function seedKnownPlayers() {
   const names = new Set();
   for (const k of Object.keys(loadPlaytime())) names.add(k);                 // playtime keys (display-cased)
@@ -343,7 +343,7 @@ async function seedKnownPlayers() {
     for (const f of fs.readdirSync(FACTION_ROLES_PATH).filter(n => n.endsWith(".txt"))) {
       for (const id of (readFactionFile(f) ?? [])) names.add(id);
     }
-  } catch { /* faction dir not reachable from here — skip */ }
+  } catch { /* faction dir not reachable from here - skip */ }
 
   const before = Object.keys(loadKnownPlayers()).length;
   await recordKnownPlayers([...names]);
@@ -402,7 +402,7 @@ const MENU_ROLE_DEFAULTS = {
   staff:     process.env.MENU_ROLE_STAFF     || "1520598947180314836",
   faction:   process.env.MENU_ROLE_FACTION   || "1520598947129852082",
 };
-/* RCON blacklist role — anyone holding it is barred from the self-serve menu
+/* RCON blacklist role - anyone holding it is barred from the self-serve menu
    panel, even if they also hold a menu role. */
 const RCON_BLACKLIST_ROLE_ID = process.env.MENU_ROLE_BLACKLIST || "1520598947129852078";
 /* Public /link add requests get posted here with Accept/Deny buttons; only holders
@@ -431,14 +431,14 @@ function menuRoleTiers() {
   ];
 }
 
-/* Punishment presets — each reason carries its own sentence, so a mod picks the
+/* Punishment presets - each reason carries its own sentence, so a mod picks the
    offence and the duration is applied automatically (no manually-typed date, except
    "Other", which takes a custom unban date). Hard R is permanent. */
 const DAY_MS = 86_400_000;
 const PUNISHMENTS = [
   { name: "MassRDM in Protected Zone",     value: "massrdm_protected", ms: 3 * DAY_MS },
-  { name: "Spawn Killing — Faction Spawn", value: "sk_faction",        ms: 5 * DAY_MS },
-  { name: "Spawn Killing — Civ Spawn",     value: "sk_civ",            ms: 7 * DAY_MS },
+  { name: "Spawn Killing - Faction Spawn", value: "sk_faction",        ms: 5 * DAY_MS },
+  { name: "Spawn Killing - Civ Spawn",     value: "sk_civ",            ms: 7 * DAY_MS },
   { name: "Hard R",                        value: "hard_r",            permanent: true },
   { name: "Soft A",                        value: "soft_a",            ms: 3 * DAY_MS },
   { name: "Slur",                          value: "slur",              ms: 1 * DAY_MS },
@@ -450,7 +450,7 @@ const PUNISHMENTS = [
   { name: "Other",                         value: "other",             custom: true },
 ];
 const PUNISH_BY_VALUE = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p]));
-// Human sentence for a punishment (embeds/logs): "Permanent", "1 Week", "3 Days", …
+// Human sentence for a punishment (embeds/logs): "Permanent", "1 Week", "3 Days", ...
 function punishDurationLabel(p) {
   if (!p || p.custom) return "Custom";
   if (p.permanent) return "Permanent";
@@ -459,7 +459,7 @@ function punishDurationLabel(p) {
 }
 // Slash-command choices, sentence shown in the label (Discord: ≤25 choices, ≤100 chars).
 const PUNISH_CHOICES = PUNISHMENTS.map(p => ({
-  name: `${p.name}${p.custom ? " (custom time)" : ` — ${punishDurationLabel(p)}`}`,
+  name: `${p.name}${p.custom ? " (custom time)" : ` - ${punishDurationLabel(p)}`}`,
   value: p.value,
 }));
 const BAN_REASON_LABELS = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p.name]));
@@ -608,7 +608,7 @@ function rankHasRoom(faction, rank) {
 /* Pavlov server installs, kept in sync. Every game file the bot writes (bans,
    faction roles, donator, economy) is mirrored into EVERY install so all servers
    stay identical. By default we auto-detect every "pavlovserver*" directory next
-   to PAVLOV_BASE_1 (pavlovserver, pavlovserver1, pavlovserver2, …). Override with
+   to PAVLOV_BASE_1 (pavlovserver, pavlovserver1, pavlovserver2, ...). Override with
    PAVLOV_BASES (comma/colon-separated absolute paths) or PAVLOV_BASE_1. */
 const PAVLOV_BASE_1 = process.env.PAVLOV_BASE_1 || "/home/steam/pavlovserver";
 function discoverPavlovBases() {
@@ -628,11 +628,11 @@ function discoverPavlovBases() {
 const PAVLOV_BASES = discoverPavlovBases();   // resolved once at startup
 logger.info("Sync", `Syncing ${PAVLOV_BASES.length} install(s): ${PAVLOV_BASES.map(b => path.basename(b)).join(", ")}`);
 
-/* Startup sync sanity check — turn the silent no-op failure modes into a visible WARN
+/* Startup sync sanity check - turn the silent no-op failure modes into a visible WARN
    so "sync isn't working" is diagnosable from the log instead of guesswork. */
 (function checkSyncConfig() {
   if (process.env.MODSAVE_SYNC === "off") {
-    logger.warn("Sync", "MODSAVE_SYNC=off — cross-install ModSave sync is DISABLED. Unset it in .env to enable.");
+    logger.warn("Sync", "MODSAVE_SYNC=off - cross-install ModSave sync is DISABLED. Unset it in .env to enable.");
     return;
   }
   if (PAVLOV_BASES.length < 2) {
@@ -640,23 +640,23 @@ logger.info("Sync", `Syncing ${PAVLOV_BASES.length} install(s): ${PAVLOV_BASES.m
   }
   const mp = process.env.MODSAVE_PATH;
   if (mp && !PAVLOV_BASES.some(b => mp === b || mp.startsWith(b + path.sep))) {
-    logger.warn("Sync", `MODSAVE_PATH (${mp}) is NOT under any install base — per-player balance writes will not be mirrored to other installs. Point it inside one of: ${PAVLOV_BASES.join(", ")}`);
+    logger.warn("Sync", `MODSAVE_PATH (${mp}) is NOT under any install base - per-player balance writes will not be mirrored to other installs. Point it inside one of: ${PAVLOV_BASES.join(", ")}`);
   }
-  // Read-only probe of each install's ModSave dir — a permission problem is a common
+  // Read-only probe of each install's ModSave dir - a permission problem is a common
   // silent cause (the bot user can't write into another install owned by steam). This
   // must NOT create anything: a diagnostic that mkdir's would mask a missing dir and
   // could seed ModSave trees in a mis-discovered install.
   for (const base of PAVLOV_BASES) {
     const dir = path.join(base, "Pavlov", "Saved", "Config", "ModSave");   // = MODSAVE_REL (defined below; inlined to avoid TDZ)
     try {
-      fs.accessSync(dir, fs.constants.W_OK);   // exists and writable — good
+      fs.accessSync(dir, fs.constants.W_OK);   // exists and writable - good
     } catch (err) {
       if (err.code === "ENOENT") {
-        // Not created yet — fine, as long as the bot could create it (parent writable).
+        // Not created yet - fine, as long as the bot could create it (parent writable).
         try { fs.accessSync(path.dirname(dir), fs.constants.W_OK); }
         catch (e2) { logger.warn("Sync", `Cannot create ModSave dir for ${path.basename(base)} (${dir}): parent not writable (${e2.code || e2.message}).`); }
       } else {
-        logger.warn("Sync", `ModSave dir not writable for ${path.basename(base)} (${dir}): ${err.code || err.message} — sync into this install will fail. Check ownership/permissions.`);
+        logger.warn("Sync", `ModSave dir not writable for ${path.basename(base)} (${dir}): ${err.code || err.message} - sync into this install will fail. Check ownership/permissions.`);
       }
     }
   }
@@ -797,13 +797,13 @@ function syncAllModSave(bases = PAVLOV_BASES) {
       if (atomicCopyPreservingMtime(dstAbs, content, mtime)) synced++;
     }
   }
-  if (synced) logger.info("Sync", `ModSave sync — propagated ${synced} file copy(ies) across ${bases.length} installs`);
+  if (synced) logger.info("Sync", `ModSave sync - propagated ${synced} file copy(ies) across ${bases.length} installs`);
   return { synced, installs: bases.length };
 }
 
 /* Targeted, EVENT-DRIVEN caps sync for one player. The blanket newest-wins pass runs
    on an interval, which is too slow for server hoppers: leave server 1, join server 2
-   inside the window, and server 2 loads a stale ledger — then saves it later with a
+   inside the window, and server 2 loads a stale ledger - then saves it later with a
    newer mtime, clobbering the caps earned on server 1. So we sync the player's ledger
    at the exact moments it matters: right after a disconnect (their balance was just
    saved) and right on join (before the destination server reads it). */
@@ -911,7 +911,7 @@ function reconcileBlacklists() {
     const same = cur.length === union.length && union.every(n => set.has(n.toLowerCase()));
     if (!same && writeGameFileSingle(blacklistPathFor(base), union.join("\n") + "\n")) wrote++;
   }
-  if (wrote) logger.info("Blacklist", `Reconciled blacklist.txt across ${wrote} install(s) — ${union.length} name(s)`);
+  if (wrote) logger.info("Blacklist", `Reconciled blacklist.txt across ${wrote} install(s) - ${union.length} name(s)`);
 }
 
 
@@ -952,7 +952,7 @@ const EXTRA_FACTION_FILES = ["faction.txt"];
 
 /* Build every FactionRoles whitelist file on startup so the game server always
    finds them, even on a brand-new install. We only CREATE missing files (empty)
-   — never touch existing rosters — and we do it in EVERY Pavlov install via
+   - never touch existing rosters - and we do it in EVERY Pavlov install via
    mirrorPaths. Covers: faction.txt, each faction's spawn (membership) file, and
    every rank file, plus the donator file. */
 function ensureFactionFiles() {
@@ -970,7 +970,7 @@ function ensureFactionFiles() {
     }
   }
   for (const fp of mirrorPaths(DONATOR_FILE)) if (ensureFile(fp, "")) created++;
-  logger.info("Init", `Faction files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` — created ${created} missing` : ""));
+  logger.info("Init", `Faction files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` - created ${created} missing` : ""));
 }
 
 // One-time startup sweep: hand any already-root-owned files THE BOT WRITES back to
@@ -1102,7 +1102,7 @@ function formatKD(playerId) {
   try { k = ipBans.getKD(playerId); } catch {}
   if (!k || !(k.kills + k.deaths)) return "*No record*";
   const ratio = (k.deaths ? k.kills / k.deaths : k.kills).toFixed(2);
-  return `**${k.kills}** / **${k.deaths}**  ·  ${ratio}`;
+  return `**${k.kills}** / **${k.deaths}**  -  ${ratio}`;
 }
 
 function formatPlaytime(minutes) {
@@ -1169,7 +1169,7 @@ async function confirmDialog(interaction, { title, body, confirmLabel = "Confirm
   catch { try { await interaction.editReply({ components: [] }); } catch {} return false; }
   const yes = btn.customId === "cd_yes";
   await btn.update({ embeds: [brand(new EmbedBuilder().setColor(yes ? NV.IRRAD_GREEN : NV.DEAD_GREY)
-    .setTitle(yes ? "Confirmed" : "Cancelled").setDescription(yes ? "Proceeding…" : "No changes made."))], components: [], keepEmbeds: true }).catch(() => {});
+    .setTitle(yes ? "Confirmed" : "Cancelled").setDescription(yes ? "Proceeding..." : "No changes made."))], components: [], keepEmbeds: true }).catch(() => {});
   return yes;
 }
 
@@ -1216,7 +1216,7 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
     rows.push(row2);
     if (total >= 4) {
       rows.push(new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder().setCustomId("pg_jump").setPlaceholder("Jump to page…")
+        new StringSelectMenuBuilder().setCustomId("pg_jump").setPlaceholder("Jump to page...")
           .addOptions(Array.from({ length: Math.min(total, 25) }, (_, i) => ({ label: `Page ${i + 1} of ${total}`, value: String(i) })))));
     }
     return rows;
@@ -1252,7 +1252,7 @@ async function paginate(interaction, lines, buildEmbed, { perPage = 12, ephemera
       if (filter) { filter = ""; page = 0; await sel.update(render()); continue; }   // active filter: tap clears
       const modal = new ModalBuilder().setCustomId("pg_search_modal").setTitle("Search this list")
         .addComponents(new ActionRowBuilder().addComponents(
-          new TextInputBuilder().setCustomId("pg_q").setLabel("Show only lines containing…")
+          new TextInputBuilder().setCustomId("pg_q").setLabel("Show only lines containing...")
             .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(50)));
       await sel.showModal(modal).catch(() => {});
       let sub;
@@ -1315,7 +1315,7 @@ function preserveBalanceAcrossKick(name) {
 // changes name AND IP is still caught. This is safe for temp bans because a served
 // temp ban is lifted on rejoin by autoBanDecision (and cleared outright by the 60s
 // expiry sweep), so the flag never outlives the ban.
-/* ---- OS-level firewall block (ufw) — extracted to ./moderation/firewall ----
+/* ---- OS-level firewall block (ufw) - extracted to ./moderation/firewall ----
    Blocks/unblocks IPs at the OS firewall (opt-in via UFW_BLOCK=1). Used on bans
    and by the owner /firewall command. See moderation/firewall.js for details. */
 const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallStatus } =
@@ -1336,7 +1336,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
    Set FACTION_BOT_TOKEN + FACTION_CLIENT_ID in .env to run a dedicated faction
    bot (own Discord application, invited to each faction's guild). It registers
    ONLY the /faction command; the main
-   bot keeps everything else. Runs in THIS process, sharing all state — no file
+   bot keeps everything else. Runs in THIS process, sharing all state - no file
    races. Leave the env vars unset and everything stays on the main bot. */
 const FACTION_BOT = !!(process.env.FACTION_BOT_TOKEN && process.env.FACTION_CLIENT_ID);
 const factionClient = FACTION_BOT ? new Client({ intents: [GatewayIntentBits.Guilds] }) : null;
@@ -1355,28 +1355,20 @@ function embedToText(e) {
   let d; try { d = typeof e?.toJSON === "function" ? e.toJSON() : e; } catch { d = e; }
   if (!d || typeof d !== "object") return "";
   // Strip embed-era decoration that reads as clutter in a plain message: divider /
-  // rule lines (▓▒░, ----, ───, ====, ▔▔▔ …) and stacked blank lines. Code-fence
+  // rule lines (▓▒░, ----, ───, ====, ▔▔▔ ...) and stacked blank lines. Code-fence
   const decor = /^[\s>*_`~|·▓▒░─━▔═▬⎯=—–-]+$/;
   const tidy  = (s) => String(s).split("\n")
     .filter(l => l.trim().startsWith("```") || !decor.test(l))
     .join("\n").replace(/\n{2,}/g, "\n").trim();
-  // Compact reply style: "✅ **Title** — description", fields as short
-  // "**Name:** value" lines, no headings, no footers.
+  // Human reply style: when there's a description, the reply is just the leading
+  // emoji from the title plus the sentence itself, like "✅ Banned chupavr for 2d".
+  // The title text only shows when there's no description to speak for itself.
   const title = String(d.title ?? "").trim();
   const desc  = tidy(d.description ?? "");
-  // Bold the title text but keep a leading emoji/glyph outside the bold.
-  let head = "";
-  if (title) {
-    const m = title.match(/^([^\p{L}\p{N}]+)\s*(.+)$/u);
-    head = m && m[2] ? `${m[1].trim()} **${m[2]}**` : `**${title}**`;
-  }
+  const emoji = (title.match(/^([^\p{L}\p{N}*_`]+)\s/u)?.[1] ?? "").trim();
   const parts = [];
-  if (head && desc) {
-    // Single short sentence -> one clean line; otherwise title line + body.
-    const oneLine = !desc.includes("\n") && !desc.startsWith("```") && (head.length + desc.length) <= 300;
-    parts.push(oneLine ? `${head} — ${desc}` : `${head}\n${desc}`);
-  } else if (head) parts.push(head);
-  else if (desc) parts.push(desc);
+  if (desc) parts.push(emoji ? `${emoji} ${desc}` : desc);
+  else if (title) parts.push(title);
   for (const f of d.fields ?? []) {
     const name = String(f.name ?? "").trim();
     const val  = tidy(f.value ?? "");
@@ -1403,13 +1395,13 @@ function textifyChunks(payload) {
 // One-message form for interaction replies / edits / DMs: render every embed to a
 // short plain-text message (the clean reply style) and drop the embed. Components
 // (buttons/selects) pass through untouched. Overflow past one message is truncated
-// with a marker — command replies are expected to be short.
+// with a marker - command replies are expected to be short.
 function textify(payload) {
   if (!payload || typeof payload !== "object") return payload;
-  const { keepEmbeds, ...rest } = payload;   // legacy flag — conversion applies regardless
+  const { keepEmbeds, ...rest } = payload;   // legacy flag - conversion applies regardless
   if (!Array.isArray(rest.embeds) || !rest.embeds.length) return rest;
   const { first, extra } = textifyChunks(rest);
-  if (extra.length) first.content = `${first.content.slice(0, 1880)}\n-# …output shortened`;
+  if (extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
   return first;
 }
 function patchInteractionOutput(interaction) {
@@ -1422,8 +1414,8 @@ function patchInteractionOutput(interaction) {
       }
       const { keepEmbeds, ...rest } = payload;
       const { first, extra } = textifyChunks(rest);
-      // update() edits one message in place — no follow-ups possible there.
-      if (m === "update" && extra.length) first.content = `${first.content.slice(0, 1880)}\n-# …output shortened`;
+      // update() edits one message in place - no follow-ups possible there.
+      if (m === "update" && extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
       const res = await orig(first, ...args);
       if (m !== "update") {
         for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags }); } catch { break; } }
@@ -1506,10 +1498,10 @@ function commitSubjectsBetween(from, to) {
     return out.split("\n").map(s => s.trim()).filter(Boolean);
   } catch { return []; }
 }
-/* The update log is a PUBLIC changelog — it must never leak private info.
+/* The update log is a PUBLIC changelog - it must never leak private info.
    redactPrivateInfo (in ./utils, unit-tested) scrubs IPs and long ids. */
 // Scrub every text surface of an embed (title/description/fields/footer) in place.
-// Mutates embed.data directly — NOT via setTitle/etc, whose validators can throw
+// Mutates embed.data directly - NOT via setTitle/etc, whose validators can throw
 // and leave private text un-scrubbed. Nothing here can throw, so it can't fail open.
 function redactEmbedPrivateInfo(embed) {
   try {
@@ -1549,7 +1541,7 @@ async function postUpdateLogIfChanged() {
     logger.info("UpdateLog", `First run - now tracking from ${commit.slice(0, 7)}.`);
     return postToUpdateLogChannel(brand(new EmbedBuilder().setColor(NV.GOLD).setTitle("Update log online")
       .setDescription(`I'll post here whenever I restart on a new commit.`)
-      .setFooter({ text: `${commit.slice(0, 7)} · v${BOT_VERSION}` })));
+      .setFooter({ text: `${commit.slice(0, 7)} - v${BOT_VERSION}` })));
   }
   if (state.lastCommit === commit) { logger.info("UpdateLog", "Commit unchanged since last restart - nothing to post."); return; }
 
@@ -1557,24 +1549,24 @@ async function postUpdateLogIfChanged() {
   if (!subjects.length) { logger.warn("UpdateLog", `No commit log between ${state.lastCommit.slice(0, 7)} and ${commit.slice(0, 7)} - skipping (rebase/force-push?).`); return; }
 
   const SHOWN = 10;
-  // Redact at the SOURCE — scrub each commit subject before it ever enters the
+  // Redact at the SOURCE - scrub each commit subject before it ever enters the
   // embed, so the public changelog can't leak an IP/id even if the embed-level
   // pass hit an edge case. (redactEmbedPrivateInfo below is the belt-and-braces.)
   const lines = subjects.slice(-SHOWN).map(s => `- ${redactPrivateInfo(s)}`);
-  if (subjects.length > SHOWN) lines.unshift(`- …and ${subjects.length - SHOWN} earlier change${subjects.length - SHOWN === 1 ? "" : "s"}`);
+  if (subjects.length > SHOWN) lines.unshift(`- ...and ${subjects.length - SHOWN} earlier change${subjects.length - SHOWN === 1 ? "" : "s"}`);
 
   logger.info("UpdateLog", `Posting ${subjects.length} change(s) since ${state.lastCommit.slice(0, 7)}.`);
   return postToUpdateLogChannel(brand(new EmbedBuilder().setColor(NV.GOLD).setTitle("The bot just updated")
     .setDescription(`${lines.join("\n")}`)
-    .setFooter({ text: `${commit.slice(0, 7)} · v${BOT_VERSION}` })));
+    .setFooter({ text: `${commit.slice(0, 7)} - v${BOT_VERSION}` })));
 }
 
 // ---- punishment dm notice ----
 async function dmPunishmentNotice(discordUser, { action, color, playerId, reason, fields = [] }) {
   if (!discordUser) return null;
   const embed = brand(new EmbedBuilder().setColor(color)
-    .setTitle(`Moderation Notice — ${action}`)
-    .setDescription(`${hero("A moderation action has been taken on your account.")}\n\n**${playerId}** — ${action}${reason ? `: ${reason}` : ""}`)
+    .setTitle(`Moderation Notice - ${action}`)
+    .setDescription(`${hero("A moderation action has been taken on your account.")}\n\n**${playerId}** - ${action}${reason ? `: ${reason}` : ""}`)
     .addFields(...fields),
     { thumb: true, footer: { text: "You received this because a moderator linked your Discord account to this action." } });
   try {
@@ -1593,7 +1585,7 @@ function dmStatusField(sent, discordUser) {
     name: "Player Notified",
     value: sent
       ? `DM delivered to <@${discordUser.id}>`
-      : `Couldn't DM <@${discordUser.id}> — their DMs are closed or the bot is blocked.`,
+      : `Couldn't DM <@${discordUser.id}> - their DMs are closed or the bot is blocked.`,
     inline: false,
   };
 }
@@ -1623,7 +1615,7 @@ function extractPlayerNames(data) {
     .filter(Boolean);
 }
 
-/** Live online players for a server as { name, id } — id is the Pavlov UniqueId,
+/** Live online players for a server as { name, id } - id is the Pavlov UniqueId,
     which is what RCON Kick actually targets (NOT the display name). */
 async function getOnlinePlayers(server) {
   let data;
@@ -1645,7 +1637,7 @@ function setPlayerCacheFromData(server, data) {
   return true;
 }
 
-/* All-time peak concurrent players — per server and combined across every active
+/* All-time peak concurrent players - per server and combined across every active
    server. Recomputed from the live cache on each roster refresh; only writes when a
    peak is newly exceeded, so it's cheap even at poll frequency. Peaks are monotonic. */
 const { reducePeaks } = require("./stats/peaks");
@@ -1674,7 +1666,7 @@ async function refreshPlayerCache(server = "server1") {
     // fresh last-seen stamps indefinitely and stay "online" in every list.
     if (playerCache[server].length && Date.now() - playerCache.lastUpdated[server] > CACHE_TTL_MS) {
       playerCache[server] = [];
-      logger.warn("Cache", `${server} roster cleared — unreachable beyond cache TTL`);
+      logger.warn("Cache", `${server} roster cleared - unreachable beyond cache TTL`);
     }
   }
 }
@@ -1762,7 +1754,7 @@ function isDonator(playerId) {
   return (readDonatorFile() ?? []).some(l => l.toLowerCase() === id);
 }
 
-/** Returns { ok, already } — already=true if the player was already listed. */
+/** Returns { ok, already } - already=true if the player was already listed. */
 function addDonator(playerId) {
   const lines = readDonatorFile();
   if (lines === null) return { ok: false, already: false };
@@ -1771,7 +1763,7 @@ function addDonator(playerId) {
   return { ok: writeDonatorFile(lines), already: false };
 }
 
-/** Returns { ok, missing } — missing=true if the player wasn't listed. */
+/** Returns { ok, missing } - missing=true if the player wasn't listed. */
 function removeDonator(playerId) {
   const lines = readDonatorFile();
   if (lines === null) return { ok: false, missing: false };
@@ -1802,11 +1794,11 @@ async function processDonatorRestores() {
     if (!s || s.restoreAt > now) continue;
     try {
       addDonator(s.playerId);
-      logger.info("Donator", `Restored donator perks for ${s.playerId} — suspension served`);
+      logger.info("Donator", `Restored donator perks for ${s.playerId} - suspension served`);
     } catch (e) { logger.warn("Donator", `Restore failed for ${s.playerId}: ${e.message}`); continue; }
     await update(FILES.DONATOR_SUSPEND, {}, (m) => { delete m[key]; return m; });
     try { await logBan(clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Donator Perks Restored")
-      .setDescription(`\`${s.playerId}\`'s donator perks were auto-restored — suspension served.`))); } catch {}
+      .setDescription(`\`${s.playerId}\`'s donator perks were auto-restored - suspension served.`))); } catch {}
   }
 }
 
@@ -1854,7 +1846,7 @@ function buildFactionMembershipIndex() {
 /* Roll a killer's per-victim tally up into per-faction kill counts. Returns
    { [faction]: { total, members: [{ name, count }] } }, members sorted most-killed
    first. A victim in two factions counts toward each. Killers' own faction is not
-   excluded — the tally reflects exactly who they killed. */
+   excluded - the tally reflects exactly who they killed. */
 function factionKillBreakdown(killerId) {
   const membership = buildFactionMembershipIndex();
   if (!membership) return null;
@@ -1987,9 +1979,9 @@ const { GAMBLE_QUOTA_MAX, GAMBLE_QUOTA_WINDOW_MS, _ledgerQueues, addToPot, casin
   loadDiscordLinks: (...a) => loadDiscordLinks(...a),
 });
 
-/* ---------------- casino: game logic (pure — no I/O) ----------------
+/* ---------------- casino: game logic (pure - no I/O) ----------------
    Extracted to ./casino/games.js (deterministic given Math.random; no bot
-   state). casinoResultEmbed stays below — it's theme-coupled. */
+   state). casinoResultEmbed stays below - it's theme-coupled. */
 const {
   GAME_ICON, JACKPOT_MIN_BALANCE, JACKPOT_WIN_CHANCE,
   SLOT_SYMBOLS, spinSlotReel, spinSlots,
@@ -2086,13 +2078,13 @@ function importModsaveBanlist() {
       if (!wantsPerm && !expires) {
         // Date we can't parse - keep the ban (safe direction) but say so loudly
         // instead of silently escalating a dated ban to permanent.
-        logger.warn("Bans", `Imported ban for "${p.name}" has an unparseable unban date "${p.unban}" — recorded as permanent; /unban and re-ban with a YYYY-MM-DD date to fix`);
+        logger.warn("Bans", `Imported ban for "${p.name}" has an unparseable unban date "${p.unban}" - recorded as permanent; /unban and re-ban with a YYYY-MM-DD date to fix`);
         p.reason = `${p.reason} [unparseable unban date: ${p.unban}]`;
       }
       bans.push(expires
         ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: "until " + p.unban }
         : { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), permanent: true });
-      try { removeAutobanExempt(p.name).catch(() => {}); } catch {}   // an in-game ban is deliberate — clears any exemption
+      try { removeAutobanExempt(p.name).catch(() => {}); } catch {}   // an in-game ban is deliberate - clears any exemption
       added++;
     }
     if (added) logger.info("Bans", `Imported ${added} ban(s) from the modsave banlist into the database`);
@@ -2120,9 +2112,9 @@ async function processExpiredBans() {
       logger.info("Bans", `Expired ban lifted: ${ban.playerId}`);
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
       await logBan(
-        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Sentence Served — Player Released")
-          .setDescription(`> *"Every soul deserves a second chance in the server."*\n\n**${ban.playerId}** served **${ban.durationLabel ?? "Unknown"}** for ${ban.reason} — originally banned by ${ban.moderator}.`),
-          "Exile expired — access restored automatically")
+        clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Sentence Served - Player Released")
+          .setDescription(`> *"Every soul deserves a second chance in the server."*\n\n**${ban.playerId}** served **${ban.durationLabel ?? "Unknown"}** for ${ban.reason} - originally banned by ${ban.moderator}.`),
+          "Exile expired - access restored automatically")
       );
     } catch (err) {
       logger.error("Bans", `Unban failed for ${ban.playerId}: ${err.message}`);
@@ -2196,7 +2188,7 @@ async function ensureMenuPanel() {
   const saved = safeRead(FILES.MENU_PANEL, {});
   if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
   const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("RCON Menu Access")
-    .setDescription(`${hero("Tools for trusted staff.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically — no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
+    .setDescription(`${hero("Tools for trusted staff.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically - no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("menu_start").setLabel("Get Menu").setStyle(ButtonStyle.Success));
   try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
@@ -2204,7 +2196,7 @@ async function ensureMenuPanel() {
 }
 
 /* Log linking a Discord user to the RCON name they claimed a menu for. One active
-   menu per Discord user — they can't claim a second/other name while their grant is
+   menu per Discord user - they can't claim a second/other name while their grant is
    on record; re-entering their own name removes it (toggle), same as whitelists. */
 const loadMenuLinks = () => safeRead(FILES.MENU_LINKS, {});
 function setMenuLink(discordId, data) { return update(FILES.MENU_LINKS, {}, (m) => { m[discordId] = data; return m; }); }
@@ -2213,7 +2205,7 @@ function clearMenuLink(discordId)     { return update(FILES.MENU_LINKS, {}, (m) 
 function menuLinkActive(link) { return !!(link && link.name && (loadMenuGrants()[String(link.name).toLowerCase()] || []).length); }
 
 async function handleMenuPanelSubmit(interaction) {
-  // RCON blacklist role — self-serve is entirely off for these members.
+  // RCON blacklist role - self-serve is entirely off for these members.
   if (memberHasRoleId(interaction.member, RCON_BLACKLIST_ROLE_ID)) {
     logger.info("MenuPanel", `${interaction.user.tag} blocked by RCON blacklist role`);
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
@@ -2296,10 +2288,10 @@ function removeMenuGrant(playerId, server, menuValue) {
    player's live menu on disconnect, so without this a /givemenu (or self-service
    claim) only lasted until they left. Fired from the connection log (onConnect);
    waits a few seconds so the player shows up in RefreshList, then re-sends the
-   exact grant(s) on record — nothing is granted that an admin didn't grant. */
+   exact grant(s) on record - nothing is granted that an admin didn't grant. */
 const _recentRegrant = new Map();   // nameLower -> ts (don't re-grant more than once per 2 min)
 
-/* Master names get a menu handed to them automatically on join — GiveMenu with NO
+/* Master names get a menu handed to them automatically on join - GiveMenu with NO
    bit code (the server grants its default menu). Debounced like the re-grant path so
    a reconnect flurry doesn't spam RCON. */
 function grantMasterMenu(name) {
@@ -2317,7 +2309,7 @@ function grantMasterMenu(name) {
 }
 
 /* Players immune to /flush's random kick: master names, donators (donator.txt), and
-   Staff/High Staff menu holders. NOTE: this is /flush immunity ONLY — it does NOT
+   Staff/High Staff menu holders. NOTE: this is /flush immunity ONLY - it does NOT
    exempt anyone from ban-evasion auto-bans. Only MASTER names bypass auto-ban (see
    onAutoBan); staff/donators sharing an IP with an evader are still enforced.
    Faction-menu holders are NOT trusted (they can be any member). */
@@ -2331,7 +2323,7 @@ function isProtectedPlayer(name) {
 }
 
 /* Auto-ban exemption: a player who was explicitly UNBANNED is never auto-banned again
-   (even if a lingering flag — e.g. a shared IP with a still-banned evader — would match),
+   (even if a lingering flag - e.g. a shared IP with a still-banned evader - would match),
    until they're deliberately re-banned. Keyed by lowercased Pavlov name. */
 const loadAutobanExempt = () => safeRead(FILES.AUTOBAN_EXEMPT, {});
 const isAutobanExempt   = (name) => { const k = String(name ?? "").trim().toLowerCase(); return !!k && !!loadAutobanExempt()[k]; };
@@ -2391,7 +2383,7 @@ if (DB_EXPORT_INTERVAL_MS > 0) {
 }
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
-// (ufw is manual-only via /firewall — no periodic auto-block/reconcile of ban IPs)
+// (ufw is manual-only via /firewall - no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
@@ -2426,7 +2418,7 @@ setTimeout(postPlaytimeLeaderboard, 25_000);
 // Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure -> Load.
 function autoBackupFactions() {
   const r = saveFactionBackup();
-  if (r.ok) logger.info("Backup", `Auto-saved faction whitelists — ${r.count} file(s)`);
+  if (r.ok) logger.info("Backup", `Auto-saved faction whitelists - ${r.count} file(s)`);
   else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
 }
 
@@ -2454,20 +2446,20 @@ const {  } = require("./events")({
 
 // ---- graceful shutdown ----
 async function shutdown(signal) {
-  logger.info("Bot", `${signal} received — draining write queues…`);
+  logger.info("Bot", `${signal} received - draining write queues...`);
   // _queues holds the tail promise of every per-file write chain; waiting on them
   // means pm2 restarts can't kill an in-flight atomic write mid-rename.
   try { await Promise.allSettled([..._queues.values()]); } catch {}
   try { ipBans.flushAll(); } catch {}   // registry / K-D / kill-log throttled writes
   try { if (DB_EXPORT_INTERVAL_MS > 0) exportDbToJson(); } catch {}   // fresh JSON backup on clean exit
   releaseSingleInstanceLock();
-  logger.info("Bot", "Queues drained — exiting.");
+  logger.info("Bot", "Queues drained - exiting.");
   process.exit(0);
 }
 process.on("SIGINT",  () => { shutdown("SIGINT").catch(() => process.exit(1)); });
 process.on("SIGTERM", () => { shutdown("SIGTERM").catch(() => process.exit(1)); });
 process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, { stack: err.stack }));
-process.on("unhandledRejection", r   => logger.error("Unhandled", String(r)));
+process.on("unhandledRkick", r   => logger.error("Unhandled", String(r)));
 
 // ---- interactions ----
 // ---- interactions (handler extracted to ./commands) ----
@@ -2520,7 +2512,7 @@ if (factionClient) {
   factionClient.once("clientReady", async () => {
     logger.info("FactionBot", `${factionClient.user.tag} online (faction commands)`);
     try {
-      factionClient.user.setPresence({ activities: [{ name: "faction rosters  ·  /faction", type: ActivityType.Watching }], status: "online" });
+      factionClient.user.setPresence({ activities: [{ name: "faction rosters  -  /faction", type: ActivityType.Watching }], status: "online" });
     } catch {}
     try {
       const frest = new REST({ version: "10" }).setToken(process.env.FACTION_BOT_TOKEN);

@@ -27,7 +27,7 @@ module.exports = function(ctx) {
    Entirely optional - a no-op if IPHUB_API_KEY isn't set. */
 const IPHUB_API_KEY  = process.env.IPHUB_API_KEY || "";
 const IPQS_API_KEY   = process.env.IPQS_API_KEY  || "";
-const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional — higher ipinfo.io free quota
+const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional - higher ipinfo.io free quota
 const _regionName    = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
 const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
 function saveVpnCheck(ip, data) {
@@ -51,12 +51,12 @@ async function checkVpn(ip) {
 }
 async function _backfillGeo(ip, prev) {
   const geo = await geoLookup(ip);
-  if (!geo) return prev;                           // geo still unavailable — keep the old entry, retry next time
+  if (!geo) return prev;                           // geo still unavailable - keep the old entry, retry next time
   const result = { ...prev, geo, isp: geo.isp || prev.isp || null };
   await saveVpnCheck(ip, result);
   return { ...result, checkedAt: Date.now() };
 }
-// IP geolocation via ipinfo.io — full city-level location. Works keyless (rate-limited);
+// IP geolocation via ipinfo.io - full city-level location. Works keyless (rate-limited);
 // set IPINFO_TOKEN for the larger free quota. Doesn't touch the IPHub/IPQS quotas.
 async function geoLookup(ip) {
   try {
@@ -65,7 +65,7 @@ async function geoLookup(ip) {
     const d = await res.json();
     if (!d || !d.ip || d.error || d.bogon) return null;   // error / private / reserved IP
     const [lat, lon] = String(d.loc || "").split(",");
-    // ipinfo's `org` is "AS#### <ISP name>" — split into ASN + ISP.
+    // ipinfo's `org` is "AS#### <ISP name>" - split into ASN + ISP.
     let asn = null, isp = d.org || null;
     const m = String(d.org || "").match(/^(AS\d+)\s+(.*)$/);
     if (m) { asn = m[1]; isp = m[2]; }
@@ -86,10 +86,10 @@ async function geoLookup(ip) {
   }
 }
 async function _doVpnCheck(ip) {
-  // Geolocation first — free/keyless, for every IP regardless of the VPN keys.
+  // Geolocation first - free/keyless, for every IP regardless of the VPN keys.
   const gwho = await geoLookup(ip);
 
-  // VPN detection — optional, only when IPHUB_API_KEY is set.
+  // VPN detection - optional, only when IPHUB_API_KEY is set.
   let iphub = null, iphubFailed = false, flagged = false, confirmed = null, ipqs = null;
   if (IPHUB_API_KEY) {
     try {
@@ -100,7 +100,7 @@ async function _doVpnCheck(ip) {
       iphubFailed = true;
     }
     flagged = iphub?.block === 1;
-    // IPQS only cross-checks IPHub-flagged IPs — its free tier is ~35/day, so spend it
+    // IPQS only cross-checks IPHub-flagged IPs - its free tier is ~35/day, so spend it
     // where it counts (disputing a flag), not on geolocation (ipwho.is covers that).
     if (flagged && IPQS_API_KEY) {
       try {
@@ -133,7 +133,7 @@ function formatFullLocation(geo) {
   if (!geo) return null;
   const place = [geo.city, geo.region, geo.country].filter(Boolean).join(", ") + (geo.zip ? ` ${geo.zip}` : "");
   const bits  = [place.trim() || geo.country || null, geo.isp || null, geo.timezone ? `TZ ${geo.timezone}` : null].filter(Boolean);
-  return bits.length ? bits.join("  ·  ") : null;
+  return bits.length ? bits.join("  -  ") : null;
 }
 // Called from ipBans' onConfirm for every freshly-confirmed IP. Since checkVpn()
 // caches an IP's result forever, this naturally only ever acts once per IP - a
@@ -143,7 +143,7 @@ async function checkVpnAndAlert(name, ip) {
   const alreadyChecked = !!loadVpnChecks()[ip];
   const result = await checkVpn(ip).catch(() => null);
   if (!result) return null;
-  // Clean, or an IP we've already acted on — return the verdict for the feed, but don't ban.
+  // Clean, or an IP we've already acted on - return the verdict for the feed, but don't ban.
   if (!result.flagged || alreadyChecked) return result;
 
   // Masters and explicitly-unbanned players are never auto-actioned (matches onAutoBan).
@@ -156,13 +156,13 @@ async function checkVpnAndAlert(name, ip) {
   const disputed = result.confirmed === false;   // IPHub flagged it, IPQS actively said clean
   if (disputed) {
     const embed = brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-      .setTitle("VPN Flag Disputed — No Action")
+      .setTitle("VPN Flag Disputed - No Action")
       .setDescription(`**${name}** connected from an IP IPHub flagged, but IPQS checked it and disagreed.`)
       .addFields(
         { name: "ISP",         value: result.isp || "unknown",        inline: true },
         { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
-        { name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true },
-      ).setFooter({ text: "Likely false positive — not banned" }));
+        { name: "IPQS", value: `vpn:${result.ipqs.vpn} - proxy:${result.ipqs.proxy} - tor:${result.ipqs.tor} - fraud:${result.ipqs.fraudScore}`, inline: true },
+      ).setFooter({ text: "Likely false positive - not banned" }));
     await logAction(embed);
     return result;
   }
@@ -173,9 +173,9 @@ async function checkVpnAndAlert(name, ip) {
   catch (err) { logger.warn("VPN", `auto-ban failed for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
   try { await upsertPermBan({ playerId: name, reason: "VPN/proxy detected", moderator: "VPN detection (auto)" }); } catch {}
   writeModLog({ action: "auto-vpnban", playerId: name, reason: `VPN/proxy detected (${label})`, by: "VPN detection (auto)" });
-  logger.warn("VPN", `Auto-banned ${name} — ${label}, ip ${ip}`);
+  logger.warn("VPN", `Auto-banned ${name} - ${label}, ip ${ip}`);
   const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
-    .setTitle("Auto-Ban — VPN/Proxy Detected")
+    .setTitle("Auto-Ban - VPN/Proxy Detected")
     .setDescription(`${hero(randomQuote("autoban"))}`)
     .addFields(
       { name: "Player", value: `\`${name}\``, inline: true },
@@ -183,9 +183,9 @@ async function checkVpnAndAlert(name, ip) {
       { name: "Status",  value: label,          inline: false },
       { name: "ISP",         value: result.isp || "unknown",        inline: true },
       { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
-      ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} · proxy:${result.ipqs.proxy} · tor:${result.ipqs.tor} · fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
+      ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} - proxy:${result.ipqs.proxy} - tor:${result.ipqs.tor} - fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
       { name: "Enforced", value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
-    ), "Auto-ban · native RCON ban · all servers");
+    ), "Auto-ban - native RCON ban - all servers");
   await logBan(embed);
   postFeed(embed);
   return result;

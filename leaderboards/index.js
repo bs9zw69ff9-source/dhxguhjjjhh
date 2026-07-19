@@ -43,9 +43,9 @@ function rankLabel(i) {
 function buildLeaderboardEmbed() {
   const entries = buildLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.GOLD)
-    .setTitle(`Richest Players — Top ${LEADERBOARD_TOP_N}`);
+    .setTitle(`Richest Players - Top ${LEADERBOARD_TOP_N}`);
   if (!entries) return brand(embed.setColor(NV.RUST_RED)
-    .setDescription(`${hero("Economy records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable — check your \`.env\`.`),
+    .setDescription(`${hero("Economy records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable - check your \`.env\`.`),
     { footer: { text: `Updated every 30s` } });
   if (!entries.length) return brand(embed.setColor(NV.IRRAD_GREEN)
     .setDescription(`${hero("No ledgers found.")}\nNo cap records on file yet.`),
@@ -53,7 +53,7 @@ function buildLeaderboardEmbed() {
   const top = entries[0]?.balance || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
-    return `${rankLabel(i)}  **${e.playerId}**  ·  ${e.balance.toLocaleString()} credits${meter}`;
+    return `${rankLabel(i)}  **${e.playerId}**  -  ${e.balance.toLocaleString()} credits${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
     `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} credits** across **${entries.totalPlayers ?? entries.length}** ledgers\n${body}`),
@@ -95,7 +95,7 @@ function buildPlaytimeLeaderboardData() {
 function buildPlaytimeLeaderboardEmbed() {
   const entries = buildPlaytimeLeaderboardData();
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
-    .setTitle(`Most Active Players — Top ${LEADERBOARD_TOP_N}`);
+    .setTitle(`Most Active Players - Top ${LEADERBOARD_TOP_N}`);
   if (!entries.length) return brand(embed
     .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while players are online (sampled every 60s).`),
     { footer: { text: `Updated every 30s` } });
@@ -106,7 +106,7 @@ function buildPlaytimeLeaderboardEmbed() {
   const players  = Object.keys(all).filter(k => (Number(all[k]) || 0) > 0).length;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.minutes, top, 8)}\`` : "";
-    return `${rankLabel(i)}  **${e.playerId}**  ·  ${formatPlaytime(e.minutes)}${meter}`;
+    return `${rankLabel(i)}  **${e.playerId}**  -  ${formatPlaytime(e.minutes)}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
     `${hero("Time served in the server.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** players\n${body}`),
@@ -126,26 +126,26 @@ async function postPlaytimeLeaderboard() {
   try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("playtimeLb", m.id); } catch {}
 }
 
-/* Live player list — edits its own message in a channel every 30s. */
+/* Live player list - edits its own message in a channel every 30s. */
 function buildPlayerListEmbed() {
   // Read the faction spawn files once so we can tag each connected player with
   // their faction. Players not in any faction are shown exactly as before.
   const membership = buildFactionMembershipIndex();
   const factionTag = (name) => {
     const facs = membership?.get(name.toLowerCase());
-    return facs && facs.length ? `  —  ${facs.join(" / ")}` : "";
+    return facs && facs.length ? `  -  ${facs.join(" / ")}` : "";
   };
   const fmt = (arr) => {
     if (!arr.length) return "*Empty*";
     let out = arr.map(n => `• ${n}${factionTag(n)}`).join("\n");
-    if (out.length > 1024) out = out.slice(0, 1000).replace(/\n[^\n]*$/, "") + "\n…";
+    if (out.length > 1024) out = out.slice(0, 1000).replace(/\n[^\n]*$/, "") + "\n...";
     return out;
   };
   const total = allCachedPlayers().length;
   const stats = safeRead(FILES.SERVER_STATS, {});
   const today = dailyPeak(stats, easternClock().date);
   const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Live Player List")
-    .setDescription(`${hero(`**${total}** player${total !== 1 ? "s" : ""} online right now.`)}\n-# Today's peak: **${today}**  ·  all-time: **${stats?.combined?.peak ?? 0}**`);
+    .setDescription(`${hero(`**${total}** player${total !== 1 ? "s" : ""} online right now.`)}\n-# Today's peak: **${today}**  -  all-time: **${stats?.combined?.peak ?? 0}**`);
   for (const srv of ACTIVE_SERVERS) {
     const list = [...playerCache[srv]].sort((a, b) => a.localeCompare(b));
     embed.addFields({ name: `${serverLabel(srv)} (${list.length})`, value: fmt(list), inline: true });
@@ -245,8 +245,8 @@ function buildDashboardEmbed(snaps) {
   const gw       = Math.max(0, client.ws.ping);
   const lines = [
     "LIVE NETWORK STATUS",
-    `${totalP}/${totalMax} online · gw ${gw}ms`,
-    `peak ${peak} all-time · ${today} today`,
+    `${totalP}/${totalMax} online - gw ${gw}ms`,
+    `peak ${peak} all-time - ${today} today`,
     "──────────────────────────",
     ...snaps.map(hudRow),
   ];

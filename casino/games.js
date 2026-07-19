@@ -1,6 +1,6 @@
-/* ---------------- casino: game logic (pure — no I/O) ----------------
+/* ---------------- casino: game logic (pure - no I/O) ----------------
    Extracted from index.js. Every function here is deterministic given
-   Math.random — no shared bot state, no Discord/RCON/db access — so it can be
+   Math.random - no shared bot state, no Discord/RCON/db access - so it can be
    unit-tested in isolation. The theme-coupled result-embed builder stays in
    index.js (it needs brand/DIVIDER/randomQuote). */
 
@@ -73,7 +73,7 @@ function freshDeck() {
   return deck;
 }
 function cardValue(card) { return card.rank === "A" ? 11 : ["J","Q","K"].includes(card.rank) ? 10 : Number(card.rank); }
-// Returns { total, soft } — soft = hand contains an ace still counted as 11.
+// Returns { total, soft } - soft = hand contains an ace still counted as 11.
 function handValue(cards) {
   let total = cards.reduce((s, c) => s + cardValue(c), 0);
   let aces  = cards.filter(c => c.rank === "A").length;

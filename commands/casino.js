@@ -19,7 +19,7 @@ module.exports = (ctx) => {
          STATS
          ───────────────────────────────────────────────────── */
       /* ─────────────────────────────────────────────────────
-         CASINO — slots, coinflip, blackjack, roulette,
+         CASINO - slots, coinflip, blackjack, roulette,
          cockfight, russian roulette, admin config
          ───────────────────────────────────────────────────── */
   "slots": async (interaction, name) => {
@@ -103,7 +103,7 @@ module.exports = (ctx) => {
             // Fresh 60s per decision (matches the old per-call timeout) - but a
             // bystander mashing the buttons can't extend THIS decision's window,
             // since the deadline is fixed for the whole awaitOwnedComponent() call.
-            const btn = await awaitOwnedComponent(msg, interaction.user.id, Date.now() + 60_000, "This isn't your hand — you can't play someone else's blackjack.");
+            const btn = await awaitOwnedComponent(msg, interaction.user.id, Date.now() + 60_000, "This isn't your hand - you can't play someone else's blackjack.");
             if (!btn) break;   // idle timeout -> auto-stand on whatever hand stands now
             if (btn.customId === "bj_hit") {
               player.push(draw());
@@ -113,7 +113,7 @@ module.exports = (ctx) => {
             }
             if (btn.customId === "bj_double") {
               const d = await debitCaps(playerId, bet);
-              if (!d.ok) { await btn.update({ embeds: [renderEmbed("Blackjack", "Not enough credits to double — Hit or Stand.", false)], components: [renderRow(true)] }); continue; }
+              if (!d.ok) { await btn.update({ embeds: [renderEmbed("Blackjack", "Not enough credits to double - Hit or Stand.", false)], components: [renderRow(true)] }); continue; }
               bet *= 2;
               player.push(draw());
               if (handValue(player).total > 21) bust = true;
@@ -278,7 +278,7 @@ module.exports = (ctx) => {
 
         let died = false;
         for (;;) {
-          const btn = await awaitOwnedComponent(msg, interaction.user.id, Date.now() + 60_000, "This isn't your revolver — you can't pull someone else's trigger.");
+          const btn = await awaitOwnedComponent(msg, interaction.user.id, Date.now() + 60_000, "This isn't your revolver - you can't pull someone else's trigger.");
           if (!btn) break;   // idle timeout -> banks whatever's been survived so far
           if (btn.customId === "rr_cashout") { await btn.deferUpdate(); break; }
           await btn.deferUpdate();
@@ -307,7 +307,7 @@ module.exports = (ctx) => {
         }
         const playerId = loadDiscordLinks()[interaction.user.id]?.name;
         if (!playerId) {
-          return interaction.reply({ embeds: [warningEmbed("Not Linked", "Link your Discord to your Pavlov username first — use `/link add`.")], flags: MessageFlags.Ephemeral });
+          return interaction.reply({ embeds: [warningEmbed("Not Linked", "Link your Discord to your Pavlov username first - use `/link add`.")], flags: MessageFlags.Ephemeral });
         }
         if (!checkRateLimit(interaction.user.id, "casino", cfg.cooldownMs)) {
           return interaction.reply({ embeds: [rateLimitEmbed()], flags: MessageFlags.Ephemeral });
@@ -322,7 +322,7 @@ module.exports = (ctx) => {
         }
         const pot = currentPot();
         if (pot <= 0) {
-          return interaction.reply({ embeds: [warningEmbed("Jackpot Is Empty", "There's nothing in the pot right now — check back after a few more losses across the casino.")], flags: MessageFlags.Ephemeral });
+          return interaction.reply({ embeds: [warningEmbed("Jackpot Is Empty", "There's nothing in the pot right now - check back after a few more losses across the casino.")], flags: MessageFlags.Ephemeral });
         }
 
         const go = await confirmDialog(interaction, {
@@ -334,7 +334,7 @@ module.exports = (ctx) => {
 
         const debit = await debitCaps(playerId, balance);
         if (!debit.ok) {
-          return interaction.editReply({ embeds: [errorEmbed("Balance Changed", "Your balance changed before this went through — nothing was wagered.")], components: [] });
+          return interaction.editReply({ embeds: [errorEmbed("Balance Changed", "Your balance changed before this went through - nothing was wagered.")], components: [] });
         }
         const wager = balance;   // the exact amount debitCaps subtracted, not debit.before (the live pre-debit balance)
         const win = Math.random() < JACKPOT_WIN_CHANCE;

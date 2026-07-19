@@ -18,7 +18,7 @@ module.exports = (ctx) => {
   return {
 
   /* ─────────────────────────────────────────────────────
-         FACTION — all subcommands
+         FACTION - all subcommands
          ───────────────────────────────────────────────────── */
   "faction": async (interaction, name) => {
         const sub = interaction.options.getSubcommand();
@@ -41,13 +41,13 @@ module.exports = (ctx) => {
           const current = countFactionRank(faction, rank);
           const capStr  = cap > 0 ? `**${cap}**` : "**Unlimited**";
           const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Rank Cap Updated")
-            .setDescription(`${interaction.user} set **${faction}** ${rankBadge(faction, rank)}'s cap to ${capStr} (currently ${current}${cap > 0 ? `/${cap}${current > cap ? " — over cap!" : ""}` : ""}).`)
+            .setDescription(`${interaction.user} set **${faction}** ${rankBadge(faction, rank)}'s cap to ${capStr} (currently ${current}${cap > 0 ? `/${cap}${current > cap ? " - over cap!" : ""}` : ""}).`)
             .setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        /* ── wipe (owner only) — reset one faction's whitelist, or every faction ── */
+        /* ── wipe (owner only) - reset one faction's whitelist, or every faction ── */
         if (sub === "wipe") {
           if (!isOwner(interaction.user.id)) {
             return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
@@ -63,7 +63,7 @@ module.exports = (ctx) => {
           const preview = counts.filter(c => c.count).map(c => `- **${c.faction}**: ${c.count} member${c.count !== 1 ? "s" : ""}`).join("\n");
           const go = await confirmDialog(interaction, {
             title: faction ? `Wipe ${faction}'s whitelist?` : "Wipe ALL faction whitelists?",
-            body: `Clears membership and every rank file${faction ? "" : ", for every faction"} — **${total}** player${total !== 1 ? "s" : ""} total.\nA pre-wipe snapshot of each file is kept in \`${FACTION_BAK_DIR}\`.\n\n${preview}`,
+            body: `Clears membership and every rank file${faction ? "" : ", for every faction"} - **${total}** player${total !== 1 ? "s" : ""} total.\nA pre-wipe snapshot of each file is kept in \`${FACTION_BAK_DIR}\`.\n\n${preview}`,
             confirmLabel: faction ? `Wipe ${faction}` : "Wipe ALL",
           });
           if (!go) return;
@@ -91,7 +91,7 @@ module.exports = (ctx) => {
           }
           if (!members.length) {
             return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} - Empty Roster`)
                 .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
                 
             ], flags: MessageFlags.Ephemeral });
@@ -103,19 +103,19 @@ module.exports = (ctx) => {
             if (!n && !rcap) return null;
             const count = rcap ? `${n}/${rcap}` : `${n}`;
             return `${getFactionRankBadge(faction, r)} ${r}: **${count}**`;
-          }).filter(Boolean).join("  ·  ");
+          }).filter(Boolean).join("  -  ");
           const lines = members.map((m, i) =>
-            `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  *${(m.ranks || [m.rank]).join(", ")}*`);
-          const header = `**${members.length}/${cap}** members${members.length > cap ? " over cap" : ""}  ·  ${summary}`;
+            `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  -  *${(m.ranks || [m.rank]).join(", ")}*`);
+          const header = `**${members.length}/${cap}** members${members.length > cap ? " over cap" : ""}  -  ${summary}`;
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
-              .setTitle(`${faction} — Roster`)
+              .setTitle(`${faction} - Roster`)
               .setDescription(`${header}\n\n${pageLines.join("\n")}`)
               .setFooter({ text: SPAWN_FILE_MAP[faction] }),
             { perPage: 20 });
         }
 
-        /* ── playtime (public, paginated) — roster ranked by time served ── */
+        /* ── playtime (public, paginated) - roster ranked by time served ── */
         if (sub === "playtime") {
           const faction = interaction.options.getString("faction");
           const members = getFactionMembers(faction);
@@ -124,12 +124,12 @@ module.exports = (ctx) => {
           }
           if (!members.length) {
             return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} — Empty Roster`)
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} - Empty Roster`)
                 .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
                 
             ], flags: MessageFlags.Ephemeral });
           }
-          // Playtime keys are display-cased names — match members case-insensitively.
+          // Playtime keys are display-cased names - match members case-insensitively.
           const byName = new Map(Object.entries(loadPlaytime()).map(([n, m]) => [n.toLowerCase(), Number(m) || 0]));
           const ranked = members
             .map(m => ({ ...m, minutes: byName.get(m.playerId.toLowerCase()) ?? null }))
@@ -139,12 +139,12 @@ module.exports = (ctx) => {
           const lines = ranked.map((m, i) => {
             const time  = m.minutes !== null ? formatPlaytime(m.minutes) : "*No record*";
             const meter = m.minutes !== null && i < 5 ? `  \`${bar(m.minutes, top, 8)}\`` : "";
-            return `${rankLabel(i)}  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  ·  ${time}${meter}`;
+            return `${rankLabel(i)}  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  -  ${time}${meter}`;
           });
-          const header = `**${members.length}** member${members.length !== 1 ? "s" : ""}  ·  **${formatPlaytime(total)}** combined`;
+          const header = `**${members.length}** member${members.length !== 1 ? "s" : ""}  -  **${formatPlaytime(total)}** combined`;
           return paginate(interaction, lines, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
-              .setTitle(`${faction} — Playtime`)
+              .setTitle(`${faction} - Playtime`)
               .setDescription(`${header}\n\n${pageLines.join("\n")}`)
               .setFooter({ text: "Playtime sampled every 60s while online" }),
             { perPage: 20 });
@@ -173,7 +173,7 @@ module.exports = (ctx) => {
           const lines = readFactionFile(spawn);
           if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], flags: MessageFlags.Ephemeral });
           if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks — a member can hold several.`)], flags: MessageFlags.Ephemeral });
+            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks - a member can hold several.`)], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
@@ -197,8 +197,8 @@ module.exports = (ctx) => {
           writeModLog({ action: "faction-add", playerId, faction, rank, by: interaction.user.tag });
           const rankFile = getFactionRankConfig(faction)?.rankFiles[rank] ?? "n/a";
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(`Added to ${faction}`)
-            .setDescription(`${interaction.user} added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} — ${lines.length}/${cap} in the roster.`)
-            .setFooter({ text: "Main spawn file + rank file updated · audit logged" });
+            .setDescription(`${interaction.user} added **${playerId}** to **${faction}** as ${rankBadge(faction, rank)} - ${lines.length}/${cap} in the roster.`)
+            .setFooter({ text: "Main spawn file + rank file updated - audit logged" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }
@@ -227,8 +227,8 @@ module.exports = (ctx) => {
           writeModLog({ action: "faction-remove", playerId, faction, oldRank, by: interaction.user.tag });
           const cap = getFactionCap(faction);
           const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle(`Removed from ${faction}`)
-            .setDescription(`${interaction.user} removed **${playerId}** from **${faction}** (was ${rankBadge(faction, oldRank)}) — ${lines.length}/${cap} in the roster.`)
-            .setFooter({ text: "Removed from spawn file and all rank files · audit logged" });
+            .setDescription(`${interaction.user} removed **${playerId}** from **${faction}** (was ${rankBadge(faction, oldRank)}) - ${lines.length}/${cap} in the roster.`)
+            .setFooter({ text: "Removed from spawn file and all rank files - audit logged" });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed] });
         }

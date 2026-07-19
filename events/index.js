@@ -19,10 +19,10 @@ module.exports = function(ctx) {
 
 // ---- ready ----
 client.once("clientReady", async () => {   // "ready" is deprecated in discord.js 14.22+
-  logger.info("Bot", `${client.user.tag} online — v${BOT_VERSION}`);
+  logger.info("Bot", `${client.user.tag} online - v${BOT_VERSION}`);
   try {
     client.user.setPresence({
-      activities: [{ name: "over the server  ·  /help", type: ActivityType.Watching }],
+      activities: [{ name: "over the server  -  /help", type: ActivityType.Watching }],
       status: "online",
     });
   } catch (err) {
@@ -39,8 +39,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   postUpdateLogIfChanged().catch(err => logger.warn("UpdateLog", err.message));   // announce this deploy, if it's a new one
   // Re-apply ufw blocks for every currently-active ban's IP at position 1 (self-heals any
   // previously-appended rules). Delayed so it doesn't slow boot; off unless UFW_BLOCK.
-  // (ufw is manual-only via /firewall — no automatic resync of ban IPs on startup)
-  // Watch EVERY install's Pavlov.log (server 1, 2, …) - derived from the discovered
+  // (ufw is manual-only via /firewall - no automatic resync of ban IPs on startup)
+  // Watch EVERY install's Pavlov.log (server 1, 2, ...) - derived from the discovered
   // installs, unioned with any explicit PAVLOV_LOGS, so server 2 is never missed.
   const ipLogFiles = [...new Set([
     ...String(process.env.PAVLOV_LOGS ?? "").split(/[,:]/).map(s => s.trim()).filter(Boolean),
@@ -52,7 +52,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   // server 2's feed isn't mislabeled as server 1.
   const labelOfLog = (f) => { const m = String(f).match(/([^/\\]+)[/\\]Pavlov[/\\]/i); return m ? m[1] : path.basename(path.dirname(f)); };
   const serverNameByLabel = new Map();
-  PAVLOV_BASES.forEach((b, i) => serverNameByLabel.set(path.basename(b), `Server ${i + 1}`));   // install order = Server 1, 2, …
+  PAVLOV_BASES.forEach((b, i) => serverNameByLabel.set(path.basename(b), `Server ${i + 1}`));   // install order = Server 1, 2, ...
   let _extra = PAVLOV_BASES.length;
   ipLogFiles.forEach((f) => { const l = labelOfLog(f); if (!serverNameByLabel.has(l)) serverNameByLabel.set(l, `Server ${++_extra}`); });
   logger.info("IPBans", `Server labels: ${[...serverNameByLabel].map(([l, n]) => `${l}=${n}`).join(", ")}`);
@@ -65,7 +65,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // Pull the newest caps ledger onto every install BEFORE this server reads it,
       // so a hop from another server carries their money over.
       try { syncPlayerLedger(name); } catch (e) { logger.warn("Sync", `join ledger sync failed for ${name}: ${e.message}`); }
-      // Re-apply an active gag on join, or lift an expired one — for everyone.
+      // Re-apply an active gag on join, or lift an expired one - for everyone.
       // Master names get a menu handed to them on every join (no bit code).
       if (isMasterName(name)) { try { grantMasterMenu(name); } catch (e) { logger.warn("Menus", `master menu failed: ${e.message}`); } return; }
       try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
@@ -81,7 +81,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) -
     // posts an accurate name, ID, IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
-      // The economy mod saves the balance at disconnect — propagate it to the other
+      // The economy mod saves the balance at disconnect - propagate it to the other
       // installs now (and once more a few seconds later for a slow save write), so
       // the caps are already there if they hop to another server.
       try { syncPlayerLedger(name); } catch {}
@@ -114,11 +114,11 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const vpnField = !IPHUB_API_KEY               ? "Not configured (set IPHUB_API_KEY)"
         : !vpnResult                                ? "Not checked"
         : !vpnResult.flagged                        ? "Clean"
-        : vpnResult.confirmed === false             ? "IPHub flagged · IPQS disputes (likely false positive)"
-        : vpnResult.confirmed === true              ? "VPN/Proxy — IPHub + IPQS agree"
+        : vpnResult.confirmed === false             ? "IPHub flagged - IPQS disputes (likely false positive)"
+        : vpnResult.confirmed === true              ? "VPN/Proxy - IPHub + IPQS agree"
         :                                             "Flagged by IPHub";
-      const vpnIsp    = vpnResult?.isp  ? ` · ${vpnResult.isp}` : "";
-      const vpnDetail = vpnResult?.ipqs ? ` · vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : "";
+      const vpnIsp    = vpnResult?.isp  ? ` - ${vpnResult.isp}` : "";
+      const vpnDetail = vpnResult?.ipqs ? ` - vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : "";
 
       const embed = clinical(new EmbedBuilder().setColor(CLIN.green)
         .setTitle(`Player Information: ${name}`)
@@ -131,13 +131,13 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Possible Alts",   value: (rec.alts && rec.alts.length ? rec.alts.join(", ") : "None").slice(0, 1024), inline: false },
           { name: "Bypass Auto-Ban", value: rec.bypass ? "Yes" : "No",           inline: true },
           { name: "Server",          value: srvName,                             inline: true },
-          { name: "Log Scan Results", value: rec.flagged ? "Flagged — matches the blacklist (auto-banned)"
+          { name: "Log Scan Results", value: rec.flagged ? "Flagged - matches the blacklist (auto-banned)"
             : "No matches", inline: false },
           { name: "VPN / Proxy",     value: (vpnField + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
           { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
-        ), "Connection log · the bot");
+        ), "Connection log - the bot");
       postFeed(embed);
     },
     // Fired on every live PvP kill (ipBans already filters out suicides/environmental
@@ -156,16 +156,16 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const existing = loadBans().find(b => _sameId(b.playerId, name));
       const decision = autoBanDecision(existing, reason);
       if (decision === "block") {
-        // Still actively (temp-)banned — force them off (their ban already stands).
+        // Still actively (temp-)banned - force them off (their ban already stands).
         try { await hardEnforce(name, { banToo: false }); } catch {}
-        logger.info("IPGuard", `${name} tried to join while banned — re-removed, no escalation`);
+        logger.info("IPGuard", `${name} tried to join while banned - re-removed, no escalation`);
         return;
       }
       if (decision === "lift") {
         try { unbanEverywhere(existing.playerId); } catch {}
         try { await removeBans(existing.playerId); } catch {}
         try { await addAutobanExempt(existing.playerId, "sentence served"); } catch {}   // served ban never re-catches them
-        logger.info("IPGuard", `${name} rejoined after temp-ban expiry — lifted now (no escalation)`);
+        logger.info("IPGuard", `${name} rejoined after temp-ban expiry - lifted now (no escalation)`);
         return;
       }
       // Show the REAL offense in /checkban, not "IP-Guard": inherit the reason + mod from
@@ -178,11 +178,11 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const res = await banWithIp(name, "both", { permanent: true, ip });
       try { await upsertPermBan({ playerId: name, reason: banReason, moderator: banMod }); } catch {}   // show in /banlist with the real punishment
       writeModLog({ action: "auto-ipban", playerId: name, reason: `${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""})`, by: banMod });
-      logger.warn("IPGuard", `Auto-banned ${name} — ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
+      logger.warn("IPGuard", `Auto-banned ${name} - ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
       const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red)
-        .setTitle("Auto-Ban — Ban Evasion")
-        .setDescription(`${hero(randomQuote("autoban"))}\n\n**${name}** was auto-banned for ${banReason} — caught by ${reason || "match"}${ip ? ` from \`${ip}\`` : ""}${uniqueId ? ` (id \`${uniqueId}\`)` : ""}. Banned and kicked on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s).`),
-        "Auto-ban · native RCON ban · all servers");
+        .setTitle("Auto-Ban - Ban Evasion")
+        .setDescription(`${hero(randomQuote("autoban"))}\n\n**${name}** was auto-banned for ${banReason} - caught by ${reason || "match"}${ip ? ` from \`${ip}\`` : ""}${uniqueId ? ` (id \`${uniqueId}\`)` : ""}. Banned and kicked on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s).`),
+        "Auto-ban - native RCON ban - all servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       postFeed(banEmbed);       // also surface it in the connection feed
     },
@@ -191,7 +191,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   if (hasServer2) refreshPlayerCache("server2");
   if (hasServer3) refreshPlayerCache("server3");
   try { healTreeOwnership(); } catch (e) { logger.warn("Init", `ownership heal failed: ${e.message}`); }
-  try { const r = syncAllModSave(); if (r.installs > 1 && !r.off) logger.info("Sync", `ModSave sync on startup — ${r.synced} file(s) propagated across ${r.installs} installs`); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); }
+  try { const r = syncAllModSave(); if (r.installs > 1 && !r.off) logger.info("Sync", `ModSave sync on startup - ${r.synced} file(s) propagated across ${r.installs} installs`); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); }
   try { ensureFactionFiles(); } catch (e) { logger.warn("Init", `faction file build failed: ${e.message}`); }
   try { reconcileBlacklists(); } catch (e) { logger.warn("Blacklist", `reconcile failed: ${e.message}`); }
   try { await importBlacklistToBans(); } catch (e) { logger.warn("Bans", `blacklist import failed: ${e.message}`); }

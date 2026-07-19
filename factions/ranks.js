@@ -1,6 +1,6 @@
 /* ---------------- factions/ranks: faction rank registry (pure data) ----------------
    Extracted from index.js. Per-faction rank order, display badges, and the
-   Config/*.txt rank-file names. No logic and no bot state — just the data the
+   Config/*.txt rank-file names. No logic and no bot state - just the data the
    faction rank helpers in index.js read. */
 const FACTION_RANKS = {
   "NCR": {

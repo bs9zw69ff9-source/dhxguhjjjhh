@@ -50,7 +50,7 @@ function writeFactionFile(spawnFile, lines, opts = {}) {
         const keep    = new Set(lines.map(l => String(l).toLowerCase()));
         const dropped = current.filter(l => !keep.has(l.toLowerCase())).length;
         if (dropped > FACTION_BULK_DROP_LIMIT) {
-          logger.error("Faction", `REFUSED write to ${spawnFile}: would remove ${dropped} of ${current.length} entries (limit ${FACTION_BULK_DROP_LIMIT}). Suspected corruption — roster left untouched.`);
+          logger.error("Faction", `REFUSED write to ${spawnFile}: would remove ${dropped} of ${current.length} entries (limit ${FACTION_BULK_DROP_LIMIT}). Suspected corruption - roster left untouched.`);
           return false;
         }
       }

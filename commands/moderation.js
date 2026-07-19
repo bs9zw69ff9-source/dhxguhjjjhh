@@ -37,9 +37,9 @@ module.exports = (ctx) => {
           try { await sendRcon(`Kick ${playerId}`, srv, 2500, 1); } catch {}
         }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
-        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Ejected from the server")
-          .setDescription(`${interaction.user} kicked **${playerId}** from ${serverLabel(server)} — ${reason}`)
-          .setFooter({ text: "Kick logged — no ban issued" });
+        const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Kicked")
+          .setDescription(`${interaction.user} kicked **${playerId}** from ${serverLabel(server)} (reason: \`${reason}\`).`)
+          .setFooter({ text: "Kick logged - no ban issued" });
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
           action: "Kick", color: NV.NCR_TAN, playerId, reason,
@@ -53,7 +53,7 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         FLUSH — randomly kick one online player from a server
+         FLUSH - randomly kick one online player from a server
          ───────────────────────────────────────────────────── */
   "flush": async (interaction, name) => {
         if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral });
@@ -67,7 +67,7 @@ module.exports = (ctx) => {
         if (!pool.length) {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", "No players are currently online on the selected server.")] });
         }
-        // Staff (Staff/High Staff menu on record — NOT the Faction menu), donators,
+        // Staff (Staff/High Staff menu on record - NOT the Faction menu), donators,
         // and master names are immune to the random kick.
         const candidates = pool.filter(p => !isProtectedPlayer(p.name));
         if (!candidates.length) {
@@ -79,9 +79,9 @@ module.exports = (ctx) => {
         let kicked = false;
         try { await sendRcon(`Kick ${target}`, pick.srv, 2500, 1); kicked = true; } catch {}
         writeModLog({ action: "flush-kick", playerId: pick.name, server: pick.srv, by: interaction.user.tag });
-        const embed = brand(new EmbedBuilder().setColor(kicked ? NV.AMBER : NV.NCR_TAN).setTitle("Flush — Random Kick")
-          .setDescription(`${interaction.user} flushed **${pick.name}** from ${serverLabel(pick.srv)} — picked at random from ${candidates.length} eligible of ${pool.length} online (staff & donators immune).`)
-          .setFooter({ text: kicked ? "Random kick — no ban issued" : "Kick command sent (no RCON confirmation)" }));
+        const embed = brand(new EmbedBuilder().setColor(kicked ? NV.AMBER : NV.NCR_TAN).setTitle("Flush - Random Kick")
+          .setDescription(`${interaction.user} flushed **${pick.name}** from ${serverLabel(pick.srv)} - picked at random from ${candidates.length} eligible of ${pool.length} online (staff & donators immune).`)
+          .setFooter({ text: kicked ? "Random kick - no ban issued" : "Kick command sent (no RCON confirmation)" }));
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -103,7 +103,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
 
       /* ─────────────────────────────────────────────────────
-         STAFFACTIVITY — all mod actions taken BY a staff member
+         STAFFACTIVITY - all mod actions taken BY a staff member
          ───────────────────────────────────────────────────── */
   "staffactivity": async (interaction, name) => {
         const staff = interaction.options.getUser("staff");
@@ -115,37 +115,37 @@ module.exports = (ctx) => {
         });
         if (!matches.length) {
           return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Activity — None")
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Activity - None")
               .setDescription(`No moderation actions on record for ${staff}.`)
           ], flags: MessageFlags.Ephemeral });
         }
         // tally by action type
         const counts = {};
         for (const e of matches) counts[e.action] = (counts[e.action] ?? 0) + 1;
-        const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a}: ${n}`).join(" · ");
+        const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a}: ${n}`).join(" - ");
         const lines = matches.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
-          const detail = e.reason ? ` — ${e.reason}` : e.amount ? ` — ${e.amount > 0 ? "+" : ""}${e.amount} credits` : e.faction ? ` — ${e.faction}` : "";
-          const who    = e.playerId ? ` · ${e.playerId}` : "";
-          return `\`${e.action}\`${who}${detail} · <t:${ts}:R>`;
+          const detail = e.reason ? ` - ${e.reason}` : e.amount ? ` - ${e.amount > 0 ? "+" : ""}${e.amount} credits` : e.faction ? ` - ${e.faction}` : "";
+          const who    = e.playerId ? ` - ${e.playerId}` : "";
+          return `\`${e.action}\`${who}${detail} - <t:${ts}:R>`;
         });
         return paginate(interaction, lines, (pageLines) =>
           new EmbedBuilder().setColor(NV.AMBER)
-            .setTitle(`Staff Activity — ${staff.tag}`)
+            .setTitle(`Staff Activity - ${staff.tag}`)
             .setDescription(`${matches.length} action${matches.length !== 1 ? "s" : ""} total *(newest first)*\n${summary}\n\n${pageLines.join("\n")}`)
             .setFooter({ text: "Mod log" }),
           { perPage: 12, ephemeral: true });
         },
 
   /* ─────────────────────────────────────────────────────
-         STAFFLEADERBOARD — rank staff by moderation actions
+         STAFFLEADERBOARD - rank staff by moderation actions
          ───────────────────────────────────────────────────── */
   "staffleaderboard": async (interaction, name) => {
         const period = interaction.options.getString("period") || "all";
         const windowMs = { "24h": 86_400_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 }[period] || 0;
         const cutoff = windowMs ? Date.now() - windowMs : 0;
         const label  = { "24h": "last 24 hours", "7d": "last 7 days", "30d": "last 30 days" }[period] || "all time";
-        // Moderation/enforcement actions ONLY — bans, kicks, mutes, unbans, ban-list
+        // Moderation/enforcement actions ONLY - bans, kicks, mutes, unbans, ban-list
         // clears, firewall, manual RCON bans. Deliberately excludes economy (caps/
         // wages/casino), faction ops, donator, linking, announcements, map rotation.
         const MOD_ACTIONS = new Set([
@@ -153,7 +153,7 @@ module.exports = (ctx) => {
           "cleartempbans", "clearallbans", "firewall-block", "firewall-unblock",
           "manual-rcon", "permanent ban",
         ]);
-        // Only human staff — skip automated actors (VPN auto-ban, expiry sweep, system, IP-Guard).
+        // Only human staff - skip automated actors (VPN auto-ban, expiry sweep, system, IP-Guard).
         const AUTO = /^(vpn detection|system|auto|ip-?guard|sentence served|\(auto\))/i;
         const tally = new Map();   // by -> { total, actions: {} }
         for (const e of loadModLog()) {
@@ -169,7 +169,7 @@ module.exports = (ctx) => {
         const ranked = [...tally.entries()].sort((a, b) => b[1].total - a[1].total);
         if (!ranked.length) {
           return interaction.reply({ embeds: [
-            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Leaderboard — No Activity")
+            new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Staff Leaderboard - No Activity")
               .setDescription(`No staff moderation actions (bans, kicks, mutes) on record for the **${label}**.`)
           ], flags: MessageFlags.Ephemeral });
         }
@@ -180,12 +180,12 @@ module.exports = (ctx) => {
           const marker  = `\`${i < 3 ? "◆" : "#"}${String(i + 1).padStart(2)}\``;
           const meter   = i < 5 ? `  \`${bar(t.total, max, 8)}\`` : "";
           const top3    = Object.entries(t.actions).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([a, n]) => `${a} ${n}`).join(", ");
-          return `${marker}  **${by}**  ·  **${t.total}** action${t.total !== 1 ? "s" : ""}${meter}\n-# ${top3}`;
+          return `${marker}  **${by}**  -  **${t.total}** action${t.total !== 1 ? "s" : ""}${meter}\n-# ${top3}`;
         });
         const embed = brand(new EmbedBuilder().setColor(NV.AMBER)
-          .setTitle(`Staff Leaderboard — ${label.replace(/^\w/, c => c.toUpperCase())}`)
+          .setTitle(`Staff Leaderboard - ${label.replace(/^\w/, c => c.toUpperCase())}`)
           .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** moderation action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${lines.join("\n")}`)
-          .setFooter({ text: "Mod log · bans/kicks/mutes only · automated actions excluded" }));
+          .setFooter({ text: "Mod log - bans/kicks/mutes only - automated actions excluded" }));
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
 
@@ -208,7 +208,7 @@ module.exports = (ctx) => {
         } else if (punish?.custom) {
           const dateStr = interaction.options.getString("date");
           if (!dateStr) return interaction.reply({ embeds: [errorEmbed("Date Required",
-            "For **Other**, add the `date` option (`YYYY-MM-DD`) — the ban lifts at 12pm Eastern that day.")], flags: MessageFlags.Ephemeral });
+            "For **Other**, add the `date` option (`YYYY-MM-DD`) - the ban lifts at 12pm Eastern that day.")], flags: MessageFlags.Ephemeral });
           expires = easternNoonUTC(dateStr);
           if (!expires || expires <= Date.now()) return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
             `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)}\`). The ban lifts at **12pm Eastern** that day.`)], flags: MessageFlags.Ephemeral });
@@ -239,11 +239,11 @@ module.exports = (ctx) => {
 
         const ts       = expires ? Math.floor(expires / 1000) : null;
         const sentence = permanent ? "**permanently**" : `for **${label}**`;
-        const liftLine = permanent ? "" : `\nLifts <t:${ts}:F> (<t:${ts}:R>)`;
+        const liftLine = permanent ? "" : ` Lifts <t:${ts}:R>.`;
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
-          .setTitle(permanent ? "Permanent Exile Issued" : "Player Exiled from the server")
-          .setDescription(`${interaction.user} banned **${playerId}** from ${serverLabel(server)} ${sentence} — ${reason}${liftLine}`),
-          replaced ? `Replaced earlier exile: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
+          .setTitle(permanent ? "Permanent Ban Issued" : "Player Banned")
+          .setDescription(`${interaction.user} banned **${playerId}** ${sentence} on ${serverLabel(server)} (reason: \`${reason}\`).${liftLine}`),
+          replaced ? `Replaced earlier ban: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
         if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
 
         // Timed donator-perk suspension (e.g. Donator Abuse): pull perks now, auto-restore later.
@@ -252,17 +252,17 @@ module.exports = (ctx) => {
           const weeks = Math.round(punish.donatorSuspendMs / (7 * DAY_MS));
           const rTs   = Math.floor(sus.restoreAt / 1000);
           embed.addFields({ name: "Donator Perks", value: sus.wasDonator
-            ? `Removed — auto-restored <t:${rTs}:R> (${weeks} week${weeks !== 1 ? "s" : ""}).`
-            : "Player wasn't a donator — nothing to remove." });
+            ? `Removed - auto-restored <t:${rTs}:R> (${weeks} week${weeks !== 1 ? "s" : ""}).`
+            : "Player wasn't a donator - nothing to remove." });
           if (sus.wasDonator) writeModLog({ action: "donator-suspend", playerId, by: interaction.user.tag, restoreAt: sus.restoreAt });
         }
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
           fields: permanent
-            ? [ { name: "Sentence", value: "**Permanent**",    inline: true }, { name: "Server", value: serverLabel(server), inline: true } ]
+            ? [ { name: "Length", value: "**Permanent**",    inline: true }, { name: "Server", value: serverLabel(server), inline: true } ]
             : [ { name: "Duration", value: `**${label}**`,     inline: true }, { name: "Server", value: serverLabel(server), inline: true },
-                { name: "Expires",  value: `<t:${ts}:F>  ·  <t:${ts}:R>`, inline: false } ],
+                { name: "Expires",  value: `<t:${ts}:F>  -  <t:${ts}:R>`, inline: false } ],
         });
         const tbDmField = dmStatusField(tbDm, tbTarget);
         if (tbDmField) embed.addFields(tbDmField);
@@ -291,11 +291,9 @@ module.exports = (ctx) => {
         await removeBans(playerId);
         const { blacklist: bl, cleared: c } = unbanEverywhere(playerId);   // blacklist.txt (both installs) + IP flags
         writeModLog({ action: "unban", playerId, by: interaction.user.tag, server });
-        const ipLifted = c && (c.ips + c.names) > 0
-          ? `Cleared ${c.ips} IP(s) and ${c.names} username flag(s).`
-          : "Nothing was flagged for this player.";
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Exile Lifted — Welcome Back to the server")
-          .setDescription(`${interaction.user} pardoned **${playerId}**. ${removed ? "Temp ban record cleared." : "No temp ban record."} ${bl.removed ? `Removed from blacklist.txt on ${bl.removed} install(s).` : "Was not on blacklist.txt."} ${ipLifted}`));
+        const ipLifted = c && (c.ips + c.names) > 0 ? " Their IP flags were cleared too." : "";
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Player Unbanned")
+          .setDescription(`${interaction.user} unbanned **${playerId}**.${removed || bl.removed ? "" : " They were not banned in the first place."}${ipLifted}`));
         await logBan(embed);
         return interaction.editReply({ embeds: [embed] });
         },
@@ -318,30 +316,30 @@ module.exports = (ctx) => {
         if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Temporary Exile Active")
-              .setDescription(`**${playerId}** is banned from ${serverLabel(server)} for **${tb.durationLabel ?? "?"}** — ${tb.reason}\nBanned by ${tb.moderator} · **${formatTimeLeft(tb.expires)}** left · lifts <t:${ts}:F> (<t:${ts}:R>)`)
+            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Temp Ban Active")
+              .setDescription(`**${playerId}** is banned for **${tb.durationLabel ?? "?"}** (reason: \`${tb.reason}\`).\nBanned by ${tb.moderator}, **${formatTimeLeft(tb.expires)}** left, lifts <t:${ts}:R>.`)
               .addFields(..._cbCtx), "Auto-lifted when timer expires")
           ]});
         }
         const hits = blacklistHas(playerId);   // which installs list this name in blacklist.txt
         if (tb && tb.permanent) {   // permanent ban recorded in the ban JSON
           return interaction.reply({ embeds: [
-            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Active")
-              .setDescription(`**${playerId}** is permanently banned — ${tb.reason ?? "Permanent ban"}\nBanned by ${tb.moderator ?? "?"} · on file: ${hits.length ? hits.map(n => `Server ${n}`).join(" + ") : "ban JSON"}`)
-              .addFields(..._cbCtx), "Permanent — use /unban to lift")
+            clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Active")
+              .setDescription(`**${playerId}** is permanently banned (reason: \`${tb.reason ?? "none given"}\`). Banned by ${tb.moderator ?? "?"}.`)
+              .addFields(..._cbCtx), "Permanent - use /unban to lift")
           ]});
         }
         if (!hits.length) {
-          const cleanE = clinical(new EmbedBuilder().setColor(_cbRec?.flagged ? CLIN.grey : CLIN.green).setTitle("No Exile Found")
-            .setDescription(`${hero("This player walks free.")}\n\`${playerId}\` has no active ban.`));
-          if (_cbRec?.flagged) cleanE.addFields({ name: "Evasion Watch", value: "Matches an active IP/EOS flag — next join is auto-banned.", inline: false });
-          if (isAutobanExempt(playerId)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned — auto-bans will never re-catch this name.", inline: false });
+          const cleanE = clinical(new EmbedBuilder().setColor(_cbRec?.flagged ? CLIN.grey : CLIN.green).setTitle("Not Banned")
+            .setDescription(`**${playerId}** is not banned.`));
+          if (_cbRec?.flagged) cleanE.addFields({ name: "Evasion Watch", value: "Matches an active IP/EOS flag - next join is auto-banned.", inline: false });
+          if (isAutobanExempt(playerId)) cleanE.addFields({ name: "Unban Protection", value: "Explicitly unbanned - auto-bans will never re-catch this name.", inline: false });
           if (_cbCtx.length) cleanE.addFields(..._cbCtx);
           return interaction.reply({ embeds: [cleanE] });
         }
         return interaction.reply({ embeds: [
-          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Active")
-            .setDescription(`**${playerId}** is on the blacklist — banned on ${hits.map(n => `**Server ${n}**`).join(" + ")}.`), "Blacklisted — use /unban to lift")
+          clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Active")
+            .setDescription(`**${playerId}** is on the blacklist - banned on ${hits.map(n => `**Server ${n}**`).join(" + ")}.`), "Blacklisted - use /unban to lift")
         ]});
         },
 
@@ -364,14 +362,14 @@ module.exports = (ctx) => {
         enforceBansSweep().catch(() => {});   // player sweep after the punishment
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
-        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Exile Issued")
-          .setDescription(`${interaction.user} permanently banned **${playerId}** from ${serverLabel(server)} — ${reason}`));
+        const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Issued")
+          .setDescription(`${interaction.user} permanently banned **${playerId}** on ${serverLabel(server)} (reason: \`${reason}\`).`));
         if (notes) embed.addFields({ name: "Notes", value: notes });
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
           fields: [
-            { name: "Sentence", value: "**Permanent**",      inline: true },
+            { name: "Length", value: "**Permanent**",      inline: true },
             { name: "Server",   value: serverLabel(server),  inline: true },
           ],
         });
@@ -392,12 +390,12 @@ module.exports = (ctx) => {
         // higher-tier bans in place and tell the mod how many were protected.
         const bans = allTemp.filter(b => canOverride(actorTier, b.moderatorRank));
         const protectedCount = allTemp.length - bans.length;
-        if (!bans.length) return interaction.reply({ embeds: [successEmbed("Registry Clear",
-          protectedCount ? `No temp exiles you can clear — **${protectedCount}** are protected (issued by a higher tier).` : "No active temporary exiles to remove.")], flags: MessageFlags.Ephemeral });
+        if (!bans.length) return interaction.reply({ embeds: [successEmbed("Nothing To Clear",
+          protectedCount ? `No temp bans you can clear - **${protectedCount}** are protected (issued by a higher tier).` : "No active temporary bans to remove.")], flags: MessageFlags.Ephemeral });
         const preview = bans.map(b => `- \`${b.playerId}\` - *${b.reason}*`).join("\n").slice(0, 3500);
         const go = await confirmDialog(interaction, {
           title: "Clear all temporary bans?",
-          body: `This lifts **${bans.length}** temp exile${bans.length !== 1 ? "s" : ""} and unbans on both servers.${protectedCount ? `\n\n**${protectedCount}** higher-tier ban${protectedCount !== 1 ? "s" : ""} will be left in place.` : ""}\n\n${preview}`,
+          body: `This lifts **${bans.length}** temp ban${bans.length !== 1 ? "s" : ""} and unbans on both servers.${protectedCount ? `\n\n**${protectedCount}** higher-tier ban${protectedCount !== 1 ? "s" : ""} will be left in place.` : ""}\n\n${preview}`,
           confirmLabel: `Clear ${bans.length}`,
         });
         if (!go) return;
@@ -419,7 +417,7 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         CLEARALLBANS — owner only: Unban every banned player
+         CLEARALLBANS - owner only: Unban every banned player
          ───────────────────────────────────────────────────── */
   "clearallbans": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
@@ -433,7 +431,7 @@ module.exports = (ctx) => {
         const names = allNames.filter(n => canOverride(actorTier, banByName.get(n.toLowerCase())?.moderatorRank));
         const protectedCount = allNames.length - names.length;
         if (!names.length) {
-          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Exiles on Record").setDescription(`${hero("The server is at peace.")}\n${protectedCount ? `Nothing you can clear — **${protectedCount}** ban(s) are protected (issued by a higher tier).` : "Nothing to clear — no bans on record."}`))] });
+          return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("No Bans Found").setDescription(`${hero("No bans on record.")}\n${protectedCount ? `Nothing you can clear - **${protectedCount}** ban(s) are protected (issued by a higher tier).` : "Nothing to clear - no bans on record."}`))] });
         }
 
         const preview = names.slice(0, 30).map(n => `- \`${n}\``).join("\n") + (names.length > 30 ? `\n...and ${names.length - 30} more` : "");
@@ -453,9 +451,9 @@ module.exports = (ctx) => {
         for (const n of names) { try { unbanEverywhere(n); ok++; } catch (e) { failed++; logger.warn("ClearAllBans", `Unban ${n} failed: ${e.message}`); } }
         await removeBans(...names);
         writeModLog({ action: "clearallbans", count: ok, by: interaction.user.tag });
-        await logBan(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("All Exiles Pardoned")
-          .setDescription(`${interaction.user} unbanned **${ok}**${failed ? `, ${failed} failed` : ""} — removed from blacklist.txt on both servers and lifted their flags.`)));
-        return interaction.editReply({ embeds: [successEmbed("All Exiles Pardoned", `Unbanned **${ok}**${failed ? `, **${failed}** failed` : ""}.`)], components: [], keepEmbeds: true });
+        await logBan(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Everyone Unbanned")
+          .setDescription(`${interaction.user} unbanned everyone (**${ok}** player${"s"}${failed ? `, ${failed} failed` : ""}).`)));
+        return interaction.editReply({ embeds: [successEmbed("Everyone Unbanned", `Unbanned **${ok}**${failed ? `, **${failed}** failed` : ""}.`)], components: [], keepEmbeds: true });
         },
 
   /* ─────────────────────────────────────────────────────
@@ -472,7 +470,7 @@ module.exports = (ctx) => {
             const fmt = (r) => r.status === "fulfilled" ? ((r.value.trim() || "no response").slice(0, 900)) : `unreachable: ${r.reason?.message || r.reason}`;
             writeModLog({ action: "manual-rcon", command, server, by: interaction.user.tag });
             return interaction.editReply({ embeds: [
-              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON — All Servers")
+              new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Raw RCON - All Servers")
                 .addFields(
                   { name: "Signal", value: `\`\`\`${command}\`\`\``, inline: false },
                   ...ACTIVE_SERVERS.map((s, i) => ({ name: `${serverLabel(s)} Response`, value: `\`\`\`${fmt(results[i])}\`\`\``, inline: false })),
@@ -495,48 +493,48 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         INSPECT — owner-only deep dossier (IPs, VPN detection,
+         INSPECT - owner-only deep dossier (IPs, VPN detection,
          alts, EOS id, enforcement flags). Ephemeral: sensitive.
          ───────────────────────────────────────────────────── */
   "inspect": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const playerId = sanitizeId(interaction.options.getString("playerid"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // exposes IPs — never public
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // exposes IPs - never public
 
         let rec = null; try { rec = ipBans.getRecord(playerId); } catch {}
         const allIps = rec?.ips  ?? [];
         const cIps   = rec?.cips ?? [];
         const alts   = rec?.alts ?? [];
         // VPN/proxy verdict per known IP (confirmed IPs preferred, else all). Actively run
-        // any missing checks now — owner command, worth the lookups. checkVpn caches, so
+        // any missing checks now - owner command, worth the lookups. checkVpn caches, so
         // already-checked IPs cost nothing, and it's a no-op when IPHUB_API_KEY is unset.
         const ipsToShow = (cIps.length ? cIps : allIps).slice(0, 12);
         if (IPHUB_API_KEY) { try { await Promise.all(ipsToShow.map(ip => checkVpn(ip).catch(() => null))); } catch {} }
         const vpn    = loadVpnChecks();
         const vpnLines = ipsToShow.map(ip => {
           const v = vpn[ip];
-          if (!v) return `\`${ip}\` — *not checked*`;
+          if (!v) return `\`${ip}\` - *not checked*`;
           const verdict = v.confirmed === true ? "**VPN/proxy** (IPHub+IPQS agree)"
             : v.confirmed === false            ? "disputed (IPHub flagged, IPQS clean)"
             : v.flagged                        ? "flagged by IPHub"
             :                                    "clean";
-          const q = v.ipqs ? ` · vpn:${v.ipqs.vpn} proxy:${v.ipqs.proxy} tor:${v.ipqs.tor} fraud:${v.ipqs.fraudScore}` : "";
-          return `\`${ip}\` — ${verdict}${v.isp ? ` · ${v.isp}` : ""}${q}`;
+          const q = v.ipqs ? ` - vpn:${v.ipqs.vpn} proxy:${v.ipqs.proxy} tor:${v.ipqs.tor} fraud:${v.ipqs.fraudScore}` : "";
+          return `\`${ip}\` - ${verdict}${v.isp ? ` - ${v.isp}` : ""}${q}`;
         });
 
         const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
         const linkedId = discordIdForPavlov(playerId);
         const flags = [];
-        if (rec?.flagged)            flags.push("IP/EOS **flagged** — next join is auto-banned");
-        if (isMasterName(playerId))  flags.push("**MASTER** — bypasses all enforcement");
-        if (isDonator(playerId))     flags.push("Donator — flush-immune (NOT ban-immune)");
-        if (isAutobanExempt(playerId)) flags.push("Unban-exempt — auto-ban won't re-catch");
-        if (rec?.bypass)             flags.push("Untracked (ignore-list) — no IP logging/auto-ban");
+        if (rec?.flagged)            flags.push("IP/EOS **flagged** - next join is auto-banned");
+        if (isMasterName(playerId))  flags.push("**MASTER** - bypasses all enforcement");
+        if (isDonator(playerId))     flags.push("Donator - flush-immune (NOT ban-immune)");
+        if (isAutobanExempt(playerId)) flags.push("Unban-exempt - auto-ban won't re-catch");
+        if (rec?.bypass)             flags.push("Untracked (ignore-list) - no IP logging/auto-ban");
 
-        const joinCap = (arr) => arr.length ? arr.map(x => `\`${x}\``).join("  ·  ").slice(0, 1000) : null;
+        const joinCap = (arr) => arr.length ? arr.map(x => `\`${x}\``).join("  -  ").slice(0, 1000) : null;
         const embed = new EmbedBuilder().setColor(rec?.flagged ? NV.LEGION_RED : NV.BLUE_VATS)
-          .setTitle(`Inspect — ${rec?.name || playerId}`)
+          .setTitle(`Inspect - ${rec?.name || playerId}`)
           .addFields(
             { name: "EOS / Unique ID", value: rec?.id ? `\`${rec.id}\`` : "*unknown (no confirmed disconnect yet)*", inline: false },
             { name: `All IPs (${allIps.length})`,        value: joinCap(allIps) ?? "*none on record*",   inline: false },
@@ -547,15 +545,15 @@ module.exports = (ctx) => {
             { name: "First seen", value: rec?.firstSeen ? `<t:${Math.floor(rec.firstSeen / 1000)}:R>` : "*n/a*", inline: true },
             { name: "Last seen",  value: rec?.lastSeen  ? `<t:${Math.floor(rec.lastSeen / 1000)}:R>`  : "*n/a*", inline: true },
             { name: "Discord",    value: linkedId ? `<@${linkedId}> \`${linkedId}\`` : "*not linked*",           inline: true },
-            { name: "Ban",        value: tb ? (tb.permanent || !tb.expires ? `Permanent — ${tb.reason}` : `Temp — ${tb.reason} · until <t:${Math.floor(tb.expires / 1000)}:R>`) : "*none*", inline: false },
+            { name: "Ban",        value: tb ? (tb.permanent || !tb.expires ? `Permanent - ${tb.reason}` : `Temp - ${tb.reason} - until <t:${Math.floor(tb.expires / 1000)}:R>`) : "*none*", inline: false },
             { name: "Flags / status", value: flags.length ? flags.map(f => `• ${f}`).join("\n") : "*none*",     inline: false },
           )
-          .setFooter({ text: "Owner inspection · sensitive — do not share" });
+          .setFooter({ text: "Owner inspection - sensitive - do not share" });
         return interaction.editReply({ embeds: [embed] });
         },
 
   /* ─────────────────────────────────────────────────────
-         FIREWALL — owner-only manual ufw block/unblock of an IP,
+         FIREWALL - owner-only manual ufw block/unblock of an IP,
          independent of any ban. Needs UFW_BLOCK=1 (root/sudo ufw).
          ───────────────────────────────────────────────────── */
   "firewall": async (interaction, name) => {
@@ -567,17 +565,17 @@ module.exports = (ctx) => {
         if (sub === "status") {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });   // sensitive: exposes IPs
           let st; try { st = await firewallStatus(); } catch (err) { st = { error: err.message }; }
-          if (st?.error) return interaction.editReply({ embeds: [errorEmbed("Firewall — Status Unavailable", `Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``)] });
+          if (st?.error) return interaction.editReply({ embeds: [errorEmbed("Firewall - Status Unavailable", `Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``)] });
           const denied = st.denied || [];
           const list = denied.length
             ? denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3800)
             : "*No IPs are currently denied at the firewall.*";
-          const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked (should never happen):** ${st.mastersBlocked.map(i => `\`${i}\``).join(", ")} — the reconcile will clear them.` : "")
-            + (st.flaggedNotBlocked?.length ? `\n⚠ **Flagged but NOT blocked:** ${st.flaggedNotBlocked.length} IP(s) — reconcile will re-apply.` : "");
+          const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked (should never happen):** ${st.mastersBlocked.map(i => `\`${i}\``).join(", ")} - the reconcile will clear them.` : "")
+            + (st.flaggedNotBlocked?.length ? `\n⚠ **Flagged but NOT blocked:** ${st.flaggedNotBlocked.length} IP(s) - reconcile will re-apply.` : "");
           const embed = clinical(new EmbedBuilder().setColor(denied.length ? CLIN.red : CLIN.green)
-            .setTitle("Firewall — Blocked IPs")
+            .setTitle("Firewall - Blocked IPs")
             .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied at the OS firewall (ufw ${st.active ? "**active**" : "inactive"}). **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${list}`)
-            .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }));
+            .setFooter({ text: "sudo ufw status numbered - owner - sensitive" }));
           return interaction.editReply({ embeds: [embed] });
         }
 
@@ -589,32 +587,32 @@ module.exports = (ctx) => {
         if (sub === "block") {
           let res; try { res = await firewallBlockIps([ip]); } catch (err) { res = { blocked: 0, error: err.message }; }
           writeModLog({ action: "firewall-block", playerId: ip, reason: "manual firewall block", by: interaction.user.tag });
-          logger.info("Firewall", `Manual block of ${ip} by ${interaction.user.tag} — blocked ${res.blocked}`);
+          logger.info("Firewall", `Manual block of ${ip} by ${interaction.user.tag} - blocked ${res.blocked}`);
           const ok = res.blocked > 0;
           const embed = clinical(new EmbedBuilder().setColor(ok ? CLIN.red : NV.AMBER)
-            .setTitle(ok ? "Firewall — IP Blocked" : "Firewall — Block Not Applied")
+            .setTitle(ok ? "Firewall - IP Blocked" : "Firewall - Block Not Applied")
             .setDescription(`${ok ? `\`${ip}\` is now denied at the OS firewall.` : `Could not block \`${ip}\`.${res.error ? ` (${res.error})` : ""}`}`)
             .addFields(
               { name: "IP",     value: `\`${ip}\``, inline: true },
               { name: "Rule",   value: "`ufw insert 1 deny from <ip>`", inline: true },
               { name: "Result", value: ok ? `Blocked **${res.blocked}** rule(s)` : "No rule added", inline: true },
-            ), "Manual firewall control · owner");
+            ), "Manual firewall control - owner");
           return interaction.editReply({ embeds: [embed] });
         }
 
         // sub === "unblock"
         let res; try { res = await firewallUnblockIps([ip]); } catch (err) { res = { unblocked: 0, error: err.message }; }
         writeModLog({ action: "firewall-unblock", playerId: ip, reason: "manual firewall unblock", by: interaction.user.tag });
-        logger.info("Firewall", `Manual unblock of ${ip} by ${interaction.user.tag} — removed ${res.unblocked}`);
+        logger.info("Firewall", `Manual unblock of ${ip} by ${interaction.user.tag} - removed ${res.unblocked}`);
         const ok = res.unblocked > 0;
         const embed = clinical(new EmbedBuilder().setColor(ok ? CLIN.green : NV.AMBER)
-          .setTitle(ok ? "Firewall — Block Removed" : "Firewall — No Block Found")
+          .setTitle(ok ? "Firewall - Block Removed" : "Firewall - No Block Found")
           .setDescription(`${ok ? `\`${ip}\` is no longer denied at the OS firewall.` : `No firewall rule for \`${ip}\` was found to remove.${res.error ? ` (${res.error})` : ""}`}`)
           .addFields(
             { name: "IP",     value: `\`${ip}\``, inline: true },
             { name: "Rule",   value: "`ufw delete <rule>`", inline: true },
             { name: "Result", value: ok ? `Removed **${res.unblocked}** rule(s)` : "Nothing to remove", inline: true },
-          ), "Manual firewall control · owner");
+          ), "Manual firewall control - owner");
         return interaction.editReply({ embeds: [embed] });
         },
   };

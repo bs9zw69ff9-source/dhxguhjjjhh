@@ -13,7 +13,7 @@
      • Mod cannot override a Super Owner's, Owner's, or Admin's action.
 
    Equal tiers can override each other (the rule only protects strictly-higher tiers).
-   This module is pure — role predicates are injected — so it unit-tests without any
+   This module is pure - role predicates are injected - so it unit-tests without any
    Discord or filesystem dependency. */
 
 const TIER = { SUPER_OWNER: 4, OWNER: 3, ADMIN: 2, MOD: 1, NONE: 0 };
@@ -33,7 +33,7 @@ function commandTier(member, { isSuperOwner, isOwner, hasAdminRole, hasModRole }
 function commandTierName(tier) { return TIER_NAMES[tier] ?? "Staff"; }
 
 /* True if a staff member at `actorTier` may override a record issued at `recordTier`.
-   Records predating the hierarchy carry no tier — treated as 0, so anyone may lift
+   Records predating the hierarchy carry no tier - treated as 0, so anyone may lift
    them (no retroactive lock-outs). */
 function canOverride(actorTier, recordTier) {
   return Number(actorTier) >= Number(recordTier || 0);

@@ -11,14 +11,14 @@ module.exports = function(ctx) {
 
 async function banWithIp(playerId, server = "both", opts = {}) {
   const name = sanitizeBanName(playerId);
-  // Master names are never banned — no matter which path asks (command or auto-ban).
+  // Master names are never banned - no matter which path asks (command or auto-ban).
   if (isMasterName(name)) {
     logger.warn("Bans", `Refused to ban master name "${name}"`);
     return { ids: [], ips: [], alts: [], field: null, blacklist: { name, servers: 0 }, ok: false, master: true };
   }
   removeAutobanExempt(name).catch(() => {});   // a deliberate ban clears any unban exemption
   // Native RCON Ban + Kick by USERNAME on every server. NO blacklist.txt.
-  // NOTE: the OS firewall (ufw) is deliberately NOT touched here — ufw deny/allow
+  // NOTE: the OS firewall (ufw) is deliberately NOT touched here - ufw deny/allow
   // is a manual owner action via /firewall, never applied automatically on a ban.
   let enforced = { servers: 0 };
   try { enforced = await hardEnforce(name); }
@@ -34,8 +34,8 @@ async function banWithIp(playerId, server = "both", opts = {}) {
 
 
 
-/* Force-ban + remove a player by USERNAME on every server — native RCON `Ban` + `Kick`,
-   NO blacklist.txt — logging the server's response to each so `pm2 logs` shows exactly
+/* Force-ban + remove a player by USERNAME on every server - native RCON `Ban` + `Kick`,
+   NO blacklist.txt - logging the server's response to each so `pm2 logs` shows exactly
    what landed. Returns { servers } = how many servers accepted a command. */
 async function hardEnforce(name, { banToo = true, kick = true } = {}) {
   const target = sanitizeId(name);
@@ -77,7 +77,7 @@ function scheduleBanRecheck(name) {
 
 /* Safety-net enforcement: RefreshList is the AUTHORITATIVE list of who is actually in
    the game. Every sweep, cross-reference it against the active ban list + IP/EOS flags
-   and force-remove anyone banned who's still online — a ban whose join-time kick missed,
+   and force-remove anyone banned who's still online - a ban whose join-time kick missed,
    or a player who was already in the game when the ban landed. This is what actually
    gets a stuck banned player OUT; the per-command RCON responses are logged so we can
    see whether the removal takes. */
@@ -100,9 +100,9 @@ async function enforceBansSweep() {
         let flaggedHit = false;
         if (!nameBanned) { try { flaggedHit = !!ipBans.getRecord(nm)?.flagged; } catch {} }   // flagged IP/EOS
         if (nameBanned || flaggedHit) {
-          logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} — force-removing`);
+          logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} - force-removing`);
           await hardEnforce(nm);                // native Ban + Kick by username, responses logged
-          // NOTE: the sweep does NOT create a ban RECORD — the IP/EOS flag already
+          // NOTE: the sweep does NOT create a ban RECORD - the IP/EOS flag already
           // persists the auto-ban and re-catches them on join. Recording here made a
           // flagged/shared IP mass-create ban entries wrongly attributed to a person.
           continue;
@@ -117,7 +117,7 @@ async function enforceBansSweep() {
 }
 
 /* One-time repair: rewrite legacy auto-ban records (moderator "IP-Guard" or a reason
-   starting "Auto-ban") so /checkban shows the REAL punishment — the original ban's
+   starting "Auto-ban") so /checkban shows the REAL punishment - the original ban's
    offense + moderator where we can find it, else a clean "Ban evasion". */
 async function fixAutoBanReasons() {
   await update(FILES.TEMPBAN, [], (bans) => {
@@ -138,7 +138,7 @@ async function fixAutoBanReasons() {
 
 /* Ban-list reconciliation: the bot's ban DB (tempbans.json) is the source of truth.
    Re-apply every ACTIVE ban to each server (native RCON Ban) and to blacklist.txt so
-   the server's ban list is rebuilt and stays complete — even after a SERVER restart
+   the server's ban list is rebuilt and stays complete - even after a SERVER restart
    wipes its native bans. Re-banning an already-banned player is a harmless no-op, so
    this makes bans self-healing: a banned player can't slip in through a lost ban list.
 
@@ -182,13 +182,13 @@ async function reconcileBans() {
   } finally { _reconcileBusy = false; }
 }
 
-/* The original ban whose flag caught this player — so /checkban and the ban record
+/* The original ban whose flag caught this player - so /checkban and the ban record
    show the REAL offense, not "IP-Guard" / "Ban evasion". A real ban is one whose reason
    isn't itself an auto-ban and whose moderator isn't the auto-ban marker. Matched by:
    1) the SAME EOS account (evader kept the account, changed name),
    2) the same name, or a shared-confirmed-IP alt. */
 function isRealBan(b) {
-  // A per-player punishment — NOT an auto-ban and NOT a broad /configure IP/name
+  // A per-player punishment - NOT an auto-ban and NOT a broad /configure IP/name
   // blacklist (those aren't a punishment on one person, and copying their moderator
   // makes every match look like that admin banned it).
   return b && b.reason && !/^(auto-ban|ban evasion)/i.test(b.reason)
@@ -207,12 +207,12 @@ function sourceBanFor(name, uniqueId) {
   return real.find(b => relSet.has(String(b.playerId).toLowerCase())) || null;
 }
 /* What should the IP-Guard do with a join that matched a flagged IP/name/id?
-   - "block": an UNEXPIRED temp ban covers this name — the blacklist already bounced
+   - "block": an UNEXPIRED temp ban covers this name - the blacklist already bounced
      them; log it, never escalate.
    - "lift":  the covering temp ban has EXPIRED but the entry/flags are still around
      (the 60s lift sweep hasn't run yet, or a stale flag survived). A served temp ban
-     must never turn permanent — lift it right now instead.
-   - "ban":   nothing covers them (evasion alt / fresh blacklist match) — auto-ban. */
+     must never turn permanent - lift it right now instead.
+   - "ban":   nothing covers them (evasion alt / fresh blacklist match) - auto-ban. */
 function autoBanDecision(existing, reason, now = Date.now()) {
   if (existing && !existing.permanent && existing.expires) {
     if (existing.expires > now) return "block";
@@ -230,7 +230,7 @@ function unbanEverywhere(playerId) {
   let bl = { name, removed: 0 };
   try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
   let cleared = null;
-  // NOTE: the OS firewall (ufw) is NOT touched on unban — any ufw deny is an
+  // NOTE: the OS firewall (ufw) is NOT touched on unban - any ufw deny is an
   // owner-managed manual rule, removed only via /firewall unblock.
   try { cleared = ipBans.unblacklistPlayer(name); } catch {}
   // Lift the native RCON ban too (auto-bans issue `Ban <username>`), by USERNAME.

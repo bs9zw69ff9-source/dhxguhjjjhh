@@ -1,8 +1,8 @@
 /* ---------------- moderation/firewall: OS-level ufw block control ----------------
    Extracted from index.js. Blocks/unblocks IPs at the OS firewall via `sudo ufw`.
-   ufw is a MANUAL owner action only — driven exclusively by the /firewall command
+   ufw is a MANUAL owner action only - driven exclusively by the /firewall command
    (block/unblock/status). It is never applied automatically on a ban, unban, or on
-   startup. IPs are strictly validated (_IPV4_RE) and passed as argv — never a shell.
+   startup. IPs are strictly validated (_IPV4_RE) and passed as argv - never a shell.
 
    Injected deps:
      logger    - shared structured logger
@@ -29,7 +29,7 @@ module.exports = function createFirewall({ logger, ipBans, masterIps }) {
       });
     });
   }
-  // Same as _ufw but feeds `input` to stdin — for `ufw delete <n>` which prompts "Proceed
+  // Same as _ufw but feeds `input` to stdin - for `ufw delete <n>` which prompts "Proceed
   // with operation (y|n)?". We answer "y".
   function _ufwInput(args, input) {
     return new Promise((resolve) => {
@@ -46,7 +46,7 @@ module.exports = function createFirewall({ logger, ipBans, masterIps }) {
   }
   async function firewallBlockIps(ips) {
     if (!UFW_BLOCK) return { blocked: 0, off: true };
-    // Master/owner IPs are never denied — filter them out no matter which path asks.
+    // Master/owner IPs are never denied - filter them out no matter which path asks.
     const skipped = (ips || []).map(String).filter(ip => isMasterIp(ip));
     if (skipped.length) logger.warn("Firewall", `Refused to block protected master IP(s): ${[...new Set(skipped)].join(", ")}`);
     const valid = [...new Set((ips || []).map(String).filter(ip => _IPV4_RE.test(ip) && !isMasterIp(ip)))];

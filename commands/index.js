@@ -32,7 +32,7 @@ module.exports = function createCommands(ctx) {
   // awaitMessageComponent / awaitModalSubmit flows are patched too.
   try { patchInteractionOutput(interaction); } catch {}
 
-  /* ── Blacklist gate — barred users get nothing, on every interaction.
+  /* ── Blacklist gate - barred users get nothing, on every interaction.
         Owners are immune and can never be blacklisted. ── */
   if (isBlacklisted(interaction.user.id) && !isOwner(interaction.user.id)) {
     if (interaction.isAutocomplete()) return interaction.respond([]).catch(() => {});
@@ -43,13 +43,13 @@ module.exports = function createCommands(ctx) {
   }
 
   /* ── Panel buttons + modals ─────────────────────────── */
-  // On failure, tell the user instead of leaving the modal stuck on "thinking…".
+  // On failure, tell the user instead of leaving the modal stuck on "thinking...".
   const modalFail = (tag) => (e) => {
     logger.warn(tag, e.message);
-    const payload = { embeds: [errorEmbed("Something Went Wrong", "That didn't go through — try again in a moment.")], flags: MessageFlags.Ephemeral };
+    const payload = { embeds: [errorEmbed("Something Went Wrong", "That didn't go through - try again in a moment.")], flags: MessageFlags.Ephemeral };
     (interaction.deferred || interaction.replied ? interaction.followUp(payload) : interaction.reply(payload)).catch(() => {});
   };
-  /* Link-request Accept/Deny — persistent (no collector), so it works after restarts.
+  /* Link-request Accept/Deny - persistent (no collector), so it works after restarts.
      Only the approver role (or an owner) may act. */
   if (interaction.isButton() && interaction.customId.startsWith("linkreq_")) {
     const canAct = isOwner(interaction.user.id) || memberHasRoleId(interaction.member, LINK_APPROVER_ROLE);
@@ -57,13 +57,13 @@ module.exports = function createCommands(ctx) {
     const [tag, uid, encName] = interaction.customId.split(":");
     const pavlov = decodeURIComponent(encName ?? "");
     const approve = tag === "linkreq_ok";
-    // Re-check the one-to-one rules at ACCEPT time — a second pending request for the
+    // Re-check the one-to-one rules at ACCEPT time - a second pending request for the
     // same name (or same user) may have been approved while this card sat here.
     if (approve) {
       const takenBy = discordIdForPavlov(pavlov);
       const already = loadDiscordLinks()[uid];
       if ((takenBy && takenBy !== uid) || already) {
-        const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Link Request — Void")
+        const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Link Request - Void")
           .setDescription(`${already ? `<@${uid}> is already linked to \`${already.name}\`.` : `\`${pavlov}\` was claimed by <@${takenBy}> while this request was pending.`}\nNothing was changed.`)
           );
         return interaction.update(textify({ content: "", embeds: [stale], components: [] })).catch(() => {});
@@ -75,7 +75,7 @@ module.exports = function createCommands(ctx) {
         writeModLog({ action: "link", targetUserId: uid, playerId: pavlov, by: interaction.user.tag });
       }
       const done = brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
-        .setTitle(approve ? "Link Request — Approved" : "Link Request — Denied")
+        .setTitle(approve ? "Link Request - Approved" : "Link Request - Denied")
         .setDescription(`${interaction.user} ${approve ? "approved" : "denied"} <@${uid}>'s request to link to \`${pavlov}\`.`)
         );
       await interaction.update(textify({ content: "", embeds: [done], components: [] }));
@@ -88,7 +88,7 @@ module.exports = function createCommands(ctx) {
       } catch { /* DMs closed */ }
     } catch (e) {
       logger.warn("LinkReq", `accept/deny failed: ${e.message}`);
-      interaction.reply({ embeds: [errorEmbed("Failed", "Couldn't process that request — try again.")], flags: MessageFlags.Ephemeral }).catch(() => {});
+      interaction.reply({ embeds: [errorEmbed("Failed", "Couldn't process that request - try again.")], flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     return;
   }
@@ -115,7 +115,7 @@ module.exports = function createCommands(ctx) {
   if (interaction.isModalSubmit()) {   // e.g. cfg_modal submitted after its 120s collector expired
     setTimeout(() => {
       if (!interaction.replied && !interaction.deferred) {
-        interaction.reply({ content: "This form expired — run the command again.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        interaction.reply({ content: "This form expired - run the command again.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
     }, 2500);
     return;
@@ -230,7 +230,7 @@ module.exports = function createCommands(ctx) {
     const handler = _handlers[name];
     if (handler) return await handler(interaction, name);
 
-      return interaction.reply({ embeds: [errorEmbed("Unknown Command", `\`/${name}\` isn't wired up in this build — the command list may still be refreshing. Try again in a minute.`)], flags: MessageFlags.Ephemeral }).catch(() => {});
+      return interaction.reply({ embeds: [errorEmbed("Unknown Command", `\`/${name}\` isn't wired up in this build - the command list may still be refreshing. Try again in a minute.`)], flags: MessageFlags.Ephemeral }).catch(() => {});
 
   } catch (err) {
     logger.error("Command", `/${interaction.commandName}: ${err.message}`, { stack: err.stack });

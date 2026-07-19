@@ -52,7 +52,7 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         DONATOR  (admin — manage the donator whitelist file)
+         DONATOR  (admin - manage the donator whitelist file)
          ───────────────────────────────────────────────────── */
   "donator": async (interaction, name) => {
         const sub = interaction.options.getSubcommand();
@@ -64,14 +64,14 @@ module.exports = (ctx) => {
           }
           if (!lines.length) {
             return interaction.reply({ embeds: [
-              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Donator List — Empty")
+              new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Donator List - Empty")
                 .setDescription("No players are in the donator file yet.\n\nUse `/donator add` to enrol someone.")
             ], flags: MessageFlags.Ephemeral });
           }
           const out = lines.map((id, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${id}**`);
           return paginate(interaction, out, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
-              .setTitle(`Donators — ${lines.length}`)
+              .setTitle(`Donators - ${lines.length}`)
               .setDescription(`> *"The House remembers its most generous patrons."*\n\n${pageLines.join("\n")}`)
               .setFooter({ text: DONATOR_FILE }),
             { perPage: 20, ephemeral: true });
@@ -136,10 +136,10 @@ module.exports = (ctx) => {
         const anyOk  = acks.some(Boolean);
         writeModLog({ action: "announce", message, target, by: interaction.user.tag, server, delivered: allOk });
         const deliveryNote = allOk
-          ? "Sent via RCON `Notify` — visible in-game if your build supports it."
+          ? "Sent via RCON `Notify` - visible in-game if your build supports it."
           : anyOk
             ? "One server may not support `Notify`. Message logged here regardless."
-            : "Server gave no acknowledgement — your Pavlov build may not support `Notify`. Message logged here only.";
+            : "Server gave no acknowledgement - your Pavlov build may not support `Notify`. Message logged here only.";
         const embed = new EmbedBuilder().setColor(allOk ? NV.BLUE_VATS : NV.NCR_TAN).setTitle("Broadcast Sent")
           .setDescription(`> ${message}\n\n${interaction.user} broadcast to ${isAll ? "**all players**" : `\`${target}\``} on ${serverLabel(server)}. ${deliveryNote}`)
           .setFooter({ text: "RCON Notify broadcast" });
@@ -172,7 +172,7 @@ module.exports = (ctx) => {
         addMenuGrant(playerId, server, menuValue, menuId, interaction.user.tag);
         const embed = new EmbedBuilder().setColor(NV.AMBER)
           .setTitle("Menu Access Granted")
-          .setDescription(`${interaction.user} granted **${menuMeta?.name ?? menuValue}** to **${playerId}** on ${serverLabel(server)}.\n-# Recorded for tracking — not re-applied automatically on rejoin.`)
+          .setDescription(`${interaction.user} granted **${menuMeta?.name ?? menuValue}** to **${playerId}** on ${serverLabel(server)}.\n-# Recorded for tracking - not re-applied automatically on rejoin.`)
           ;
         if (menuValue === "highstaff") {
           embed.addFields({ name: "Auto-applied (each run separately)", value: `\`\`\`\nAddMod ${playerId}\nAddAccessManager ${playerId}\nGiveMenu ${playerId} <menu bitmask>\n\`\`\`` , inline: false });
@@ -215,7 +215,7 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         STRIPMENUALL — owner only: clear EVERYONE's menu access
+         STRIPMENUALL - owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
   "stripmenuall": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
@@ -244,17 +244,17 @@ module.exports = (ctx) => {
 
         const embed = brand(new EmbedBuilder().setColor(NV.LEGION_RED)
           .setTitle("Mass Menu Revocation")
-          .setDescription(`${hero("Cleared menu access for every player on both servers.")}\n\`ClearMenuAccess\` · \`ClearAccessManagers\` — **${holders.length}** grant(s) cleared.`)
+          .setDescription(`${hero("Cleared menu access for every player on both servers.")}\n\`ClearMenuAccess\` - \`ClearAccessManagers\` - **${holders.length}** grant(s) cleared.`)
           );
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },
 
   /* ─────────────────────────────────────────────────────
-         SETFACTIONADMIN — owner sets this guild's Faction Leader role
+         SETFACTIONADMIN - owner sets this guild's Faction Leader role
 
       /* ─────────────────────────────────────────────────────
-         SETRCONROLES — which Discord role grants each RCON menu
+         SETRCONROLES - which Discord role grants each RCON menu
          ───────────────────────────────────────────────────── */
   "setrconroles": async (interaction, name) => {
         if (!hasAdminRole(interaction.member) && !isOwner(interaction.user.id)) return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
@@ -277,10 +277,10 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         CONFIGURE — owner-only hidden controls (blacklist, IP, factions)
+         CONFIGURE - owner-only hidden controls (blacklist, IP, factions)
          ───────────────────────────────────────────────────── */
       /* ─────────────────────────────────────────────────────
-         LINK — owner: link a Discord account to a Pavlov username
+         LINK - owner: link a Discord account to a Pavlov username
          ───────────────────────────────────────────────────── */
   "link": async (interaction, name) => {
         const sub = interaction.options.getSubcommand();
@@ -306,7 +306,7 @@ module.exports = (ctx) => {
             .setDescription(had ? `Unlinked ${user} *(was \`${had.name}\`)*.` : `${user} had no link.`))], flags: MessageFlags.Ephemeral });
         }
 
-        // add — PUBLIC: request to link YOUR OWN Discord to a Pavlov name; staff approves.
+        // add - PUBLIC: request to link YOUR OWN Discord to a Pavlov name; staff approves.
         // Hard one-to-one rules, enforced BEFORE any request is posted:
         //   • an account that already holds a link cannot use the command (staff must
         //     /link remove it first), and
@@ -316,29 +316,29 @@ module.exports = (ctx) => {
         const existing = loadDiscordLinks()[interaction.user.id];
         if (existing) {
           return interaction.reply({ embeds: [deniedEmbed("Already Linked",
-            `Your Discord is already linked to \`${existing.name}\`. One link per account — ask a mod to \`/link remove\` it first if it's wrong.`,
+            `Your Discord is already linked to \`${existing.name}\`. One link per account - ask a mod to \`/link remove\` it first if it's wrong.`,
             "One Pavlov name per Discord account")], flags: MessageFlags.Ephemeral });
         }
         const clash = discordIdForPavlov(pavlov);
         if (clash) {
           writeModLog({ action: "link-denied", targetUserId: interaction.user.id, playerId: pavlov, reason: `name already linked to ${clash}`, by: "auto" });
           return interaction.reply({ embeds: [deniedEmbed("Name Already Claimed",
-            `\`${pavlov}\` is already linked to another Discord account. If that's YOUR in-game name, tell a mod — they can \`/link remove\` the false claim.`,
-            "Auto-denied — no request sent")], flags: MessageFlags.Ephemeral });
+            `\`${pavlov}\` is already linked to another Discord account. If that's YOUR in-game name, tell a mod - they can \`/link remove\` the false claim.`,
+            "Auto-denied - no request sent")], flags: MessageFlags.Ephemeral });
         }
         let ch = null;
         try { ch = await client.channels.fetch(LINK_REQUEST_CHANNEL); } catch {}
         if (!ch?.isTextBased()) {
-          return interaction.reply({ embeds: [errorEmbed("Requests Unavailable", "The link-request channel is not reachable — tell an admin.")], flags: MessageFlags.Ephemeral });
+          return interaction.reply({ embeds: [errorEmbed("Requests Unavailable", "The link-request channel is not reachable - tell an admin.")], flags: MessageFlags.Ephemeral });
         }
-        const reqEmbed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Link Request — Pending")
+        const reqEmbed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Link Request - Pending")
           .setDescription(`${interaction.user} (\`${interaction.user.id}\`) wants to link to \`${pavlov}\`.`)
           .setFooter({ text: "Approve or deny below" }));
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`linkreq_ok:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Accept").setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`linkreq_no:${interaction.user.id}:${encodeURIComponent(pavlov)}`).setLabel("Deny").setStyle(ButtonStyle.Danger),
         );
-        try { await ch.send(textify({ embeds: [reqEmbed], components: [row] })); }   // no staff ping — the card in the channel is enough
+        try { await ch.send(textify({ embeds: [reqEmbed], components: [row] })); }   // no staff ping - the card in the channel is enough
         catch (e) { return interaction.reply({ embeds: [errorEmbed("Request Failed", `Couldn't post the request: ${e.message}`)], flags: MessageFlags.Ephemeral }); }
         return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Link Request Sent")
           .setDescription(`Your request to link to \`${pavlov}\` is pending staff approval. You'll be DM'd the result.`))], flags: MessageFlags.Ephemeral });
@@ -347,9 +347,9 @@ module.exports = (ctx) => {
   "configure": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
 
-        // Grouped by area (emoji-prefixed) — Discord select menus have no native
+        // Grouped by area (emoji-prefixed) - Discord select menus have no native
         // optgroups, so the emoji + ordering carry the sections visually.
-        const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Choose an owner action…")
+        const menu = new StringSelectMenuBuilder().setCustomId("cfg_menu").setPlaceholder("Choose an owner action...")
           .addOptions(
             // ── IP enforcement ──
             { label: "Blacklist IP / username",   value: "blacklist_ip",   emoji: "🚫", description: "Auto-ban anyone matching an IP or username" },
@@ -360,7 +360,7 @@ module.exports = (ctx) => {
             { label: "Clear all flagged IPs",     value: "clear_flags",    emoji: "🧹", description: "Stop every IP auto-ban (keep history)" },
             { label: "Wipe ALL IP data",          value: "clear_all",      emoji: "💥", description: "Full registry + flag reset (irreversible)" },
             // ── firewall ──
-            { label: "Firewall — blocked IPs",    value: "firewall_status", emoji: "🔥", description: "Every IP currently denied at the OS firewall" },
+            { label: "Firewall - blocked IPs",    value: "firewall_status", emoji: "🔥", description: "Every IP currently denied at the OS firewall" },
             // ── discord access ──
             { label: "Bar a Discord user",        value: "user_bl_add",    emoji: "⛔", description: "Block a Discord user from ALL bot commands" },
             { label: "Un-bar a Discord user",     value: "user_bl_remove", emoji: "✅", description: "Restore a Discord user's command access" },
@@ -376,21 +376,21 @@ module.exports = (ctx) => {
             { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Set every player's credits to 0 (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Owner Control Panel")
-          .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below — destructive ones ask you to confirm first.\n` +
-            `🚫 **IP Enforcement** — blacklist, alts, clear flags\n` +
-            `🔥 **Firewall** — view blocked IPs\n` +
-            `⛔ **Discord Access** — bar / un-bar users\n` +
-            `👁️ **IP Tracking** — ignore lists\n` +
-            `💾 **Factions** — save / load whitelists\n` +
-            `💰 **Economy** — wipe money`)
-          .setFooter({ text: "Owner only · sensitive · menu closes after 60s" }));
+          .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below - destructive ones ask you to confirm first.\n` +
+            `🚫 **IP Enforcement** - blacklist, alts, clear flags\n` +
+            `🔥 **Firewall** - view blocked IPs\n` +
+            `⛔ **Discord Access** - bar / un-bar users\n` +
+            `👁️ **IP Tracking** - ignore lists\n` +
+            `💾 **Factions** - save / load whitelists\n` +
+            `💰 **Economy** - wipe money`)
+          .setFooter({ text: "Owner only - sensitive - menu closes after 60s" }));
         // ── all action logic in one place; returns a branded result embed ──
         const audit = (embed) => { logAction(embed).catch(() => {}); return embed; };
         async function runAction(choice, val) {
           if (choice === "view_alts") {
             let alts = []; try { alts = ipBans.getAltNamesOf(val); } catch {}
             const list = alts.length ? alts.map(n => `• **${n}**`).join("\n").slice(0, 4000) : "*No known alt accounts (no other account shares a confirmed IP).*";
-            return brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle(`Alt Accounts — ${val}`)
+            return brand(new EmbedBuilder().setColor(alts.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle(`Alt Accounts - ${val}`)
               .addFields({ name: `Linked accounts (${alts.length})`, value: list, inline: false })
               .setFooter({ text: "Alt links come from confirmed shared IPs" }));
           }
@@ -400,19 +400,19 @@ module.exports = (ctx) => {
             if (r.kind === "username" && r.value) toBan.add(r.value);
             for (const id of r.ids) { const nm = ipBans.registry[id]?.name; if (nm) toBan.add(nm); }
             for (const nm of toBan) { try { await banWithIp(nm, "both", { permanent: true }); await upsertPermBan({ playerId: nm, reason: "Blacklisted via /configure", moderator: interaction.user.tag }); } catch {} }
-            const desc = `${r.kind} \`${r.value}\` blacklisted — any account matching it is auto-banned.` +
-              (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet — future connections will be caught.`);
+            const desc = `${r.kind} \`${r.value}\` blacklisted - any account matching it is auto-banned.` +
+              (toBan.size ? `\nBanned & kicked **${toBan.size}** matching name(s) now.` : `\nNo accounts on record yet - future connections will be caught.`);
             return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklisted").setDescription(hero(desc))));
           }
           if (choice === "wipe_money") {
-            if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm — no money was wiped."));
+            if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm - no money was wiped."));
             const r = wipeAllMoney();
             return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`))));
           }
           if (choice === "load_factions") {
-            if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm — nothing was restored."));
+            if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm - nothing was restored."));
             const r = loadFactionBackup();
-            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found — use **Save faction whitelists** first." : `Load failed: ${r.error}`)))));
+            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found - use **Save faction whitelists** first." : `Load failed: ${r.error}`)))));
           }
           if (["user_bl_add", "user_bl_remove", "ignore_add", "ignore_remove", "clear_ip"].includes(choice)) {
             let desc, color = NV.IRRAD_GREEN;
@@ -420,24 +420,24 @@ module.exports = (ctx) => {
             else if (choice === "user_bl_remove") { const uid = val.replace(/\D/g, ""); const removed = uid && removeUserBlacklist(uid); desc = removed ? `<@${uid}> (\`${uid}\`) can use commands again.` : `\`${uid || val}\` wasn't on the barred list.`; }
             else if (choice === "ignore_add")     { const r = ipBans.addUntracked(val); desc = `**${val}** will no longer be tracked. Purged **${r.purged}** record(s). (No IP logging, feed, or auto-ban for this name.)`; }
             else if (choice === "ignore_remove")  { const ok2 = ipBans.removeUntracked(val); desc = ok2 ? `**${val}** is tracked again from their next connection.` : `**${val}** wasn't on the ignore list.`; }
-            else                                  { const r = ipBans.clearIp(val); desc = `\`${val}\` — ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
+            else                                  { const r = ipBans.clearIp(val); desc = `\`${val}\` - ${r.flagRemoved ? "un-flagged" : "was not flagged"}, removed from **${r.players}** record(s).`; }
             return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc))));
           }
           if (choice === "firewall_status") {
             let st; try { st = await firewallStatus(); } catch (e) { st = { error: e.message }; }
-            if (st?.off)   return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall — Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable)."));
-            if (st?.error) return brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall — Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``));
+            if (st?.off)   return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Firewall - Disabled").setDescription("OS firewall blocking is off (set **UFW_BLOCK=1** to enable)."));
+            if (st?.error) return brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Firewall - Status Unavailable").setDescription(`Could not read \`sudo ufw status numbered\`.\n\`\`\`${st.error}\`\`\``));
             const denied = st.denied || [];
             const listed = denied.map(ip => `${st.isFlagged(ip) ? GLYPH.deny : GLYPH.dot} \`${ip}\`${st.isFlagged(ip) ? "  *(flagged)*" : ""}`).join("\n").slice(0, 3600) || "*No IPs are currently denied at the firewall.*";
-            const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked:** ${st.mastersBlocked.map(x => `\`${x}\``).join(", ")} — reconcile will clear them.` : "")
-              + (st.flaggedNotBlocked?.length ? `\n⚠ **${st.flaggedNotBlocked.length} flagged IP(s) not yet blocked** — reconcile will re-apply.` : "");
-            return brand(new EmbedBuilder().setColor(denied.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle("Firewall — Blocked IPs")
-              .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) · **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${listed}`)
-              .setFooter({ text: "sudo ufw status numbered · owner · sensitive" }));
+            const warn = (st.mastersBlocked?.length ? `\n⚠ **Master IP(s) blocked:** ${st.mastersBlocked.map(x => `\`${x}\``).join(", ")} - reconcile will clear them.` : "")
+              + (st.flaggedNotBlocked?.length ? `\n⚠ **${st.flaggedNotBlocked.length} flagged IP(s) not yet blocked** - reconcile will re-apply.` : "");
+            return brand(new EmbedBuilder().setColor(denied.length ? NV.LEGION_RED : NV.IRRAD_GREEN).setTitle("Firewall - Blocked IPs")
+              .setDescription(`**${denied.length}** IP${denied.length !== 1 ? "s" : ""} denied (ufw ${st.active ? "**active**" : "inactive"}) - **${st.flaggedCount ?? 0}** flagged in ipBans.${warn}\n${listed}`)
+              .setFooter({ text: "sudo ufw status numbered - owner - sensitive" }));
           }
           if (choice === "view_blacklist") {
             const b = ipBans.getBlacklist();
-            const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  ·  ").slice(0, 1024) : "*none*";
+            const fmt = (a) => a.length ? a.map(x => `\`${x}\``).join("  -  ").slice(0, 1024) : "*none*";
             return brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Blacklist")
               .addFields(
                 { name: `IPs (${b.ips.length})`,        value: fmt(b.ips),   inline: false },
@@ -445,13 +445,13 @@ module.exports = (ctx) => {
                 { name: `Account IDs (${(b.ids || []).length})`, value: fmt(b.ids || []), inline: false },
               ));
           }
-          if (choice === "ignore_list")  { const n = ipBans.getUntracked(); return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Ignored Usernames").setDescription(n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored — everyone is tracked.")); }
+          if (choice === "ignore_list")  { const n = ipBans.getUntracked(); return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Ignored Usernames").setDescription(n.length ? n.map(x => `• \`${x}\``).join("\n").slice(0, 4000) : "No usernames are ignored - everyone is tracked.")); }
           if (choice === "user_bl_list") { const ids = [...BLACKLIST_IDS]; return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Barred Discord Users").setDescription(ids.length ? ids.map(x => `• <@${x}> \`${x}\``).join("\n").slice(0, 4000) : "No Discord users are barred from commands.")); }
           let desc, color = NV.AMBER;
           if (choice === "clear_names")  { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
           else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
           else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
-          else if (choice === "save_factions") { const r = saveFactionBackup(); desc = r.ok ? `Snapshot saved — **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
+          else if (choice === "save_factions") { const r = saveFactionBackup(); desc = r.ok ? `Snapshot saved - **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
           else { desc = "Unknown action."; }
           return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc))));
         }

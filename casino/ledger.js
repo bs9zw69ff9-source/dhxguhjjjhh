@@ -84,7 +84,7 @@ async function casinoIntake(interaction) {
   }
   const playerId = loadDiscordLinks()[interaction.user.id]?.name;
   if (!playerId) {
-    await interaction.reply({ embeds: [warningEmbed("Not Linked", "Link your Discord to your Pavlov username first — use `/link add`.")], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [warningEmbed("Not Linked", "Link your Discord to your Pavlov username first - use `/link add`.")], flags: MessageFlags.Ephemeral });
     return null;
   }
   if (!checkRateLimit(interaction.user.id, "casino", cfg.cooldownMs)) {

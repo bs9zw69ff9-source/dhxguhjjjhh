@@ -15,14 +15,18 @@ assert.ok(start > 0 && end > start, "extraction markers present in index.js");
 const { embedToText, textify, textifyChunks, patchInteractionOutput } =
   new Function(`${src.slice(start, end)}; return { embedToText, textify, textifyChunks, patchInteractionOutput };`)();
 
-test("short title+description render as one clean line", () => {
-  const out = embedToText({ title: "✅  Success", description: "Tempbanned **chupavr** for **2d** (Reason: `vdm`)." });
-  assert.equal(out, "✅ **Success** — Tempbanned **chupavr** for **2d** (Reason: `vdm`).");
+test("reply is just the title emoji plus the sentence (human style)", () => {
+  const out = embedToText({ title: "✅ Success", description: "Tempbanned **chupavr** for **2d** (Reason: `vdm`)." });
+  assert.equal(out, "✅ Tempbanned **chupavr** for **2d** (Reason: `vdm`).");
 });
 
-test("multi-line description keeps a bold title line above the body", () => {
-  const out = embedToText({ title: "Temporary Exile Active", description: "line one\nline two" });
-  assert.equal(out, "**Temporary Exile Active**\nline one\nline two");
+test("title without an emoji is dropped when a description exists", () => {
+  const out = embedToText({ title: "Temp Ban Active", description: "line one\nline two" });
+  assert.equal(out, "line one\nline two");
+});
+
+test("title-only embeds still show the title", () => {
+  assert.equal(embedToText({ title: "✅ Done" }), "✅ Done");
 });
 
 test("fields render compactly; footers and rules are dropped", () => {
@@ -40,7 +44,7 @@ test("textify converts an embed payload to content and drops the embeds", () => 
   const p = textify({ embeds: [{ title: "✅ Done", description: "ok" }], flags: 64, keepEmbeds: true });
   assert.equal(p.embeds, undefined);
   assert.equal(p.flags, 64);
-  assert.match(p.content, /✅ \*\*Done\*\* — ok/);
+  assert.equal(p.content, "✅ ok");
 });
 
 test("patched reply sends converted content and follows up overflow chunks", async () => {

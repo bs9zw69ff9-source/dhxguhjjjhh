@@ -1,19 +1,19 @@
 /* ================================================================
- * ipBans.js — IP / EOS ban-evasion tracker for Pavlov
+ * ipBans.js - IP / EOS ban-evasion tracker for Pavlov
  * ================================================================
  * Tails the Pavlov server log, learns each account's UniqueId (EOS), name and
  * IPs, and catches ban evaders. The SPEC this implements:
  *
  *   1. TRACK from the log: for every account (UniqueId), its name and its
- *      CONFIRMED IPs — the IP and id that appear on the SAME disconnect line
+ *      CONFIRMED IPs - the IP and id that appear on the SAME disconnect line
  *      (UChannel::Close etc.). These pairings are certain. Join-time IPs (an
  *      "accept" line correlated to a later "login" line) are a GUESS: kept for
- *      display only, NEVER used to flag or auto-ban — a wrong guess would ban a
+ *      display only, NEVER used to flag or auto-ban - a wrong guess would ban a
  *      stranger.
  *
  *   2. FLAG on a ban (blacklistPlayer, called by the bot's /permban, /tempban
  *      and the auto-ban): the account's CONFIRMED IP(s) + its EOS id. If it has
- *      no confirmed IP yet (still online), nothing is flagged now — pendingFlag
+ *      no confirmed IP yet (still online), nothing is flagged now - pendingFlag
  *      flags the real IP the instant a disconnect confirms it.
  *
  *   3. AUTO-BAN trigger: a live join whose EXACT IP or EOS id is flagged. No /24
@@ -64,7 +64,7 @@ const ACCEPT_RE = /(?:NotifyAcceptingConnection accepted from:|NotifyAcceptedCon
 const IP_FIELD_RE  = /RemoteAddr:\s*((?:\d{1,3}\.){3}\d{1,3})/i;                    // the IP, anywhere on the line
 const UID_FIELD_RE = /UniqueId:\s*([^\s,]+)/i;                                      // disconnect-style id field
 // ?Name=Foo option. The value ends at the next URL option (?/&), at a following
-// "field: value" token (real Pavlov lines are `?Name=Bob userId: EOS:…` with no ?
+// "field: value" token (real Pavlov lines are `?Name=Bob userId: EOS:...` with no ?
 const NAME_OPT_RE  = /[?&]Name=([^?&]+?)(?=[?&]|\s+(?:userId|userid|PlayerId|UniqueId|platform|pid)\s*[:=]|\s*$)/i;
 const UID_LOGIN_RE = /(?:userId|PlayerId|UniqueId|userid)\s*[:=]\s*([^\s,?&]+)/i;   // login-style id field
 // A confirmed pairing = a line with both an IP and a disconnect-style id.
@@ -91,7 +91,7 @@ const KILLEDBY_RE = /"KilledBy":\s*"([^"]*)"/i;
 
 /* ---------------- small helpers ---------------- */
 const norm     = s => String(s ?? "").trim().toLowerCase();
-// Strict IPv4 shape check — octets bounded 0-255 so "999.1.1.1" isn't treated as an IP.
+// Strict IPv4 shape check - octets bounded 0-255 so "999.1.1.1" isn't treated as an IP.
 const IPV4_RE  = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
 // "NULL:<hex>" -> "<hex>", and strip any stray non-alphanumerics (e.g. a trailing
 // "'" captured from quoted NetworkFailure/error log lines).
@@ -115,15 +115,15 @@ function loadJSON(p, fallback) {
   const key = _kvKey(p);
   const row = _kvGet.get(key);
   if (row !== undefined) { try { return JSON.parse(row.data); } catch { return fallback; } }
-  // Not in the DB yet — import the JSON backup file if present, else seed the fallback.
+  // Not in the DB yet - import the JSON backup file if present, else seed the fallback.
   try {
     const raw = fs.readFileSync(p, "utf8");
     const val = JSON.parse(raw);
     _kvSet.run(key, raw);                       // one-time data transfer
     return val;
   } catch (err) {
-    if (err.code !== "ENOENT") {                // corrupt file — preserve the evidence, start fresh
-      try { const bak = `${p}.corrupt-${Date.now()}`; fs.renameSync(p, bak); console.error(`[ipBans] ${path.basename(p)} was corrupt — moved to ${path.basename(bak)}, starting fresh`); } catch {}
+    if (err.code !== "ENOENT") {                // corrupt file - preserve the evidence, start fresh
+      try { const bak = `${p}.corrupt-${Date.now()}`; fs.renameSync(p, bak); console.error(`[ipBans] ${path.basename(p)} was corrupt - moved to ${path.basename(bak)}, starting fresh`); } catch {}
     }
     _kvSet.run(key, JSON.stringify(fallback === undefined ? {} : fallback));
     return fallback;
@@ -137,7 +137,7 @@ function saveJSON(p, data) {
 /* ---------------- STATE ---------------- */
 // registry: { [hexId]: { name, ips: string[], firstSeen, lastSeen } }
 const registry  = loadJSON(REGISTRY_PATH, {});
-const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs (EXACT match only — no /24 subnets)
+const flagged      = new Set(loadJSON(BLACKLIST_PATH, []));   // flagged IPs (EXACT match only - no /24 subnets)
 const ipFlagged = ip => flagged.has(ip);
 const flaggedNames = new Set((loadJSON(FNAMES_PATH, []) || []).map(s => String(s).trim().toLowerCase())); // flagged usernames
 const MANUAL_IPS_PATH = path.join(__dirname, "ip_manual.json");
@@ -180,7 +180,7 @@ function bumpKD(name, field) {
   e.name = name; e[field] = (e[field] || 0) + 1; kd[k] = e; scheduleKD();
 }
 // Per-killer victim tallies: { [killerLower]: { [victimLower]: { name, count } } }.
-// Lets /stats show how many times a player has killed each individual — which the
+// Lets /stats show how many times a player has killed each individual - which the
 // bot then rolls up per faction by cross-referencing the faction spawn files.
 const killLog = loadJSON(KILLLOG_PATH, {});
 let killLogDirty = false, killLogTimer = null;
@@ -234,7 +234,7 @@ function resolveIds(input) {
   const key = norm(input);
   if (registry[input]) return [input];
   // registry keys are CLEANED ids - also try the cleaned form of the input, so
-  // prefixed tokens ("NULL:abc…", "EOS:abc…") still resolve to their entry.
+  // prefixed tokens ("NULL:abc...", "EOS:abc...") still resolve to their entry.
   const cid = cleanId(input);
   if (cid && registry[cid]) return [cid];
   const ckey = norm(cid);
@@ -335,7 +335,7 @@ function altNamesForIps(ips, excludeIds = []) {
 function blacklistPlayer(input, opts = {}) {
   const flagId = opts.flagId === true;
   const ids  = resolveIds(input);
-  // Flag ONLY CONFIRMED IPs (same-line disconnect pairings — 100% reliable). Join-time
+  // Flag ONLY CONFIRMED IPs (same-line disconnect pairings - 100% reliable). Join-time
   // IPs are a timing GUESS and can be mis-correlated to a stranger, so flagging them
   // was auto-banning unrelated players ("random IP bans"). If the banned player has no
   // confirmed IP yet (still online, never disconnected), nothing is flagged now —
@@ -368,9 +368,9 @@ function blacklistPlayer(input, opts = {}) {
     field: {
       name: "IP Enforcement",
       value: (ips.length
-        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} + ${ids.length} account id(s) — any account from them is auto-banned.`
-        : (ids.length ? `Flagged **${ids.length}** account id(s) — any reconnect with them is auto-banned.` : "No connection data on record yet.")) +
-        (altNames.length ? `\nShares an IP with: ${altNames.map(a => `\`${a}\``).join("  ·  ")}` : ""),
+        ? `Flagged **${ips.length}** IP${ips.length !== 1 ? "s" : ""} + ${ids.length} account id(s) - any account from them is auto-banned.`
+        : (ids.length ? `Flagged **${ids.length}** account id(s) - any reconnect with them is auto-banned.` : "No connection data on record yet.")) +
+        (altNames.length ? `\nShares an IP with: ${altNames.map(a => `\`${a}\``).join("  -  ")}` : ""),
       inline: false,
     },
   };
@@ -518,7 +518,7 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   if (name && untrackedNames.has(norm(name))) {    // ignore-listed username - don't track at all
     if (!skipId(rawId)) { const cid = cleanId(rawId); if (!untrackedIds.has(cid)) { untrackedIds.set(cid, norm(name)); saveUntrackedIds(); } }   // also skip their disconnect lines
     // Master names still get a live join callback (with NO IP) so the bot can hand
-    // them a menu on join — but nothing about them is recorded.
+    // them a menu on join - but nothing about them is recorded.
     if (live && masterNames.has(norm(name)) && Date.now() - (recentJoin.get(norm(name)) ?? 0) >= JOIN_DEBOUNCE_MS) {
       recentJoin.set(norm(name), Date.now());
       try { await onConnect({ name, ip: null, server }); } catch (e) { console.error("[ipBans] onConnect(master) failed:", e.message); }
@@ -540,7 +540,7 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   if (Date.now() - (recentJoin.get(key) ?? 0) >= JOIN_DEBOUNCE_MS) {
     recentJoin.set(key, Date.now());
     // `confident` = the join IP was unambiguously correlated (exactly one pending
-    // connection) — safe for the bot to act on (e.g. VPN ban+kick while online).
+    // connection) - safe for the bot to act on (e.g. VPN ban+kick while online).
     try { await onConnect({ name: display, ip: ip || null, server, confident }); }
     catch (e) { console.error("[ipBans] onConnect failed:", e.message); }
   }
@@ -549,11 +549,11 @@ async function handleJoin(name, rawId, ip, ts, server, confident) {
   //  • username comes straight from the login line -> reliable, ban on sight.
   if (valid && Date.now() - (recentAuto.get(id) ?? 0) >= AUTO_DEBOUNCE_MS) {
     // Ban-on-join match, EXACT only:
-    //  • flagged EOS id           — straight off the login line, most reliable
-    //  • flagged username         — deliberate manual flag
-    //  • a CONFIRMED IP on record  — this account previously disconnected from a flagged IP
-    //  • the current join's IP     — only when the correlation is unambiguous (confident)
-    // Never a mis-correlated join IP (e.ips) — that would ban an innocent.
+    //  • flagged EOS id           - straight off the login line, most reliable
+    //  • flagged username         - deliberate manual flag
+    //  • a CONFIRMED IP on record  - this account previously disconnected from a flagged IP
+    //  • the current join's IP     - only when the correlation is unambiguous (confident)
+    // Never a mis-correlated join IP (e.ips) - that would ban an innocent.
     const e = registry[id];
     const knownFlagged = e && (e.cips || []).some(ipFlagged);
     const reason = flaggedIds.has(id)                        ? "blacklisted account (EOS id)"
@@ -669,7 +669,7 @@ function parseLine(line, server, key) {
   // 4) ban/unban from ANY admin tool - flag/clear that player's IPs (live only)
   if (!live) return;
   const b = line.match(BAN_RE);
-  if (b) { const r = blacklistPlayer(b[1]); if (r.ips.length) console.log(`[ipBans] ban detected "${b[1]}" — flagged ${r.ips.length} IP(s)${r.alts.length ? `, alts: ${r.alts.join(", ")}` : ""}`); return; }
+  if (b) { const r = blacklistPlayer(b[1]); if (r.ips.length) console.log(`[ipBans] ban detected "${b[1]}" - flagged ${r.ips.length} IP(s)${r.alts.length ? `, alts: ${r.alts.join(", ")}` : ""}`); return; }
   const u = line.match(UNBAN_RE);
   if (u) { unblacklistPlayer(u[1]); }
 }
@@ -783,14 +783,14 @@ function init(opts = {}) {
 
   // Master/owner in-game names are never tracked (no IP logging, feed, or auto-ban)
   // but DO still get a live join callback so the bot can hand them a menu. Seeded
-  // in-memory only — hardcoded in the bot, so not written to the untracked file.
+  // in-memory only - hardcoded in the bot, so not written to the untracked file.
   if (Array.isArray(opts.masters)) for (const m of opts.masters) { const k = norm(m); if (k) { untrackedNames.add(k); masterNames.add(k); } }
 
   const { files, how } = resolveLogFiles(opts);
   console.log(`[ipBans] log source: ${how}`);
   for (const f of files) {
     try { const st = fs.statSync(f); console.log(`[ipBans] log OK  (${(st.size / 1048576).toFixed(1)} MB): ${f}`); }
-    catch (e) { console.warn(`[ipBans] log MISSING/unreadable: ${f} — ${e.code || e.message}. Set PAVLOV_LOGS in .env.`); }
+    catch (e) { console.warn(`[ipBans] log MISSING/unreadable: ${f} - ${e.code || e.message}. Set PAVLOV_LOGS in .env.`); }
   }
 
   // expand each log into itself + sibling rotated logs, oldest -> newest so the latest name/lastSeen wins
@@ -824,8 +824,8 @@ function init(opts = {}) {
   const named = all.filter(id => registry[id].name).length;
   const cipd  = all.filter(id => (registry[id].cips || []).length).length;
   const linked = all.filter(id => registry[id].name && (registry[id].cips || []).length).length;
-  console.log(`[ipBans] ready — ${all.length} known IDs (${named} named, ${cipd} with a confirmed IP, ${linked} fully linked), ${flagged.size} flagged IPs. Watching ${watchList.length} file(s) every ${(opts.pollMs || POLL_MS) / 1000}s.`);
-  if (all.length && !linked) console.warn(`[ipBans] WARNING: no account has a confirmed IP yet — account bans can't flag IPs. Run \`node ipBans.js\` and check the close=(IP+id) count to verify the log format.`);
+  console.log(`[ipBans] ready - ${all.length} known IDs (${named} named, ${cipd} with a confirmed IP, ${linked} fully linked), ${flagged.size} flagged IPs. Watching ${watchList.length} file(s) every ${(opts.pollMs || POLL_MS) / 1000}s.`);
+  if (all.length && !linked) console.warn(`[ipBans] WARNING: no account has a confirmed IP yet - account bans can't flag IPs. Run \`node ipBans.js\` and check the close=(IP+id) count to verify the log format.`);
   return setInterval(poll, opts.pollMs || POLL_MS);
 }
 
@@ -867,7 +867,7 @@ if (require.main === module) {
   const { files, how } = resolveLogFiles(argFiles.length ? { logFiles: argFiles } : {});
   console.log(bar);
   console.log("ipBans self-test");
-  console.log("uid", process.getuid ? process.getuid() : "?", " · source:", how, " · PAVLOV_LOGS:", process.env.PAVLOV_LOGS || "(unset)");
+  console.log("uid", process.getuid ? process.getuid() : "?", " - source:", how, " - PAVLOV_LOGS:", process.env.PAVLOV_LOGS || "(unset)");
   console.log(bar);
   for (const f of files) {
     console.log(`\n### ${f}`);
@@ -878,8 +878,8 @@ if (require.main === module) {
     let nA = 0, nL = 0, nC = 0, nB = 0, nK = 0;
     for (const l of tail) { if (ACCEPT_RE.test(l)) nA++; if (extractLogin(l)) nL++; if (extractClose(l)) nC++; if (BAN_RE.test(l)) nB++; if (KILLEDBY_RE.test(l)) nK++; }
     console.log(`  matches in last ${tail.length} lines:  accept=${nA}  login=${nL}  close(IP+id)=${nC}  ban=${nB}  kill(KilledBy)=${nK}`);
-    if (!nL && !nC) console.log("  no join/disconnect lines matched — wrong/empty log, or unexpected format.");
-    if (!nK) console.log("  no kill data matched — set bVerboseLogging=true in Game.ini (else K/D can't work).");
+    if (!nL && !nC) console.log("  no join/disconnect lines matched - wrong/empty log, or unexpected format.");
+    if (!nK) console.log("  no kill data matched - set bVerboseLogging=true in Game.ini (else K/D can't work).");
     // Dump real sample lines so the exact format can be matched if the counts are low.
     const sample = (label, test, n = 2) => {
       const hits = tail.filter(test).slice(-n);
@@ -891,10 +891,10 @@ if (require.main === module) {
     sample("UniqueId lines",   l => /UniqueId/i.test(l));
     sample("Login/Join lines", l => /Login request:|Join request:/i.test(l));
   }
-  console.log(`\n${bar}\nRunning backfill…\n${bar}`);
+  console.log(`\n${bar}\nRunning backfill...\n${bar}`);
   clearInterval(init({ logFiles: files, pollMs: 9e8 }));
   const ids = Object.keys(registry), withIp = ids.filter(id => (registry[id].ips || []).length);
   console.log(`\nregistry: ${ids.length} players, ${withIp.length} with an IP`);
   withIp.slice(0, 25).forEach(id => console.log(`  ${registry[id].name || "?"}  [${id}]  ->  ${registry[id].ips.join(", ")}`));
-  console.log(`\n${bar}\n${withIp.length ? "RESULT: IPs ARE being captured." : "RESULT: no IPs captured — paste this whole output back."}\n${bar}`);
+  console.log(`\n${bar}\n${withIp.length ? "RESULT: IPs ARE being captured." : "RESULT: no IPs captured - paste this whole output back."}\n${bar}`);
 }
