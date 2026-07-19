@@ -173,6 +173,9 @@ module.exports = (ctx) => {
             ]);
             const listData = parseRcon(listRaw);
             const infoData = parseRcon(infoRaw);
+            // Pavlov nests the ServerInfo fields under a `ServerInfo` key — reading them
+            // top-level (the old code) is why map/mode/max all showed *Unknown* / ?.
+            const sv = infoData?.ServerInfo ?? infoData ?? {};
             // Derive the roster from the SAME RefreshList we just fetched, so the count
             // and the names always agree and are live — the old code counted this fetch
             // but drew names from the separately-polled cache, so they could disagree.
@@ -181,26 +184,24 @@ module.exports = (ctx) => {
               ok:         listData?.Successful ?? false,
               players:    roster.length,
               roster,
-              mapLabel:   infoData?.MapLabel    ?? infoData?.ServerName ?? "*Unknown*",
-              gameMode:   infoData?.GameMode    ?? "*Unknown*",
-              serverName: infoData?.ServerName  ?? serverLabel(srv),
-              maxPlayers: infoData?.MaxPlayers  ?? "?",
+              mapLabel:   sv.MapLabel ?? sv.MapName ?? sv.ServerName ?? "*Unknown*",
+              gameMode:   sv.GameMode ?? "*Unknown*",
+              serverName: sv.ServerName ?? serverLabel(srv),
+              maxPlayers: Number(sv.MaxPlayers) || 24,
             };
-          } catch { return { ok: false, players: 0, roster: [], mapLabel: "*Unreachable*", gameMode: "*Unreachable*", serverName: serverLabel(srv), maxPlayers: "?" }; }
+          } catch { return { ok: false, players: 0, roster: [], mapLabel: "*Unreachable*", gameMode: "*Unreachable*", serverName: serverLabel(srv), maxPlayers: 24 }; }
         };
         const servers = server === "both" ? ACTIVE_SERVERS : [server];
         const infos   = await Promise.all(servers.map(fetchInfo));
         const stats   = loadServerStats();
         const embeds  = infos.map((info, i) => {
           const srv = servers[i];
-          const maxN = Number(info.maxPlayers) || info.players || 1;
-          const peak = stats?.perServer?.[srv]?.peak ?? 0;
+          const maxN = Number(info.maxPlayers) || 24;
           const lines = [
             `${cell("status", 8)} ${info.ok ? `${GLYPH.up} online` : `${GLYPH.down} offline`}`,
             `${cell("map", 8)} ${info.mapLabel}`,
             `${cell("mode", 8)} ${info.gameMode}`,
-            `${cell("players", 8)} ${bar(info.players, maxN, 10)} ${info.players}/${info.maxPlayers}`,
-            `${cell("peak", 8)} ${peak} all-time`,
+            `${cell("players", 8)} ${bar(info.players, maxN, 10)} ${info.players}/${maxN}`,
           ];
           const e = new EmbedBuilder()
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
@@ -213,12 +214,12 @@ module.exports = (ctx) => {
           }
           return brand(e, { footer: { text: `${serverLabel(srv)} · live data` } });
         });
-        // Across-all-servers summary when showing more than one server.
-        if (servers.length > 1) {
-          const liveTotal = infos.reduce((s, x) => s + (x.ok ? x.players : 0), 0);
-          const peakAll   = stats?.combined?.peak ?? 0;
-          embeds[0].addFields({ name: "All Servers", value: `**${liveTotal}** online now  ·  **${peakAll}** all-time peak (combined)`, inline: false });
-        }
+        // Network total across every server: X / (combined capacity), plus the all-time
+        // combined peak — one figure, not per-server. Peak is also on the live dashboard.
+        const liveTotal = infos.reduce((s, x) => s + (x.ok ? x.players : 0), 0);
+        const totalMax  = infos.reduce((s, x) => s + (Number(x.maxPlayers) || 24), 0);
+        const peakAll   = stats?.combined?.peak ?? 0;
+        embeds[0].addFields({ name: "Network", value: `**${liveTotal}/${totalMax}** online now  ·  all-time peak **${peakAll}/${totalMax}**`, inline: false });
         return interaction.editReply({ embeds });
         },
 

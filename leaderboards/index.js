@@ -233,12 +233,14 @@ function hudRow(s) {
   return `${dot} ${name}\n  ${count} ${bar(s.players, s.max, 10)}  ${cell(s.mode, 8)}`;
 }
 function buildDashboardEmbed(snaps) {
-  const anyUp  = snaps.some(s => s.up);
-  const totalP = snaps.reduce((a, s) => a + (s.up ? s.players : 0), 0);
-  const gw     = Math.max(0, client.ws.ping);
+  const anyUp    = snaps.some(s => s.up);
+  const totalP   = snaps.reduce((a, s) => a + (s.up ? s.players : 0), 0);
+  const totalMax = snaps.reduce((a, s) => a + (Number(s.max) || 0), 0);
+  const peak     = safeRead(FILES.SERVER_STATS, {})?.combined?.peak ?? 0;
+  const gw       = Math.max(0, client.ws.ping);
   const lines = [
     "LIVE NETWORK STATUS",
-    `${totalP} online · gw ${gw}ms · ${Math.round(DASHBOARD_INTERVAL_MS / 1000)}s`,
+    `${totalP}/${totalMax} online · peak ${peak} · gw ${gw}ms`,
     "──────────────────────────",
     ...snaps.map(hudRow),
   ];
