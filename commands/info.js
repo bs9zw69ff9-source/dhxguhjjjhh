@@ -46,19 +46,19 @@ module.exports = (ctx) => {
         const embed = new EmbedBuilder().setColor(color)
           .setTitle("Command Roster")
           .setDescription(
-            `> *War never changes — but the rules of the server, those we enforce.*\n\n` +
+            `> *The rules of the server — we enforce them.*\n\n` +
             `### ${GLYPH.rank}  Your Access\n${badge}\n` +
             `-# Mod ${mStr}  ${GLYPH.dot}  Admin ${aStr}  ${GLYPH.dot}  Faction ${fStr}\n` +
             `-# Autocomplete works in every Player ID and Rank field.`
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link add`\n`/faction list` `/faction playtime`" },
+              value: "`/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link add`\n`/faction list` `/faction playtime`\nCasino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
                 "`/flush <server>` — Randomly kick one online player (staff & donators immune)",
-                "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
+                "`/tempban <id> <reason> <server>` — Exile; the punishment preset sets the duration (Other takes a date)",
                 "`/unban <id> <server>` — Lift exile",
                 "`/announce <msg> <server> <target>` — RCON Notify a player or All",
                 "`/givecaps <id> <amount> [reason]` — Give credits to a player",
@@ -74,22 +74,31 @@ module.exports = (ctx) => {
                 "`/permban <id> <server> <reason>` — Permanent ban",
                 "`/cleartempbans` `/setroles`",
                 "`/staffactivity <staff>` — All mod actions by a staff member",
+                "`/staffleaderboard [period]` — Rank staff by moderation actions",
                 "`/givemenu` `/stripmenu` `/adjustcaps`",
-                "`/manual`",
+                "`/manual` — Raw RCON command",
+                "`/casino` — Casino config (bets, cooldown, on/off)",
                 "`/donator add|remove|list <id>` — Manage the donator whitelist file",
-                "`/stripmenuall` — *Owner only* — clear ALL menu access from everyone",
-                "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
-                "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
-                "`/link remove|list` — *Mod* — manage Discord ↔ Pavlov links (adds are public requests)",
-                "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
+                "`/setrconroles [high_staff] [staff] [faction]` — Set which roles grant each RCON menu",
+                "`/link remove|list` — *Mod* — manage Discord ↔ Pavlov links (adds are public requests)",
+              ].join("\n") },
+            { name: "Owner",
+              value: [
+                "`/configure` — Control panel",
+                "`/firewall block|unblock|status` — Manual OS-firewall (ufw) control",
+                "`/stripmenuall` — Clear ALL menu access from everyone",
+                "`/clearallbans` — Unban everyone (clears blacklist.txt)",
+                "`/faction wipe [faction]` — Reset a faction's whitelist (or all)",
               ].join("\n") },
             { name: "Faction Ranks (per faction)",
               value: rankSummaryLines },
             { name: "Automation",
               value: [
                 "Temp bans auto-lifted every **60s**",
-                "Leaderboards refreshed every **30s**",
+                "Leaderboards / live player list refreshed every **30s**",
+                "Peak player counts tracked automatically (daily + all-time)",
+                "VPN check on connect — confirmed hits are auto-banned",
                 "RCON health check every **5 min**",
                 "Rank changes update both the rank registry and the rank-specific spawn files automatically",
                 "`/kick` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
