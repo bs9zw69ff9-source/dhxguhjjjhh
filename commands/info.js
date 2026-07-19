@@ -31,21 +31,21 @@ module.exports = (ctx) => {
         // Clean help-menu style: one flat list - `command` chip line, then a plain
         // explanation line under it. Tier shown in parentheses; no fields, no footer.
         const rows = [
-          ["`/serverinfo <server>`", "Live server info - map, mode, players, and network peak."],
+          ["`/serverinfo`", "Live server info - map, mode, players, and network peak."],
           ["`/checkban <player>` / `/stats <player>` / `/kd [player]`", "Ban status, full player dossier, or K/D stats and leaderboard."],
           ["`/link add`", "Request a Discord ↔ in-game name link (staff approve it)."],
           ["`/faction list <faction>` / `/faction playtime <faction>`", "Faction roster with ranks, or members ranked by playtime."],
           ["`/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot`", "Casino games - play with your credits."],
-          ["`/kick <player> <server>` / `/flush <server>`", "Kick a player, or randomly kick one online player (mod)."],
-          ["`/tempban <player> <reason> <server>` / `/unban <player>`", "Ban - the punishment preset sets the length - or lift a ban (mod)."],
-          ["`/announce <message> <server> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
+          ["`/kick <player>` / `/flush <server>`", "Kick a player, or randomly kick one online player (mod)."],
+          ["`/tempban <player> <reason>` / `/unban <player>`", "Ban - the punishment preset sets the length - or lift a ban (mod)."],
+          ["`/announce <message> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
           ["`/givecaps <player> <amount>` / `/link remove|list`", "Give credits; manage name links (mod)."],
           ["`/faction add|remove <player> <faction>`", "Faction whitelist management (faction leader)."],
-          ["`/permban <player> <server> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
+          ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],
           ["`/donator add|remove|list <player>` / `/adjustcaps <player> <amount>`", "Manage the donator whitelist; adjust a player's ledger (admin)."],
-          ["`/setroles` / `/casino` / `/manual <command> <server>`", "Set tier roles, casino config, or send raw RCON (admin)."],
+          ["`/setroles` / `/casino` / `/manual <command>`", "Set tier roles, casino config, or send raw RCON (admin)."],
           ["`/faction setrankcap <faction> <rank> <cap>`", "Cap members per rank - 0 = unlimited (admin)."],
           ["`/configure` / `/firewall block|unblock|status`", "Owner control panel; manual OS-firewall (ufw) control (owner)."],
           ["`/stripmenuall` / `/clearallbans` / `/faction wipe [faction]`", "Clear all menu access, unban everyone, or reset faction whitelists (owner)."],
@@ -65,7 +65,7 @@ module.exports = (ctx) => {
          SERVERINFO
          ───────────────────────────────────────────────────── */
   "serverinfo": async (interaction, name) => {
-        const server = interaction.options.getString("server");
+        const server = "both"   /* server option removed - applies to all servers */;
         await interaction.deferReply();
         const fetchInfo = async (srv) => {
           try {

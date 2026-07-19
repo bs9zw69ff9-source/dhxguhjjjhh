@@ -112,7 +112,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "announce": async (interaction, name) => {
         const message = sanitizeMessage(interaction.options.getString("message"));
-        const server  = interaction.options.getString("server");
+        const server  = "both"   /* server option removed - applies to all servers */;
         const rawTarget = interaction.options.getString("target");
         if (!message.trim()) return interaction.reply({ embeds: [errorEmbed("Empty Message", "Cannot broadcast an empty message.")], flags: MessageFlags.Ephemeral });
         const isAll  = !rawTarget || rawTarget.trim().toLowerCase() === "all";
@@ -152,7 +152,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "givemenu": async (interaction, name) => {
         const playerId  = sanitizeId(interaction.options.getString("playerid"));
-        const server    = interaction.options.getString("server");
+        const server    = "both"   /* server option removed - applies to all servers */;
         const menuValue = interaction.options.getString("menu");
         const menuMeta  = MENUS.find(m => m.value === menuValue);
         const menuId    = menuMeta?.menuId ?? menuValue;
@@ -185,7 +185,7 @@ module.exports = (ctx) => {
         // RemoveMenu <user> clears the player's menu bit code regardless of which menu -
         // no menu choice, no bit code needed.
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        const server   = interaction.options.getString("server");
+        const server   = "both"   /* server option removed - applies to all servers */;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         // If they were ever granted High Staff, also revoke Access Manager (RCON+).

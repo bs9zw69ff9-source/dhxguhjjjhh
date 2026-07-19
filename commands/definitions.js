@@ -22,11 +22,10 @@ const ALL_RANK_NAMES = [...new Set(
 
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
-  new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count").addStringOption(serverOption),
+  new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count"),
   new SlashCommandBuilder().setName("kick")
     .setDescription("Kick a player from the server")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Reason for kick"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("flush")
@@ -48,21 +47,17 @@ const commands = [
     .setDescription("Ban a player - the punishment sets the duration (Hard R = permanent; Other = custom date)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("reason").setDescription("Punishment - sets the ban length automatically").setRequired(true).addChoices(...PUNISH_CHOICES))
-    .addStringOption(serverOption)
     .addStringOption(o => o.setName("date").setDescription("Only for 'Other': unban date YYYY-MM-DD (lifts 12pm Eastern that day)").setRequired(false))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("unban")
     .setDescription("Lift a player's ban")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID to pardon").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption),
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID to pardon").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("checkban")
     .setDescription("Check if a player is currently banned")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption),
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("permban")
     .setDescription("Admin - Permanently ban a player")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...PUNISH_CHOICES))
     .addStringOption(o => o.setName("notes").setDescription("Additional context"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
@@ -85,18 +80,15 @@ const commands = [
   new SlashCommandBuilder().setName("announce")
     .setDescription("Mod - Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
-    .addStringOption(serverOption)
     .addStringOption(o => o.setName("target").setDescription("Who to notify: a specific player, or All").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("givemenu")
     .setDescription("Admin - Grant RCON menu access to a player")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption)
     .addStringOption(o => o.setName("menu").setDescription("Menu to grant").setRequired(true)
       .addChoices(...MENUS.map(m => ({ name: m.name, value: m.value })))),
   new SlashCommandBuilder().setName("stripmenu")
     .setDescription("Admin - Revoke ALL RCON menu access from a player")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(serverOption),
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("stripmenuall")
     .setDescription("Owner - Clear ALL menu access from every player (both servers)"),
   new SlashCommandBuilder().setName("configure")
@@ -149,8 +141,7 @@ const commands = [
 
   new SlashCommandBuilder().setName("manual")
     .setDescription("Admin - Send a raw RCON command")
-    .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true))
-    .addStringOption(serverOption),
+    .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true)),
   new SlashCommandBuilder().setName("givecaps")
     .setDescription("Give credits to a player (faction leader / mod command)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))

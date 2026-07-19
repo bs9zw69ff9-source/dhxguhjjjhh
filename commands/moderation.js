@@ -27,7 +27,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "kick": async (interaction, name) => {
         const playerId = sanitizeId(interaction.options.getString("playerid"));
-        const server   = interaction.options.getString("server");
+        const server   = "both"   /* server option removed - applies to all servers */;
         const reason   = interaction.options.getString("reason") ?? "No reason provided";
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
@@ -38,12 +38,12 @@ module.exports = (ctx) => {
         }
         writeModLog({ action: "kick", playerId, reason, by: interaction.user.tag, server });
         const embed = new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Player Kicked")
-          .setDescription(`**${interaction.user.username}** kicked **${playerId}** from ${serverLabel(server)} (reason: \`${reason}\`).`)
+          .setDescription(`**${interaction.user.username}** kicked **${playerId}** (reason: \`${reason}\`).`)
           .setFooter({ text: "Kick logged - no ban issued" });
         const kTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const kDm = await dmPunishmentNotice(kTarget, {
           action: "Kick", color: NV.NCR_TAN, playerId, reason,
-          fields: [{ name: "Server", value: serverLabel(server), inline: true }],
+          fields: [],
         });
         const kDmField = dmStatusField(kDm, kTarget);
         if (kDmField) embed.addFields(kDmField);
@@ -194,7 +194,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "tempban": async (interaction, name) => {
         const playerId  = sanitizeBanName(interaction.options.getString("playerid"));
-        const server    = interaction.options.getString("server");
+        const server    = "both"   /* server option removed - applies to all servers */;
         const reasonKey = interaction.options.getString("reason");
         const punish    = PUNISH_BY_VALUE[reasonKey];
         const reason    = punish?.name ?? BAN_REASON_LABELS[reasonKey] ?? reasonKey;
@@ -242,7 +242,7 @@ module.exports = (ctx) => {
         const liftLine = permanent ? "" : ` Lifts <t:${ts}:R>.`;
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
           .setTitle(permanent ? "Permanent Ban Issued" : "Player Banned")
-          .setDescription(`**${interaction.user.username}** banned **${playerId}** ${sentence} on ${serverLabel(server)} (reason: \`${reason}\`).${liftLine}`),
+          .setDescription(`**${interaction.user.username}** banned **${playerId}** ${sentence} (reason: \`${reason}\`).${liftLine}`),
           replaced ? `Replaced earlier ban: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
         if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
 
@@ -260,8 +260,8 @@ module.exports = (ctx) => {
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
           fields: permanent
-            ? [ { name: "Length", value: "**Permanent**",    inline: true }, { name: "Server", value: serverLabel(server), inline: true } ]
-            : [ { name: "Duration", value: `**${label}**`,     inline: true }, { name: "Server", value: serverLabel(server), inline: true },
+            ? [ { name: "Length", value: "**Permanent**",    inline: true } ]
+            : [ { name: "Duration", value: `**${label}**`,     inline: true },
                 { name: "Expires",  value: `<t:${ts}:F>  -  <t:${ts}:R>`, inline: false } ],
         });
         const tbDmField = dmStatusField(tbDm, tbTarget);
@@ -276,7 +276,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "unban": async (interaction, name) => {
         const playerId = sanitizeBanName(interaction.options.getString("playerid"));
-        const server   = interaction.options.getString("server");
+        const server   = "both"   /* server option removed - applies to all servers */;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         // Hierarchy: a lower tier can't lift a ban issued by a higher tier.
         const existingBan = loadBans().find(b => b.playerId.toLowerCase() === playerId.toLowerCase());
@@ -303,7 +303,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "checkban": async (interaction, name) => {
         const playerId = sanitizeBanName(interaction.options.getString("playerid"));
-        const server   = interaction.options.getString("server");
+        const server   = "both"   /* server option removed - applies to all servers */;
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
         // Prefer an active TEMP entry if the registry ever holds duplicates for a name.
         const _entries = loadBans().filter(b => b.playerId.toLowerCase() === playerId.toLowerCase());
@@ -351,7 +351,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "permban": async (interaction, name) => {
         const playerId  = sanitizeBanName(interaction.options.getString("playerid"));
-        const server    = interaction.options.getString("server");
+        const server    = "both"   /* server option removed - applies to all servers */;
         const reasonKey = interaction.options.getString("reason");
         const notes     = interaction.options.getString("notes") ?? null;
         const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
@@ -363,14 +363,13 @@ module.exports = (ctx) => {
         await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Issued")
-          .setDescription(`**${interaction.user.username}** permanently banned **${playerId}** on ${serverLabel(server)} (reason: \`${reason}\`).`));
+          .setDescription(`**${interaction.user.username}** permanently banned **${playerId}** (reason: \`${reason}\`).`));
         if (notes) embed.addFields({ name: "Notes", value: notes });
         const pbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const pbDm = await dmPunishmentNotice(pbTarget, {
           action: "Permanent Ban", color: NV.LEGION_RED, playerId, reason,
           fields: [
             { name: "Length", value: "**Permanent**",      inline: true },
-            { name: "Server",   value: serverLabel(server),  inline: true },
           ],
         });
         const pbDmField = dmStatusField(pbDm, pbTarget);
@@ -461,7 +460,7 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "manual": async (interaction, name) => {
         const command = interaction.options.getString("command");
-        const server  = interaction.options.getString("server");
+        const server  = "both"   /* server option removed - applies to all servers */;
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           if (server === "both") {
