@@ -1,21 +1,21 @@
-/* ---------------- commands/moderation: /kick /mute /unmute /flush /staffactivity /tempban /unban /banlist /checkban /permban /cleartempbans /clearallbans /manual /inspect /firewall ----------------
+/* ---------------- commands/moderation: /kick /flush /staffactivity /staffleaderboard /tempban /unban /checkban /permban /cleartempbans /clearallbans /manual /inspect /firewall ----------------
    Split from commands/index.js. Each handler receives (interaction, name) and
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
   const {
   BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES, GLYPH,
   IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
-  addAutobanExempt, banWithIp, blacklistHas, brand, canOverride, checkVpn, clearMute,
+  addAutobanExempt, banWithIp, blacklistHas, brand, canOverride, checkVpn,
   commandTier, commandTierName,
   clinical, confirmDialog, discordIdForPavlov, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
   easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
-  firewallUnblockIps, formatTimeLeft, gagEverywhere, getMute, getOnlinePlayers, hasModRole,
+  firewallUnblockIps, formatTimeLeft, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
   isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, log,
   logAction, logBan, logger, modOnlyEmbed, ownerOnlyEmbed, paginate,
-  parseDuration, preserveBalanceAcrossKick, punishDurationLabel, randomQuote, removeBans, sanitizeBanName,
-  sanitizeId, sendRcon, serverLabel, setMute, successEmbed, suspendDonator,
-  unbanEverywhere, ungagEverywhere, update, upsertPermBan, upsertTempBan, warningEmbed,
+  preserveBalanceAcrossKick, punishDurationLabel, randomQuote, removeBans, sanitizeBanName,
+  sanitizeId, sendRcon, serverLabel, successEmbed, suspendDonator,
+  unbanEverywhere, update, upsertPermBan, upsertTempBan, warningEmbed,
   writeModLog,
   blacklistAll, ACTIVE_SERVERS,
   } = ctx;
@@ -50,59 +50,6 @@ module.exports = (ctx) => {
         brand(embed); await logAction(embed);
         enforceBansSweep().catch(() => {});     // player sweep after the punishment
         return interaction.editReply({ embeds: [embed] });
-        },
-
-  /* ─────────────────────────────────────────────────────
-         MUTE — in-game gag for a set time, re-applied every join
-         ───────────────────────────────────────────────────── */
-  "mute": async (interaction, name) => {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        const durStr   = interaction.options.getString("duration");
-        const reason   = interaction.options.getString("reason") ?? "No reason provided";
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be muted.`)], flags: MessageFlags.Ephemeral });
-        const durMs = parseDuration(durStr);
-        if (!durMs) return interaction.reply({ embeds: [errorEmbed("Invalid Duration", "Use `30s`, `10m`, `2h`, or `1d` (a bare number = minutes).")], flags: MessageFlags.Ephemeral });
-        await interaction.deferReply();
-        const expires = Date.now() + durMs;
-        // If they're already under an active mute, they should already be gagged
-        // natively - Gag is a bare toggle, so re-sending it here (e.g. a mod re-running
-        // /mute to extend the duration) would flip it back OFF instead of extending it.
-        const alreadyMuted = getMute(playerId);
-        const stillActive  = alreadyMuted && alreadyMuted.expires > Date.now();
-        await setMute(playerId, { name: playerId, expires, reason, moderator: interaction.user.tag, moderatorRank: commandTier(interaction.member), moderatorId: interaction.user.id, at: Date.now() });
-        if (!stillActive) gagEverywhere(playerId);   // gag now if they're online and not already gagged
-        enforceBansSweep().catch(() => {});      // player sweep after the punishment
-        writeModLog({ action: "mute", playerId, reason, duration: durStr, by: interaction.user.tag });
-        const ts = Math.floor(expires / 1000);
-        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Player Silenced")
-          .setDescription(`${interaction.user} muted **${playerId}** for **${durStr}** (expires <t:${ts}:R>) — ${reason}`)
-          .setFooter({ text: "Re-gagged every join until it expires — then unmuted on their next join" }).setTimestamp());
-        await logAction(embed);
-        return interaction.editReply({ embeds: [embed] });
-        },
-
-  "unmute": async (interaction, name) => {
-        const playerId = sanitizeId(interaction.options.getString("playerid"));
-        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-        const had = getMute(playerId);
-        // Hierarchy: a lower tier can't lift a mute set by a higher tier.
-        const actorTier = commandTier(interaction.member);
-        if (had && !canOverride(actorTier, had.moderatorRank)) {
-          return interaction.reply({ embeds: [warningEmbed("Outranked",
-            `\`${playerId}\` was muted by a **${commandTierName(had.moderatorRank)}**. As **${commandTierName(actorTier)}**, you can't lift a higher tier's mute.`)], flags: MessageFlags.Ephemeral });
-        }
-        await clearMute(playerId);
-        // Only toggle if we believe they're actually gagged right now - Gag is a bare
-        // toggle with no True/False, so calling it on someone who isn't muted would
-        // incorrectly mute them instead of harmlessly no-op'ing like the old form did.
-        if (had) ungagEverywhere(playerId);
-        writeModLog({ action: "unmute", playerId, by: interaction.user.tag });
-        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Player Unsilenced")
-          .setDescription(had ? `${interaction.user} lifted the mute on \`${playerId}\` and ungagged them.` : `\`${playerId}\` had no active mute — nothing to lift.`)
-          .setTimestamp());
-        await logAction(embed);
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
 
   /* ─────────────────────────────────────────────────────
@@ -354,30 +301,6 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         BANLIST — all active bans
-         ───────────────────────────────────────────────────── */
-  "banlist": async (interaction, name) => {
-        const now  = Date.now();
-        const bans = loadBans()
-          .filter(b => b.permanent || (b.expires && b.expires > now))
-          .sort((a, b) => (b.permanent ? 1 : 0) - (a.permanent ? 1 : 0) || (a.expires ?? 0) - (b.expires ?? 0));   // perms first, then soonest-expiring
-        if (!bans.length) {
-          return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green)
-            .setTitle("Ban List — Empty").setDescription("No active bans."))], flags: MessageFlags.Ephemeral });
-        }
-        const lines = bans.map((b, i) => {
-          const when = (b.permanent || !b.expires) ? "**PERM**" : `until <t:${Math.floor(b.expires / 1000)}:d>`;
-          return `\`${String(i + 1).padStart(2, "0")}\`  **${b.playerId}**  ·  ${when}  ·  *${(b.reason || "no reason").slice(0, 60)}*  ·  ${b.moderator || "?"}`;
-        });
-        const perm = bans.filter(b => b.permanent || !b.expires).length;
-        return paginate(interaction, lines, (pageLines) =>
-          clinical(new EmbedBuilder().setColor(CLIN.red)
-            .setTitle(`Ban List — ${bans.length} active`)
-            .setDescription(`**${perm}** permanent · **${bans.length - perm}** temporary\n${DIVIDER}\n${pageLines.join("\n")}`)),
-          { perPage: 15, ephemeral: true });
-        },
-
-  /* ─────────────────────────────────────────────────────
          CHECKBAN
          ───────────────────────────────────────────────────── */
   "checkban": async (interaction, name) => {
@@ -389,12 +312,9 @@ module.exports = (ctx) => {
         const tb = _entries.find(b => !b.permanent && b.expires) ?? _entries[0];
         // Cross-referenced context shown on every branch.
         const _cbLink  = discordIdForPavlov(playerId);
-        const _cbMute  = getMute(playerId);
-        const _cbMuted = _cbMute && (!_cbMute.expires || _cbMute.expires > Date.now());
         let _cbRec = null; try { _cbRec = ipBans.getRecord(playerId); } catch {}
         const _cbCtx = [];
         if (_cbLink)  _cbCtx.push({ name: "Discord", value: `<@${_cbLink}>`, inline: true });
-        if (_cbMuted) _cbCtx.push({ name: "In-Game Mute", value: `Active — lifts <t:${Math.floor(_cbMute.expires / 1000)}:R>`, inline: true });
         if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [

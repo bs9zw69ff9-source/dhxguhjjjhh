@@ -15,7 +15,7 @@ module.exports = function createCommands(ctx) {
   brand, checkRateLimit, client, commandPlayerCandidates, commands, deniedEmbed,
   discordIdForPavlov, errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
   handleMenuPanelSubmit, hasAdminRole, hasFactionLeaderRole, hasModRole, isBlacklisted, isOwner,
-  loadDiscordLinks, logger, memberHasRoleId, modOnlyEmbed, parseClockTime, parseDuration,
+  loadDiscordLinks, logger, memberHasRoleId, modOnlyEmbed,
   patchInteractionOutput, rateLimitEmbed, setDiscordLink, textify, writeModLog,
   } = ctx;
 
@@ -126,24 +126,6 @@ module.exports = function createCommands(ctx) {
     const focused  = interaction.options.getFocused(true);
     const cmdName  = interaction.commandName;
 
-    // /mute duration - quick suggestions (typed valid durations are honoured)
-    if (focused.name === "duration" && cmdName === "mute") {
-      const q = focused.value.trim().toLowerCase();
-      const opts = ["30s", "5m", "10m", "30m", "1h", "2h", "12h", "1d", "3d", "7d"]
-        .map(d => ({ name: d, value: d }));
-      if (q && parseDuration(q) && !opts.find(o => o.value === q)) opts.unshift({ name: q, value: q });
-      return interaction.respond(opts.filter(o => !q || o.value.startsWith(q)).slice(0, 25)).catch(() => {});
-    }
-
-    // /autorotate time - common Eastern times (typed valid times are honoured)
-    if (focused.name === "time" && cmdName === "autorotate") {
-      const q = focused.value.trim().toLowerCase();
-      const opts = ["00:00", "03:00", "06:00", "09:00", "12:00", "15:00", "18:00", "21:00"]
-        .map(t => ({ name: `${t} Eastern`, value: t }));
-      if (q && parseClockTime(q)) opts.unshift({ name: `${q} Eastern`, value: q });
-      return interaction.respond(opts.filter(o => !q || o.value.includes(q)).slice(0, 25)).catch(() => {});
-    }
-
     // /tempban date - quick calendar suggestions (always future dates, YYYY-MM-DD)
     if (focused.name === "date" && cmdName === "tempban") {
       const q = focused.value.trim();
@@ -214,10 +196,10 @@ module.exports = function createCommands(ctx) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "ping", "dashboard", "serverinfo", "find", "checkban", "banlist", "wagelist", "checkbalance", "stats", "kd", "link",
+  const PUBLIC         = ["help", "serverinfo", "checkban", "stats", "kd", "link",
                            "slots", "coinflip", "blackjack", "roulette", "cockfight", "russianroulette", "jackpot"];
-  const MOD_COMMANDS   = ["kick", "flush", "tempban", "unban", "mute", "unmute", "announce", "givecaps"];
-  const FL_COMMANDS    = ["addwage", "removewage", "faction"];
+  const MOD_COMMANDS   = ["kick", "flush", "tempban", "unban", "announce", "givecaps"];
+  const FL_COMMANDS    = ["faction"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "staffleaderboard", "casino"];
 
   const name = interaction.commandName;
@@ -229,7 +211,7 @@ module.exports = function createCommands(ctx) {
     // /faction's read-only subcommands (list / audit / playtime) are public - only
     // the mutating ones need the Faction Leader / Mod gate.
     const factionPublicSub = name === "faction" &&
-      ["list", "audit", "playtime"].includes(interaction.options.getSubcommand(false));
+      ["list", "playtime"].includes(interaction.options.getSubcommand(false));
     if (FL_COMMANDS.includes(name) && !factionPublicSub && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
       return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }

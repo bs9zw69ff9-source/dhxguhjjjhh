@@ -1,4 +1,4 @@
-/* ---------------- commands/admin: /setroles /donator /announce /givemenu /stripmenu /stripmenuall /setrconroles /link /configure /autorotate ----------------
+/* ---------------- commands/admin: /setroles /donator /announce /givemenu /stripmenu /stripmenuall /setrconroles /link /configure ----------------
    Split from commands/index.js. Each handler receives (interaction, name) and
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
@@ -7,12 +7,12 @@ module.exports = (ctx) => {
   EmbedBuilder, LINK_REQUEST_CHANNEL, MENUS, MessageFlags, ModalBuilder, NV, clinical, firewallStatus,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, addDonator, addMenuGrant, addUserBlacklist,
   adminOnlyEmbed, banWithIp, bar, brand, client, commands,
-  deniedEmbed, discordIdForPavlov, easternClock, emptyIdEmbed, errorEmbed, hasAdminRole,
-  hasModRole, hero, ipBans, isOwner, loadAutoRotate, loadDiscordLinks,
+  deniedEmbed, discordIdForPavlov, emptyIdEmbed, errorEmbed, hasAdminRole,
+  hasModRole, hero, ipBans, isOwner, loadDiscordLinks,
   loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
-  ownerOnlyEmbed, paginate, parseClockTime, path, randomQuote, readDonatorFile,
+  ownerOnlyEmbed, paginate, path, randomQuote, readDonatorFile,
   removeDiscordLink, removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
-  sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel, setAutoRotate,
+  sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,
   wipeAllMoney, writeModLog,
   BLACKLIST_IDS,
@@ -502,42 +502,5 @@ module.exports = (ctx) => {
         }
         },
 
-  /* ─────────────────────────────────────────────────────
-         AUTOROTATE — owner: schedule a daily map rotation (Eastern)
-         ───────────────────────────────────────────────────── */
-  "autorotate": async (interaction, name) => {
-        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
-        const sub = interaction.options.getSubcommand();
-        const cfg = loadAutoRotate();
-
-        if (sub === "off") {
-          setAutoRotate({});
-          return interaction.reply({ embeds: [brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Auto-Rotation Disabled")
-            .setDescription(cfg.time ? `Stopped the daily map rotation *(was ${cfg.time} Eastern)*.` : "There was no rotation scheduled."))], flags: MessageFlags.Ephemeral });
-        }
-
-        if (sub === "status") {
-          const desc = cfg.time
-            ? `The map rotates **every day at ${cfg.time} Eastern** on **${serverLabel(cfg.server || "both")}**.${cfg.lastRun ? ` Last rotated ${cfg.lastRun}.` : " Hasn't rotated yet."}`
-            : "No rotation scheduled. Use `/autorotate set` to add one.";
-          const embed = brand(new EmbedBuilder().setColor(cfg.time ? NV.IRRAD_GREEN : NV.DEAD_GREY).setTitle("Map Auto-Rotation").setDescription(desc));
-          const now = easternClock();
-          embed.setFooter({ text: `Server clock: ${now.hm} Eastern` });
-          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        }
-
-        // set
-        const time = parseClockTime(interaction.options.getString("time"));
-        if (!time) return interaction.reply({ embeds: [errorEmbed("Invalid Time",
-          "Enter a time like `03:00`, `18:30`, `3pm`, or `6:30pm` — interpreted as **Eastern**.")], flags: MessageFlags.Ephemeral });
-        const server = interaction.options.getString("server") || "both";
-        setAutoRotate({ time, server, lastRun: null });
-        writeModLog({ action: "autorotate-set", time, server, by: interaction.user.tag });
-        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Auto-Rotation Scheduled")
-          .setDescription(`The map will rotate **every day at ${time} Eastern** on **${serverLabel(server)}** (\`RotateMap\`).`)
-          .setFooter({ text: `Server clock: ${easternClock().hm} Eastern · checked every minute` }).setTimestamp());
-        await logAction(embed);
-        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        },
   };
 };

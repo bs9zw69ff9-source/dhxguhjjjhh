@@ -61,37 +61,6 @@ async function hardEnforce(name, { banToo = true, kick = true } = {}) {
   return { servers: ok };
 }
 
-/* ---- in-game mute (RCON Gag) ----
-   A gag doesn't survive a reconnect, so a muted player is re-gagged on EVERY join
-   until their mute expires; the first join AFTER expiry ungags them and clears it. */
-const loadMutes = () => safeRead(FILES.MUTES, {});
-const getMute   = (name) => loadMutes()[String(name ?? "").toLowerCase()] || null;
-function setMute(name, data) { return update(FILES.MUTES, {}, (m) => { m[String(name).toLowerCase()] = data; return m; }); }
-function clearMute(name)     { return update(FILES.MUTES, {}, (m) => { delete m[String(name).toLowerCase()]; return m; }); }
-// parseDuration ("30s"/"10m"/"2h"/"1d" -> ms) lives in ./utils.
-// `Gag <username>` — a bare toggle, confirmed no True/False argument works at all
-// (tried both; neither did anything). So both of these send the exact same command -
-// correct only when the target's actual gag state is the opposite of what we want,
-// which holds for every real call site below. Sent to every server.
-const gagEverywhere   = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Gag ${t}`, srv, 2500, 0).catch(() => {}); };
-const ungagEverywhere = (name) => { const t = sanitizeId(name); if (t) for (const srv of ACTIVE_SERVERS) sendRcon(`Gag ${t}`, srv, 2500, 0).catch(() => {}); };
-// Called on every live join: re-apply an active gag. A gag doesn't survive a
-// reconnect, so a fresh join is never actually gagged yet - an EXPIRED mute needs no
-// RCON call at all (there's nothing live to toggle off), just dropping the record.
-// Calling the toggle here "just in case" would incorrectly gag someone who was never
-// gagged this session.
-function applyMuteOnJoin(name) {
-  const mute = getMute(name);
-  if (!mute) return;
-  if (mute.expires && mute.expires <= Date.now()) {
-    clearMute(name);
-    logger.info("Mute", `${name}'s expired mute record cleared on join (nothing live to un-toggle)`);
-  } else {
-    gagEverywhere(name);                         // re-apply the mute for this session
-    logger.info("Mute", `Re-gagged ${name} on join`);
-  }
-}
-
 /* 30s after a ban, back it up: write the name into blacklist.txt (reconnect block that
    doesn't depend on the RCON ban sticking) and re-run enforcement in case they slipped
    back in. Requested belt-and-suspenders on top of the native ban. */
@@ -281,5 +250,5 @@ function parseRcon(raw) {
 }
 
 
-  return { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, applyMuteOnJoin, autoBanDecision, banWithIp, clearMute, enforceBansSweep, fixAutoBanReasons, gagEverywhere, getMute, hardEnforce, isRealBan, loadMutes, parseRcon, reconcileBans, scheduleBanRecheck, setMute, sourceBanFor, unbanEverywhere, ungagEverywhere };
+  return { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere };
 };

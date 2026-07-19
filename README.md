@@ -92,28 +92,28 @@ Each moderation action records the tier of the staffer who issued it, and a lowe
 tier can never override a higher tier's action:
 
 - A **Super Owner** can override anything.
-- An **Owner** cannot override a Super Owner's ban/mute.
+- An **Owner** cannot override a Super Owner's ban.
 - An **Admin** cannot override a Super Owner's or Owner's.
 - A **Mod** cannot override a Super Owner's, Owner's, or Admin's.
 
-Equal tiers can override each other. This is enforced on `/unban`, `/unmute`,
+Equal tiers can override each other. This is enforced on `/unban`,
 re-banning an already-banned player, and the bulk `/cleartempbans` / `/clearallbans`
 (which skip protected higher-tier bans). The tier rules are a pure, unit-tested
-module — [`moderation/hierarchy.js`](moderation/hierarchy.js). Bans/mutes made before
-this feature carry no tier and stay overridable by anyone, so nothing is retroactively
+module — [`moderation/hierarchy.js`](moderation/hierarchy.js). Bans made before this
+feature carry no tier and stay overridable by anyone, so nothing is retroactively
 locked.
 
 ## Commands
 
 | Tier | Commands |
 |------|----------|
-| 🌐 Public | `/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/kd` `/checkbalance` `/wagelist` `/link` · casino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot` |
-| 🛡️ Moderator | `/kick` `/mute` `/unmute` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
-| ⚔️ Faction Leader | `/faction add\|remove\|rank\|transfer\|setcap\|setrankcap\|wipe` `/addwage` `/removewage` |
+| 🌐 Public | `/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link` · casino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot` |
+| 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
+| ⚔️ Faction Leader | `/faction add\|remove\|setrankcap\|wipe` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` `/casino` |
-| 👑 Owner | `/configure` (control panel) `/inspect` `/firewall block\|unblock\|status` `/autorotate` `/stripmenuall` `/clearallbans` |
+| 👑 Owner | `/configure` (control panel) `/inspect` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` |
 
-Read-only `/faction list\|audit\|playtime` are public. Roles map to tiers with
+Read-only `/faction list\|playtime` are public. Roles map to tiers with
 `/setroles`; an unset tier role means that tier is unrestricted. `/tempban`
 uses punishment presets that set the duration automatically.
 
@@ -121,7 +121,7 @@ uses punishment presets that set the duration automatically.
 
 - Temp-ban expiry sweep every **60s**; online-ban enforcement sweep every **30s**
 - Ban-list reconcile from the DB every **5 min**
-- Leaderboards / player list refreshed on a short interval; weekly wages every **7 days**
+- Leaderboards / player list refreshed on a short interval
 - VPN check on connect (one lookup per new IP, cached); auto-ban on a confirmed hit
 - Firewall reconcile every **2 min** when `UFW_BLOCK=1` (keeps flagged IPs blocked,
   master IPs never blocked); SQLite → JSON export every **10 min**

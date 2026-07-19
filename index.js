@@ -239,8 +239,6 @@ function removeBans(...ids) {
 }
 const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" });
 const saveRoles         = (d) => safeWrite(FILES.ROLES,         d);
-const loadWages         = () => safeRead(FILES.WAGES,          []);
-const saveWages         = (d) => safeWrite(FILES.WAGES,         d);
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
 const loadModLog        = () => safeRead(FILES.MODLOG,         []);
@@ -339,7 +337,6 @@ function getKnownPlayerChoices(query, exclude = new Set(), limit = 25) {
 async function seedKnownPlayers() {
   const names = new Set();
   for (const k of Object.keys(loadPlaytime())) names.add(k);                 // playtime keys (display-cased)
-  for (const w of loadWages())     if (w.playerId)   names.add(w.playerId);  // payroll
   for (const b of loadBans())      if (b.playerId)   names.add(b.playerId);  // temp bans
   for (const d of (readDonatorFile() ?? [])) names.add(d);                   // donators
   try {                                                                      // every faction spawn + rank file
@@ -369,16 +366,10 @@ function commandPlayerCandidates(interaction) {
   if (cmd === "unban" || cmd === "checkban")
                               return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAllCached()])];  // temp-banned + blacklist.txt (cached for autocomplete)
   if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
-  if (cmd === "unmute")       return Object.values(loadMutes()).map(m => m.name);                      // currently muted
-  if (cmd === "removewage")   return loadWages().map(w => w.playerId);                                 // on payroll
   if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
-  if (cmd === "faction" && (sub === "remove" || sub === "rank")) {
+  if (cmd === "faction" && sub === "remove") {
     const f = interaction.options.getString("faction");
     return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of that faction
-  }
-  if (cmd === "faction" && sub === "transfer") {
-    const f = interaction.options.getString("from_faction");
-    return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of source faction
   }
   return null;   // default: online + known players
 }
@@ -487,16 +478,6 @@ const BAN_DURATIONS = {
   "1y":  { ms: 31_536_000_000,     label: "1 Year"   },
 };
 
-/* Warn auto-escalation thresholds */
-
-const WAGE_TIERS = {
-  low_rank:  { label: "Low Rank",  amount: 400,  weekly: true  },
-  mid_rank:  { label: "Mid Rank",  amount: 500,  weekly: true  },
-  high_rank: { label: "High Rank", amount: 650,  weekly: true  },
-  mercenary: { label: "Mercenary", amount: 200,  weekly: false },
-};
-
-const WAGE_INTERVAL_MS        = 7 * 24 * 60 * 60 * 1000;
 const LEADERBOARD_INTERVAL_MS = 30 * 1000;   // caps + playtime leaderboards refresh every 30s
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
@@ -1124,27 +1105,6 @@ function formatKD(playerId) {
   return `**${k.kills}** / **${k.deaths}**  ·  ${ratio}`;
 }
 
-/* ---- scheduled map rotation (Eastern time) ----
-   easternClock/parseClockTime live in ./utils (pure). */
-const loadAutoRotate = () => safeRead(FILES.AUTOROTATE, {});
-function setAutoRotate(cfg) { return safeWrite(FILES.AUTOROTATE, cfg); }
-// Runs every minute: rotate the map when the scheduled Eastern time is hit (once/day).
-async function checkAutoRotate() {
-  const cfg = loadAutoRotate();
-  if (!cfg.time) return;
-  const { date, hm } = easternClock();
-  if (hm !== cfg.time || cfg.lastRun === date) return;   // not the minute, or already fired today
-  setAutoRotate({ ...cfg, lastRun: date });              // mark first so overlapping ticks can't double-fire
-  const server = cfg.server || "both";
-  try {
-    await sendRconBoth("RotateMap", server);
-    logger.info("AutoRotate", `RotateMap fired at ${hm} EST on ${serverLabel(server)}`);
-    logAction(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Scheduled Map Rotation")
-      .setDescription(`Automatic map rotation ran at **${hm} Eastern** on ${serverLabel(server)}.`)
-      .setTimestamp()));
-  } catch (e) { logger.warn("AutoRotate", `RotateMap failed: ${e.message}`); }
-}
-
 function formatPlaytime(minutes) {
   if (minutes < 60)  return `${minutes}m`;
   const h = Math.floor(minutes / 60);
@@ -1362,7 +1322,7 @@ const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallStatu
   require("./moderation/firewall")({ logger, ipBans, masterIps: MASTER_IPS });
 
 // ---- moderation/bans: native RCON ban/kick enforcement, reconcile, unban (extracted to ./moderation/bans) ----
-const { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, applyMuteOnJoin, autoBanDecision, banWithIp, clearMute, enforceBansSweep, fixAutoBanReasons, gagEverywhere, getMute, hardEnforce, isRealBan, loadMutes, parseRcon, reconcileBans, scheduleBanRecheck, setMute, sourceBanFor, unbanEverywhere, ungagEverywhere } = require("./moderation/bans")({
+const { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere } = require("./moderation/bans")({
   ACTIVE_SERVERS, FILES, UFW_BLOCK, _sameId, blacklistAdd, blacklistRemove,
   firewallBlockIps, firewallUnblockIps, ipBans, isMasterName, loadBans, logger,
   preserveBalanceAcrossKick, safeRead, safeWrite, sanitizeBanName, sanitizeId, sendRcon,
@@ -2149,43 +2109,6 @@ async function processExpiredBans() {
   }
 }
 
-// ---- wage payout ----
-async function processWagePayout() {
-  const wages = loadWages(), now = Date.now();
-  const weekly = wages.filter(w => WAGE_TIERS[w.tier]?.weekly);
-  if (!weekly.length) return;
-  const results = { paid: [], skipped: [], failed: [] };
-  let changed = false;
-  for (const entry of weekly) {
-    const tier = WAGE_TIERS[entry.tier];
-    if (!tier) continue;
-    if (entry.lastPaidAt && now - entry.lastPaidAt < WAGE_INTERVAL_MS * 0.9) {
-      results.skipped.push({ playerId: entry.playerId }); continue;
-    }
-    const current = readPlayerBalance(entry.playerId) ?? 0;
-    const newBal  = current + tier.amount;
-    if (writePlayerBalance(entry.playerId, newBal)) {
-      entry.lastPaidAt = now; changed = true;
-      results.paid.push({ playerId: entry.playerId, tier: tier.label, amount: tier.amount, newBal });
-      writeModLog({ action: "wage-payout", playerId: entry.playerId, amount: tier.amount, tier: tier.label });
-    } else {
-      results.failed.push({ playerId: entry.playerId, tier: tier.label });
-    }
-  }
-  if (changed) saveWages(wages);
-  logger.info("Wages", `Payout: ${results.paid.length} paid, ${results.skipped.length} skipped, ${results.failed.length} failed`);
-  if (!results.paid.length && !results.failed.length) return;
-  const lines = [
-    ...results.paid.map(r   => `\`${r.playerId}\`  ·  **${r.tier}**  →  **${r.newBal.toLocaleString()} credits** *(+${r.amount})*`),
-    ...results.failed.map(r => `\`${r.playerId}\`  ·  **${r.tier}**  —  *ledger write failed*`),
-  ];
-  const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Weekly Wages Disbursed")
-    .setDescription(`> *${randomQuote("wages")}*\n\n${DIVIDER}\n**${results.paid.length}** paid  ·  **${results.skipped.length}** skipped  ·  **${results.failed.length}** failed`)
-    .setFooter({ text: "The House always pays its debts." }).setTimestamp();
-  for (const f of chunkFields(lines, "Payout Ledger")) embed.addFields(f);
-  brand(embed); await logAction(embed);
-}
-
 // ---- leaderboards: caps/playtime boards, player list, live dashboard (extracted to ./leaderboards) ----
 const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, buildPlaytimeLeaderboardData, buildPlaytimeLeaderboardEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, postPlaytimeLeaderboard, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
   ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
@@ -2437,7 +2360,6 @@ if (DB_EXPORT_INTERVAL_MS > 0) {
 }
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
-setInterval(checkAutoRotate,         60_000);   // scheduled map rotation (Eastern time)
 // (ufw is manual-only via /firewall — no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
@@ -2450,7 +2372,6 @@ setInterval(async () => {
   if (hasServer3) await refreshPlayerCache("server3");
   tickPlaytime();
 }, 60_000);
-setInterval(processWagePayout, WAGE_INTERVAL_MS);
 
 setInterval(autoBackupFactions, 24 * 60 * 60 * 1000);
 setInterval(async () => {        // capture any in-game-menu bans, then rebuild the file from the DB
@@ -2468,10 +2389,6 @@ setTimeout(() => {
 
 setTimeout(postLeaderboard, 20_000);
 setTimeout(postPlaytimeLeaderboard, 25_000);
-setTimeout(() => {
-  const due = loadWages().filter(w => WAGE_TIERS[w.tier]?.weekly && (!w.lastPaidAt || Date.now() - w.lastPaidAt >= WAGE_INTERVAL_MS * 0.9));
-  if (due.length) { logger.info("Wages", `${due.length} overdue payout(s), processing in 15s...`); setTimeout(processWagePayout, 15_000); }
-}, 5_000);
 }
 
 
@@ -2492,7 +2409,7 @@ const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./c
 const {  } = require("./events")({
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
-  applyMuteOnJoin, autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
+  autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, ensureMenuPanel, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
@@ -2530,35 +2447,35 @@ const { onInteraction } = require("./commands")({
   FILES, GAMBLE_QUOTA_MAX, GAMBLE_QUOTA_WINDOW_MS, GAME_ICON, GLYPH, IPHUB_API_KEY,
   JACKPOT_MIN_BALANCE, JACKPOT_WIN_CHANCE, LINK_APPROVER_ROLE, LINK_REQUEST_CHANNEL, MENUS, MessageFlags,
   ModalBuilder, NV, PUNISH_BY_VALUE, ROULETTE_COLOR_EMOJI, RUSSIAN_ROULETTE_MULTS, SPAWN_FILE_MAP,
-  StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UFW_BLOCK, WAGE_INTERVAL_MS, WAGE_TIERS,
+  StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UFW_BLOCK,
   _IPV4_RE, addAutobanExempt, addDonator, addMenuGrant, addPlayerToRankFile, addToPot,
   addUserBlacklist, adminOnlyEmbed, awaitOwnedComponent, banWithIp, bar, blacklistHas,
   blacklistedEmbed, brand, buildDashboardEmbed, buildFactionMembershipIndex, casinoIntake, casinoResultEmbed,
-  cell, checkGambleQuota, checkRateLimit, checkVpn, clearMute, client,
+  cell, checkGambleQuota, checkRateLimit, checkVpn, client,
   clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank, creditCaps,
   currentPot, dashboardSnapshots, debitCaps, deniedEmbed, discordIdForPavlov, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, drainPot, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
   firewallStatus, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
-  formatUptime, freshDeck, fs, gagEverywhere, gambleQuotaLimitEmbed, getFactionCap,
+  formatUptime, freshDeck, fs, gambleQuotaLimitEmbed, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
-  getFactionRankOrder, getLastSeen, getMute, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
+  getFactionRankOrder, getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handValue, handleMenuPanelSubmit, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt, isBlackjack,
-  isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer, loadAutoRotate,
+  isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer,
   loadBans, loadCasinoConfig, loadDiscordLinks, loadFactionAudit, loadFactionBackup, loadMenuGrants,
-  loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadServerStats, loadVpnChecks, loadWages,
+  loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadServerStats, loadVpnChecks,
   extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
-  modOnlyEmbed, ownerOnlyEmbed, paginate, parseClockTime, parseDuration, parseRcon,
+  modOnlyEmbed, ownerOnlyEmbed, paginate, parseDuration, parseRcon,
   patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, punishDurationLabel, randomQuote,
   rankBadge, rankHasRoom, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
   readPlayerBalance, refreshPlayerCache, removeBans, removeDiscordLink, removeDonator, removeFactionRank,
   removeMenuGrant, removePlayerFromAllRankFiles, removePlayerFromRankFile, removeUserBlacklist, sanitizeBanName, sanitizeId,
-  sanitizeMessage, saveCasinoConfig, saveFactionBackup, saveRoles, saveWages, sendRcon,
-  sendRconBoth, serverLabel, setAutoRotate, setDiscordLink, setFactionCap, setFactionRank,
-  setFactionRankCap, setMenuRole, setMute, spawn, spinRoulette, spinSlots,
-  successEmbed, suspendDonator, textify, unbanEverywhere, ungagEverywhere, update,
+  sanitizeMessage, saveCasinoConfig, saveFactionBackup, saveRoles, sendRcon,
+  sendRconBoth, serverLabel, setDiscordLink, setFactionCap, setFactionRank,
+  setFactionRankCap, setMenuRole, spawn, spinRoulette, spinSlots,
+  successEmbed, suspendDonator, textify, unbanEverywhere, update,
   upsertPermBan, upsertTempBan, warningEmbed, wipeAllMoney, wipeFaction, writeFactionAudit,
   writeFactionFile, writeModLog, writePlayerBalance,
   blacklistAll,
@@ -2613,7 +2530,6 @@ module.exports = {
   // owner / access
   isOwner, isBlacklisted, isMasterName, isProtectedPlayer,
   parseClockTime, easternClock, parseDuration,
-  loadMutes, getMute, setMute, clearMute,
   loadDiscordLinks, setDiscordLink, removeDiscordLink, discordIdForPavlov,
   isAutobanExempt, addAutobanExempt, removeAutobanExempt,
   // ui / parsing helpers

@@ -22,26 +22,13 @@ const ALL_RANK_NAMES = [...new Set(
 
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
-  new SlashCommandBuilder().setName("ping").setDescription("Bot and server health check with uptime"),
-  new SlashCommandBuilder().setName("dashboard").setDescription("Live server status dashboard (auto-refreshes for 5 min)"),
   new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count").addStringOption(serverOption),
-  new SlashCommandBuilder().setName("find")
-    .setDescription("Search for a player by partial name across both servers")
-    .addStringOption(o => o.setName("name").setDescription("Partial or full player name").setRequired(true)),
   new SlashCommandBuilder().setName("kick")
     .setDescription("Eject a player from the server")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption)
     .addStringOption(o => o.setName("reason").setDescription("Reason for ejection"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
-  new SlashCommandBuilder().setName("mute")
-    .setDescription("In-game mute (gag) a player for a set time — re-applied every join until it expires")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("duration").setDescription("How long — e.g. 30s, 10m, 2h, 1d").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason for the mute")),
-  new SlashCommandBuilder().setName("unmute")
-    .setDescription("Lift a player's in-game mute now")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("flush")
     .setDescription("Randomly kick one online player from a server")
     .addStringOption(serverOption),
@@ -72,8 +59,6 @@ const commands = [
     .setDescription("Check if a player is currently exiled")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addStringOption(serverOption),
-  new SlashCommandBuilder().setName("banlist")
-    .setDescription("List all active bans"),
   new SlashCommandBuilder().setName("permban")
     .setDescription("Admin — Permanently exile a player")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
@@ -147,31 +132,12 @@ const commands = [
       .setDescription("Remove a player from a faction whitelist")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
       .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("rank")
-      .setDescription("Faction Leader — Add or remove a rank for a member (a member can hold several)")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to add (faction-specific)").setRequired(true).setAutocomplete(true))
-      .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
-    .addSubcommand(s => s.setName("transfer")
-      .setDescription("Mod — Transfer a player from one faction to another")
-      .addStringOption(o => o.setName("from_faction").setDescription("Current faction").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("to_faction").setDescription("Destination faction").setRequired(true).addChoices(...factionChoices))
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the current faction first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank in new faction (default: lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a faction with their ranks")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
-    .addSubcommand(s => s.setName("audit")
-      .setDescription("View recent add/remove/rank changes for a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
     .addSubcommand(s => s.setName("playtime")
       .setDescription("Whitelisted members' playtime, highest to lowest")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
-    .addSubcommand(s => s.setName("setcap")
-      .setDescription("Admin — Set the maximum member cap for a faction")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
-      .addIntegerOption(o => o.setName("cap").setDescription("Maximum number of members (1–500)").setRequired(true).setMinValue(1).setMaxValue(500)))
     .addSubcommand(s => s.setName("setrankcap")
       .setDescription("Admin — Set the per-rank member cap within a faction")
       .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
@@ -185,31 +151,6 @@ const commands = [
     .setDescription("Admin — Send a raw RCON command")
     .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true))
     .addStringOption(serverOption),
-  new SlashCommandBuilder().setName("autorotate")
-    .setDescription("Owner — Schedule a daily map rotation at a set Eastern time")
-    .addSubcommand(s => s.setName("set")
-      .setDescription("Rotate the map every day at this Eastern (EST/EDT) time")
-      .addStringOption(o => o.setName("time").setDescription("Time — e.g. 03:00, 18:30, 3pm, 6:30pm (Eastern)").setRequired(true))
-      .addStringOption(serverOption))
-    .addSubcommand(s => s.setName("off").setDescription("Turn off the scheduled map rotation"))
-    .addSubcommand(s => s.setName("status").setDescription("Show the current rotation schedule")),
-  new SlashCommandBuilder().setName("addwage")
-    .setDescription("Enrol a player in payroll or issue a one-time mercenary payment")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("tier").setDescription("Payment tier").setRequired(true)
-      .addChoices(
-        { name: "Low Rank  — 400 credits/week",       value: "low_rank"  },
-        { name: "Mid Rank  — 500 credits/week",       value: "mid_rank"  },
-        { name: "High Rank — 650 credits/week",       value: "high_rank" },
-        { name: "Mercenary — 200 credits (one-time)", value: "mercenary" }
-      )),
-  new SlashCommandBuilder().setName("removewage")
-    .setDescription("Remove a player from the weekly payroll")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder().setName("wagelist").setDescription("View all players on the weekly payroll"),
-  new SlashCommandBuilder().setName("checkbalance")
-    .setDescription("Check a player's credits balance")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("givecaps")
     .setDescription("Give credits to a player (faction leader / mod command)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))

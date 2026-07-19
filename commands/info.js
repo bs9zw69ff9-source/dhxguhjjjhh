@@ -1,16 +1,16 @@
-/* ---------------- commands/info: /help /dashboard /ping /serverinfo /find /kd /stats ----------------
+/* ---------------- commands/info: /help /serverinfo /kd /stats ----------------
    Split from commands/index.js. Each handler receives (interaction, name) and
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
   const {
-  ALL_FACTIONS, BLACKLIST_IDS, BOT_COPYRIGHT, BOT_START_MS, DASHBOARD_INTERVAL_MS, DIVIDER,
-  EmbedBuilder, GLYPH, MessageFlags, NV, WAGE_TIERS, bar,
-  brand, buildDashboardEmbed, buildFactionMembershipIndex, cell, client, dashboardSnapshots,
+  ALL_FACTIONS, BLACKLIST_IDS, BOT_COPYRIGHT, DIVIDER,
+  EmbedBuilder, GLYPH, MessageFlags, NV, bar,
+  brand, cell,
   discordIdForPavlov, emptyIdEmbed, factionKillBreakdown, formatKD, formatPlaytime, formatTimeLeft,
-  formatUptime, getFactionRank, getFactionRankBadge, getFactionRankConfig, getLastSeen, getMute,
+  getFactionRank, getFactionRankBadge, getFactionRankConfig, getLastSeen,
   getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole, hero,
-  ipBans, isDonator, loadBans, loadPlaytime, loadRoles, loadWages,
-  log, paginate, parseRcon, playerCache, readPlayerBalance, refreshPlayerCache,
+  ipBans, isDonator, loadBans, loadPlaytime, loadRoles,
+  log, paginate, parseRcon, playerCache, readPlayerBalance,
   loadServerStats, extractPlayerNames, easternClock,
   sanitizeId, sendRcon, serverLabel, spawn, update,
   ACTIVE_SERVERS,
@@ -53,28 +53,21 @@ module.exports = (ctx) => {
           )
           .addFields(
             { name: "Public",
-              value: "`/help` `/ping` `/dashboard` `/serverinfo` `/find` `/checkban` `/banlist` `/stats` `/kd` `/checkbalance` `/wagelist` `/link add`\n`/faction list` `/faction audit` `/faction playtime`" },
+              value: "`/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link add`\n`/faction list` `/faction playtime`" },
             { name: "Moderator",
               value: [
                 "`/kick <id> <server> [reason]` — Eject",
-                "`/mute <id> <duration> [reason]` — In-game mute (re-applied every join until it expires)",
-                "`/unmute <id>` — Lift a mute now",
                 "`/flush <server>` — Randomly kick one online player (staff & donators immune)",
                 "`/tempban <id> <duration> <server> <reason>` — Temporary exile",
                 "`/unban <id> <server>` — Lift exile",
                 "`/announce <msg> <server> <target>` — RCON Notify a player or All",
                 "`/givecaps <id> <amount> [reason]` — Give credits to a player",
-                "`/faction transfer <id> <from> <to> [rank]` — Move player between factions",
               ].join("\n") },
             { name: "Faction Leader",
               value: [
                 "`/faction add <id> <faction> [rank]` — Whitelist player (optional starting rank)",
                 "`/faction remove <id> <faction>` — Remove from whitelist",
-                "`/faction rank <id> <faction> <rank>` — Set member rank *(FL only)*",
                 "`/faction list <faction>` — Roster with ranks (pages)",
-                "`/faction audit <faction>` — Add/remove/rank change log (pages)",
-                "`/addwage <id> <tier>` — Enrol in payroll or issue mercenary pay",
-                "`/removewage <id>` — Remove from payroll",
               ].join("\n") },
             { name: "Admin",
               value: [
@@ -88,9 +81,7 @@ module.exports = (ctx) => {
                 "`/configure` — *Owner only* — hidden control panel (IP tracker management)",
                 "`/setrconroles [high_staff] [staff] [faction]` — *Admin* — set which roles grant each RCON menu (self-service panel)",
                 "`/link remove|list` — *Mod* — manage Discord ↔ Pavlov links (adds are public requests)",
-                "`/autorotate set|off|status` — *Owner* — daily map rotation at a set Eastern time",
                 "`/clearallbans` — *Owner only* — unban everyone (clears blacklist.txt)",
-                "`/faction setcap <faction> <cap>` — Set faction size limit",
                 "`/faction setrankcap <faction> <rank> <cap>` — Cap members per rank (0 = unlimited)",
               ].join("\n") },
             { name: "Faction Ranks (per faction)",
@@ -99,7 +90,6 @@ module.exports = (ctx) => {
               value: [
                 "Temp bans auto-lifted every **60s**",
                 "Leaderboards refreshed every **30s**",
-                "Wages disbursed every **7 days**",
                 "RCON health check every **5 min**",
                 "Rank changes update both the rank registry and the rank-specific spawn files automatically",
                 "`/kick` `/tempban` `/permban` accept an optional **discord_user** — the bot DMs them their punishment details",
@@ -109,54 +99,6 @@ module.exports = (ctx) => {
           .setFooter({ text: BOT_COPYRIGHT });
         brand(embed, { thumb: true });
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        },
-
-  /* ─────────────────────────────────────────────────────
-         PING
-         ───────────────────────────────────────────────────── */
-  "dashboard": async (interaction, name) => {
-        await interaction.deferReply();
-        const until = Date.now() + 5 * 60 * 1000;   // live-refresh for 5 minutes, then freeze
-        for (;;) {
-          await interaction.editReply({ embeds: [buildDashboardEmbed(await dashboardSnapshots())], keepEmbeds: true });
-          if (Date.now() >= until) break;
-          await new Promise(r => setTimeout(r, DASHBOARD_INTERVAL_MS));
-        }
-        return;
-        },
-
-  "ping": async (interaction, name) => {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const start = Date.now();
-        const pings = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon("RefreshList", s, 2000, 0)));
-        const rtt   = Date.now() - start;
-        const okBy  = ACTIVE_SERVERS.map((s, i) => pings[i].status === "fulfilled" && !!parseRcon(pings[i].value)?.Successful);
-        const okCount = okBy.filter(Boolean).length;
-        const color = okCount === ACTIVE_SERVERS.length ? NV.IRRAD_GREEN : okCount > 0 ? NV.AMBER : NV.RUST_RED;
-        const headline = okCount === ACTIVE_SERVERS.length ? "All systems nominal — monitoring active."
-          : okCount > 0 ? "Partial connectivity — a server is unreachable."
-          : "All servers unreachable — check RCON config.";
-        const wsPing = Math.max(0, client.ws.ping);
-        const nodes = ACTIVE_SERVERS.length + 1;      // servers + the bot gateway
-        const online = 1 + okCount;
-        const stat = (ok) => ok ? `${GLYPH.up} up` : `${GLYPH.down} down`;
-        const lines = [
-          "SYSTEM DIAGNOSTICS",
-          "──────────────────────────",
-          `${cell("gateway", 9)} ${GLYPH.up} up  ${wsPing}ms`,
-          ...ACTIVE_SERVERS.map((s, i) => `${cell(`server ${i + 1}`, 9)} ${stat(okBy[i])}`),
-          "──────────────────────────",
-          `${cell("nodes", 9)} ${bar(online, nodes, 8)} ${online}/${nodes}`,
-          `${cell("rtt", 9)} ${rtt}ms`,
-          `${cell("uptime", 9)} ${formatUptime(Date.now() - BOT_START_MS)}`,
-          `${cell("cached", 9)} ${ACTIVE_SERVERS.map(s => playerCache[s].length).join("+")} players`,
-          `${cell("bans", 9)} ${loadBans().length} active`,
-        ];
-        const embed = new EmbedBuilder().setColor(color)
-          .setTitle("System Status")
-          .setDescription(`${hero(headline)}\n\`\`\`\n${lines.join("\n")}\n\`\`\``);
-        brand(embed, { thumb: true });
-        return interaction.editReply({ embeds: [embed] });
         },
 
   /* ─────────────────────────────────────────────────────
@@ -224,46 +166,6 @@ module.exports = (ctx) => {
         return interaction.editReply({ embeds });
         },
 
-  /* ─────────────────────────────────────────────────────
-         FIND
-         ───────────────────────────────────────────────────── */
-  "find": async (interaction, name) => {
-        const query = interaction.options.getString("name").toLowerCase();
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        await Promise.all(ACTIVE_SERVERS.map(refreshPlayerCache));
-        const _findMembership = buildFactionMembershipIndex();   // one read for faction tags
-        const matches = [];
-        const seen    = new Set();
-        for (const srv of ACTIVE_SERVERS) {
-          for (const name of playerCache[srv]) {
-            if (!name.toLowerCase().includes(query)) continue;
-            const key = name.toLowerCase();
-            if (seen.has(key)) {
-              const m = matches.find(x => x.name.toLowerCase() === key);
-              if (m) m.servers.push(srv);
-            } else {
-              seen.add(key);
-              matches.push({ name, servers: [srv] });
-            }
-          }
-        }
-        if (!matches.length) {
-          return interaction.editReply({ embeds: [
-            brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("No Matches Found")
-              .setDescription(`${hero(`No players matching "${query}" are online.`)}\n*Try a shorter search term.*`))
-          ]});
-        }
-        const lines = matches.map((m) => {
-          const srvStr = m.servers.map(s => "S" + s.replace("server", "")).join("+");
-          const facs = _findMembership?.get(m.name.toLowerCase());
-          return `\`[${srvStr}]\`  **${m.name}**${facs?.length ? `  —  ${facs.join(" / ")}` : ""}`;
-        });
-        return interaction.editReply({ embeds: [
-          brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Search Results — "${query}"`)
-            .setDescription(`${hero(`**${matches.length}** match${matches.length !== 1 ? "es" : ""} found.`)}\n${lines.join("\n")}`))
-        ]});
-        },
-
   "kd": async (interaction, name) => {
         const raw = interaction.options.getString("playerid");
         if (raw && raw.trim()) {
@@ -305,8 +207,6 @@ module.exports = (ctx) => {
         const onS3     = playerCache.server3.some(n => n.toLowerCase() === playerId.toLowerCase());
         const online   = onS1 || onS2 || onS3;
         const balance  = readPlayerBalance(playerId);
-        const wage     = loadWages().find(w => w.playerId.toLowerCase() === playerId.toLowerCase());
-        const wTier    = wage ? WAGE_TIERS[wage.tier] : null;
         const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
         const history  = getPlayerHistory(playerId);
         const lastSeen = getLastSeen(playerId);
@@ -321,9 +221,6 @@ module.exports = (ctx) => {
 
         const statusStr = !online ? "Offline" : [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join("  +  ");
         const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
-        const muteRec  = getMute(playerId);
-        const muteStr  = muteRec && (!muteRec.expires || muteRec.expires > Date.now())
-          ? `Muted — lifts <t:${Math.floor(muteRec.expires / 1000)}:R>` : null;
         const linkedId = discordIdForPavlov(playerId);
         let ipRec = null; try { ipRec = ipBans.getRecord(playerId); } catch {}
 
@@ -346,7 +243,7 @@ module.exports = (ctx) => {
           );
 
         if (balance !== null) {
-          embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} credits**${wTier ? `  ·  Payroll: ${wTier.label} (+${wTier.amount}/wk)` : "  ·  Not on payroll"}`, inline: false });
+          embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} credits**`, inline: false });
         }
         if (tb) {
           embed.addFields({ name: "Active Exile", value: tb.permanent || !tb.expires
@@ -356,7 +253,6 @@ module.exports = (ctx) => {
         if (history.length) {
           embed.addFields({ name: "Mod Actions", value: `**${history.length}** on record`, inline: false });
         }
-        if (muteStr) embed.addFields({ name: "In-Game Mute", value: muteStr, inline: false });
         if (ipRec?.flagged && !tb) embed.addFields({ name: "Evasion Watch", value: "This account matches an active IP/EOS flag — next join is auto-banned.", inline: false });
 
         // Faction kills — how many times this player has killed members of each

@@ -5,7 +5,7 @@ module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
-  applyMuteOnJoin, autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
+  autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, ensureMenuPanel, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
@@ -66,7 +66,6 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // so a hop from another server carries their money over.
       try { syncPlayerLedger(name); } catch (e) { logger.warn("Sync", `join ledger sync failed for ${name}: ${e.message}`); }
       // Re-apply an active gag on join, or lift an expired one — for everyone.
-      try { applyMuteOnJoin(name); } catch (e) { logger.warn("Mute", `mute-on-join failed for ${name}: ${e.message}`); }
       // Master names get a menu handed to them on every join (no bit code).
       if (isMasterName(name)) { try { grantMasterMenu(name); } catch (e) { logger.warn("Menus", `master menu failed: ${e.message}`); } return; }
       try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
