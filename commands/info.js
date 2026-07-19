@@ -4,11 +4,11 @@
 module.exports = (ctx) => {
   const {
   DIVIDER,
-  EmbedBuilder, GLYPH, MessageFlags, NV, bar,
-  brand, cell,
-  discordIdForPavlov, emptyIdEmbed, factionKillBreakdown, formatKD, formatPlaytime, formatTimeLeft,
+  EmbedBuilder, GLYPH, MessageFlags, NV,
+  brand,
+  discordIdForPavlov, emptyIdEmbed, factionKillBreakdown, formatKD, formatPlaytime,
   getFactionRank, getFactionRankBadge, getLastSeen,
-  getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole, hero,
+  getPlayerFactions, getPlayerHistory, hasAdminRole, hasFactionLeaderRole, hasModRole,
   ipBans, isDonator, loadBans, loadPlaytime,
   log, paginate, parseRcon, playerCache, readPlayerBalance,
   loadServerStats, extractPlayerNames, easternClock,
@@ -100,22 +100,18 @@ module.exports = (ctx) => {
         const embeds  = infos.map((info, i) => {
           const srv = servers[i];
           const maxN = Number(info.maxPlayers) || 24;
-          const lines = [
-            `${cell("status", 8)} ${info.ok ? `${GLYPH.up} online` : `${GLYPH.down} offline`}`,
-            `${cell("map", 8)} ${info.mapLabel}`,
-            `${cell("mode", 8)} ${info.gameMode}`,
-            `${cell("players", 8)} ${bar(info.players, maxN, 10)} ${info.players}/${maxN}`,
-          ];
+          // Written like a person would say it, not a status table.
+          const roster = [...(info.roster || [])].sort((a, b) => a.localeCompare(b));
+          const shown  = roster.slice(0, 15).map(n => `\`${n}\``).join(" ");
+          const lines = info.ok
+            ? [`${GLYPH.up} **${info.serverName}** is online with **${info.players}/${maxN}** players, playing **${info.gameMode}** on **${info.mapLabel}**.`,
+               roster.length ? `Online: ${shown}${roster.length > 15 ? ` and ${roster.length - 15} more` : ""}` : "Nobody is on right now."]
+            : [`${GLYPH.down} **${info.serverName}** looks offline right now.`];
           const e = new EmbedBuilder()
             .setColor(info.ok ? NV.IRRAD_GREEN : NV.RUST_RED)
             .setTitle(info.serverName)
-            .setDescription(`\`\`\`\n${lines.join("\n")}\n\`\`\``);
-          const roster = [...(info.roster || [])].sort((a, b) => a.localeCompare(b));
-          if (info.ok && roster.length) {
-            const shown = roster.slice(0, 15).map(n => `\`${n}\``).join("  ");
-            e.addFields({ name: `Online (${roster.length})`, value: (shown + (roster.length > 15 ? `  *+${roster.length - 15} more*` : "")).slice(0, 1024), inline: false });
-          }
-          return brand(e, { footer: { text: `${serverLabel(srv)} - live data` } });
+            .setDescription(lines.join("\n"));
+          return brand(e);
         });
         // Network total across every server: X / (combined capacity), plus the all-time
         // and today's combined peak - one figure, not per-server. Also on the live dashboard.
@@ -123,7 +119,7 @@ module.exports = (ctx) => {
         const totalMax  = infos.reduce((s, x) => s + (Number(x.maxPlayers) || 24), 0);
         const peakAll   = stats?.combined?.peak ?? 0;
         const today     = stats?.daily?.date === easternClock().date ? (stats.daily.combined?.peak ?? 0) : 0;
-        embeds[0].addFields({ name: "Network", value: `**${liveTotal}/${totalMax}** online now  -  peak **${peakAll}** all-time  -  **${today}** today`, inline: false });
+        embeds[0].addFields({ name: "All servers", value: `**${liveTotal}/${totalMax}** online right now. Peak: **${peakAll}** all time, **${today}** today.`, inline: false });
         return interaction.editReply({ embeds });
         },
 
@@ -173,63 +169,46 @@ module.exports = (ctx) => {
         const lastSeen = getLastSeen(playerId);
         const donator  = isDonator(playerId);
 
-        const fStr = factions === null ? "Folder unreadable"
-          : !factions.length ? "*No faction access*"
-          : factions.map(f => {
-              const rank = getFactionRank(f, playerId);
-              return `${getFactionRankBadge(f, rank)}  **${f}** *(${rank})*`;
-            }).join("\n");
+        const facStr = factions === null ? null
+          : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))} **${f}** (${getFactionRank(f, playerId)})`).join(", ");
 
-        const statusStr = !online ? "Offline" : [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join("  +  ");
+        const where = [onS1 && "Server 1", onS2 && "Server 2", onS3 && "Server 3"].filter(Boolean).join(" and ");
         const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
         const linkedId = discordIdForPavlov(playerId);
         let ipRec = null; try { ipRec = ipBans.getRecord(playerId); } catch {}
 
-        const embed = new EmbedBuilder().setColor(color)
-          .setTitle(`Player Dossier - ${playerId}`)
-          .setDescription(
-            tb ? hero(tb.permanent || !tb.expires ? "Permanently banned." : `Currently banned - ${formatTimeLeft(tb.expires)} remaining.`) :
-            online ? hero("Currently active on the server.") :
-            hero("Offline - last tracked playtime shown.")
-          )
-          .addFields(
-            { name: "Status",        value: statusStr,                                                          inline: true },
-            { name: "Playtime",      value: minutes !== null ? `**${formatPlaytime(minutes)}**` : "*No record*", inline: true },
-            { name: "Last Seen",     value: online ? "Online now" : lastSeen ? `<t:${Math.floor(lastSeen / 1000)}:R>` : "*No record*", inline: true },
-            { name: "Donator",       value: donator ? "Yes" : "No",                                       inline: true },
-            { name: "K / D",         value: formatKD(playerId),                                                 inline: true },
-            { name: "Sessions",      value: String(ipRec?.logins ?? 0),                                          inline: true },
-            { name: "Discord",       value: linkedId ? `<@${linkedId}>` : "*not linked*",                        inline: true },
-            { name: "Faction Ranks", value: fStr,                                                               inline: false },
-          );
-
-        if (balance !== null) {
-          embed.addFields({ name: "Balance", value: `**${balance.toLocaleString()} credits**`, inline: false });
-        }
-        if (tb) {
-          embed.addFields({ name: "Active Ban", value: tb.permanent || !tb.expires
-            ? `Permanent ban - *${tb.reason}*`
-            : `Temp ban - *${tb.reason}*  -  expires <t:${Math.floor(tb.expires / 1000)}:R>`, inline: false });
-        }
-        if (history.length) {
-          embed.addFields({ name: "Mod Actions", value: `**${history.length}** on record`, inline: false });
-        }
-        if (ipRec?.flagged && !tb) embed.addFields({ name: "Flagged", value: "This player is flagged and will be auto-banned next time they join.", inline: false });
-
-        // Faction kills - how many times this player has killed members of each
-        // faction, cross-referenced from the live kill log against the spawn files.
+        // One flowing, human-written summary instead of a field grid.
+        const bits = [];
+        bits.push(online
+          ? `**${playerId}** is online on ${where} right now.`
+          : lastSeen ? `**${playerId}** is offline, last seen <t:${Math.floor(lastSeen / 1000)}:R>.`
+          : `**${playerId}** is offline and has not been seen yet.`);
+        const facts = [];
+        if (minutes !== null) facts.push(`they have **${formatPlaytime(minutes)}** of playtime`);
+        if (balance !== null) facts.push(`**${balance.toLocaleString()} credits** in their pocket`);
+        facts.push(`a K/D of **${formatKD(playerId)}**`);
+        if (ipRec?.logins) facts.push(`**${ipRec.logins}** sessions on record`);
+        if (facts.length) bits.push(`So far ${facts.join(", ")}.`);
+        bits.push(donator ? "They are a donator." : null);
+        bits.push(linkedId ? `Discord: <@${linkedId}>.` : "Their Discord is not linked.");
+        bits.push(facStr === null ? "Could not read the faction files." : facStr ? `Factions: ${facStr}.` : "They are not in any faction.");
+        if (tb) bits.push(tb.permanent || !tb.expires
+          ? `They are **permanently banned** (reason: \`${tb.reason}\`).`
+          : `They are **banned** (reason: \`${tb.reason}\`), lifts <t:${Math.floor(tb.expires / 1000)}:R>.`);
+        if (history.length) bits.push(`They have **${history.length}** mod action${history.length !== 1 ? "s" : ""} on record.`);
+        if (ipRec?.flagged && !tb) bits.push("They are flagged and will be auto-banned next time they join.");
         const fkills = factionKillBreakdown(playerId);
         if (fkills && Object.keys(fkills).length) {
           const ordered = Object.entries(fkills).sort((a, b) => b[1].total - a[1].total);
           const grand   = ordered.reduce((a, [, d]) => a + d.total, 0);
-          embed.addFields({
-            name: `Faction Kills - ${grand} total`,
-            value: ordered.map(([f, d]) => `${GLYPH.rank} **${f}** - ${d.total} kill${d.total !== 1 ? "s" : ""}`).join("\n"),
-            inline: false,
-          });
+          bits.push(`Faction kills: ${ordered.map(([f, d]) => `**${f}** ${d.total}`).join(", ")} (${grand} total).`);
         }
 
-        brand(embed, { thumb: true, footer: { text: "Playtime tracked every 60s since deployment" } });
+        const embed = new EmbedBuilder().setColor(color)
+          .setTitle(`📋 Player Info - ${playerId}`)
+          .setDescription(bits.filter(Boolean).join("\n"));
+
+        brand(embed);
         return interaction.reply({ embeds: [embed] });
         },
   };
