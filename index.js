@@ -938,14 +938,18 @@ function reconcileBlacklists() {
 const DONATOR_FILE = process.env.DONATOR_PATH
   || path.join(FACTION_ROLES_PATH, "donator.txt");
 
-// Faction name -> its spawn-file name in FactionRoles/. No factions configured yet;
-// add the new ones here as  "Faction Name": "spawnfile.txt".
+// Faction name -> its spawn-file name in FactionRoles/.
 const SPAWN_FILE_MAP = {
+  "Gambino":           "gambinospawn.txt",
+  "Colombo":           "colombospawn.txt",
+  "Police Department": "policespawn.txt",
 };
 
-// Reverse lookup: spawn-file basename (no .txt) -> faction name, used by the log
-// tailer. Mirror every SPAWN_FILE_MAP entry here (e.g.  myfactionspawn: "My Faction").
+// Reverse lookup: spawn-file basename (no .txt) -> faction name, used by the log tailer.
 const FACTION_SPAWN_MAP = {
+  gambinospawn: "Gambino",
+  colombospawn: "Colombo",
+  policespawn:  "Police Department",
 };
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
