@@ -2030,13 +2030,22 @@ async function ensureMenuPanel() {
   if (!MENU_PANEL_CHANNEL) return;
   let ch; try { ch = await client.channels.fetch(MENU_PANEL_CHANNEL); } catch { return; }
   if (!ch?.isTextBased()) return;
-  const saved = safeRead(FILES.MENU_PANEL, {});
-  if (saved.id) { try { await ch.messages.fetch(saved.id); return; } catch {} }   // panel still there
-  const embed = clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("RCON Menu Access")
-    .setDescription(`${hero("Tools for trusted staff.")}\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically - no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
+  const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN)
+    .setTitle("🎛️ RCON Menu Access")
+    .setDescription(`Tools for trusted staff.\n\nPress **Get Menu** and enter your **exact** Pavlov in-game name. The bot grants the menu that matches your highest staff role automatically - no admin needed.\n\nOne RCON name per Discord account. Enter **your own name again** any time to remove your menu and redo it.`));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("menu_start").setLabel("Get Menu").setStyle(ButtonStyle.Success));
-  try { const m = await ch.send(textify({ embeds: [embed], components: [row] })); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
+  // Real embed (not through textify) so the panel renders as a card. content:"" clears
+  // any old plain-text body when refreshing a panel that predates this format.
+  const payload = { content: "", embeds: [embed], components: [row] };
+  const saved = safeRead(FILES.MENU_PANEL, {});
+  if (saved.id) {
+    // Refresh the existing panel in place so a format change takes effect without
+    // an admin deleting the old message.
+    try { const m = await ch.messages.fetch(saved.id); await m.edit(payload); return; }
+    catch { /* message gone - fall through and repost */ }
+  }
+  try { const m = await ch.send(payload); safeWrite(FILES.MENU_PANEL, { id: m.id }); }
   catch (e) { logger.warn("MenuPanel", `panel post failed: ${e.message}`); }
 }
 
