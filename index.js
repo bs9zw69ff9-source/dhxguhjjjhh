@@ -1999,8 +1999,8 @@ async function processExpiredBans() {
 const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
   ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
   GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
-  bar, brand, buildFactionMembershipIndex, cell, client, formatPlaytime,
-  fs, getModsavePath, hero, loadPlaytime, logger, meter,
+  bar, brand, cell, client, loadMenuGrants,
+  fs, getModsavePath, hero, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
   playerCache, easternClock,

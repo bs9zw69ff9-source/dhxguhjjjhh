@@ -5,7 +5,7 @@ module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
   GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
-  bar, brand, buildFactionMembershipIndex, cell, client,
+  bar, brand, cell, client, loadMenuGrants,
   fs, getModsavePath, hero, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
@@ -85,16 +85,17 @@ async function postLeaderboard() {
 
 /* Live player list - edits its own message in a channel every 30s. */
 function buildPlayerListEmbed() {
-  // Read the faction spawn files once so we can tag each connected player with
-  // their faction. Players not in any faction are shown exactly as before.
-  const membership = buildFactionMembershipIndex();
-  const factionTag = (name) => {
-    const facs = membership?.get(name.toLowerCase());
-    return facs && facs.length ? `  -  ${facs.join(" / ")}` : "";
+  // Tag connected players who hold a Staff / High Staff RCON menu (granted through
+  // the RCON menu panel) as staff. Whitelist-menu holders aren't staff, so they're
+  // not tagged. Everyone else is shown plain.
+  const grants = loadMenuGrants();
+  const staffTag = (name) => {
+    const g = grants[name.toLowerCase()];
+    return g && g.some(x => x.menuValue === "staff" || x.menuValue === "highstaff") ? "  -  Staff" : "";
   };
   const fmt = (arr) => {
     if (!arr.length) return "*Empty*";
-    let out = arr.map(n => `• ${n}${factionTag(n)}`).join("\n");
+    let out = arr.map(n => `• ${n}${staffTag(n)}`).join("\n");
     if (out.length > 1024) out = out.slice(0, 1000).replace(/\n[^\n]*$/, "") + "\n...";
     return out;
   };
