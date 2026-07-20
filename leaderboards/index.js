@@ -4,8 +4,8 @@
 module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
-  GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
-  bar, brand, cell, client, loadMenuGrants,
+  GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, PLAYTIME_LB_CHANNEL, allCachedPlayers,
+  bar, brand, cell, client, formatPlaytime, loadMenuGrants, loadPlaytime,
   fs, getModsavePath, hero, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
@@ -83,6 +83,49 @@ async function postLeaderboard() {
   try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("leaderboard", m.id); } catch {}
 }
 
+// ---- playtime leaderboard (RP2 only - PLAYTIME_LB_CHANNEL is unset otherwise) ----
+function buildPlaytimeLeaderboardData() {
+  return Object.entries(loadPlaytime())
+    .map(([playerId, minutes]) => ({ playerId, minutes: Number(minutes) || 0 }))
+    .filter(e => e.minutes > 0)
+    .sort((a, b) => b.minutes - a.minutes)
+    .slice(0, LEADERBOARD_TOP_N);
+}
+
+function buildPlaytimeLeaderboardEmbed() {
+  const entries = buildPlaytimeLeaderboardData();
+  const embed = new EmbedBuilder().setColor(NV.IRRAD_GREEN)
+    .setTitle(`Most Active Players - Top ${LEADERBOARD_TOP_N}`);
+  if (!entries.length) return brand(embed
+    .setDescription(`${hero("No playtime tracked yet.")}\nPlaytime accrues while players are online (sampled every 60s).`),
+    { footer: { text: `Updated every 30s` } });
+  const top = entries[0]?.minutes || 1;
+  // Grand total across EVERY tracked player (not just the top N shown).
+  const all = loadPlaytime();
+  const totalMin = Object.values(all).reduce((s, m) => s + (Number(m) || 0), 0);
+  const players  = Object.keys(all).filter(k => (Number(all[k]) || 0) > 0).length;
+  const body = entries.map((e, i) => {
+    const meter = i < 5 ? `  \`${bar(e.minutes, top, 8)}\`` : "";
+    return `${rankLabel(i)}  **${e.playerId}**  -  ${formatPlaytime(e.minutes)}${meter}`;
+  }).join("\n");
+  return brand(embed.setDescription(
+    `${hero("Time served in the server.")}\n${GLYPH.caps} **Combined: ${formatPlaytime(totalMin)}** across **${players}** players\n${body}`),
+    { thumb: true, footer: { text: `Updated every 30s` } });
+}
+
+async function postPlaytimeLeaderboard() {
+  if (!PLAYTIME_LB_CHANNEL) return;
+  let channel;
+  try { channel = await client.channels.fetch(PLAYTIME_LB_CHANNEL); } catch { return; }
+  const embed = buildPlaytimeLeaderboardEmbed();
+  const existingId = getAutopostMsgId("playtimeLb");
+  if (existingId) {
+    try { const m = await channel.messages.fetch(existingId); await m.edit({ embeds: [embed] }); return; }
+    catch { setAutopostMsgId("playtimeLb", null); }
+  }
+  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("playtimeLb", m.id); } catch {}
+}
+
 /* Live player list - edits its own message in a channel every 30s. */
 function buildPlayerListEmbed() {
   // Tag connected players who hold a Staff / High Staff RCON menu (granted through
@@ -155,12 +198,12 @@ async function purgeChannel(channelId) {
 // limit), postLeaderboard() et al. will still find and edit it - so a purge that only
 // partially succeeds can't result in a duplicate the way an unconditional reset would.
 async function refreshLeaderboardChannels() {
-  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, PLAYERLIST_CHANNEL, DASHBOARD_CHANNEL].filter(Boolean))];
+  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, PLAYTIME_LB_CHANNEL, PLAYERLIST_CHANNEL, DASHBOARD_CHANNEL].filter(Boolean))];
   for (const ch of channels) {
     try { const n = await purgeChannel(ch); if (n) logger.info("Purge", `Cleared ${n} old message(s) from channel ${ch}`); }
     catch (e) { logger.warn("Purge", `Could not purge ${ch}: ${e.message}`); }
   }
-  postLeaderboard(); postPlayerList(); if (DASHBOARD_CHANNEL) postDashboard();
+  postLeaderboard(); postPlaytimeLeaderboard(); postPlayerList(); if (DASHBOARD_CHANNEL) postDashboard();
 }
 
 // Live server-status dashboard: one self-refreshing embed with per-server
@@ -230,5 +273,5 @@ async function postDashboard() {
 }
 
 
-  return { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId };
+  return { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, buildPlaytimeLeaderboardData, buildPlaytimeLeaderboardEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, postPlaytimeLeaderboard, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId };
 };

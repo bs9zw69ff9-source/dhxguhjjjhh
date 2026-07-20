@@ -7,6 +7,10 @@ module.exports = (ctx) => {
   hasAdminRole, hasFactionLeaderRole, hasModRole,
   parseRcon, loadServerStats, extractPlayerNames, easternClock,
   sendRcon, serverLabel, ACTIVE_SERVERS,
+  sanitizeId, emptyIdEmbed, paginate, loadPlaytime, formatPlaytime,
+  getPlayerFactions, getFactionRank, getFactionRankBadge, factionKillBreakdown,
+  readPlayerBalance, loadBans, getLastSeen, isDonator, ipBans, playerCache,
+  IS_RP2,
   } = ctx;
 
   return {
@@ -26,12 +30,19 @@ module.exports = (ctx) => {
         const rows = [
           ["`/serverinfo`", "Live server info - map, mode, players, and network peak."],
           ["`/checkban <player>`", "Check whether a player is banned."],
+          ...(IS_RP2 ? [
+            ["`/stats <player>` / `/kd [player]`", "Player dossier, or K/D stats and the K/D leaderboard."],
+          ] : []),
           ["`/whitelist list <name>` / `/whitelist playtime <name>`", "Whitelist roster with ranks, or members ranked by playtime."],
           ["`/kick <player>` / `/flush <server>`", "Kick a player, or randomly kick one online player (mod)."],
           ["`/tempban <player> <reason>` / `/unban <player>`", "Ban - the punishment preset sets the length - or lift a ban (mod)."],
           ["`/announce <message> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
           ["`/givecaps <player> <amount>`", "Give credits to a player (mod)."],
           ["`/whitelist add|remove <player> <name>`", "Add or remove a player from a whitelist (whitelist leader)."],
+          ...(IS_RP2 ? [
+            ["`/whitelist rank <player> <name> <rank>`", "Add or remove a rank for a member (whitelist leader)."],
+            ["`/whitelist setrankcap <name> <rank> <cap>`", "Cap how many members can hold a rank (admin)."],
+          ] : []),
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],
@@ -110,6 +121,98 @@ module.exports = (ctx) => {
         const today     = stats?.daily?.date === easternClock().date ? (stats.daily.combined?.peak ?? 0) : 0;
         embeds[0].addFields({ name: "All servers", value: `**${liveTotal}/${totalMax}** online right now. Peak: **${peakAll}** all time, **${today}** today.`, inline: false });
         return interaction.editReply({ embeds });
+        },
+
+  /* ─────────────────────────────────────────────────────
+         KD  (RP2 only - registered when RP_PROFILE=rp2)
+         ───────────────────────────────────────────────────── */
+  "kd": async (interaction, name) => {
+        const raw = interaction.options.getString("playerid");
+        if (raw && raw.trim()) {
+          const playerId = sanitizeId(raw);
+          let k; try { k = ipBans.getKD(playerId); } catch { k = { name: playerId, kills: 0, deaths: 0 }; }
+          const ratio = (k.deaths ? k.kills / k.deaths : k.kills).toFixed(2);
+          return interaction.reply({ embeds: [
+            new EmbedBuilder().setColor(NV.AMBER).setTitle(`K/D - ${playerId}`)
+              .addFields(
+                { name: "Kills",  value: `**${k.kills}**`,  inline: true },
+                { name: "Deaths", value: `**${k.deaths}**`, inline: true },
+                { name: "Ratio",  value: `**${ratio}**`,    inline: true },
+                { name: "Playtime", value: (() => { const pt = loadPlaytime(); const key = Object.keys(pt).find(x => x.toLowerCase() === playerId.toLowerCase()); return key !== undefined ? formatPlaytime(pt[key]) : "*no record*"; })(), inline: true },
+                { name: "Whitelist",  value: (() => { const f = getPlayerFactions(playerId); return f && f.length ? f.join(", ") : "*none*"; })(), inline: true },
+              ).setFooter({ text: "Tracked from live kill logs while the bot is running" })
+          ]});
+        }
+        // no player -> leaderboard
+        let top = []; try { top = ipBans.topKD(100); } catch {}
+        if (!top.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("K/D Leaderboard").setDescription("No kill data tracked yet.")] });
+        await interaction.deferReply();
+        const lines = top.map((e, i) => `\`${String(i + 1).padStart(2, "0")}\`  **${e.name}**  -  ${e.kills}/${e.deaths}  -  **${e.ratio.toFixed(2)}** K/D`);
+        return paginate(interaction, lines, (pageLines) =>
+          new EmbedBuilder().setColor(NV.AMBER).setTitle("K/D Leaderboard")
+            .setDescription(`> *"Only the deadliest walk the server."*\n${pageLines.join("\n")}`)
+            .setFooter({ text: "Sorted by K/D ratio" }), { perPage: 20 });
+        },
+
+  /* ─────────────────────────────────────────────────────
+         STATS  (RP2 only - registered when RP_PROFILE=rp2)
+         ───────────────────────────────────────────────────── */
+  "stats": async (interaction, name) => {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        const playtime = loadPlaytime();
+        const ptKey    = Object.keys(playtime).find(k => k.toLowerCase() === playerId.toLowerCase());
+        const minutes  = ptKey !== undefined ? playtime[ptKey] : null;
+        const factions = getPlayerFactions(playerId);
+        const onServers = ACTIVE_SERVERS.filter(s => (playerCache[s] || []).some(n => n.toLowerCase() === playerId.toLowerCase()));
+        const online    = onServers.length > 0;
+        const balance  = readPlayerBalance(playerId);
+        const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
+        const lastSeen = getLastSeen(playerId);
+        const donator  = isDonator(playerId);
+
+        const facStr = factions === null ? null
+          : factions.map(f => `${getFactionRankBadge(f, getFactionRank(f, playerId))} **${f}** (${getFactionRank(f, playerId)})`).join(", ");
+
+        const where = onServers.map(serverLabel).join(" and ");
+        const color = tb ? NV.RUST_RED : online ? NV.IRRAD_GREEN : NV.AMBER;
+        let ipRec = null; try { ipRec = ipBans.getRecord(playerId); } catch {}
+
+        // One flowing, human-written summary instead of a field grid.
+        const bits = [];
+        bits.push(online
+          ? `**${playerId}** is online on ${where} right now.`
+          : lastSeen ? `**${playerId}** is offline, last seen <t:${Math.floor(lastSeen / 1000)}:R>.`
+          : `**${playerId}** is offline and has not been seen yet.`);
+        const facts = [];
+        if (minutes !== null) facts.push(`**${formatPlaytime(minutes)}** of playtime`);
+        if (balance !== null) facts.push(`**${balance.toLocaleString()} credits**`);
+        let kd = null; try { kd = ipBans.getKD(playerId); } catch {}
+        if (kd && (kd.kills + kd.deaths)) {
+          const ratio = (kd.deaths ? kd.kills / kd.deaths : kd.kills).toFixed(2);
+          facts.push(`a **${ratio}** K/D (${kd.kills}/${kd.deaths})`);
+        }
+        if (facts.length) bits.push(`They have ${facts.join(", ")}.`);
+        bits.push(donator ? "They are a donator." : null);
+        bits.push(facStr ? `Whitelists: ${facStr}.` : null);
+        if (tb) bits.push(tb.permanent || !tb.expires
+          ? `They are **permanently banned** (reason: \`${tb.reason}\`).`
+          : `They are **banned** (reason: \`${tb.reason}\`), lifts <t:${Math.floor(tb.expires / 1000)}:R>.`);
+        // Flag status is staff-only - telling an evader they are flagged tips them off.
+        if (ipRec?.flagged && !tb && hasModRole(interaction.member)) bits.push("They are flagged and will be auto-banned next time they join.");
+        const fkills = factionKillBreakdown(playerId);
+        if (fkills && Object.keys(fkills).length) {
+          const ordered = Object.entries(fkills).sort((a, b) => b[1].total - a[1].total);
+          const grand   = ordered.reduce((a, [, d]) => a + d.total, 0);
+          bits.push(`Whitelist kills: ${ordered.map(([f, d]) => `**${f}** ${d.total}`).join(", ")} (${grand} total).`);
+        }
+
+        const embed = new EmbedBuilder().setColor(color)
+          .setTitle(`📋 Player Info - ${playerId}`)
+          .setDescription(bits.filter(Boolean).join("\n"));
+
+        brand(embed);
+        return interaction.reply({ embeds: [embed] });
         },
 
   };

@@ -69,9 +69,25 @@ for the full annotated list.
 - **Optional:** servers 2–3, ModSave/economy paths, log/leaderboard channel IDs,
   role IDs, and:
   - `BOT_NAME` — display name stamped on every embed (default `Server Authority`)
+  - `RP_PROFILE` — which RP this bot runs (see below)
   - `IPHUB_API_KEY` / `IPQS_API_KEY` / `IPINFO_TOKEN` — VPN/proxy detection + geo
   - `UFW_BLOCK=1` — also deny banned/flagged IPs at the OS firewall via `sudo ufw`
   - `DB_EXPORT_INTERVAL_MS` — how often SQLite is mirrored back to `.json` backups
+
+### RP profiles
+
+One codebase runs two different RPs, selected with `RP_PROFILE` so you can point
+separate bots (separate tokens) at the same repo:
+
+| `RP_PROFILE` | RP | Whitelists / ranks | Extra commands |
+|--------------|----|--------------------|----------------|
+| `rp1` (default) | Normal RP | Gambino · Colombo · Police Department | — (lean) |
+| `rp2` | Fallout RP | NCR · Legion · Enclave · Brotherhood of Steel · Kings · Followers | `/stats` `/kd`, per-rank caps + `/whitelist rank\|setrankcap`, and the playtime leaderboard |
+
+`rp1` stays lean; `rp2` turns the extra surface back on. The roster, rank
+registry, and command set are all chosen from the profile at boot — the same
+build runs as the main RP1 bot, and as the RP2 main + faction bots. Gambling and
+Discord links are not part of either profile.
 
 ### Owner override
 
