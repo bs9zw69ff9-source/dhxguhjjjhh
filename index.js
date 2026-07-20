@@ -137,7 +137,7 @@ function validateConfig() {
     "RCON_HOST_2", "RCON_PORT_2", "RCON_PASSWORD_2",
     "RCON_HOST_3", "RCON_PORT_3", "RCON_PASSWORD_3",
     "MODSAVE_PATH", "MOD_LOG_CHANNEL", "BAN_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
-    "PLAYTIME_LB_CHANNEL", "PLAYERLIST_CHANNEL", "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
+    "PLAYERLIST_CHANNEL", "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
     "IPHUB_API_KEY", "IPQS_API_KEY", "KILLFEED_CHANNEL",
   ];
   const missing  = required.filter(k => !process.env[k]);
@@ -204,7 +204,7 @@ acquireSingleInstanceLock();
 // Owns bot.db, the JSON->SQLite migration, the cache + write serialization, the
 // periodic JSON export, the FILES/DEFAULTS registry and the fs-ownership helpers.
 const {
-  FILES, CASINO_CONFIG_DEFAULTS,
+  FILES,
   safeRead, safeWrite, update,
   exportDbToJson, DB_EXPORT_INTERVAL_MS,
   ensureFile, matchTreeOwner, intendedOwner,
@@ -267,8 +267,6 @@ const loadFactionAudit  = () => safeRead(FILES.FACTION_AUDIT,  []);
 const loadMenuGrants    = () => safeRead(FILES.MENU_GRANTS,    {});
 const loadLastSeen      = () => safeRead(FILES.LASTSEEN,       {});
 const loadKnownPlayers  = () => safeRead(FILES.KNOWN,          {});
-const loadCasinoConfig  = () => ({ ...CASINO_CONFIG_DEFAULTS, ...safeRead(FILES.CASINO_CONFIG, CASINO_CONFIG_DEFAULTS) });
-const saveCasinoConfig  = (d) => safeWrite(FILES.CASINO_CONFIG, d);
 
 // ---- mod log writer  (serialized) ----
 function writeModLog(entry) {
@@ -423,10 +421,6 @@ const MENU_ROLE_DEFAULTS = {
 /* RCON blacklist role - anyone holding it is barred from the self-serve menu
    panel, even if they also hold a menu role. */
 const RCON_BLACKLIST_ROLE_ID = process.env.MENU_ROLE_BLACKLIST || "1520598947129852078";
-/* Public /link add requests get posted here with Accept/Deny buttons; only holders
-   of the approver role can act on them. */
-const LINK_REQUEST_CHANNEL = process.env.LINK_REQUEST_CHANNEL || "1525436831435591710";
-const LINK_APPROVER_ROLE   = process.env.LINK_APPROVER_ROLE   || "1521933974744858745";
 // Effective mapping: stored /setrconroles config overrides the env defaults.
 function loadMenuRoles() {
   const saved = safeRead(FILES.MENU_ROLES, {}) || {};
@@ -498,8 +492,6 @@ const BAN_DURATIONS = {
 
 const LEADERBOARD_INTERVAL_MS = 30 * 1000;   // caps + playtime leaderboards refresh every 30s
 const LEADERBOARD_TOP_N       = 30;
-/* Channel the playtime leaderboard auto-posts to (override with PLAYTIME_LB_CHANNEL). */
-const PLAYTIME_LB_CHANNEL     = process.env.PLAYTIME_LB_CHANNEL || "1520598950787158107";
 /* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
 const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1520598950787158106";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
@@ -583,44 +575,11 @@ function setFactionCap(faction, cap) {
   });
 }
 
-/* ---- Per-rank caps (within a faction) ----
-   Stored under cfg[faction].rankCaps = { [rankName]: number }.
-   A missing entry (or 0) means that rank is uncapped. */
-function getFactionRankCap(faction, rank) {
-  const cap = loadFactionConfig()[faction]?.rankCaps?.[rank];
-  return cap > 0 ? cap : null;                       // null = unlimited
-}
-
-function getFactionRankCaps(faction) {
-  return loadFactionConfig()[faction]?.rankCaps ?? {};
-}
-
-function setFactionRankCap(faction, rank, cap) {
-  return update(FILES.FACTION_CONFIG, {}, (cfg) => {
-    if (!cfg[faction]) cfg[faction] = {};
-    if (!cfg[faction].rankCaps) cfg[faction].rankCaps = {};
-    if (cap > 0) cfg[faction].rankCaps[rank] = cap;
-    else delete cfg[faction].rankCaps[rank];          // 0 clears the cap
-    return cfg;
-  });
-}
-
 /** Number of members currently holding `rank` in `faction`. */
 function countFactionRank(faction, rank) {
   const members = getFactionMembers(faction);
   if (!members) return 0;
   return members.filter(m => m.rank === rank).length;
-}
-
-/**
- * Returns { ok, cap, count } describing whether one more member can be
- * assigned `rank`. ok=true when uncapped or below the cap.
- */
-function rankHasRoom(faction, rank) {
-  const cap = getFactionRankCap(faction, rank);
-  if (cap === null) return { ok: true, cap: null, count: 0 };
-  const count = countFactionRank(faction, rank);
-  return { ok: count < cap, cap, count };
 }
 
 /* Pavlov server installs, kept in sync. Every game file the bot writes (bans,
@@ -1901,36 +1860,10 @@ function wipeAllMoney() {
   return { ok: true, wiped, total: files.length };
 }
 
-// ---- casino/ledger: atomic caps debit/credit, jackpot pot, shared intake (extracted to ./casino/ledger) ----
-const { GAMBLE_QUOTA_MAX, GAMBLE_QUOTA_WINDOW_MS, _ledgerQueues, addToPot, casinoIntake, checkGambleQuota, creditCaps, currentPot, debitCaps, drainPot, gambleQuotaLimitEmbed, mutateBalance } = require("./casino/ledger")({
-  FILES, MessageFlags, checkRateLimit, errorEmbed, loadCasinoConfig, logger,
-  rateLimitEmbed, readPlayerBalance, safeRead, safeWrite, update, warningEmbed,
-  writePlayerBalance,
-  loadDiscordLinks: (...a) => loadDiscordLinks(...a),
+// ---- casino/ledger: atomic caps debit/credit (extracted to ./casino/ledger) ----
+const { creditCaps, debitCaps, mutateBalance } = require("./casino/ledger")({
+  logger, readPlayerBalance, writePlayerBalance,
 });
-
-/* ---------------- casino: game logic (pure - no I/O) ----------------
-   Extracted to ./casino/games.js (deterministic given Math.random; no bot
-   state). casinoResultEmbed stays below - it's theme-coupled. */
-const {
-  GAME_ICON, JACKPOT_MIN_BALANCE, JACKPOT_WIN_CHANCE,
-  SLOT_SYMBOLS, spinSlotReel, spinSlots,
-  ROULETTE_RED, rouletteColor, ROULETTE_COLOR_EMOJI, ROULETTE_SPACES, spinRoulette,
-  CARD_RANKS, CARD_SUITS, freshDeck, cardValue, handValue, formatHand, isBlackjack,
-  RUSSIAN_ROULETTE_MULTS,
-} = require("./casino/games");
-
-// Shared result-card builder for the single-shot games (slots, coinflip, roulette,
-// cockfight-vs-house) so every casino embed shares one title/field/footer layout.
-function casinoResultEmbed({ icon, title, color, body, bet, resultLabel, resultValue, balance }) {
-  return brand(new EmbedBuilder().setColor(color).setTitle(`${icon}  ${title}`)
-    .setDescription(`${body}`)
-    .addFields(
-      { name: "Wager",     value: `**${bet.toLocaleString()} credits**`,     inline: true },
-      { name: resultLabel, value: resultValue,                            inline: true },
-      { name: "Balance",   value: `**${balance.toLocaleString()} credits**`, inline: true },
-    ).setFooter({ text: randomQuote("casino") }));
-}
 
 /* ---------------- modsave ban-message file (custom ban screen) ----------------
    Config/blacklist.txt stays NAMES-ONLY (what Pavlov matches on). Separately we
@@ -2063,9 +1996,9 @@ async function processExpiredBans() {
 }
 
 // ---- leaderboards: caps/playtime boards, player list, live dashboard (extracted to ./leaderboards) ----
-const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, buildPlaytimeLeaderboardData, buildPlaytimeLeaderboardEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, postPlaytimeLeaderboard, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
+const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
   ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
-  GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, PLAYTIME_LB_CHANNEL, allCachedPlayers,
+  GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
   bar, brand, buildFactionMembershipIndex, cell, client, formatPlaytime,
   fs, getModsavePath, hero, loadPlaytime, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
@@ -2075,28 +2008,10 @@ const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildP
 
 /* Find the Discord user to DM for a Pavlov username, by matching the guild member
    whose server NICKNAME (or display name) equals the name. Returns a User or null. */
-/* Explicit Discord <-> Pavlov links (set by the owner via /link). Keyed by Discord id:
-   { [discordId]: { name, at, by } }. Takes priority over the nickname-search fallback. */
-const loadDiscordLinks = () => safeRead(FILES.DISCORD_LINKS, {});
-function setDiscordLink(discordId, name, by) { return update(FILES.DISCORD_LINKS, {}, (m) => { m[discordId] = { name, at: Date.now(), by }; return m; }); }
-function removeDiscordLink(discordId)        { return update(FILES.DISCORD_LINKS, {}, (m) => { delete m[discordId]; return m; }); }
-// Pavlov username -> linked Discord id (or null).
-function discordIdForPavlov(name) {
-  const key = String(name ?? "").trim().toLowerCase();
-  if (!key) return null;
-  const links = loadDiscordLinks();
-  for (const [id, v] of Object.entries(links)) if (String(v?.name ?? "").toLowerCase() === key) return id;
-  return null;
-}
-
 async function dmUserForPavlov(name, guild) {
   const key = String(name ?? "").trim().toLowerCase();
-  if (!key) return null;
-  // 1) explicit owner-set link wins.
-  const linkedId = discordIdForPavlov(name);
-  if (linkedId) { try { return await client.users.fetch(linkedId); } catch { /* fall through */ } }
-  // 2) fall back to matching a guild member's nickname / display name.
-  if (!guild) return null;
+  if (!key || !guild) return null;
+  // Match a guild member's nickname / display name.
   try {
     const found = await guild.members.fetch({ query: name, limit: 100 });   // query (op8) - no privileged intent needed
     const m = found.find(mm => (mm.nickname && mm.nickname.toLowerCase() === key) || mm.displayName.toLowerCase() === key);
@@ -2315,7 +2230,6 @@ setInterval(enforceBansSweep,        30_000);   // remove banned players who are
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 // (ufw is manual-only via /firewall - no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
-setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 if (DASHBOARD_CHANNEL) setInterval(postDashboard, DASHBOARD_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
@@ -2339,7 +2253,6 @@ setTimeout(() => {
 }, 30_000);
 
 setTimeout(postLeaderboard, 20_000);
-setTimeout(postPlaytimeLeaderboard, 25_000);
 }
 
 
@@ -2352,7 +2265,7 @@ function autoBackupFactions() {
 
 // ---- commands/definitions: every slash-command builder (registration payload) (extracted to ./commands/definitions) ----
 const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./commands/definitions")({
-  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, JACKPOT_MIN_BALANCE, PermissionFlagsBits, SlashCommandBuilder,
+  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, PermissionFlagsBits, SlashCommandBuilder,
   PUNISH_CHOICES, MENUS,
 });
 
@@ -2395,37 +2308,37 @@ const { onInteraction } = require("./commands")({
   ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_REASON_LABELS, BLACKLIST_IDS,
   BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, redactPrivateInfo,
   DASHBOARD_INTERVAL_MS, DAY_MS, DIVIDER, DONATOR_FILE, EmbedBuilder, FACTION_BAK_DIR,
-  FILES, GAMBLE_QUOTA_MAX, GAMBLE_QUOTA_WINDOW_MS, GAME_ICON, GLYPH, IPHUB_API_KEY,
-  JACKPOT_MIN_BALANCE, JACKPOT_WIN_CHANCE, LINK_APPROVER_ROLE, LINK_REQUEST_CHANNEL, MENUS, MessageFlags,
-  ModalBuilder, NV, PUNISH_BY_VALUE, ROULETTE_COLOR_EMOJI, RUSSIAN_ROULETTE_MULTS, SPAWN_FILE_MAP,
+  FILES, GLYPH, IPHUB_API_KEY,
+  MENUS, MessageFlags,
+  ModalBuilder, NV, PUNISH_BY_VALUE, SPAWN_FILE_MAP,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UFW_BLOCK,
-  _IPV4_RE, addAutobanExempt, addDonator, addMenuGrant, addPlayerToRankFile, addToPot,
+  _IPV4_RE, addAutobanExempt, addDonator, addMenuGrant, addPlayerToRankFile,
   addUserBlacklist, adminOnlyEmbed, awaitOwnedComponent, banWithIp, bar, blacklistHas,
-  blacklistedEmbed, brand, buildDashboardEmbed, buildFactionMembershipIndex, casinoIntake, casinoResultEmbed,
-  cell, checkGambleQuota, checkRateLimit, checkVpn, client,
+  blacklistedEmbed, brand, buildDashboardEmbed, buildFactionMembershipIndex,
+  cell, checkRateLimit, checkVpn, client,
   clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank, creditCaps,
-  currentPot, dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, discordIdForPavlov, dmPunishmentNotice,
-  dmStatusField, dmUserForPavlov, drainPot, easternClock, easternNoonUTC, emptyIdEmbed,
+  dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, dmPunishmentNotice,
+  dmStatusField, dmUserForPavlov, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
-  firewallStatus, firewallUnblockIps, formatHand, formatKD, formatPlaytime, formatTimeLeft,
-  formatUptime, freshDeck, fs, gambleQuotaLimitEmbed, getFactionCap,
-  getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
+  firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
+  formatUptime, fs, getFactionCap,
+  getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
   getFactionRankOrder, getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
-  getPlayerFilePath, getPlayerHistory, getPlayerRanks, handValue, handleMenuPanelSubmit, hasAdminRole,
-  hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt, isBlackjack,
+  getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, hasAdminRole,
+  hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt,
   isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer,
-  loadBans, loadCasinoConfig, loadDiscordLinks, loadFactionAudit, loadFactionBackup, loadMenuGrants,
+  loadBans, loadFactionAudit, loadFactionBackup, loadMenuGrants,
   loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadServerStats, loadVpnChecks,
   extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
   modOnlyEmbed, ownerOnlyEmbed, paginate, parseDuration, parseRcon,
   patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, punishDurationLabel, randomQuote,
-  rankBadge, rankHasRoom, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
-  readPlayerBalance, refreshPlayerCache, removeBans, removeDiscordLink, removeDonator, removeFactionRank,
+  rankBadge, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
+  readPlayerBalance, refreshPlayerCache, removeBans, removeDonator, removeFactionRank,
   removeMenuGrant, removePlayerFromAllRankFiles, removePlayerFromRankFile, removeUserBlacklist, sanitizeBanName, sanitizeId,
-  sanitizeMessage, saveCasinoConfig, saveFactionBackup, saveRoles, sendRcon,
-  sendRconBoth, serverLabel, setDiscordLink, setFactionCap, setFactionRank,
-  setFactionRankCap, setMenuRole, spawn, spinRoulette, spinSlots,
+  sanitizeMessage, saveFactionBackup, saveRoles, sendRcon,
+  sendRconBoth, serverLabel, setFactionCap, setFactionRank,
+  setMenuRole, spawn,
   successEmbed, suspendDonator, textify, unbanEverywhere, update,
   upsertPermBan, upsertTempBan, warningEmbed, wipeAllMoney, wipeFaction, writeFactionAudit,
   writeFactionFile, writeModLog, writePlayerBalance,
@@ -2472,7 +2385,7 @@ module.exports = {
   commandPlayerCandidates,
   sanitizeId,
   // leaderboards
-  buildPlaytimeLeaderboardData, savePlaytime,
+  savePlaytime,
   // warnings
   // bans (serialized)
   loadBans, upsertTempBan, upsertPermBan, removeBans, autoBanDecision, isRealBan, sourceBanFor,
@@ -2481,13 +2394,12 @@ module.exports = {
   // owner / access
   isOwner, isBlacklisted, isMasterName, isProtectedPlayer,
   parseClockTime, easternClock, parseDuration,
-  loadDiscordLinks, setDiscordLink, removeDiscordLink, discordIdForPavlov,
   isAutobanExempt, addAutobanExempt, removeAutobanExempt,
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   embedToText, textify, textifyChunks,
-  // faction rank caps
-  getFactionRankCap, getFactionRankCaps, setFactionRankCap, getFactionCap, setFactionCap,
+  // faction caps
+  getFactionCap, setFactionCap,
   // faction file safety
   readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
   SPAWN_FILE_MAP, ALL_FACTIONS, wipeFaction, loadFactionRanks, setFactionRank,
@@ -2495,12 +2407,9 @@ module.exports = {
   syncAllModSave, syncPlayerLedger, looksLikeLedgerEntry, isPlayerOnline, playerCache,
   // rcon menu roles
   loadMenuRoles, setMenuRole,
-  // casino
-  loadCasinoConfig, saveCasinoConfig, mutateBalance, debitCaps, creditCaps,
-  SLOT_SYMBOLS, spinSlots, ROULETTE_SPACES, rouletteColor, spinRoulette,
-  freshDeck, cardValue, handValue, formatHand, isBlackjack, RUSSIAN_ROULETTE_MULTS,
-  awaitOwnedComponent, checkGambleQuota, GAMBLE_QUOTA_MAX, GAMBLE_QUOTA_WINDOW_MS,
-  currentPot, addToPot, drainPot, JACKPOT_MIN_BALANCE, JACKPOT_WIN_CHANCE,
+  // economy ledger
+  mutateBalance, debitCaps, creditCaps,
+  awaitOwnedComponent,
   getAutopostMsgId, setAutopostMsgId,
   isPidAlive, acquireSingleInstanceLock, releaseSingleInstanceLock, LOCK_FILE,
   checkVpn, checkVpnAndAlert, loadVpnChecks, saveVpnCheck,

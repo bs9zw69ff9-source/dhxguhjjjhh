@@ -59,7 +59,7 @@ const DIRECT = [
 ];
 // domain modules receive the SAME ctx that index.js passes to ./commands
 const DOMAIN = ["commands/info.js", "commands/moderation.js", "commands/admin.js",
-  "commands/factions.js", "commands/economy.js", "commands/casino.js"];
+  "commands/factions.js", "commands/economy.js"];
 
 function moduleDestructure(file) {
   const m = decomment(read(file)).match(/const \{([\s\S]*?)\} = ctx;/);

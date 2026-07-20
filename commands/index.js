@@ -10,19 +10,19 @@
 */
 module.exports = function createCommands(ctx) {
   const {
-  ALL_RANK_NAMES, ActionRowBuilder, DIVIDER, EmbedBuilder, LINK_APPROVER_ROLE, MessageFlags,
+  ALL_RANK_NAMES, ActionRowBuilder, DIVIDER, EmbedBuilder, MessageFlags,
   ModalBuilder, NV, TextInputBuilder, TextInputStyle, adminOnlyEmbed, blacklistedEmbed,
-  brand, checkRateLimit, client, commandPlayerCandidates, commands, deniedEmbed,
-  discordIdForPavlov, errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
+  brand, checkRateLimit, client, commandPlayerCandidates, commands,
+  errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
   handleMenuPanelSubmit, hasAdminRole, hasFactionLeaderRole, hasModRole, isBlacklisted, isOwner,
-  loadDiscordLinks, logger, memberHasRoleId, modOnlyEmbed,
-  patchInteractionOutput, rateLimitEmbed, setDiscordLink, textify, writeModLog,
+  logger, modOnlyEmbed,
+  patchInteractionOutput, rateLimitEmbed, textify, writeModLog,
   } = ctx;
 
   // Command handlers, split by domain (each takes the same ctx).
   const _handlers = Object.assign({},
     require("./info")(ctx), require("./moderation")(ctx), require("./admin")(ctx),
-    require("./factions")(ctx), require("./economy")(ctx), require("./casino")(ctx));
+    require("./factions")(ctx), require("./economy")(ctx));
 
 
   async function onInteraction(interaction) {
@@ -49,50 +49,6 @@ module.exports = function createCommands(ctx) {
     const payload = { embeds: [errorEmbed("Something Went Wrong", "That didn't go through - try again in a moment.")], flags: MessageFlags.Ephemeral };
     (interaction.deferred || interaction.replied ? interaction.followUp(payload) : interaction.reply(payload)).catch(() => {});
   };
-  /* Link-request Accept/Deny - persistent (no collector), so it works after restarts.
-     Only the approver role (or an owner) may act. */
-  if (interaction.isButton() && interaction.customId.startsWith("linkreq_")) {
-    const canAct = isOwner(interaction.user.id) || memberHasRoleId(interaction.member, LINK_APPROVER_ROLE);
-    if (!canAct) return interaction.reply({ embeds: [deniedEmbed("Not Authorized", `Only <@&${LINK_APPROVER_ROLE}> can approve or deny link requests.`)], flags: MessageFlags.Ephemeral }).catch(() => {});
-    const [tag, uid, encName] = interaction.customId.split(":");
-    const pavlov = decodeURIComponent(encName ?? "");
-    const approve = tag === "linkreq_ok";
-    // Re-check the one-to-one rules at ACCEPT time - a second pending request for the
-    // same name (or same user) may have been approved while this card sat here.
-    if (approve) {
-      const takenBy = discordIdForPavlov(pavlov);
-      const already = loadDiscordLinks()[uid];
-      if ((takenBy && takenBy !== uid) || already) {
-        const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Link Request - Void")
-          .setDescription(`${already ? `<@${uid}> is already linked to \`${already.name}\`.` : `\`${pavlov}\` was claimed by <@${takenBy}> while this request was pending.`}\nNothing was changed.`)
-          );
-        return interaction.update(textify({ content: "", embeds: [stale], components: [] })).catch(() => {});
-      }
-    }
-    try {
-      if (approve) {
-        await setDiscordLink(uid, pavlov, interaction.user.tag);
-        writeModLog({ action: "link", targetUserId: uid, playerId: pavlov, by: interaction.user.tag });
-      }
-      const done = brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
-        .setTitle(approve ? "Link Request - Approved" : "Link Request - Denied")
-        .setDescription(`**${interaction.user.username}** ${approve ? "approved" : "denied"} <@${uid}>'s request to link to \`${pavlov}\`.`)
-        );
-      await interaction.update(textify({ content: "", embeds: [done], components: [] }));
-      // DM the requester the outcome (best effort).
-      try {
-        const u = await client.users.fetch(uid);
-        await u.send(textify({ embeds: [brand(new EmbedBuilder().setColor(approve ? NV.IRRAD_GREEN : NV.RUST_RED)
-          .setTitle(approve ? "Your link request was approved" : "Your link request was denied")
-          .setDescription(approve ? `Your Discord is now linked to \`${pavlov}\`.` : `Your request to link to \`${pavlov}\` was denied by staff.`))] }));
-      } catch { /* DMs closed */ }
-    } catch (e) {
-      logger.warn("LinkReq", `accept/deny failed: ${e.message}`);
-      interaction.reply({ embeds: [errorEmbed("Failed", "Couldn't process that request - try again.")], flags: MessageFlags.Ephemeral }).catch(() => {});
-    }
-    return;
-  }
-
   if (interaction.isButton() && interaction.customId === "menu_start") {
     const modal = new ModalBuilder().setCustomId("menu_modal").setTitle("Get RCON menu access")
       .addComponents(new ActionRowBuilder().addComponents(
@@ -196,11 +152,10 @@ module.exports = function createCommands(ctx) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "serverinfo", "checkban", "stats", "kd", "link",
-                           "slots", "coinflip", "blackjack", "roulette", "cockfight", "russianroulette", "jackpot"];
+  const PUBLIC         = ["help", "serverinfo", "checkban"];
   const MOD_COMMANDS   = ["kick", "flush", "tempban", "unban", "announce", "givecaps"];
   const FL_COMMANDS    = ["whitelist"];
-  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "staffleaderboard", "casino"];
+  const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "staffleaderboard"];
 
   const name = interaction.commandName;
 

@@ -7,7 +7,7 @@ module.exports = (ctx) => {
   IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
   addAutobanExempt, banWithIp, blacklistHas, brand, canOverride, checkVpn,
   commandTier, commandTierName,
-  clinical, confirmDialog, discordIdForPavlov, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
+  clinical, confirmDialog, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
   easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
   firewallUnblockIps, formatTimeLeft, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
@@ -309,10 +309,8 @@ module.exports = (ctx) => {
         const _entries = loadBans().filter(b => b.playerId.toLowerCase() === playerId.toLowerCase());
         const tb = _entries.find(b => !b.permanent && b.expires) ?? _entries[0];
         // Cross-referenced context shown on every branch.
-        const _cbLink  = discordIdForPavlov(playerId);
         let _cbRec = null; try { _cbRec = ipBans.getRecord(playerId); } catch {}
         const _cbCtx = [];
-        if (_cbLink)  _cbCtx.push({ name: "Discord", value: `<@${_cbLink}>`, inline: true });
         if (tb && !tb.permanent && tb.expires) {
           const ts = Math.floor(tb.expires / 1000);
           return interaction.reply({ embeds: [
@@ -514,7 +512,6 @@ module.exports = (ctx) => {
         });
 
         const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
-        const linkedId = discordIdForPavlov(playerId);
         const flags = [];
         if (rec?.flagged)            flags.push("IP/EOS **flagged** - next join is auto-banned");
         if (isMasterName(playerId))  flags.push("**MASTER** - bypasses all enforcement");
@@ -534,7 +531,6 @@ module.exports = (ctx) => {
             { name: "Sessions",   value: String(rec?.logins ?? 0),                                              inline: true },
             { name: "First seen", value: rec?.firstSeen ? `<t:${Math.floor(rec.firstSeen / 1000)}:R>` : "*n/a*", inline: true },
             { name: "Last seen",  value: rec?.lastSeen  ? `<t:${Math.floor(rec.lastSeen / 1000)}:R>`  : "*n/a*", inline: true },
-            { name: "Discord",    value: linkedId ? `<@${linkedId}> \`${linkedId}\`` : "*not linked*",           inline: true },
             { name: "Ban",        value: tb ? (tb.permanent || !tb.expires ? `Permanent - ${tb.reason}` : `Temp - ${tb.reason} - until <t:${Math.floor(tb.expires / 1000)}:R>`) : "*none*", inline: false },
             { name: "Flags / status", value: flags.length ? flags.map(f => `• ${f}`).join("\n") : "*none*",     inline: false },
           )

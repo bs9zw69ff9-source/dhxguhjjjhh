@@ -3,7 +3,7 @@
    (a plain object built in index.js). Usage: require("./commands/definitions")(ctx). */
 module.exports = function(ctx) {
   const {
-  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, JACKPOT_MIN_BALANCE, PermissionFlagsBits, SlashCommandBuilder,
+  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, PermissionFlagsBits, SlashCommandBuilder,
   PUNISH_CHOICES, MENUS,
   } = ctx;
 
@@ -97,16 +97,6 @@ const commands = [
     .setDescription("Owner - Clear ALL menu access from every player (both servers)"),
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
-  new SlashCommandBuilder().setName("link")
-    .setDescription("Link your Discord account to your Pavlov username")
-    .addSubcommand(s => s.setName("add")
-      .setDescription("Request to link YOUR Discord to your Pavlov username (staff approves)")
-      .addStringOption(o => o.setName("pavlov").setDescription("Your exact Pavlov in-game username").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("remove")
-      .setDescription("Mod - Remove a Discord account's link")
-      .addUserOption(o => o.setName("discord_user").setDescription("The Discord account").setRequired(true)))
-    .addSubcommand(s => s.setName("list")
-      .setDescription("Mod - Show all Discord ↔ Pavlov links")),
   new SlashCommandBuilder().setName("clearallbans")
     .setDescription("Owner - Unban everyone (clears blacklist.txt on both servers)"),
   new SlashCommandBuilder().setName("setrconroles")
@@ -128,23 +118,12 @@ const commands = [
       .setDescription("Remove a player from a whitelist")
       .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
       .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName("rank")
-      .setDescription("Whitelist Leader - Add or remove a rank for a member (a member can hold several)")
-      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to add (whitelist-specific)").setRequired(true).setAutocomplete(true))
-      .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a whitelist with their ranks")
       .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
     .addSubcommand(s => s.setName("playtime")
       .setDescription("Whitelisted members' playtime, highest to lowest")
       .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
-    .addSubcommand(s => s.setName("setrankcap")
-      .setDescription("Admin - Set the per-rank member cap within a whitelist")
-      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to cap (whitelist-specific)").setRequired(true).setAutocomplete(true))
-      .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500)))
     .addSubcommand(s => s.setName("wipe")
       .setDescription("Owner - Reset a whitelist (or all of them), clearing every member and rank")
       .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist to wipe (omit to wipe ALL)")))),
@@ -162,9 +141,6 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName("amount").setDescription("Credits to add (positive) or subtract (negative)").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for adjustment (logged)")),
-  new SlashCommandBuilder().setName("stats")
-    .setDescription("Player dossier: playtime, whitelists, balance, and mod history")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
   // requires a non-empty description - a zero-width one gets the whole PUT rejected.
   new SlashCommandBuilder().setName("health")
@@ -184,57 +160,6 @@ const commands = [
       .addStringOption(o => o.setName("ip").setDescription("Address to unblock").setRequired(true)))
     .addSubcommand(s => s.setName("status")
       .setDescription("Show the firewall block list")),
-  new SlashCommandBuilder().setName("kd")
-    .setDescription("Kill/death stats - a player's K/D, or the leaderboard")
-    .addStringOption(o => o.setName("playerid").setDescription("Player (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
-  /* ── CASINO ─────────────────────────────────────────── */
-  new SlashCommandBuilder().setName("slots")
-    .setDescription("Pull the slot machine - wager credits for a shot at the jackpot")
-    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
-  new SlashCommandBuilder().setName("coinflip")
-    .setDescription("Call it - heads or tails, double or nothing")
-    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
-    .addStringOption(o => o.setName("call").setDescription("Your call").setRequired(true)
-      .addChoices({ name: "Heads", value: "heads" }, { name: "Tails", value: "tails" })),
-  new SlashCommandBuilder().setName("blackjack")
-    .setDescription("Play a hand of blackjack against the dealer")
-    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
-  new SlashCommandBuilder().setName("roulette")
-    .setDescription("Place a bet on the wheel")
-    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
-    .addStringOption(o => o.setName("space").setDescription("Outside bet (ignored if a number is given)")
-      .addChoices(
-        { name: "Red (2x)",            value: "red"    },
-        { name: "Black (2x)",          value: "black"  },
-        { name: "Even (2x)",           value: "even"   },
-        { name: "Odd (2x)",            value: "odd"    },
-        { name: "1-18 / Low (2x)",     value: "low"    },
-        { name: "19-36 / High (2x)",   value: "high"   },
-        { name: "1st 12  1-12 (3x)",   value: "1st12"  },
-        { name: "2nd 12  13-24 (3x)",  value: "2nd12"  },
-        { name: "3rd 12  25-36 (3x)",  value: "3rd12"  },
-      ))
-    .addIntegerOption(o => o.setName("number").setDescription("Straight-up bet on a single number 0-36 (36x, overrides space)").setMinValue(0).setMaxValue(36)),
-  new SlashCommandBuilder().setName("cockfight")
-    .setDescription("Wager credits on a duel - challenge another player, or the house")
-    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000))
-    .addUserOption(o => o.setName("opponent").setDescription("Challenge this player instead of the house")),
-  new SlashCommandBuilder().setName("russianroulette")
-    .setDescription("Push your luck - pull the trigger for a rising multiplier, or cash out")
-    .addIntegerOption(o => o.setName("bet").setDescription("Credits to wager").setRequired(true).setMinValue(1).setMaxValue(1_000_000)),
-  new SlashCommandBuilder().setName("jackpot")
-    .setDescription(`Bet your ENTIRE balance for a shot at the casino jackpot (min ${JACKPOT_MIN_BALANCE.toLocaleString()} credits)`),
-  new SlashCommandBuilder().setName("casino")
-    .setDescription("Admin - Configure the casino")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addSubcommand(s => s.setName("status").setDescription("Show the current casino config"))
-    .addSubcommand(s => s.setName("toggle")
-      .setDescription("Enable or disable gambling server-wide")
-      .addBooleanOption(o => o.setName("enabled").setDescription("On or off").setRequired(true)))
-    .addSubcommand(s => s.setName("setlimits")
-      .setDescription("Set the min/max bet")
-      .addIntegerOption(o => o.setName("min").setDescription("Minimum bet").setRequired(true).setMinValue(1))
-      .addIntegerOption(o => o.setName("max").setDescription("Maximum bet").setRequired(true).setMinValue(1))),
 ].map(c => c.toJSON());
 
 // Partition: faction commands live on the faction bot when it's configured.

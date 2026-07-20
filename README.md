@@ -1,11 +1,11 @@
 # Pavlov RP Moderation Bot
 
 A theme-neutral Discord moderation bot for **Pavlov VR** RP servers. It drives
-the game servers over RCON and adds native bans/kicks/mutes with punishment
-presets, ban-evasion + VPN/proxy detection with optional OS-firewall blocking,
-whitelists and ranks, a credits economy with a casino, weekly wages and
-leaderboards, donator management, self-service RCON menus, and a layered
-owner/admin/mod/whitelist permission model — all behind slash commands.
+the game servers over RCON and adds native bans/kicks with punishment presets,
+ban-evasion + VPN/proxy detection with optional OS-firewall blocking, whitelists
+and ranks, a credits economy, a caps leaderboard, donator management,
+self-service RCON menus, and a layered owner/admin/mod/whitelist permission
+model — all behind slash commands.
 
 It ships **brand-neutral** and skins to any RP: set `BOT_NAME` in `.env` (e.g.
 `Mojave Authority`, `LSPD Command`) and every embed is stamped with it.
@@ -40,14 +40,14 @@ no hidden globals.
 index.js              entry point + wiring (the ctx is built here)
 ipBans.js             Pavlov.log tailer: EOS-id ↔ IP ↔ name tracking, auto-ban
 commands/             slash-command dispatcher (index.js) + domain handlers
-                      (moderation, admin, factions, economy, casino, info)
+                      (moderation, admin, factions, economy, info)
                       and definitions.js (every SlashCommandBuilder)
 events/               clientReady handler + ipBans join/leave/kill/auto-ban hooks
 moderation/           bans.js (RCON enforce/reconcile/unban), vpn.js (IPHub/IPQS
                       + geolocation), firewall.js (ufw block/unblock/status)
 factions/             ranks.js (rank registry), files.js, whitelist.js
-casino/               games.js (pure math), ledger.js (atomic caps ledger)
-leaderboards/         caps + playtime boards, live player list, server dashboard
+casino/               ledger.js (atomic caps ledger)
+leaderboards/         caps board, live player list, server dashboard
 database/             SQLite (bot.db) storage layer + JSON export
 rcon/                 Pavlov RCON transport (TCP + md5 auth)
 discord/              theme.js (palette, quotes, brand, embed builders)
@@ -108,11 +108,11 @@ locked.
 
 | Tier | Commands |
 |------|----------|
-| 🌐 Public | `/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link` · casino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot` |
+| 🌐 Public | `/help` `/serverinfo` `/checkban` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
-| ⚔️ Whitelist Leader | `/whitelist add\|remove\|rank\|setrankcap\|wipe` |
-| 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` `/casino` |
-| 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` |
+| ⚔️ Whitelist Leader | `/whitelist add\|remove` |
+| 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
+| 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
 Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
 `/setroles`; an unset tier role means that tier is unrestricted. `/tempban`
@@ -141,7 +141,7 @@ npm run check   # syntax check (node --check on index.js + ipBans.js)
 npm test        # node:test suites — pure logic, wiring guard, handler tests
 ```
 
-Tests cover the pure/leaf modules (utils, casino math, theme, firewall guard,
+Tests cover the pure/leaf modules (utils, theme, firewall guard,
 SQLite round-trip in an isolated temp dir, faction rank registry, ipBans, the
 plain-text renderer), a static wiring check of every module's `ctx` contract,
 and handler-level tests that drive the kick/tempban/unban/checkban flows against

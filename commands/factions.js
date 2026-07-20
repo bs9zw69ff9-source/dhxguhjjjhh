@@ -4,14 +4,14 @@
 module.exports = (ctx) => {
   const {
   ALL_FACTIONS, DIVIDER, EmbedBuilder, FACTION_BAK_DIR, MessageFlags, NV,
-  SPAWN_FILE_MAP, addPlayerToRankFile, adminOnlyEmbed, bar, brand, confirmDialog,
-  countFactionRank, emptyIdEmbed, errorEmbed, factionLeaderStrictEmbed, formatPlaytime, getFactionCap,
-  getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
-  getFactionRankOrder, getPlayerFactions, getPlayerRanks, hasAdminRole, hasFactionLeaderRole,
+  SPAWN_FILE_MAP, addPlayerToRankFile, bar, brand, confirmDialog,
+  countFactionRank, emptyIdEmbed, errorEmbed, formatPlaytime, getFactionCap,
+  getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
+  getFactionRankOrder, getPlayerFactions,
   isOwner, loadPlaytime, logAction, logger, meter,
   ownerOnlyEmbed, paginate, path, randomQuote, rankBadge,
-  rankHasRoom, rankLabel, readFactionFile, removeFactionRank, removePlayerFromAllRankFiles, removePlayerFromRankFile,
-  sanitizeId, setFactionRank, setFactionRankCap, spawn, successEmbed,
+  rankLabel, readFactionFile, removeFactionRank, removePlayerFromAllRankFiles,
+  sanitizeId, setFactionRank, spawn, successEmbed,
   update, warningEmbed, wipeFaction, writeFactionAudit, writeFactionFile, writeModLog,
   } = ctx;
 
@@ -22,30 +22,6 @@ module.exports = (ctx) => {
          ───────────────────────────────────────────────────── */
   "whitelist": async (interaction, name) => {
         const sub = interaction.options.getSubcommand();
-
-        /* ── setrankcap (admin only) ── */
-        if (sub === "setrankcap") {
-          if (!hasAdminRole(interaction.member)) {
-            return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
-          }
-          const faction = interaction.options.getString("whitelist");
-          const rank    = interaction.options.getString("rank");
-          const cap     = interaction.options.getInteger("cap");
-          const validRanks = getFactionRankOrder(faction);
-          if (!validRanks.includes(rank)) {
-            return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
-          }
-          await setFactionRankCap(faction, rank, cap);
-          writeModLog({ action: "faction-setrankcap", faction, rank, cap, by: interaction.user.tag });
-          const current = countFactionRank(faction, rank);
-          const capStr  = cap > 0 ? `**${cap}**` : "**Unlimited**";
-          const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Rank Cap Updated")
-            .setDescription(`**${interaction.user.username}** set **${faction}** ${rankBadge(faction, rank)}'s cap to ${capStr} (currently ${current}${cap > 0 ? `/${cap}${current > cap ? " - over cap!" : ""}` : ""}).`)
-            .setFooter({ text: cap > 0 ? "Cap enforced on add / rank / transfer" : "Rank is now uncapped" });
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        }
 
         /* ── wipe (owner only) - reset one whitelist, or every whitelist ── */
         if (sub === "wipe") {
@@ -99,10 +75,8 @@ module.exports = (ctx) => {
           const cap = getFactionCap(faction);
           const summary = getFactionRankOrder(faction).slice().reverse().map(r => {
             const n = countFactionRank(faction, r);   // file-based: counts every holder (a member may hold several ranks)
-            const rcap = getFactionRankCap(faction, r);
-            if (!n && !rcap) return null;
-            const count = rcap ? `${n}/${rcap}` : `${n}`;
-            return `${getFactionRankBadge(faction, r)} ${r}: **${count}**`;
+            if (!n) return null;
+            return `${getFactionRankBadge(faction, r)} ${r}: **${n}**`;
           }).filter(Boolean).join("  -  ");
           const lines = members.map((m, i) =>
             `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  -  *${(m.ranks || [m.rank]).join(", ")}*`);
@@ -150,58 +124,6 @@ module.exports = (ctx) => {
             { perPage: 20 });
         }
 
-        /* ── rank (Whitelist Leader ONLY) ── */
-        if (sub === "rank") {
-          if (!hasFactionLeaderRole(interaction.member)) {
-            return interaction.reply({ embeds: [factionLeaderStrictEmbed()], flags: MessageFlags.Ephemeral });
-          }
-          const playerId = sanitizeId(interaction.options.getString("playerid"));
-          const faction  = interaction.options.getString("whitelist");
-          const rank     = interaction.options.getString("rank");
-          const removing = interaction.options.getBoolean("remove") === true;
-          if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-          const validRanks = getFactionRankOrder(faction);
-          if (!validRanks.includes(rank)) {
-            return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${rank}** is not a rank in **${faction}**. Valid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}.`)], flags: MessageFlags.Ephemeral });
-          }
-          const spawn = SPAWN_FILE_MAP[faction];
-          const lines = readFactionFile(spawn);
-          if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read the roster file for **${faction}**.`)], flags: MessageFlags.Ephemeral });
-          if (!lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not in **${faction}**. Use \`/whitelist add\` first.`)], flags: MessageFlags.Ephemeral });
-          }
-          const had = getPlayerRanks(faction, playerId);
-          if (removing) {
-            if (!had.includes(rank)) {
-              return interaction.reply({ embeds: [warningEmbed("Rank Not Held", `\`${playerId}\` does not hold **${rank}** in **${faction}**. They hold: ${had.join(", ") || "none"}.`)], flags: MessageFlags.Ephemeral });
-            }
-            if (!removePlayerFromRankFile(faction, playerId, rank)) {
-              return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${rank}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
-            }
-          } else {
-            if (had.includes(rank)) {
-              return interaction.reply({ embeds: [warningEmbed("Already Holds Rank", `\`${playerId}\` already holds **${rank}** in **${faction}**. They hold: ${had.join(", ")}.`)], flags: MessageFlags.Ephemeral });
-            }
-            const room = rankHasRoom(faction, rank);   // a member can hold MULTIPLE ranks; cap is per rank file
-            if (!room.ok) {
-              return interaction.reply({ embeds: [errorEmbed("Rank Full",
-                `**${rank}** in **${faction}** is full (**${room.count}/${room.cap}**). Raise the cap with \`/whitelist setrankcap\`.`)], flags: MessageFlags.Ephemeral });
-            }
-            if (!addPlayerToRankFile(faction, playerId, rank)) {
-              return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${rank}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
-            }
-          }
-          const now = getPlayerRanks(faction, playerId);
-          await setFactionRank(faction, playerId, now[now.length - 1] ?? getFactionDefaultRank(faction));   // track highest as primary
-          writeFactionAudit({ action: "rank", faction, playerId, rank: removing ? `-${rank}` : rank, by: interaction.user.tag });
-          writeModLog({ action: removing ? "faction-unrank" : "faction-rank", playerId, faction, rank, by: interaction.user.tag });
-          const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(removing ? "✅ Rank Removed" : "✅ Rank Added")
-            .setDescription(`**${interaction.user.username}** ${removing ? "removed" : "gave"} **${playerId}** the ${rankBadge(faction, rank)} **${rank}** rank in **${faction}**. They now hold: ${now.length ? now.map(r => `**${r}**`).join(", ") : "no ranks"}.`);
-          brand(embed); await logAction(embed);
-          return interaction.reply({ embeds: [embed] });
-        }
-
         /* ── add ── */
         if (sub === "add") {
           const playerId = sanitizeId(interaction.options.getString("playerid"));
@@ -225,16 +147,11 @@ module.exports = (ctx) => {
           const lines = readFactionFile(spawn);
           if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], flags: MessageFlags.Ephemeral });
           if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/whitelist rank\` to add or remove ranks - a member can hold several.`)], flags: MessageFlags.Ephemeral });
+            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (rank: ${getFactionRank(faction, playerId) || "none"}).`)], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
             return interaction.reply({ embeds: [errorEmbed("Whitelist Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/whitelist setcap\` to increase the limit, or remove a member first.`)], flags: MessageFlags.Ephemeral });
-          }
-          const addRoom = rankHasRoom(faction, rank);
-          if (!addRoom.ok) {
-            return interaction.reply({ embeds: [errorEmbed("Rank Full",
-              `**${rank}** in **${faction}** is at its cap (**${addRoom.count}/${addRoom.cap}**).\n\nAdd them at a different rank, or raise the cap with \`/whitelist setrankcap\`.`)], flags: MessageFlags.Ephemeral });
           }
           lines.push(playerId);
           if (!writeFactionFile(spawn, lines)) {
