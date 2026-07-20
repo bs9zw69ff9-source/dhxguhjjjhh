@@ -3,7 +3,7 @@
    (a plain object built in index.js). Usage: require("./commands/definitions")(ctx). */
 module.exports = function(ctx) {
   const {
-  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, IS_RP2, PermissionFlagsBits, SlashCommandBuilder,
+  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, PermissionFlagsBits, SlashCommandBuilder,
   PUNISH_CHOICES, MENUS,
   } = ctx;
 
@@ -23,46 +23,8 @@ const ALL_RANK_NAMES = [...new Set(
   Object.values(FACTION_RANKS).flatMap(cfg => cfg.order)
 )].map(r => ({ name: r, value: r }));
 
-/* /whitelist is assembled here so the rank/setrankcap subcommands can be added
-   only on RP2 (RP1 has no per-rank management or caps). */
-const whitelistCmd = new SlashCommandBuilder()
-  .setName("whitelist")
-  .setDescription("Manage whitelists, ranks, and rosters")
-  .addSubcommand(s => s.setName("add")
-    .setDescription("Add a player to a whitelist")
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
-    .addStringOption(o => o.setName("rank").setDescription("Starting rank (whitelist-specific, default is lowest rank)").setAutocomplete(true)))
-  .addSubcommand(s => s.setName("remove")
-    .setDescription("Remove a player from a whitelist")
-    .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
-    .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true)))
-  .addSubcommand(s => s.setName("list")
-    .setDescription("List all members of a whitelist with their ranks")
-    .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
-  .addSubcommand(s => s.setName("playtime")
-    .setDescription("Whitelisted members' playtime, highest to lowest")
-    .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))));
-if (IS_RP2) {
-  whitelistCmd
-    .addSubcommand(s => s.setName("rank")
-      .setDescription("Whitelist Leader - Add or remove a rank for a member (a member can hold several)")
-      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to add (whitelist-specific)").setRequired(true).setAutocomplete(true))
-      .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
-    .addSubcommand(s => s.setName("setrankcap")
-      .setDescription("Admin - Set the per-rank member cap within a whitelist")
-      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to cap (whitelist-specific)").setRequired(true).setAutocomplete(true))
-      .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500)));
-}
-whitelistCmd.addSubcommand(s => s.setName("wipe")
-  .setDescription("Owner - Reset a whitelist (or all of them), clearing every member and rank")
-  .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist to wipe (omit to wipe ALL)"))));
 
-
-const commandBuilders = [
+const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
   new SlashCommandBuilder().setName("serverinfo").setDescription("Server info: map, mode, player count"),
   new SlashCommandBuilder().setName("kick")
@@ -144,7 +106,27 @@ const commandBuilders = [
     .addRoleOption(o => o.setName("staff_role").setDescription("Role that grants the Staff menu"))
     .addRoleOption(o => o.setName("whitelist_role").setDescription("Role that grants the Whitelist menu")),
   /* ── WHITELIST ─────────────────────────────────────────── */
-  whitelistCmd,
+  new SlashCommandBuilder()
+    .setName("whitelist")
+    .setDescription("Manage whitelists, ranks, and rosters")
+    .addSubcommand(s => s.setName("add")
+      .setDescription("Add a player to a whitelist")
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
+      .addStringOption(o => o.setName("rank").setDescription("Starting rank (whitelist-specific, default is lowest rank)").setAutocomplete(true)))
+    .addSubcommand(s => s.setName("remove")
+      .setDescription("Remove a player from a whitelist")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("list")
+      .setDescription("List all members of a whitelist with their ranks")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
+    .addSubcommand(s => s.setName("playtime")
+      .setDescription("Whitelisted members' playtime, highest to lowest")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
+    .addSubcommand(s => s.setName("wipe")
+      .setDescription("Owner - Reset a whitelist (or all of them), clearing every member and rank")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist to wipe (omit to wipe ALL)")))),
 
   new SlashCommandBuilder().setName("manual")
     .setDescription("Admin - Send a raw RCON command")
@@ -178,20 +160,7 @@ const commandBuilders = [
       .addStringOption(o => o.setName("ip").setDescription("Address to unblock").setRequired(true)))
     .addSubcommand(s => s.setName("status")
       .setDescription("Show the firewall block list")),
-];
-
-// RP2 (Fallout) restores the player stats surface. RP1 stays lean.
-if (IS_RP2) {
-  commandBuilders.push(
-    new SlashCommandBuilder().setName("stats")
-      .setDescription("Player dossier: playtime, whitelists, balance, and mod history")
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
-    new SlashCommandBuilder().setName("kd")
-      .setDescription("Kill/death stats - a player's K/D, or the leaderboard")
-      .addStringOption(o => o.setName("playerid").setDescription("Player (leave blank for the K/D leaderboard)").setRequired(false).setAutocomplete(true)),
-  );
-}
-const commands = commandBuilders.map(c => c.toJSON());
+].map(c => c.toJSON());
 
 // Partition: faction commands live on the faction bot when it's configured.
 const FACTION_COMMAND_NAMES = new Set(["whitelist"]);

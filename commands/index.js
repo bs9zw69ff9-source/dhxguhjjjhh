@@ -152,7 +152,7 @@ module.exports = function createCommands(ctx) {
   }
 
   /* ── Permission routing ───────────────────────────────── */
-  const PUBLIC         = ["help", "serverinfo", "checkban", "stats", "kd"];
+  const PUBLIC         = ["help", "serverinfo", "checkban"];
   const MOD_COMMANDS   = ["kick", "flush", "tempban", "unban", "announce", "givecaps"];
   const FL_COMMANDS    = ["whitelist"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "staffleaderboard"];

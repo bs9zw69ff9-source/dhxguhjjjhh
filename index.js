@@ -490,16 +490,8 @@ const BAN_DURATIONS = {
   "1y":  { ms: 31_536_000_000,     label: "1 Year"   },
 };
 
-// ---- faction-specific rank system ----
-// Rank registry + spawn maps (per-RP profile) extracted to ./factions/ranks.
-// RP_PROFILE selects the roster; IS_RP2 gates the extra command surface. Required
-// up here because a few config constants below key off the profile.
-const { RP_PROFILE, IS_RP2, FACTION_RANKS, SPAWN_FILE_MAP, FACTION_SPAWN_MAP, ALL_FACTIONS } = require("./factions/ranks");
-
 const LEADERBOARD_INTERVAL_MS = 30 * 1000;   // caps + playtime leaderboards refresh every 30s
 const LEADERBOARD_TOP_N       = 30;
-/* Channel the playtime leaderboard auto-posts to - RP2 only (empty in RP1 disables it). */
-const PLAYTIME_LB_CHANNEL     = IS_RP2 ? (process.env.PLAYTIME_LB_CHANNEL || "1520598950787158107") : "";
 /* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
 const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1520598950787158106";
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
@@ -514,7 +506,9 @@ const UPDATE_LOG_CHANNEL      = process.env.UPDATE_LOG_CHANNEL || "1526601109362
 const KILLFEED_CHANNEL        = process.env.KILLFEED_CHANNEL || "1525801322262167623";
 
 // ---- faction-specific rank system ----
-// (FACTION_RANKS / SPAWN_FILE_MAP / ALL_FACTIONS come from ./factions/ranks, required above.)
+// Rank registry (order/badges/rankFiles) extracted to ./factions/ranks.
+const { FACTION_RANKS } = require("./factions/ranks");
+
 function getFactionRankConfig(faction) { return FACTION_RANKS[faction] ?? null; }
 function getFactionRankOrder(faction)  { return FACTION_RANKS[faction]?.order ?? []; }
 function getFactionDefaultRank(faction){ return FACTION_RANKS[faction]?.default ?? "Recruit"; }
@@ -581,44 +575,11 @@ function setFactionCap(faction, cap) {
   });
 }
 
-/* ---- Per-rank caps (within a faction) - RP2 only ----
-   Stored under cfg[faction].rankCaps = { [rankName]: number }.
-   A missing entry (or 0) means that rank is uncapped. */
-function getFactionRankCap(faction, rank) {
-  const cap = loadFactionConfig()[faction]?.rankCaps?.[rank];
-  return cap > 0 ? cap : null;                       // null = unlimited
-}
-
-function getFactionRankCaps(faction) {
-  return loadFactionConfig()[faction]?.rankCaps ?? {};
-}
-
-function setFactionRankCap(faction, rank, cap) {
-  return update(FILES.FACTION_CONFIG, {}, (cfg) => {
-    if (!cfg[faction]) cfg[faction] = {};
-    if (!cfg[faction].rankCaps) cfg[faction].rankCaps = {};
-    if (cap > 0) cfg[faction].rankCaps[rank] = cap;
-    else delete cfg[faction].rankCaps[rank];          // 0 clears the cap
-    return cfg;
-  });
-}
-
 /** Number of members currently holding `rank` in `faction`. */
 function countFactionRank(faction, rank) {
   const members = getFactionMembers(faction);
   if (!members) return 0;
   return members.filter(m => m.rank === rank).length;
-}
-
-/**
- * Returns { ok, cap, count } describing whether one more member can be
- * assigned `rank`. ok=true when uncapped or below the cap.
- */
-function rankHasRoom(faction, rank) {
-  const cap = getFactionRankCap(faction, rank);
-  if (cap === null) return { ok: true, cap: null, count: 0 };
-  const count = countFactionRank(faction, rank);
-  return { ok: count < cap, cap, count };
 }
 
 /* Pavlov server installs, kept in sync. Every game file the bot writes (bans,
@@ -936,8 +897,21 @@ function reconcileBlacklists() {
 const DONATOR_FILE = process.env.DONATOR_PATH
   || path.join(FACTION_ROLES_PATH, "donator.txt");
 
-// SPAWN_FILE_MAP / FACTION_SPAWN_MAP / ALL_FACTIONS now come from ./factions/ranks
-// (per-RP profile), imported above with FACTION_RANKS.
+// Faction name -> its spawn-file name in FactionRoles/.
+const SPAWN_FILE_MAP = {
+  "Gambino":           "gambinospawn.txt",
+  "Colombo":           "colombospawn.txt",
+  "Police Department": "policespawn.txt",
+};
+
+// Reverse lookup: spawn-file basename (no .txt) -> faction name, used by the log tailer.
+const FACTION_SPAWN_MAP = {
+  gambinospawn: "Gambino",
+  colombospawn: "Colombo",
+  policespawn:  "Police Department",
+};
+
+const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
 
 /* The "faction.txt" master roster the gamemode reads, plus any other plain
    FactionRoles files the bot never writes but the server still expects to
@@ -2022,10 +1996,10 @@ async function processExpiredBans() {
 }
 
 // ---- leaderboards: caps/playtime boards, player list, live dashboard (extracted to ./leaderboards) ----
-const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, buildPlaytimeLeaderboardData, buildPlaytimeLeaderboardEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, postPlaytimeLeaderboard, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
+const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
   ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
-  GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, PLAYTIME_LB_CHANNEL, allCachedPlayers,
-  bar, brand, cell, client, formatPlaytime, loadMenuGrants, loadPlaytime,
+  GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
+  bar, brand, cell, client, loadMenuGrants,
   fs, getModsavePath, hero, logger, meter,
   parseRcon, path, refreshPlayerCache, safeRead, safeWrite, sendRcon,
   serverLabel,
@@ -2265,7 +2239,6 @@ setInterval(enforceBansSweep,        30_000);   // remove banned players who are
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
 // (ufw is manual-only via /firewall - no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
-if (IS_RP2) setInterval(postPlaytimeLeaderboard, LEADERBOARD_INTERVAL_MS);   // RP2 only
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 if (DASHBOARD_CHANNEL) setInterval(postDashboard, DASHBOARD_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
@@ -2289,7 +2262,6 @@ setTimeout(() => {
 }, 30_000);
 
 setTimeout(postLeaderboard, 20_000);
-if (IS_RP2) setTimeout(postPlaytimeLeaderboard, 25_000);   // RP2 only
 }
 
 
@@ -2302,7 +2274,7 @@ function autoBackupFactions() {
 
 // ---- commands/definitions: every slash-command builder (registration payload) (extracted to ./commands/definitions) ----
 const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./commands/definitions")({
-  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, IS_RP2, PermissionFlagsBits, SlashCommandBuilder,
+  ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, PermissionFlagsBits, SlashCommandBuilder,
   PUNISH_CHOICES, MENUS,
 });
 
@@ -2359,8 +2331,7 @@ const { onInteraction } = require("./commands")({
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
-  getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankCap, getFactionRankConfig,
-  IS_RP2, setFactionRankCap, rankHasRoom,
+  getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
   getFactionRankOrder, getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt,
@@ -2423,7 +2394,7 @@ module.exports = {
   commandPlayerCandidates,
   sanitizeId,
   // leaderboards
-  buildPlaytimeLeaderboardData, savePlaytime,
+  savePlaytime,
   // warnings
   // bans (serialized)
   loadBans, upsertTempBan, upsertPermBan, removeBans, autoBanDecision, isRealBan, sourceBanFor,
@@ -2436,8 +2407,8 @@ module.exports = {
   // ui / parsing helpers
   splitPages, extractPlayerNames, bar, dmStatusField,
   embedToText, textify, textifyChunks,
-  // faction rank caps
-  getFactionRankCap, getFactionRankCaps, setFactionRankCap, getFactionCap, setFactionCap,
+  // faction caps
+  getFactionCap, setFactionCap,
   // faction file safety
   readFactionFile, writeFactionFile, FACTION_BULK_DROP_LIMIT, FACTION_ROLES_PATH,
   SPAWN_FILE_MAP, ALL_FACTIONS, wipeFaction, loadFactionRanks, setFactionRank,
