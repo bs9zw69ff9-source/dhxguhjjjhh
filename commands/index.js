@@ -144,8 +144,8 @@ module.exports = function createCommands(ctx) {
       return interaction.respond(opts.filter(o => !q || o.value.includes(q) || o.name.toLowerCase().includes(q.toLowerCase())).slice(0, 25)).catch(() => {});
     }
 
-    if (focused.name === "rank" && cmdName === "faction") {
-      const faction = interaction.options.getString("faction") ?? interaction.options.getString("to_faction");
+    if (focused.name === "rank" && cmdName === "whitelist") {
+      const faction = interaction.options.getString("whitelist");
       if (faction) {
         const order = getFactionRankOrder(faction);
         const query = focused.value.toLowerCase();
@@ -199,7 +199,7 @@ module.exports = function createCommands(ctx) {
   const PUBLIC         = ["help", "serverinfo", "checkban", "stats", "kd", "link",
                            "slots", "coinflip", "blackjack", "roulette", "cockfight", "russianroulette", "jackpot"];
   const MOD_COMMANDS   = ["kick", "flush", "tempban", "unban", "announce", "givecaps"];
-  const FL_COMMANDS    = ["faction"];
+  const FL_COMMANDS    = ["whitelist"];
   const ADMIN_COMMANDS = ["permban", "cleartempbans", "setroles", "givemenu", "stripmenu", "manual", "adjustcaps", "donator", "staffactivity", "staffleaderboard", "casino"];
 
   const name = interaction.commandName;
@@ -208,9 +208,9 @@ module.exports = function createCommands(ctx) {
     if (ADMIN_COMMANDS.includes(name) && !hasAdminRole(interaction.member)) {
       return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
-    // /faction's read-only subcommands (list / audit / playtime) are public - only
-    // the mutating ones need the Faction Leader / Mod gate.
-    const factionPublicSub = name === "faction" &&
+    // /whitelist's read-only subcommands (list / audit / playtime) are public - only
+    // the mutating ones need the Whitelist Leader / Mod gate.
+    const factionPublicSub = name === "whitelist" &&
       ["list", "playtime"].includes(interaction.options.getSubcommand(false));
     if (FL_COMMANDS.includes(name) && !factionPublicSub && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
       return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });

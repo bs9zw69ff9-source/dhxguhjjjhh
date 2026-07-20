@@ -68,7 +68,7 @@ module.exports = (ctx) => {
         if (!pool.length) {
           return interaction.editReply({ embeds: [warningEmbed("Nothing to Flush", "No players are currently online on the selected server.")] });
         }
-        // Staff (Staff/High Staff menu on record - NOT the Faction menu), donators,
+        // Staff (Staff/High Staff menu on record - NOT the Whitelist menu), donators,
         // and master names are immune to the random kick.
         const candidates = pool.filter(p => !isProtectedPlayer(p.name));
         if (!candidates.length) {

@@ -377,7 +377,7 @@ async function seedKnownPlayers() {
    to fall back to the default online + known-player list. */
 function commandPlayerCandidates(interaction) {
   const cmd = interaction.commandName;
-  const sub = (cmd === "faction" || cmd === "donator") ? interaction.options.getSubcommand(false) : null;
+  const sub = (cmd === "whitelist" || cmd === "donator") ? interaction.options.getSubcommand(false) : null;
   const known = loadKnownPlayers();
   const disp  = (k) => known[String(k).toLowerCase()]?.name ?? k;   // recover display casing for lowercased keys
 
@@ -385,8 +385,8 @@ function commandPlayerCandidates(interaction) {
                               return [...new Set([...loadBans().map(b => b.playerId), ...blacklistAllCached()])];  // temp-banned + blacklist.txt (cached for autocomplete)
   if (cmd === "stripmenu")    return Object.keys(loadMenuGrants()).map(disp);                          // holds a menu grant
   if (cmd === "donator" && sub === "remove") return readDonatorFile() ?? [];                           // in donator file
-  if (cmd === "faction" && (sub === "remove" || sub === "rank")) {
-    const f = interaction.options.getString("faction");
+  if (cmd === "whitelist" && (sub === "remove" || sub === "rank")) {
+    const f = interaction.options.getString("whitelist");
     return f ? (readFactionFile(SPAWN_FILE_MAP[f]) ?? []) : null;                                      // members of that faction
   }
   return null;   // default: online + known players
@@ -408,7 +408,7 @@ const MENUS = [
   { name: "Staff",      value: "staff",     menuId: STAFF_MENU_ID },
   // High Staff uses the SAME bit code as Staff, but the grant also runs AddMod + AddAccessManager.
   { name: "High Staff", value: "highstaff", menuId: STAFF_MENU_ID },
-  { name: "Faction",    value: "faction",   menuId: "0000010000000000000000000000010 00100001000000" },
+  { name: "Whitelist",  value: "faction",   menuId: "0000010000000000000000000000010 00100001000000" },
 ];
 
 /* Self-service RCON-menu panel: a channel where staff enter their in-game name and
@@ -455,7 +455,7 @@ function menuRoleTiers() {
 const DAY_MS = 86_400_000;
 const PUNISHMENTS = [
   { name: "MassRDM in Protected Zone",     value: "massrdm_protected", ms: 3 * DAY_MS },
-  { name: "Spawn Killing - Faction Spawn", value: "sk_faction",        ms: 5 * DAY_MS },
+  { name: "Spawn Killing - Whitelist Spawn", value: "sk_faction",      ms: 5 * DAY_MS },
   { name: "Spawn Killing - Civ Spawn",     value: "sk_civ",            ms: 7 * DAY_MS },
   { name: "Hard R",                        value: "hard_r",            permanent: true },
   { name: "Soft A",                        value: "soft_a",            ms: 3 * DAY_MS },
@@ -979,7 +979,7 @@ function ensureFactionFiles() {
     }
   }
   for (const fp of mirrorPaths(DONATOR_FILE)) if (ensureFile(fp, "")) created++;
-  logger.info("Init", `Faction files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` - created ${created} missing` : ""));
+  logger.info("Init", `Whitelist files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` - created ${created} missing` : ""));
 }
 
 // One-time startup sweep: hand any already-root-owned files THE BOT WRITES back to
@@ -1344,7 +1344,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 /* ── Second bot: faction commands ─────────────────────────────────
    Set FACTION_BOT_TOKEN + FACTION_CLIENT_ID in .env to run a dedicated faction
    bot (own Discord application, invited to each faction's guild). It registers
-   ONLY the /faction command; the main
+   ONLY the /whitelist command; the main
    bot keeps everything else. Runs in THIS process, sharing all state - no file
    races. Leave the env vars unset and everything stays on the main bot. */
 const FACTION_BOT = !!(process.env.FACTION_BOT_TOKEN && process.env.FACTION_CLIENT_ID);
@@ -2170,7 +2170,7 @@ async function handleMenuPanelSubmit(interaction) {
   const tier = menuRoleTiers().find(t => t.role && memberHasRoleId(interaction.member, t.role));
   if (!tier) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("No Menu Role")
-      .setDescription("You don't hold a High Staff, Staff, or Faction RCON role, so there's no menu to grant. Ask an admin if this is wrong."))], flags: MessageFlags.Ephemeral });
+      .setDescription("You don't hold a High Staff, Staff, or Whitelist RCON role, so there's no menu to grant. Ask an admin if this is wrong."))], flags: MessageFlags.Ephemeral });
   }
   const meta = MENUS.find(m => m.value === tier.menu);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -2346,7 +2346,7 @@ setTimeout(postPlaytimeLeaderboard, 25_000);
 // Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure -> Load.
 function autoBackupFactions() {
   const r = saveFactionBackup();
-  if (r.ok) logger.info("Backup", `Auto-saved faction whitelists - ${r.count} file(s)`);
+  if (r.ok) logger.info("Backup", `Auto-saved whitelists - ${r.count} file(s)`);
   else logger.warn("Backup", `Auto faction backup skipped: ${r.error}`);
 }
 
@@ -2440,7 +2440,7 @@ if (factionClient) {
   factionClient.once("clientReady", async () => {
     logger.info("FactionBot", `${factionClient.user.tag} online (faction commands)`);
     try {
-      factionClient.user.setPresence({ activities: [{ name: "faction rosters  -  /faction", type: ActivityType.Watching }], status: "online" });
+      factionClient.user.setPresence({ activities: [{ name: "whitelist rosters  -  /whitelist", type: ActivityType.Watching }], status: "online" });
     } catch {}
     try {
       const frest = new REST({ version: "10" }).setToken(process.env.FACTION_BOT_TOKEN);

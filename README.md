@@ -3,9 +3,9 @@
 A theme-neutral Discord moderation bot for **Pavlov VR** RP servers. It drives
 the game servers over RCON and adds native bans/kicks/mutes with punishment
 presets, ban-evasion + VPN/proxy detection with optional OS-firewall blocking,
-faction whitelists and ranks, a credits economy with a casino, weekly wages and
+whitelists and ranks, a credits economy with a casino, weekly wages and
 leaderboards, donator management, self-service RCON menus, and a layered
-owner/admin/mod/faction permission model — all behind slash commands.
+owner/admin/mod/whitelist permission model — all behind slash commands.
 
 It ships **brand-neutral** and skins to any RP: set `BOT_NAME` in `.env` (e.g.
 `Mojave Authority`, `LSPD Command`) and every embed is stamped with it.
@@ -110,11 +110,11 @@ locked.
 |------|----------|
 | 🌐 Public | `/help` `/serverinfo` `/checkban` `/stats` `/kd` `/link` · casino: `/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
-| ⚔️ Faction Leader | `/faction add\|remove\|rank\|setrankcap\|wipe` |
+| ⚔️ Whitelist Leader | `/whitelist add\|remove\|rank\|setrankcap\|wipe` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` `/casino` |
 | 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` |
 
-Read-only `/faction list\|playtime` are public. Roles map to tiers with
+Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
 `/setroles`; an unset tier role means that tier is unrestricted. `/tempban`
 uses punishment presets that set the duration automatically.
 

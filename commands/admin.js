@@ -54,7 +54,7 @@ module.exports = (ctx) => {
   "setroles": async (interaction, name) => {
         const modRole   = interaction.options.getRole("mod_role");
         const adminRole = interaction.options.getRole("admin_role");
-        const flRole    = interaction.options.getRole("faction_leader_role");
+        const flRole    = interaction.options.getRole("whitelist_leader_role");
         if (!modRole && !adminRole && !flRole) {
           const c = loadRoles();
           return interaction.reply({ embeds: [
@@ -63,7 +63,7 @@ module.exports = (ctx) => {
               .addFields(
                 { name: "Moderator",     value: c.modRoleId           ? `<@&${c.modRoleId}>`           : "`not set`", inline: true },
                 { name: "Admin",          value: c.adminRoleId         ? `<@&${c.adminRoleId}>`         : "`not set`", inline: true },
-                { name: "Faction Leader", value: c.factionLeaderRoleId ? `<@&${c.factionLeaderRoleId}>` : "`not set`", inline: true },
+                { name: "Whitelist Leader", value: c.factionLeaderRoleId ? `<@&${c.factionLeaderRoleId}>` : "`not set`", inline: true },
               ).setFooter({ text: "Pass role options to /setroles to update" })
           ], flags: MessageFlags.Ephemeral });
         }
@@ -72,7 +72,7 @@ module.exports = (ctx) => {
         if (adminRole) c.adminRoleId         = adminRole.id;
         if (flRole)    c.factionLeaderRoleId = flRole.id;
         saveRoles(c);
-        const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Faction → <@&${flRole.id}>`].filter(Boolean);
+        const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Whitelist → <@&${flRole.id}>`].filter(Boolean);
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Permissions Updated")
           .setDescription(`${changes.join("\n")}\n\n— **${interaction.user.username}**`).setFooter({ text: "Takes effect immediately" });
         brand(embed); await logAction(embed);
@@ -279,7 +279,7 @@ module.exports = (ctx) => {
         },
 
   /* ─────────────────────────────────────────────────────
-         SETFACTIONADMIN - owner sets this guild's Faction Leader role
+         SETFACTIONADMIN - owner sets this guild's Whitelist Leader role
 
       /* ─────────────────────────────────────────────────────
          SETRCONROLES - which Discord role grants each RCON menu
@@ -288,7 +288,7 @@ module.exports = (ctx) => {
         if (!hasAdminRole(interaction.member) && !isOwner(interaction.user.id)) return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const hs = interaction.options.getRole("high_staff_role");
         const st = interaction.options.getRole("staff_role");
-        const fa = interaction.options.getRole("faction_role");
+        const fa = interaction.options.getRole("whitelist_role");
         if (hs) await setMenuRole("highstaff", hs.id);
         if (st) await setMenuRole("staff", st.id);
         if (fa) await setMenuRole("faction", fa.id);
@@ -299,7 +299,7 @@ module.exports = (ctx) => {
             { name: "High Staff", value: m.highstaff ? `<@&${m.highstaff}>` : "*(unset)*", inline: true },
             { name: "Staff",       value: m.staff     ? `<@&${m.staff}>`     : "*(unset)*", inline: true },
             { name: "Faction",     value: m.faction   ? `<@&${m.faction}>`   : "*(unset)*", inline: true },
-          ).setFooter({ text: "Priority: High Staff > Staff > Faction" }));
+          ).setFooter({ text: "Priority: High Staff > Staff > Whitelist" }));
         await logAction(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
@@ -398,8 +398,8 @@ module.exports = (ctx) => {
             { label: "Un-ignore a username",      value: "ignore_remove",  emoji: "👁️", description: "Resume tracking a player" },
             { label: "List ignored usernames",    value: "ignore_list",    emoji: "📋", description: "Show the ignore list" },
             // ── factions ──
-            { label: "Save faction whitelists",   value: "save_factions",  emoji: "💾", description: "Snapshot all faction spawn + rank files" },
-            { label: "Load faction whitelists",   value: "load_factions",  emoji: "♻️", description: "Restore the last snapshot (overwrites current)" },
+            { label: "Save whitelists",          value: "save_factions",  emoji: "💾", description: "Snapshot all whitelist spawn + rank files" },
+            { label: "Load whitelists",          value: "load_factions",  emoji: "♻️", description: "Restore the last snapshot (overwrites current)" },
             // ── economy ──
             { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Set every player's credits to 0 (irreversible)" },
           );
@@ -409,7 +409,7 @@ module.exports = (ctx) => {
             `🔥 **Firewall** - view blocked IPs\n` +
             `⛔ **Discord Access** - bar / un-bar users\n` +
             `👁️ **IP Tracking** - ignore lists\n` +
-            `💾 **Factions** - save / load whitelists\n` +
+            `💾 **Whitelists** - save / load\n` +
             `💰 **Economy** - wipe money`)
           .setFooter({ text: "Owner only - sensitive - menu closes after 60s" }));
         // ── all action logic in one place; returns a branded result embed ──
@@ -440,7 +440,7 @@ module.exports = (ctx) => {
           if (choice === "load_factions") {
             if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm - nothing was restored."));
             const r = loadFactionBackup();
-            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Faction Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** faction file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found - use **Save faction whitelists** first." : `Load failed: ${r.error}`)))));
+            return audit(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Whitelists Restored").setDescription(hero(r.ok ? `Restored **${r.restored}** whitelist file(s)${r.savedAt ? ` from the snapshot saved <t:${Math.floor(r.savedAt / 1000)}:R>` : ""}.` : (r.empty ? "No saved snapshot found - use **Save whitelists** first." : `Load failed: ${r.error}`)))));
           }
           if (["user_bl_add", "user_bl_remove", "ignore_add", "ignore_remove", "clear_ip"].includes(choice)) {
             let desc, color = NV.IRRAD_GREEN;
@@ -479,12 +479,12 @@ module.exports = (ctx) => {
           if (choice === "clear_names")  { const n = ipBans.clearFlaggedNames(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged username${n !== 1 ? "s" : ""}. No more "blacklisted username" auto-bans. (Flagged IPs kept.)`; }
           else if (choice === "clear_flags") { const n = ipBans.clearFlags(); color = NV.LEGION_RED; desc = `Removed **${n}** flagged IP${n !== 1 ? "s" : ""}. No IP auto-bans until new bans flag IPs again. (History kept.)`; }
           else if (choice === "clear_all")   { const r = ipBans.clearAll(); color = NV.LEGION_RED; desc = `Wiped **${r.ids}** player record(s) and **${r.flagged}** flagged IP${r.flagged !== 1 ? "s" : ""}. Rebuilds from the logs as players connect.`; }
-          else if (choice === "save_factions") { const r = saveFactionBackup(); desc = r.ok ? `Snapshot saved - **${r.count}** faction file(s). Use **Load faction whitelists** to restore them later.` : `Save failed: ${r.error}`; }
+          else if (choice === "save_factions") { const r = saveFactionBackup(); desc = r.ok ? `Snapshot saved - **${r.count}** whitelist file(s). Use **Load whitelists** to restore them later.` : `Save failed: ${r.error}`; }
           else { desc = "Unknown action."; }
           return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc))));
         }
 
-        const MODAL = { ignore_add: ["Ignore a username", "Username"], ignore_remove: ["Un-ignore a username", "Username"], clear_ip: ["Clear a specific IP", "IP address"], blacklist_ip: ["Blacklist IP / username", "IP or username"], view_alts: ["View alt accounts", "Player username"], user_bl_add: ["Bar a Discord user", "Discord user ID"], user_bl_remove: ["Un-bar a Discord user", "Discord user ID"], wipe_money: ["Wipe ALL money", "Type WIPE to confirm"], load_factions: ["Restore faction whitelists", "Type LOAD to confirm"] };
+        const MODAL = { ignore_add: ["Ignore a username", "Username"], ignore_remove: ["Un-ignore a username", "Username"], clear_ip: ["Clear a specific IP", "IP address"], blacklist_ip: ["Blacklist IP / username", "IP or username"], view_alts: ["View alt accounts", "Player username"], user_bl_add: ["Bar a Discord user", "Discord user ID"], user_bl_remove: ["Un-bar a Discord user", "Discord user ID"], wipe_money: ["Wipe ALL money", "Type WIPE to confirm"], load_factions: ["Restore whitelists", "Type LOAD to confirm"] };
         const menuRow = () => new ActionRowBuilder().addComponents(menu);
         const navRow  = () => new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("cfg_back").setLabel("Back to menu").setEmoji("◀️").setStyle(ButtonStyle.Secondary),

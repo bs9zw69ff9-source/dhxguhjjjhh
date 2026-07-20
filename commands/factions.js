@@ -1,4 +1,4 @@
-/* ---------------- commands/factions: /faction ----------------
+/* ---------------- commands/factions: /whitelist ----------------
    Split from commands/index.js. Each handler receives (interaction, name) and
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
@@ -20,7 +20,7 @@ module.exports = (ctx) => {
   /* ─────────────────────────────────────────────────────
          FACTION - all subcommands
          ───────────────────────────────────────────────────── */
-  "faction": async (interaction, name) => {
+  "whitelist": async (interaction, name) => {
         const sub = interaction.options.getSubcommand();
 
         /* ── setrankcap (admin only) ── */
@@ -28,7 +28,7 @@ module.exports = (ctx) => {
           if (!hasAdminRole(interaction.member)) {
             return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
           }
-          const faction = interaction.options.getString("faction");
+          const faction = interaction.options.getString("whitelist");
           const rank    = interaction.options.getString("rank");
           const cap     = interaction.options.getInteger("cap");
           const validRanks = getFactionRankOrder(faction);
@@ -47,23 +47,23 @@ module.exports = (ctx) => {
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        /* ── wipe (owner only) - reset one faction's whitelist, or every faction ── */
+        /* ── wipe (owner only) - reset one whitelist, or every whitelist ── */
         if (sub === "wipe") {
           if (!isOwner(interaction.user.id)) {
             return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
           }
-          const faction = interaction.options.getString("faction");
+          const faction = interaction.options.getString("whitelist");
           const targets = faction ? [faction] : ALL_FACTIONS;
           const counts  = targets.map(f => ({ faction: f, count: (readFactionFile(SPAWN_FILE_MAP[f]) ?? []).length }));
           const total   = counts.reduce((s, c) => s + c.count, 0);
           if (!total) {
             return interaction.reply({ embeds: [successEmbed("Nothing to Wipe",
-              faction ? `**${faction}** has no members.` : "No faction has any members.")], flags: MessageFlags.Ephemeral });
+              faction ? `**${faction}** has no members.` : "No whitelist has any members.")], flags: MessageFlags.Ephemeral });
           }
           const preview = counts.filter(c => c.count).map(c => `- **${c.faction}**: ${c.count} member${c.count !== 1 ? "s" : ""}`).join("\n");
           const go = await confirmDialog(interaction, {
-            title: faction ? `Wipe ${faction}'s whitelist?` : "Wipe ALL faction whitelists?",
-            body: `Clears membership and every rank file${faction ? "" : ", for every faction"} - **${total}** player${total !== 1 ? "s" : ""} total.\nA pre-wipe snapshot of each file is kept in \`${FACTION_BAK_DIR}\`.\n\n${preview}`,
+            title: faction ? `Wipe ${faction}'s whitelist?` : "Wipe ALL whitelists?",
+            body: `Clears membership and every rank file${faction ? "" : ", for every whitelist"} - **${total}** player${total !== 1 ? "s" : ""} total.\nA pre-wipe snapshot of each file is kept in \`${FACTION_BAK_DIR}\`.\n\n${preview}`,
             confirmLabel: faction ? `Wipe ${faction}` : "Wipe ALL",
           });
           if (!go) return;
@@ -76,15 +76,15 @@ module.exports = (ctx) => {
           }
           writeModLog({ action: "faction-wipe", faction: faction || "ALL", count: wipedMembers, by: interaction.user.tag });
           const embed = successEmbed(
-            faction ? `${faction} Whitelist Wiped` : "All Faction Whitelists Wiped",
-            `Cleared **${wipedMembers}** player${wipedMembers !== 1 ? "s" : ""} across **${wipedFactions}** faction${wipedFactions !== 1 ? "s" : ""}.`);
+            faction ? `${faction} Whitelist Wiped` : "All Whitelists Wiped",
+            `Cleared **${wipedMembers}** player${wipedMembers !== 1 ? "s" : ""} across **${wipedFactions}** whitelist${wipedFactions !== 1 ? "s" : ""}.`);
           await logAction(embed);
           return interaction.editReply({ embeds: [embed], components: [], keepEmbeds: true });
         }
 
         /* ── list (public, paginated) ── */
         if (sub === "list") {
-          const faction  = interaction.options.getString("faction");
+          const faction  = interaction.options.getString("whitelist");
           const members  = getFactionMembers(faction);
           if (members === null) {
             return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], flags: MessageFlags.Ephemeral });
@@ -92,7 +92,7 @@ module.exports = (ctx) => {
           if (!members.length) {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} - Empty Roster`)
-                .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
+                .setDescription("No players are currently whitelisted here.\n\nUse `/whitelist add` to enlist someone.")
                 
             ], flags: MessageFlags.Ephemeral });
           }
@@ -117,7 +117,7 @@ module.exports = (ctx) => {
 
         /* ── playtime (public, paginated) - roster ranked by time served ── */
         if (sub === "playtime") {
-          const faction = interaction.options.getString("faction");
+          const faction = interaction.options.getString("whitelist");
           const members = getFactionMembers(faction);
           if (members === null) {
             return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Check the server path.`)], flags: MessageFlags.Ephemeral });
@@ -125,7 +125,7 @@ module.exports = (ctx) => {
           if (!members.length) {
             return interaction.reply({ embeds: [
               new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle(`${faction} - Empty Roster`)
-                .setDescription("No players are currently whitelisted for this faction.\n\nUse `/faction add` to enlist someone.")
+                .setDescription("No players are currently whitelisted here.\n\nUse `/whitelist add` to enlist someone.")
                 
             ], flags: MessageFlags.Ephemeral });
           }
@@ -150,13 +150,13 @@ module.exports = (ctx) => {
             { perPage: 20 });
         }
 
-        /* ── rank (Faction Leader ONLY) ── */
+        /* ── rank (Whitelist Leader ONLY) ── */
         if (sub === "rank") {
           if (!hasFactionLeaderRole(interaction.member)) {
             return interaction.reply({ embeds: [factionLeaderStrictEmbed()], flags: MessageFlags.Ephemeral });
           }
           const playerId = sanitizeId(interaction.options.getString("playerid"));
-          const faction  = interaction.options.getString("faction");
+          const faction  = interaction.options.getString("whitelist");
           const rank     = interaction.options.getString("rank");
           const removing = interaction.options.getBoolean("remove") === true;
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
@@ -169,7 +169,7 @@ module.exports = (ctx) => {
           const lines = readFactionFile(spawn);
           if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read the roster file for **${faction}**.`)], flags: MessageFlags.Ephemeral });
           if (!lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not in **${faction}**. Use \`/faction add\` first.`)], flags: MessageFlags.Ephemeral });
+            return interaction.reply({ embeds: [warningEmbed("Not a Member", `\`${playerId}\` is not in **${faction}**. Use \`/whitelist add\` first.`)], flags: MessageFlags.Ephemeral });
           }
           const had = getPlayerRanks(faction, playerId);
           if (removing) {
@@ -186,7 +186,7 @@ module.exports = (ctx) => {
             const room = rankHasRoom(faction, rank);   // a member can hold MULTIPLE ranks; cap is per rank file
             if (!room.ok) {
               return interaction.reply({ embeds: [errorEmbed("Rank Full",
-                `**${rank}** in **${faction}** is full (**${room.count}/${room.cap}**). Raise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
+                `**${rank}** in **${faction}** is full (**${room.count}/${room.cap}**). Raise the cap with \`/whitelist setrankcap\`.`)], flags: MessageFlags.Ephemeral });
             }
             if (!addPlayerToRankFile(faction, playerId, rank)) {
               return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${rank}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
@@ -205,11 +205,11 @@ module.exports = (ctx) => {
         /* ── add ── */
         if (sub === "add") {
           const playerId = sanitizeId(interaction.options.getString("playerid"));
-          const faction  = interaction.options.getString("faction");
+          const faction  = interaction.options.getString("whitelist");
           const rawRank  = interaction.options.getString("rank");
           const rank     = rawRank ?? getFactionDefaultRank(faction);
           const spawn    = SPAWN_FILE_MAP[faction];
-          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
+          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Whitelist", `Whitelist \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const validRanks = getFactionRankOrder(faction);
           if (!validRanks.includes(rank)) {
@@ -219,22 +219,22 @@ module.exports = (ctx) => {
           // One faction per player - block if they're already in a different faction.
           const otherFactions = (getPlayerFactions(playerId) || []).filter(f => f !== faction);
           if (otherFactions.length) {
-            return interaction.reply({ embeds: [errorEmbed("Already in a Faction",
-              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A player can only be in one faction.\n\nUse \`/faction transfer\` to move them, or \`/faction remove\` first.`)], flags: MessageFlags.Ephemeral });
+            return interaction.reply({ embeds: [errorEmbed("Already in a Whitelist",
+              `\`${playerId}\` already belongs to **${otherFactions.join(", ")}**. A player can only be in one whitelist.\n\nUse \`/whitelist transfer\` to move them, or \`/whitelist remove\` first.`)], flags: MessageFlags.Ephemeral });
           }
           const lines = readFactionFile(spawn);
           if (lines === null) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read spawn file for **${faction}**. Add aborted to protect the roster.`)], flags: MessageFlags.Ephemeral });
           if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) {
-            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/faction rank\` to add or remove ranks - a member can hold several.`)], flags: MessageFlags.Ephemeral });
+            return interaction.reply({ embeds: [warningEmbed("Already Whitelisted", `\`${playerId}\` is already in **${faction}** (ranks: ${(getPlayerRanks(faction, playerId).join(", ") || "none")}).\n\nUse \`/whitelist rank\` to add or remove ranks - a member can hold several.`)], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
-            return interaction.reply({ embeds: [errorEmbed("Faction Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/faction setcap\` to increase the limit, or remove a member first.`)], flags: MessageFlags.Ephemeral });
+            return interaction.reply({ embeds: [errorEmbed("Whitelist Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/whitelist setcap\` to increase the limit, or remove a member first.`)], flags: MessageFlags.Ephemeral });
           }
           const addRoom = rankHasRoom(faction, rank);
           if (!addRoom.ok) {
             return interaction.reply({ embeds: [errorEmbed("Rank Full",
-              `**${rank}** in **${faction}** is at its cap (**${addRoom.count}/${addRoom.cap}**).\n\nAdd them at a different rank, or raise the cap with \`/faction setrankcap\`.`)], flags: MessageFlags.Ephemeral });
+              `**${rank}** in **${faction}** is at its cap (**${addRoom.count}/${addRoom.cap}**).\n\nAdd them at a different rank, or raise the cap with \`/whitelist setrankcap\`.`)], flags: MessageFlags.Ephemeral });
           }
           lines.push(playerId);
           if (!writeFactionFile(spawn, lines)) {
@@ -258,9 +258,9 @@ module.exports = (ctx) => {
         /* ── remove ── */
         if (sub === "remove") {
           const playerId = sanitizeId(interaction.options.getString("playerid"));
-          const faction  = interaction.options.getString("faction");
+          const faction  = interaction.options.getString("whitelist");
           const spawn    = SPAWN_FILE_MAP[faction];
-          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Faction", `Faction \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
+          if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Whitelist", `Whitelist \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
           const lines = readFactionFile(spawn);
           if (!lines) return interaction.reply({ embeds: [errorEmbed("File Unreadable", `Cannot read \`${spawn}\`.`)], flags: MessageFlags.Ephemeral });

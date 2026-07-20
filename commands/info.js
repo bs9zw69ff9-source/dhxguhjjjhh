@@ -25,7 +25,7 @@ module.exports = (ctx) => {
         const isAdmin = hasAdminRole(interaction.member);
         const isMod   = hasModRole(interaction.member);
         const isFLead = hasFactionLeaderRole(interaction.member);
-        const access  = isAdmin ? "ADMIN" : isMod ? "MODERATOR" : isFLead ? "FACTION LEADER" : "PUBLIC";
+        const access  = isAdmin ? "ADMIN" : isMod ? "MODERATOR" : isFLead ? "WHITELIST LEADER" : "PUBLIC";
         const color   = isAdmin ? NV.AMBER : isMod ? NV.NCR_TAN : isFLead ? NV.GOLD : NV.BLUE_VATS;
 
         // Clean help-menu style: one flat list - `command` chip line, then a plain
@@ -34,22 +34,22 @@ module.exports = (ctx) => {
           ["`/serverinfo`", "Live server info - map, mode, players, and network peak."],
           ["`/checkban <player>` / `/stats <player>` / `/kd [player]`", "Ban status, full player dossier, or K/D stats and leaderboard."],
           ["`/link add`", "Request a Discord ↔ in-game name link (staff approve it)."],
-          ["`/faction list <faction>` / `/faction playtime <faction>`", "Faction roster with ranks, or members ranked by playtime."],
+          ["`/whitelist list <name>` / `/whitelist playtime <name>`", "Whitelist roster with ranks, or members ranked by playtime."],
           ["`/slots` `/coinflip` `/blackjack` `/roulette` `/cockfight` `/russianroulette` `/jackpot`", "Casino games - play with your credits."],
           ["`/kick <player>` / `/flush <server>`", "Kick a player, or randomly kick one online player (mod)."],
           ["`/tempban <player> <reason>` / `/unban <player>`", "Ban - the punishment preset sets the length - or lift a ban (mod)."],
           ["`/announce <message> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
           ["`/givecaps <player> <amount>` / `/link remove|list`", "Give credits; manage name links (mod)."],
-          ["`/faction add|remove <player> <faction>`", "Faction whitelist management (faction leader)."],
-          ["`/faction rank <faction> <player> <rank>`", "Give or remove a member's rank - a member can hold several (faction leader)."],
+          ["`/whitelist add|remove <player> <name>`", "Whitelist management (whitelist leader)."],
+          ["`/whitelist rank <name> <player> <rank>`", "Give or remove a member's rank - a member can hold several (whitelist leader)."],
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],
           ["`/donator add|remove|list <player>` / `/adjustcaps <player> <amount>`", "Manage the donator whitelist; adjust a player's ledger (admin)."],
           ["`/setroles` / `/casino` / `/manual <command>`", "Set tier roles, casino config, or send raw RCON (admin)."],
-          ["`/faction setrankcap <faction> <rank> <cap>`", "Cap members per rank - 0 = unlimited (admin)."],
+          ["`/whitelist setrankcap <name> <rank> <cap>`", "Cap members per rank - 0 = unlimited (admin)."],
           ["`/configure` / `/firewall block|unblock|status` / `/health`", "Owner control panel, manual OS-firewall (ufw) control, and bot health (owner)."],
-          ["`/stripmenuall` / `/clearallbans` / `/faction wipe [faction]`", "Clear all menu access, unban everyone, or reset faction whitelists (owner)."],
+          ["`/stripmenuall` / `/clearallbans` / `/whitelist wipe [name]`", "Clear all menu access, unban everyone, or reset whitelists (owner)."],
         ];
         const embed = new EmbedBuilder().setColor(color)
           .setTitle(`📚 ${process.env.BOT_NAME || "Server"} - Help Menu`)
@@ -191,7 +191,7 @@ module.exports = (ctx) => {
         if (facts.length) bits.push(`They have ${facts.join(", ")}.`);
         bits.push(donator ? "They are a donator." : null);
         bits.push(linkedId ? `Discord: <@${linkedId}>.` : null);
-        bits.push(facStr ? `Factions: ${facStr}.` : null);
+        bits.push(facStr ? `Whitelists: ${facStr}.` : null);
         if (tb) bits.push(tb.permanent || !tb.expires
           ? `They are **permanently banned** (reason: \`${tb.reason}\`).`
           : `They are **banned** (reason: \`${tb.reason}\`), lifts <t:${Math.floor(tb.expires / 1000)}:R>.`);
@@ -201,7 +201,7 @@ module.exports = (ctx) => {
         if (fkills && Object.keys(fkills).length) {
           const ordered = Object.entries(fkills).sort((a, b) => b[1].total - a[1].total);
           const grand   = ordered.reduce((a, [, d]) => a + d.total, 0);
-          bits.push(`Faction kills: ${ordered.map(([f, d]) => `**${f}** ${d.total}`).join(", ")} (${grand} total).`);
+          bits.push(`Whitelist kills: ${ordered.map(([f, d]) => `**${f}** ${d.total}`).join(", ")} (${grand} total).`);
         }
 
         const embed = new EmbedBuilder().setColor(color)

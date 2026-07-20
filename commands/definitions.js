@@ -80,7 +80,7 @@ const commands = [
     .setDescription("Admin - Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
-    .addRoleOption(o => o.setName("faction_leader_role").setDescription("Faction Leader role")),
+    .addRoleOption(o => o.setName("whitelist_leader_role").setDescription("Whitelist Leader role")),
   new SlashCommandBuilder().setName("announce")
     .setDescription("Mod - Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))
@@ -114,46 +114,46 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addRoleOption(o => o.setName("high_staff_role").setDescription("Role that grants the High Staff menu"))
     .addRoleOption(o => o.setName("staff_role").setDescription("Role that grants the Staff menu"))
-    .addRoleOption(o => o.setName("faction_role").setDescription("Role that grants the Faction menu")),
-  /* ── FACTION ─────────────────────────────────────────── */
+    .addRoleOption(o => o.setName("whitelist_role").setDescription("Role that grants the Whitelist menu")),
+  /* ── WHITELIST ─────────────────────────────────────────── */
   new SlashCommandBuilder()
-    .setName("faction")
-    .setDescription("Manage faction whitelists, ranks, and rosters")
+    .setName("whitelist")
+    .setDescription("Manage whitelists, ranks, and rosters")
     .addSubcommand(s => s.setName("add")
-      .setDescription("Add a player to a faction whitelist")
+      .setDescription("Add a player to a whitelist")
       .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
-      .addStringOption(o => o.setName("rank").setDescription("Starting rank (faction-specific, default is lowest rank)").setAutocomplete(true)))
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
+      .addStringOption(o => o.setName("rank").setDescription("Starting rank (whitelist-specific, default is lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("remove")
-      .setDescription("Remove a player from a faction whitelist")
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
+      .setDescription("Remove a player from a whitelist")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("rank")
-      .setDescription("Faction Leader - Add or remove a rank for a member (a member can hold several)")
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to add (faction-specific)").setRequired(true).setAutocomplete(true))
+      .setDescription("Whitelist Leader - Add or remove a rank for a member (a member can hold several)")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the whitelist first)").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("rank").setDescription("Rank to add (whitelist-specific)").setRequired(true).setAutocomplete(true))
       .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
     .addSubcommand(s => s.setName("list")
-      .setDescription("List all members of a faction with their ranks")
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true))))
+      .setDescription("List all members of a whitelist with their ranks")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
     .addSubcommand(s => s.setName("playtime")
       .setDescription("Whitelisted members' playtime, highest to lowest")
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true))))
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true))))
     .addSubcommand(s => s.setName("setrankcap")
-      .setDescription("Admin - Set the per-rank member cap within a faction")
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
-      .addStringOption(o => o.setName("rank").setDescription("Rank to cap (faction-specific)").setRequired(true).setAutocomplete(true))
+      .setDescription("Admin - Set the per-rank member cap within a whitelist")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist name").setRequired(true)))
+      .addStringOption(o => o.setName("rank").setDescription("Rank to cap (whitelist-specific)").setRequired(true).setAutocomplete(true))
       .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500)))
     .addSubcommand(s => s.setName("wipe")
-      .setDescription("Owner - Reset a faction's whitelist (or all of them), clearing every member and rank")
-      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction to wipe (omit to wipe ALL factions)")))),
+      .setDescription("Owner - Reset a whitelist (or all of them), clearing every member and rank")
+      .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist to wipe (omit to wipe ALL)")))),
 
   new SlashCommandBuilder().setName("manual")
     .setDescription("Admin - Send a raw RCON command")
     .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true)),
   new SlashCommandBuilder().setName("givecaps")
-    .setDescription("Give credits to a player (faction leader / mod command)")
+    .setDescription("Give credits to a player (whitelist leader / mod command)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
     .addIntegerOption(o => o.setName("amount").setDescription("Credits to give").setRequired(true).setMinValue(1).setMaxValue(10000))
     .addStringOption(o => o.setName("reason").setDescription("Reason (shown in logs)")),
@@ -163,7 +163,7 @@ const commands = [
     .addIntegerOption(o => o.setName("amount").setDescription("Credits to add (positive) or subtract (negative)").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for adjustment (logged)")),
   new SlashCommandBuilder().setName("stats")
-    .setDescription("Player dossier: playtime, factions, balance, and mod history")
+    .setDescription("Player dossier: playtime, whitelists, balance, and mod history")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
   // requires a non-empty description - a zero-width one gets the whole PUT rejected.
@@ -238,7 +238,7 @@ const commands = [
 ].map(c => c.toJSON());
 
 // Partition: faction commands live on the faction bot when it's configured.
-const FACTION_COMMAND_NAMES = new Set(["faction"]);
+const FACTION_COMMAND_NAMES = new Set(["whitelist"]);
 const mainCommands    = FACTION_BOT ? commands.filter(c => !FACTION_COMMAND_NAMES.has(c.name)) : commands;
 const factionCommands = commands.filter(c => FACTION_COMMAND_NAMES.has(c.name));
 
