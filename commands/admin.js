@@ -7,15 +7,15 @@ module.exports = (ctx) => {
   EmbedBuilder, LINK_REQUEST_CHANNEL, MENUS, MessageFlags, ModalBuilder, NV, clinical, firewallStatus,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, addDonator, addMenuGrant, addUserBlacklist,
   adminOnlyEmbed, banWithIp, bar, brand, client, commands,
-  deniedEmbed, discordIdForPavlov, emptyIdEmbed, errorEmbed, hasAdminRole,
+  _diag, deniedEmbed, discordIdForPavlov, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole,
   hasModRole, hero, ipBans, isOwner, loadDiscordLinks,
   loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
-  ownerOnlyEmbed, paginate, path, randomQuote, readDonatorFile,
+  ownerOnlyEmbed, paginate, parseRcon, path, randomQuote, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDiscordLink, removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,
   wipeAllMoney, writeModLog,
-  BLACKLIST_IDS,
+  BLACKLIST_IDS, BOT_START_MS,
   } = ctx;
 
   return {
@@ -23,6 +23,34 @@ module.exports = (ctx) => {
   /* ─────────────────────────────────────────────────────
          SETROLES
          ───────────────────────────────────────────────────── */
+
+  /* ─────────────────────────────────────────────────────
+         HEALTH - owner: uptime, server reachability, suppressed-error visibility
+         ───────────────────────────────────────────────────── */
+  "health": async (interaction, name) => {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const checks = await Promise.allSettled(ACTIVE_SERVERS.map(s => sendRcon("RefreshList", s, 2500, 0)));
+        const up = ACTIVE_SERVERS.map((s, i) => checks[i].status === "fulfilled" && !!parseRcon(checks[i].value)?.Successful);
+        const mem = Math.round(process.memoryUsage().rss / 1024 / 1024);
+        const lines = [
+          `The bot has been up **${formatUptime(Date.now() - BOT_START_MS)}** and is using **${mem} MB** of memory.`,
+          ACTIVE_SERVERS.map((s, i) => `${up[i] ? "🟢" : "🔴"} ${serverLabel(s)}`).join("  "),
+          `Warnings since start: **${_diag.counts.warn}**. Errors: **${_diag.counts.error}**.`,
+        ];
+        if (_diag.recent.length) {
+          const recent = _diag.recent.slice(-5).map(r =>
+            `${r.level === "error" ? "❌" : "⚠️"} [${r.tag}] ${redactPrivateInfo(r.message)} <t:${Math.floor(r.at / 1000)}:R>`);
+          lines.push(`Most recent:\n${recent.join("\n")}`);
+        } else {
+          lines.push("No warnings or errors since the last restart.");
+        }
+        const ok = up.every(Boolean) && _diag.counts.error === 0;
+        return interaction.editReply({ embeds: [brand(new EmbedBuilder()
+          .setColor(ok ? NV.IRRAD_GREEN : NV.AMBER).setTitle("🩺 Bot Health")
+          .setDescription(lines.join("\n")))] });
+        },
+
   "setroles": async (interaction, name) => {
         const modRole   = interaction.options.getRole("mod_role");
         const adminRole = interaction.options.getRole("admin_role");

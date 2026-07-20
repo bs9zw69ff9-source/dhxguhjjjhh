@@ -48,7 +48,7 @@ module.exports = (ctx) => {
           ["`/donator add|remove|list <player>` / `/adjustcaps <player> <amount>`", "Manage the donator whitelist; adjust a player's ledger (admin)."],
           ["`/setroles` / `/casino` / `/manual <command>`", "Set tier roles, casino config, or send raw RCON (admin)."],
           ["`/faction setrankcap <faction> <rank> <cap>`", "Cap members per rank - 0 = unlimited (admin)."],
-          ["`/configure` / `/firewall block|unblock|status`", "Owner control panel; manual OS-firewall (ufw) control (owner)."],
+          ["`/configure` / `/firewall block|unblock|status` / `/health`", "Owner control panel, manual OS-firewall (ufw) control, and bot health (owner)."],
           ["`/stripmenuall` / `/clearallbans` / `/faction wipe [faction]`", "Clear all menu access, unban everyone, or reset faction whitelists (owner)."],
         ];
         const embed = new EmbedBuilder().setColor(color)

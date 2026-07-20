@@ -163,6 +163,8 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
   // requires a non-empty description - a zero-width one gets the whole PUT rejected.
+  new SlashCommandBuilder().setName("health")
+    .setDescription("Owner: bot health - uptime, server reachability, recent errors"),
   new SlashCommandBuilder().setName("inspect")
     .setDescription("Owner: full record for a player")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)),

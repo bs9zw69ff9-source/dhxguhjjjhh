@@ -75,7 +75,8 @@ for the full annotated list.
 
 ### Owner override
 
-Owner Discord user IDs are hardcoded in `OWNER_IDS` at the top of `index.js`.
+Owner Discord user IDs come from `OWNER_IDS` / `SUPER_OWNER_IDS` in `.env`
+(hardcoded defaults in `index.js` are the fallback).
 Owners pass every permission check, skip rate limits, and can never be
 blacklisted. Master in-game names (`MASTER_NAMES`) and a master IP allowlist
 (`MASTER_IPS`) are likewise code-only — master names are never banned/tracked,
@@ -111,7 +112,7 @@ locked.
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
 | ⚔️ Faction Leader | `/faction add\|remove\|rank\|setrankcap\|wipe` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` `/casino` |
-| 👑 Owner | `/configure` (control panel) `/inspect` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` |
+| 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` |
 
 Read-only `/faction list\|playtime` are public. Roles map to tiers with
 `/setroles`; an unset tier role means that tier is unrestricted. `/tempban`
@@ -137,13 +138,22 @@ logs) is **git-ignored** — it's state, not source.
 
 ```bash
 npm run check   # syntax check (node --check on index.js + ipBans.js)
-npm test        # node:test suites — pure logic + the module-wiring guard
+npm test        # node:test suites — pure logic, wiring guard, handler tests
 ```
 
 Tests cover the pure/leaf modules (utils, casino math, theme, firewall guard,
-SQLite round-trip in an isolated temp dir, faction rank registry, ipBans) plus a
-static wiring check of every module's `ctx` contract. No Discord token or network
-is needed to run them.
+SQLite round-trip in an isolated temp dir, faction rank registry, ipBans, the
+plain-text renderer), a static wiring check of every module's `ctx` contract,
+and handler-level tests that drive the kick/tempban/unban/checkban flows against
+a stubbed ctx (master-name guards, hierarchy overrides, flag-visibility gating).
+No Discord token or network is needed. The same suite runs in CI on every push
+(`.github/workflows/test.yml`).
+
+Deploys are one command on the VPS — `bash scripts/deploy.sh` fetches the branch,
+hard-resets the working tree (git-ignored state like `.env`/`bot.db` untouched),
+and restarts pm2. `/health` (owner) shows uptime, per-server RCON reachability,
+and the warn/error counters + recent entries the resilient error handling would
+otherwise hide.
 
 ## Backups (off-site, via rclone)
 

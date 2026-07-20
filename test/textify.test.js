@@ -5,15 +5,7 @@
    rendering, chunking, and the interaction patch converting embeds to content. */
 const { test } = require("node:test");
 const assert = require("node:assert");
-const fs = require("node:fs");
-const path = require("node:path");
-
-const src = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
-const start = src.indexOf("function embedToText");
-const end   = src.indexOf("function logAction(");
-assert.ok(start > 0 && end > start, "extraction markers present in index.js");
-const { embedToText, textify, textifyChunks, patchInteractionOutput } =
-  new Function(`${src.slice(start, end)}; return { embedToText, textify, textifyChunks, patchInteractionOutput };`)();
+const { embedToText, textify, textifyChunks, patchInteractionOutput } = require("../discord/textify");
 
 test("reply is just the title emoji plus the sentence (human style)", () => {
   const out = embedToText({ title: "✅ Success", description: "Tempbanned **chupavr** for **2d** (Reason: `vdm`)." });

@@ -1,0 +1,19 @@
+# Runs the full test suite (72 node:test cases incl. the module-wiring guard and
+# handler tests) plus a syntax check on every push and pull request, so a broken
+# commit is flagged before it ever reaches the VPS.
+name: tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

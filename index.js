@@ -53,8 +53,11 @@ const BOT_AUTHOR    = "bs9zw69ff9-source";
 const BOT_COPYRIGHT = `2026 ${BOT_AUTHOR} - All rights reserved`;
 const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${new Date(BOT_START_MS).toISOString().slice(0, 10)}`;
 
-// ---- hardcoded owners  (super-users - top of every permission) ----
-const OWNER_IDS = new Set([
+// ---- owners  (super-users - top of every permission) ----
+// Overridable via OWNER_IDS / SUPER_OWNER_IDS in .env (comma/space separated);
+// the hardcoded sets below are the fallback so a bare checkout still works.
+const _envIds = (name) => String(process.env[name] ?? "").split(/[\s,]+/).filter(Boolean);
+const OWNER_IDS = new Set(_envIds("OWNER_IDS").length ? _envIds("OWNER_IDS") : [
   "1014251293159731310",
   "678362059905171471",
 ]);
@@ -64,10 +67,12 @@ function isOwner(userId) { return OWNER_IDS.has(String(userId)); }
 // A super owner outranks everyone. Their moderation actions can't be overridden by
 // anyone else; they can override anyone. (Also members of OWNER_IDS above, so every
 // existing owner-gated check still passes for them.)
-const SUPER_OWNER_IDS = new Set([
+const SUPER_OWNER_IDS = new Set(_envIds("SUPER_OWNER_IDS").length ? _envIds("SUPER_OWNER_IDS") : [
   "1014251293159731310",
 ]);
 function isSuperOwner(userId) { return SUPER_OWNER_IDS.has(String(userId)); }
+// A super owner must also pass every owner-gated check even when the sets come from env.
+for (const id of SUPER_OWNER_IDS) OWNER_IDS.add(id);
 
 /* Staff command hierarchy: super owner > owner > admin > mod. A lower tier can never
    override (unban / unmute / clear) a moderation action issued by a higher tier.
@@ -102,12 +107,25 @@ function log(level, tag, message, extra) {
   console.log(line);
   try { fs.appendFileSync(LOG_FILE, line + "\n"); } catch {}
 }
+/* Diagnostics the owner can actually see: every warn/error is counted and the
+   most recent ones kept in a small ring buffer, surfaced by /health. This gives
+   eyes on problems the resilient .catch(() => {}) paths would otherwise hide. */
+const _diag = { counts: { warn: 0, error: 0 }, recent: [], startedAt: Date.now() };
+function _diagRecord(level, tag, message) {
+  _diag.counts[level]++;
+  _diag.recent.push({ level, tag, message: String(message).slice(0, 160), at: Date.now() });
+  if (_diag.recent.length > 25) _diag.recent.shift();
+}
 const logger = {
   debug: (t, m, e) => log(LOG_LEVEL.DEBUG, t, m, e),
   info:  (t, m, e) => log(LOG_LEVEL.INFO,  t, m, e),
-  warn:  (t, m, e) => log(LOG_LEVEL.WARN,  t, m, e),
-  error: (t, m, e) => log(LOG_LEVEL.ERROR, t, m, e),
+  warn:  (t, m, e) => { _diagRecord("warn",  t, m); log(LOG_LEVEL.WARN,  t, m, e); },
+  error: (t, m, e) => { _diagRecord("error", t, m); log(LOG_LEVEL.ERROR, t, m, e); },
 };
+// Unhandled promise rejections are logged (and counted) instead of vanishing.
+process.on("unhandledRejection", (err) => {
+  try { logger.error("Unhandled", err?.message || String(err)); } catch {}
+});
 
 // ---- config validation ----
 function validateConfig() {
@@ -1343,91 +1361,8 @@ const factionClient = FACTION_BOT ? new Client({ intents: [GatewayIntentBits.Gui
 // The client that lives in the faction guilds (falls back to the main bot).
 const fclient = () => (factionClient && factionClient.isReady() ? factionClient : client);
 
-/* ================================================================
-   PLAIN-TEXT OUTPUT  (no embeds anywhere)
-   ================================================================
-   Every reply/log/DM in this codebase is still BUILT as an EmbedBuilder (that
-   keeps ~250 call sites untouched), but at send time it is rendered to plain
-   markdown text and the embed is dropped. One conversion layer covers all
-   interaction replies (patched per interaction), channel logs, panels,
-   leaderboards, DMs, and the webhook feed. */
-function embedToText(e) {
-  let d; try { d = typeof e?.toJSON === "function" ? e.toJSON() : e; } catch { d = e; }
-  if (!d || typeof d !== "object") return "";
-  // Strip embed-era decoration that reads as clutter in a plain message: divider /
-  // rule lines (▓▒░, ----, ───, ====, ▔▔▔ ...) and stacked blank lines. Code-fence
-  const decor = /^[\s>*_`~|·▓▒░─━▔═▬⎯=—–-]+$/;
-  const tidy  = (s) => String(s).split("\n")
-    .filter(l => l.trim().startsWith("```") || !decor.test(l))
-    .join("\n").replace(/\n{2,}/g, "\n").trim();
-  // Human reply style: when there's a description, the reply is just the leading
-  // emoji from the title plus the sentence itself, like "✅ Banned chupavr for 2d".
-  // The title text only shows when there's no description to speak for itself.
-  const title = String(d.title ?? "").trim();
-  const desc  = tidy(d.description ?? "");
-  const emoji = (title.match(/^([^\p{L}\p{N}*_`]+)\s/u)?.[1] ?? "").trim();
-  const parts = [];
-  if (desc) parts.push(emoji ? `${emoji} ${desc}` : desc);
-  else if (title) parts.push(title);
-  for (const f of d.fields ?? []) {
-    const name = String(f.name ?? "").trim();
-    const val  = tidy(f.value ?? "");
-    if (!name && !val) continue;
-    parts.push(val.includes("\n") ? `**${name}**\n${val}` : `**${name}:** ${val}`);
-  }
-  return parts.filter(Boolean).join("\n");
-}
-// payload {content?, embeds?, ...} -> { first: payload-without-embeds, extra: [overflow strings] }
-// Messages cap at 2000 chars (embeds allowed ~6000), so long output splits by line.
-function textifyChunks(payload) {
-  const text = [payload.content, ...(payload.embeds ?? []).map(embedToText)].filter(Boolean).join("\n\n");
-  const chunks = [];
-  let cur = "";
-  for (let line of String(text).split("\n")) {
-    while (line.length > 1900) { chunks.push(line.slice(0, 1900)); line = line.slice(1900); }
-    if (cur && cur.length + 1 + line.length > 1900) { chunks.push(cur); cur = line; }
-    else cur = cur ? `${cur}\n${line}` : line;
-  }
-  if (cur) chunks.push(cur);
-  const { embeds, ...rest } = payload;
-  return { first: { ...rest, content: chunks[0] || "​" }, extra: chunks.slice(1) };
-}
-// One-message form for interaction replies / edits / DMs: render every embed to a
-// short plain-text message (the clean reply style) and drop the embed. Components
-// (buttons/selects) pass through untouched. Overflow past one message is truncated
-// with a marker - command replies are expected to be short.
-function textify(payload) {
-  if (!payload || typeof payload !== "object") return payload;
-  const { keepEmbeds, ...rest } = payload;   // legacy flag - conversion applies regardless
-  if (!Array.isArray(rest.embeds) || !rest.embeds.length) return rest;
-  const { first, extra } = textifyChunks(rest);
-  if (extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
-  // Replies are plain text now, so a raw <@id> in the content would ping. Command
-  // replies should never ping anyone - mentions still render, they just don't notify.
-  if (!first.allowedMentions) first.allowedMentions = { parse: [] };
-  return first;
-}
-function patchInteractionOutput(interaction) {
-  for (const m of ["reply", "editReply", "followUp", "update"]) {
-    const orig = typeof interaction[m] === "function" ? interaction[m].bind(interaction) : null;
-    if (!orig) continue;
-    interaction[m] = async (payload, ...args) => {
-      if (!payload || typeof payload !== "object" || !Array.isArray(payload.embeds) || !payload.embeds.length) {
-        return orig(payload, ...args);
-      }
-      const { keepEmbeds, ...rest } = payload;
-      const { first, extra } = textifyChunks(rest);
-      if (!first.allowedMentions) first.allowedMentions = { parse: [] };   // never ping from a reply
-      // update() edits one message in place - no follow-ups possible there.
-      if (m === "update" && extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
-      const res = await orig(first, ...args);
-      if (m !== "update") {
-        for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags, allowedMentions: { parse: [] } }); } catch { break; } }
-      }
-      return res;
-    };
-  }
-}
+// ---- plain-text reply rendering (extracted to ./discord/textify) ----
+const { embedToText, textifyChunks, textify, patchInteractionOutput } = require("./discord/textify");
 
 function logAction(embed) {
   if (!process.env.MOD_LOG_CHANNEL) return;
@@ -2467,7 +2402,7 @@ process.on("unhandledRkick", r   => logger.error("Unhandled", String(r)));
 // ---- interactions (handler extracted to ./commands) ----
 const { onInteraction } = require("./commands")({
   ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_REASON_LABELS, BLACKLIST_IDS,
-  BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType,
+  BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, redactPrivateInfo,
   DASHBOARD_INTERVAL_MS, DAY_MS, DIVIDER, DONATOR_FILE, EmbedBuilder, FACTION_BAK_DIR,
   FILES, GAMBLE_QUOTA_MAX, GAMBLE_QUOTA_WINDOW_MS, GAME_ICON, GLYPH, IPHUB_API_KEY,
   JACKPOT_MIN_BALANCE, JACKPOT_WIN_CHANCE, LINK_APPROVER_ROLE, LINK_REQUEST_CHANNEL, MENUS, MessageFlags,
