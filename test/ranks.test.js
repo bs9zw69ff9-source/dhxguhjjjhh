@@ -2,9 +2,9 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { FACTION_RANKS } = require("../factions/ranks");
 
-test("every faction has a coherent rank registry", () => {
-  const factions = Object.keys(FACTION_RANKS);
-  assert.ok(factions.length >= 8);
+test("every configured faction has a coherent rank registry", () => {
+  // No minimum count - factions are added on demand. This validates the SCHEMA of
+  // whatever is configured, so a malformed faction added later fails the suite.
   for (const [name, cfg] of Object.entries(FACTION_RANKS)) {
     assert.ok(Array.isArray(cfg.order) && cfg.order.length > 0, `${name}: empty order`);
     assert.ok(cfg.order.includes(cfg.default), `${name}: default '${cfg.default}' not in order`);

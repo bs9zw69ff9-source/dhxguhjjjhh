@@ -14,6 +14,10 @@ function serverOption(o) {
 }
 
 const factionChoices = ALL_FACTIONS.map(f => ({ name: f, value: f }));
+// Add the faction list as choices, but ONLY when there are factions - Discord
+// rejects an empty choices array, so with zero factions the option falls back to
+// autocomplete (which returns the current list, empty for now) and stays valid.
+const facChoices = (o) => factionChoices.length ? o.addChoices(...factionChoices) : o.setAutocomplete(true);
 
 const ALL_RANK_NAMES = [...new Set(
   Object.values(FACTION_RANKS).flatMap(cfg => cfg.order)
@@ -118,32 +122,32 @@ const commands = [
     .addSubcommand(s => s.setName("add")
       .setDescription("Add a player to a faction whitelist")
       .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
       .addStringOption(o => o.setName("rank").setDescription("Starting rank (faction-specific, default is lowest rank)").setAutocomplete(true)))
     .addSubcommand(s => s.setName("remove")
       .setDescription("Remove a player from a faction whitelist")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
       .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName("rank")
       .setDescription("Faction Leader - Add or remove a rank for a member (a member can hold several)")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
       .addStringOption(o => o.setName("playerid").setDescription("Player ID (pick the faction first)").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("rank").setDescription("Rank to add (faction-specific)").setRequired(true).setAutocomplete(true))
       .addBooleanOption(o => o.setName("remove").setDescription("Remove this rank instead of adding it")))
     .addSubcommand(s => s.setName("list")
       .setDescription("List all members of a faction with their ranks")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true))))
     .addSubcommand(s => s.setName("playtime")
       .setDescription("Whitelisted members' playtime, highest to lowest")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices)))
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true))))
     .addSubcommand(s => s.setName("setrankcap")
       .setDescription("Admin - Set the per-rank member cap within a faction")
-      .addStringOption(o => o.setName("faction").setDescription("Faction name").setRequired(true).addChoices(...factionChoices))
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction name").setRequired(true)))
       .addStringOption(o => o.setName("rank").setDescription("Rank to cap (faction-specific)").setRequired(true).setAutocomplete(true))
       .addIntegerOption(o => o.setName("cap").setDescription("Max members at this rank (0 = unlimited)").setRequired(true).setMinValue(0).setMaxValue(500)))
     .addSubcommand(s => s.setName("wipe")
       .setDescription("Owner - Reset a faction's whitelist (or all of them), clearing every member and rank")
-      .addStringOption(o => o.setName("faction").setDescription("Faction to wipe (omit to wipe ALL factions)").addChoices(...factionChoices))),
+      .addStringOption(o => facChoices(o.setName("faction").setDescription("Faction to wipe (omit to wipe ALL factions)")))),
 
   new SlashCommandBuilder().setName("manual")
     .setDescription("Admin - Send a raw RCON command")

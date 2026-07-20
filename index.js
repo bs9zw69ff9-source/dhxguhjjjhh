@@ -938,27 +938,14 @@ function reconcileBlacklists() {
 const DONATOR_FILE = process.env.DONATOR_PATH
   || path.join(FACTION_ROLES_PATH, "donator.txt");
 
+// Faction name -> its spawn-file name in FactionRoles/. No factions configured yet;
+// add the new ones here as  "Faction Name": "spawnfile.txt".
 const SPAWN_FILE_MAP = {
-  "NCR":                 "ncrspawn.txt",
-  "Legion":              "legionspawn.txt",
-  "Enclave":             "enclavespawn.txt",
-  "Khans":               "khansspawn.txt",
-  "Brotherhood of Steel":"bosspawn.txt",
-  "Kings":               "kingsspawn.txt",
-  "Super Mutants":       "supermutantspawn.txt",
-  "Followers":           "followersspawn.txt",
 };
 
+// Reverse lookup: spawn-file basename (no .txt) -> faction name, used by the log
+// tailer. Mirror every SPAWN_FILE_MAP entry here (e.g.  myfactionspawn: "My Faction").
 const FACTION_SPAWN_MAP = {
-  ncrspawn:          "NCR",
-  legionspawn:       "Legion",
-  enclavespawn:      "Enclave",
-  khanspawn:         "Khans",
-  khansspawn:        "Khans",
-  bosspawn:          "Brotherhood of Steel",
-  kingsspawn:        "Kings",
-  supermutantspawn:  "Super Mutants",
-  followersspawn:    "Followers",
 };
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
