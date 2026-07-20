@@ -1,11 +1,14 @@
-/* ---------------- discord/textify: plain-text reply rendering ----------------
+/* ---------------- discord/textify: reply rendering (text for short, embed for long) ----------------
    Every reply in this codebase is BUILT as an EmbedBuilder (that keeps ~250 call
-   sites untouched), but at send time it is rendered to short human-readable text
-   and the embed is dropped. This module is pure (no ctx) - it owns the renderer
-   (embedToText), the message chunker (textifyChunks), the one-shot converter
-   (textify, used for DMs/panel posts), and the per-interaction patch that
-   converts reply/editReply/followUp/update payloads and sends overflow as
-   follow-up messages. Unit-tested directly in test/textify.test.js. */
+   sites untouched). At send time each payload is sized: SHORT one-line results
+   (a ban confirmation, an access denial) are flattened to a clean plain-text
+   message and the embed dropped; LONG or multi-part results (the help menu, a
+   player dossier, per-server status, paginated lists) keep their embed - so they
+   read well and paginator buttons attach to an embed, not a wall of text. Either
+   way nothing pings. This module is pure (no ctx) - it owns the renderer
+   (embedToText), the size decision (isLongPayload), the chunker (textifyChunks),
+   the one-shot converter (textify, for DMs/panel posts), and the per-interaction
+   patch. Unit-tested directly in test/textify.test.js. */
 
 function embedToText(e) {
   let d; try { d = typeof e?.toJSON === "function" ? e.toJSON() : e; } catch { d = e; }
@@ -33,6 +36,19 @@ function embedToText(e) {
   }
   return parts.filter(Boolean).join("\n");
 }
+/* Decide whether a payload should stay as a proper embed instead of being flattened
+   to a plain-text reply. Short, one-line results (a ban confirmation, an access
+   denial) read best as clean text; long or structured results (the help menu, a
+   player dossier, per-server status, any paginated list) read far better as an
+   embed - and keeping them as embeds also means paginator buttons attach to an
+   embed, not a wall of text. */
+function isLongPayload(embeds) {
+  if (!Array.isArray(embeds) || !embeds.length) return false;
+  if (embeds.length > 1) return true;                 // multi-embed (e.g. /serverinfo)
+  const txt = embeds.map(embedToText).join("\n");
+  return txt.length > 900 || txt.split("\n").length > 8;
+}
+
 // payload {content?, embeds?, ...} -> { first: payload-without-embeds, extra: [overflow strings] }
 // Messages cap at 2000 chars (embeds allowed ~6000), so long output splits by line.
 function textifyChunks(payload) {
@@ -48,18 +64,19 @@ function textifyChunks(payload) {
   const { embeds, ...rest } = payload;
   return { first: { ...rest, content: chunks[0] || "​" }, extra: chunks.slice(1) };
 }
-// One-message form for interaction replies / edits / DMs: render every embed to a
-// short plain-text message (the clean reply style) and drop the embed. Components
-// (buttons/selects) pass through untouched. Overflow past one message is truncated
-// with a marker - command replies are expected to be short.
+// One-message form for interaction replies / edits / DMs. SHORT results render to a
+// clean plain-text message and the embed is dropped; LONG or structured results keep
+// their embed(s). Components (buttons/selects) pass through untouched either way, and
+// nothing pings (allowedMentions parse []).
 function textify(payload) {
   if (!payload || typeof payload !== "object") return payload;
-  const { keepEmbeds, ...rest } = payload;   // legacy flag - conversion applies regardless
+  const { keepEmbeds, ...rest } = payload;   // legacy flag - conversion decided by size now
   if (!Array.isArray(rest.embeds) || !rest.embeds.length) return rest;
-  const { first, extra } = textifyChunks(rest);
-  if (extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
-  // Replies are plain text now, so a raw <@id> in the content would ping. Command
-  // replies should never ping anyone - mentions still render, they just don't notify.
+  if (isLongPayload(rest.embeds)) {
+    if (!rest.allowedMentions) rest.allowedMentions = { parse: [] };
+    return rest;                             // keep the embed(s) for long/structured output
+  }
+  const { first } = textifyChunks(rest);
   if (!first.allowedMentions) first.allowedMentions = { parse: [] };
   return first;
 }
@@ -72,17 +89,14 @@ function patchInteractionOutput(interaction) {
         return orig(payload, ...args);
       }
       const { keepEmbeds, ...rest } = payload;
-      const { first, extra } = textifyChunks(rest);
-      if (!first.allowedMentions) first.allowedMentions = { parse: [] };   // never ping from a reply
-      // update() edits one message in place - no follow-ups possible there.
-      if (m === "update" && extra.length) first.content = `${first.content.slice(0, 1880)}\n-# ...output shortened`;
-      const res = await orig(first, ...args);
-      if (m !== "update") {
-        for (const c of extra) { try { await interaction.followUp({ content: c, flags: first.flags, allowedMentions: { parse: [] } }); } catch { break; } }
-      }
-      return res;
+      if (!rest.allowedMentions) rest.allowedMentions = { parse: [] };   // never ping from a reply
+      // Long / multi-part output stays as a proper embed; short output flattens to text.
+      if (isLongPayload(rest.embeds)) return orig(rest, ...args);
+      const { first } = textifyChunks(rest);
+      if (!first.allowedMentions) first.allowedMentions = { parse: [] };
+      return orig(first, ...args);
     };
   }
 }
 
-module.exports = { embedToText, textifyChunks, textify, patchInteractionOutput };
+module.exports = { embedToText, textifyChunks, textify, patchInteractionOutput, isLongPayload };
