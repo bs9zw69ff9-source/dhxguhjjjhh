@@ -989,6 +989,42 @@ function ensureFactionFiles() {
   logger.info("Init", `Whitelist files ensured across ${PAVLOV_BASES.length} install(s)` + (created ? ` - created ${created} missing` : ""));
 }
 
+/* One-time migration cleanup, run on every startup (idempotent): the server may
+   still hold whitelist files from the OLD Fallout factions (before Gambino /
+   Colombo / NYPD). Delete those exact known files from FactionRoles in every
+   install. Only these names are touched - current rosters, faction.txt, and the
+   donator file are never removed - and a file a CURRENT faction uses is skipped. */
+const OBSOLETE_FACTION_FILES = [
+  "ncrspawn.txt", "ncrprivate.txt", "ncrcorporal.txt", "ncrsergeant.txt", "ncrmedix.txt", "ncrheavy.txt", "ncrpowerarmor.txt", "ncrmp.txt", "ncrranger.txt", "ncrlieutenant.txt", "ncrofficer.txt",
+  "legionspawn.txt", "legionrecruit.txt", "legionlegionnaire.txt", "legionexplorer.txt", "legionslavemaster.txt", "legionprimelegionary.txt", "legionveteranlegionnaire.txt", "legionvexalarius.txt", "legioncenturion.txt", "legionassasin.txt", "legionpraetorian.txt", "legionlegate.txt",
+  "enclavespawn.txt", "enclavebrigadeless.txt", "enclavetruthandjustice.txt", "enclaveresearch.txt", "enclave56thriflebrigade.txt", "enclaverecon.txt", "enclavedemolition.txt", "enclavemechanized.txt", "enclavehellfire.txt", "enclaveofficer.txt",
+  "khansspawn.txt", "khanspawn.txt", "khansprospect.txt", "khansenforcer.txt", "khansbeserker.txt", "khansseargent.txt", "khansskirmisher.txt", "khansmarksmen.txt",
+  "bosspawn.txt", "bosinitiate.txt", "bosknight.txt", "bospaladin.txt", "boselder.txt",
+  "kingsspawn.txt", "kingsprospect.txt", "kingssilverace.txt", "kingsguard.txt", "kingshighroller.txt", "kingscrown.txt", "kingstheking.txt",
+  "supermutantspawn.txt", "supermutantsuicider.txt", "supermutantinfantry.txt", "supermutantsergeant.txt", "supermutantnightkin.txt", "supermutantbombardier.txt", "supermutantbehemoth.txt",
+  "followersspawn.txt", "followersfollower.txt", "followersguard.txt", "followersrecruit.txt", "followersscholar.txt", "followersdirector.txt",
+];
+function pruneObsoleteFactionFiles() {
+  // Defensive: never delete a file a CURRENT faction actually uses (no overlap today).
+  const inUse = new Set();
+  for (const f of ALL_FACTIONS) {
+    if (SPAWN_FILE_MAP[f]) inUse.add(SPAWN_FILE_MAP[f]);
+    const cfg = getFactionRankConfig(f);
+    if (cfg?.rankFiles)  for (const rf of Object.values(cfg.rankFiles))  inUse.add(rf);
+    if (cfg?.subclasses) for (const sf of Object.values(cfg.subclasses)) inUse.add(sf);
+  }
+  let removed = 0;
+  for (const name of OBSOLETE_FACTION_FILES) {
+    if (inUse.has(name)) continue;
+    for (const fp of mirrorPaths(path.join(FACTION_ROLES_PATH, name))) {
+      try { fs.unlinkSync(fp); removed++; }
+      catch (e) { if (e.code !== "ENOENT") logger.warn("Prune", `could not delete ${fp}: ${e.message}`); }
+    }
+  }
+  if (removed) logger.info("Init", `Pruned ${removed} obsolete Fallout faction file(s) from FactionRoles`);
+  return removed;
+}
+
 // One-time startup sweep: hand any already-root-owned files THE BOT WRITES back to
 // the game-server user, so accumulated root ownership self-heals on restart.
 function healTreeOwnership() {
@@ -2398,7 +2434,7 @@ const {  } = require("./events")({
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
-  clinical, commands, enforceBansSweep, ensureFactionFiles, ensureMenuPanel, feedHook,
+  clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
