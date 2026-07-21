@@ -24,6 +24,14 @@ test("getKills returns an empty list for an unseen killer", () => {
   assert.deepEqual(ipBans.getKills("unseen-player"), []);
 });
 
+test("clearKD returns a count and empties K/D + kill tallies", () => {
+  const n = ipBans.clearKD();
+  assert.equal(typeof n, "number");
+  assert.ok(n >= 0);
+  assert.deepEqual(ipBans.topKD(), []);
+  assert.deepEqual(ipBans.getKD("anyone"), { name: "anyone", kills: 0, deaths: 0 });
+});
+
 test("flagTarget treats a valid IPv4 as an IP flag", () => {
   const r = ipBans.flagTarget("1.2.3.4");
   assert.equal(r.kind, "IP");

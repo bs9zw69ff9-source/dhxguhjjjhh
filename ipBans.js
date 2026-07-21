@@ -477,6 +477,16 @@ function clearAll() {
   return { ids, flagged: fl };
 }
 
+// Clear all kill/death + victim-tally stats (part of a full player-data wipe).
+// Returns how many players had K/D on record.
+function clearKD() {
+  const n = Object.keys(kd).length;
+  for (const k of Object.keys(kd)) delete kd[k];
+  for (const k of Object.keys(killLog)) delete killLog[k];
+  flushKD(); flushKillLog();
+  return n;
+}
+
 /* ---------------- public: untracked (ignore) list by username ---------------- */
 // Add a username the IP system should never track. Also purges any existing
 // registry entries for that name and remembers their ids so their disconnect
@@ -855,6 +865,7 @@ module.exports = {
   clearFlaggedNames,
   clearIp,
   clearAll,
+  clearKD,
   discoverLogs,
   registry,
   get blacklist() { return [...flagged]; },

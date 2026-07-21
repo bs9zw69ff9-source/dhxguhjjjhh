@@ -2012,6 +2012,23 @@ function wipeAllMoney() {
   return { ok: true, wiped, failed, total: wiped + failed };
 }
 
+/* Owner "full registration wipe": clear all accumulated PLAYER TRACKING data from
+   bot.db - the ipBans connection registry (EOS/IP/name records + flags), K/D and
+   kill tallies, playtime, last-seen, the known-player list, and activity peaks.
+   Does NOT touch bans, blacklist, warrants, whitelists/ranks, donators, RCON menu
+   grants, or any configuration - only the "who has the bot seen" telemetry. */
+function wipeAllPlayerData() {
+  const r = { registry: 0, flagged: 0, kd: 0, playtime: 0, lastseen: 0, known: 0 };
+  try { const c = ipBans.clearAll(); r.registry = c.ids; r.flagged = c.flagged; } catch (e) { logger.warn("Wipe", `registry clear failed: ${e.message}`); }
+  try { r.kd = ipBans.clearKD(); } catch (e) { logger.warn("Wipe", `kd clear failed: ${e.message}`); }
+  const clearMap = (file) => { const before = Object.keys(safeRead(file, {}) || {}).length; safeWrite(file, {}); return before; };
+  try { r.playtime = clearMap(FILES.PLAYTIME); } catch (e) { logger.warn("Wipe", `playtime clear failed: ${e.message}`); }
+  try { r.lastseen = clearMap(FILES.LASTSEEN); } catch (e) { logger.warn("Wipe", `lastseen clear failed: ${e.message}`); }
+  try { r.known    = clearMap(FILES.KNOWN);    } catch (e) { logger.warn("Wipe", `known clear failed: ${e.message}`); }
+  try { safeWrite(FILES.SERVER_STATS, {}); } catch (e) { logger.warn("Wipe", `server stats clear failed: ${e.message}`); }
+  return r;
+}
+
 // ---- casino/ledger: atomic caps debit/credit (extracted to ./casino/ledger) ----
 const { creditCaps, debitCaps, mutateBalance } = require("./casino/ledger")({
   logger, readPlayerBalance, writePlayerBalance,
@@ -2503,7 +2520,7 @@ const { onInteraction } = require("./commands")({
   sendRconBoth, serverLabel, setFactionCap, setFactionRank,
   setMenuRole, spawn,
   successEmbed, suspendDonator, textify, unbanEverywhere, update,
-  upsertPermBan, upsertTempBan, warningEmbed, wipeAllMoney, wipeFaction, writeFactionAudit,
+  upsertPermBan, upsertTempBan, warningEmbed, wipeAllMoney, wipeAllPlayerData, wipeFaction, writeFactionAudit,
   writeFactionFile, writeModLog, writePlayerBalance,
   blacklistAll,
 });

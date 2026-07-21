@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,
-  wipeAllMoney, writeModLog,
+  wipeAllMoney, wipeAllPlayerData, writeModLog,
   BLACKLIST_IDS, BOT_START_MS,
   } = ctx;
 
@@ -352,6 +352,8 @@ module.exports = (ctx) => {
             { label: "Load whitelists",          value: "load_factions",  emoji: "♻️", description: "Restore the last snapshot (overwrites current)" },
             // ── economy ──
             { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Delete every player's ledger file from ModSave (irreversible)" },
+            // ── data ──
+            { label: "Wipe ALL player data",      value: "wipe_players",   emoji: "🧨", description: "Clear the registry, K/D, playtime, last-seen (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Owner Control Panel")
           .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below - destructive ones ask you to confirm first.\n` +
@@ -360,7 +362,8 @@ module.exports = (ctx) => {
             `⛔ **Discord Access** - bar / un-bar users\n` +
             `👁️ **IP Tracking** - ignore lists\n` +
             `💾 **Whitelists** - save / load\n` +
-            `💰 **Economy** - wipe money`)
+            `💰 **Economy** - wipe money\n` +
+            `🧨 **Data** - wipe all player tracking`)
           .setFooter({ text: "Owner only - sensitive - menu closes after 60s" }));
         // ── all action logic in one place; returns a branded result embed ──
         const audit = (embed) => { Promise.resolve(logAction(embed)).catch(() => {}); return embed; };
@@ -386,6 +389,18 @@ module.exports = (ctx) => {
             if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm - no money was wiped."));
             const r = wipeAllMoney();
             return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Deleted **${r.wiped}** player ledger(s) from ModSave${r.failed ? ` (**${r.failed}** could not be deleted)` : ""}.` : `Wipe failed: ${r.error}`))));
+          }
+          if (choice === "wipe_players") {
+            if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm - no data was wiped."));
+            const r = wipeAllPlayerData();
+            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Player Data Wiped")
+              .setDescription(hero(`Cleared the bot's player registry and stats.`) +
+                `\n• Registry records: **${r.registry}**  (flags: **${r.flagged}**)` +
+                `\n• K/D on record: **${r.kd}**` +
+                `\n• Playtime entries: **${r.playtime}**` +
+                `\n• Last-seen entries: **${r.lastseen}**` +
+                `\n• Known players: **${r.known}**` +
+                `\n\nBans, blacklist, warrants, whitelists, and donators were **not** touched.`)));
           }
           if (choice === "load_factions") {
             if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm - nothing was restored."));
@@ -434,7 +449,7 @@ module.exports = (ctx) => {
           return audit(brand(new EmbedBuilder().setColor(color).setTitle("Done").setDescription(hero(desc))));
         }
 
-        const MODAL = { ignore_add: ["Ignore a username", "Username"], ignore_remove: ["Un-ignore a username", "Username"], clear_ip: ["Clear a specific IP", "IP address"], blacklist_ip: ["Blacklist IP / username", "IP or username"], view_alts: ["View alt accounts", "Player username"], user_bl_add: ["Bar a Discord user", "Discord user ID"], user_bl_remove: ["Un-bar a Discord user", "Discord user ID"], wipe_money: ["Wipe ALL money", "Type WIPE to confirm"], load_factions: ["Restore whitelists", "Type LOAD to confirm"] };
+        const MODAL = { ignore_add: ["Ignore a username", "Username"], ignore_remove: ["Un-ignore a username", "Username"], clear_ip: ["Clear a specific IP", "IP address"], blacklist_ip: ["Blacklist IP / username", "IP or username"], view_alts: ["View alt accounts", "Player username"], user_bl_add: ["Bar a Discord user", "Discord user ID"], user_bl_remove: ["Un-bar a Discord user", "Discord user ID"], wipe_money: ["Wipe ALL money", "Type WIPE to confirm"], wipe_players: ["Wipe ALL player data", "Type WIPE to confirm"], load_factions: ["Restore whitelists", "Type LOAD to confirm"] };
         const menuRow = () => new ActionRowBuilder().addComponents(menu);
         const navRow  = () => new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("cfg_back").setLabel("Back to menu").setEmoji("◀️").setStyle(ButtonStyle.Secondary),

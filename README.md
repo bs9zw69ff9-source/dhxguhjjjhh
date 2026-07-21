@@ -113,7 +113,7 @@ locked.
 | ⚔️ Whitelist Leader | `/whitelist add\|remove` `/promotion` `/demotion` `/subclass` |
 | 🚔 Police Officer | `/warrant give\|remove\|check` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
-| 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
+| 👑 Owner | `/configure` (control panel — incl. wipe money / wipe all player data) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
 Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
 `/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`,
