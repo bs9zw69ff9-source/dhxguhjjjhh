@@ -1414,10 +1414,11 @@ const fclient = () => (factionClient && factionClient.isReady() ? factionClient 
 const { embedToText, textifyChunks, textify, patchInteractionOutput } = require("./discord/textify");
 
 function logAction(embed) {
-  if (!process.env.MOD_LOG_CHANNEL) return;
-  // Fire-and-forget: never block a command's reply on a log post. Several
-  // non-deferred handlers call this before their first interaction.reply(); if we
-  client.channels.fetch(process.env.MOD_LOG_CHANNEL)
+  // Always returns a promise that never rejects, so callers can `await` it OR
+  // chain `.catch` without risking "Cannot read properties of undefined". It's
+  // still fire-and-forget - never block a command's reply on a log post.
+  if (!process.env.MOD_LOG_CHANNEL) return Promise.resolve();
+  return client.channels.fetch(process.env.MOD_LOG_CHANNEL)
     .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
     .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
 }

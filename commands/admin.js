@@ -363,7 +363,7 @@ module.exports = (ctx) => {
             `💰 **Economy** - wipe money`)
           .setFooter({ text: "Owner only - sensitive - menu closes after 60s" }));
         // ── all action logic in one place; returns a branded result embed ──
-        const audit = (embed) => { logAction(embed).catch(() => {}); return embed; };
+        const audit = (embed) => { Promise.resolve(logAction(embed)).catch(() => {}); return embed; };
         async function runAction(choice, val) {
           if (choice === "view_alts") {
             let alts = []; try { alts = ipBans.getAltNamesOf(val); } catch {}
