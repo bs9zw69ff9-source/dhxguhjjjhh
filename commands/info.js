@@ -32,6 +32,8 @@ module.exports = (ctx) => {
           ["`/announce <message> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
           ["`/givecaps <player> <amount>`", "Give credits to a player (mod)."],
           ["`/whitelist add|remove <player> <name>`", "Add or remove a player from a whitelist (whitelist leader)."],
+          ["`/promotion <player>` / `/demotion <player>`", "Move a whitelisted player up or down one rank (whitelist leader)."],
+          ["`/subclass <player> <sub-class>`", "Assign or remove a sub-class like NYPD Detective / Vice Officer (whitelist leader)."],
           ["`/warrant give|remove|check <player>`", "Issue, clear, or look up a player's warrant (police officer)."],
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],

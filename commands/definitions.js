@@ -23,6 +23,16 @@ const ALL_RANK_NAMES = [...new Set(
   Object.values(FACTION_RANKS).flatMap(cfg => cfg.order)
 )].map(r => ({ name: r, value: r }));
 
+// Every sub-class across all factions (NYPD: Vice Officer, Detective) - the
+// fixed choice list for /subclass.
+const ALL_SUBCLASSES = [...new Set(
+  Object.values(FACTION_RANKS).flatMap(cfg => Object.keys(cfg.subclasses ?? {}))
+)].map(s => ({ name: s, value: s }));
+const subclassOption = (o) => {
+  o.setName("subclass").setDescription("Sub-class").setRequired(true);
+  return ALL_SUBCLASSES.length ? o.addChoices(...ALL_SUBCLASSES) : o.setAutocomplete(true);
+};
+
 
 const commands = [
   new SlashCommandBuilder().setName("help").setDescription("Show all commands and your current access level"),
@@ -142,6 +152,17 @@ const commands = [
     .addSubcommand(s => s.setName("wipe")
       .setDescription("Owner - Reset a whitelist (or all of them), clearing every member and rank")
       .addStringOption(o => facChoices(o.setName("whitelist").setDescription("Whitelist to wipe (omit to wipe ALL)")))),
+  new SlashCommandBuilder().setName("promotion")
+    .setDescription("Move a whitelisted player up one rank")
+    .addStringOption(o => o.setName("playerid").setDescription("Player to promote").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("demotion")
+    .setDescription("Move a whitelisted player down one rank")
+    .addStringOption(o => o.setName("playerid").setDescription("Player to demote").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("subclass")
+    .setDescription("Assign or remove a sub-class (e.g. NYPD Detective / Vice Officer)")
+    .addStringOption(o => o.setName("playerid").setDescription("Player").setRequired(true).setAutocomplete(true))
+    .addStringOption(subclassOption)
+    .addBooleanOption(o => o.setName("remove").setDescription("Remove this sub-class instead of assigning it")),
 
   new SlashCommandBuilder().setName("manual")
     .setDescription("Admin - Send a raw RCON command")
@@ -178,7 +199,7 @@ const commands = [
 ].map(c => c.toJSON());
 
 // Partition: faction commands live on the faction bot when it's configured.
-const FACTION_COMMAND_NAMES = new Set(["whitelist"]);
+const FACTION_COMMAND_NAMES = new Set(["whitelist", "promotion", "demotion", "subclass"]);
 const mainCommands    = FACTION_BOT ? commands.filter(c => !FACTION_COMMAND_NAMES.has(c.name)) : commands;
 const factionCommands = commands.filter(c => FACTION_COMMAND_NAMES.has(c.name));
 

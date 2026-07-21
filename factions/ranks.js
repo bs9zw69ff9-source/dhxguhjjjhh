@@ -65,6 +65,12 @@ const FACTION_RANKS = {
       "Deputy Chief":    "policedeputychief.txt",
       "Chief of Police": "policechief.txt",
     },
+    // Sub-classes are NOT ranks - a member keeps their rank and can also be
+    // assigned one of these (its own FactionRoles .txt), via /subclass.
+    subclasses: {
+      "Vice Officer": "policevice.txt",
+      "Detective":    "policedetective.txt",
+    },
   },
 };
 

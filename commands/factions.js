@@ -5,9 +5,10 @@ module.exports = (ctx) => {
   const {
   ALL_FACTIONS, DIVIDER, EmbedBuilder, FACTION_BAK_DIR, MessageFlags, NV,
   SPAWN_FILE_MAP, addPlayerToRankFile, bar, brand, confirmDialog,
-  countFactionRank, emptyIdEmbed, errorEmbed, formatPlaytime, getFactionCap,
+  countFactionRank, emptyIdEmbed, errorEmbed, factionLeaderOnlyEmbed, formatPlaytime, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
-  getFactionRankOrder, getPlayerFactions,
+  getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, getPlayerFactions,
+  addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles, hasModRole, hasWhitelistManageRole,
   isOwner, loadPlaytime, logAction, logger, meter,
   ownerOnlyEmbed, paginate, path, randomQuote, rankBadge,
   rankLabel, readFactionFile, removeFactionRank, removePlayerFromAllRankFiles,
@@ -185,6 +186,7 @@ module.exports = (ctx) => {
             return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not write to \`${spawn}\`.`)], flags: MessageFlags.Ephemeral });
           }
           removePlayerFromAllRankFiles(faction, playerId);
+          removePlayerFromAllSubclassFiles(faction, playerId);   // leaving the faction clears sub-classes too
           await removeFactionRank(faction, playerId);
           writeFactionAudit({ action: "remove", faction, playerId, oldRank, by: interaction.user.tag });
           writeModLog({ action: "faction-remove", playerId, faction, oldRank, by: interaction.user.tag });
@@ -198,5 +200,74 @@ module.exports = (ctx) => {
 
         return;
         },
+
+  /* ─────────────────────────────────────────────────────
+         PROMOTION / DEMOTION - move a member one rank up or down
+         ───────────────────────────────────────────────────── */
+  "promotion": (interaction, name) => changeRank(interaction, +1),
+  "demotion":  (interaction, name) => changeRank(interaction, -1),
+
+  /* ─────────────────────────────────────────────────────
+         SUBCLASS - assign or remove a sub-class (not a rank)
+         ───────────────────────────────────────────────────── */
+  "subclass": async (interaction, name) => {
+        const playerId = sanitizeId(interaction.options.getString("playerid"));
+        const subclass = interaction.options.getString("subclass");
+        const removing = interaction.options.getBoolean("remove") === true;
+        if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        const faction = (getPlayerFactions(playerId) || [])[0];
+        if (!faction) return interaction.reply({ embeds: [warningEmbed("Not Whitelisted", `\`${playerId}\` is not in any whitelist. Add them with \`/whitelist add\` first.`)], flags: MessageFlags.Ephemeral });
+        if (!hasModRole(interaction.member) && !hasWhitelistManageRole(interaction.member, faction)) {
+          return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        }
+        const subs = getFactionSubclasses(faction);
+        if (!subs[subclass]) {
+          const list = Object.keys(subs);
+          return interaction.reply({ embeds: [errorEmbed("No Such Sub-class", `**${faction}** has ${list.length ? `these sub-classes: ${list.map(s => `**${s}**`).join(", ")}` : "no sub-classes"}.`)], flags: MessageFlags.Ephemeral });
+        }
+        const has = getPlayerSubclasses(faction, playerId).includes(subclass);
+        if (removing && !has) return interaction.reply({ embeds: [warningEmbed("Not Assigned", `\`${playerId}\` does not hold the **${subclass}** sub-class.`)], flags: MessageFlags.Ephemeral });
+        if (!removing && has) return interaction.reply({ embeds: [warningEmbed("Already Assigned", `\`${playerId}\` already holds the **${subclass}** sub-class.`)], flags: MessageFlags.Ephemeral });
+        const ok = removing ? removePlayerFromSubclassFile(faction, playerId, subclass) : addPlayerToSubclassFile(faction, playerId, subclass);
+        if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${subclass}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
+        writeFactionAudit({ action: removing ? "subclass-remove" : "subclass-add", faction, playerId, subclass, by: interaction.user.tag });
+        writeModLog({ action: removing ? "faction-subclass-remove" : "faction-subclass-add", playerId, faction, subclass, by: interaction.user.tag });
+        const held = getPlayerSubclasses(faction, playerId);
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(removing ? "Sub-class Removed" : "Sub-class Assigned")
+          .setDescription(`**${interaction.user.username}** ${removing ? "removed" : "assigned"} the **${subclass}** sub-class ${removing ? "from" : "to"} **${playerId}** in **${faction}**.\nSub-classes held: ${held.length ? held.map(s => `**${s}**`).join(", ") : "none"}.`);
+        brand(embed); await logAction(embed);
+        return interaction.reply({ embeds: [embed] });
+        },
   };
+
+  /* Move a member up (dir=+1) or down (dir=-1) one rank in whichever whitelist
+     they belong to. Enforces the same per-faction manage gate as /whitelist. */
+  async function changeRank(interaction, dir) {
+    const playerId = sanitizeId(interaction.options.getString("playerid"));
+    if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+    const faction = (getPlayerFactions(playerId) || [])[0];
+    if (!faction) return interaction.reply({ embeds: [warningEmbed("Not Whitelisted", `\`${playerId}\` is not in any whitelist. Add them with \`/whitelist add\` first.`)], flags: MessageFlags.Ephemeral });
+    if (!hasModRole(interaction.member) && !hasWhitelistManageRole(interaction.member, faction)) {
+      return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
+    }
+    const order   = getFactionRankOrder(faction);
+    const current = getFactionRank(faction, playerId);
+    const idx     = order.indexOf(current);
+    const nidx    = (idx < 0 ? 0 : idx) + dir;
+    if (nidx < 0)            return interaction.reply({ embeds: [warningEmbed("Lowest Rank", `\`${playerId}\` is already at the lowest rank in **${faction}** (**${order[0]}**).`)], flags: MessageFlags.Ephemeral });
+    if (nidx >= order.length) return interaction.reply({ embeds: [warningEmbed("Highest Rank", `\`${playerId}\` is already at the highest rank in **${faction}** (**${order[order.length - 1]}**).`)], flags: MessageFlags.Ephemeral });
+    const newRank = order[nidx];
+    removePlayerFromAllRankFiles(faction, playerId);        // one rank at a time - clear old rank files (sub-classes are untouched)
+    if (!addPlayerToRankFile(faction, playerId, newRank)) {
+      return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the rank files for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
+    }
+    await setFactionRank(faction, playerId, newRank);
+    const up = dir > 0;
+    writeFactionAudit({ action: up ? "promote" : "demote", faction, playerId, from: current, to: newRank, by: interaction.user.tag });
+    writeModLog({ action: up ? "faction-promote" : "faction-demote", playerId, faction, from: current, to: newRank, by: interaction.user.tag });
+    const embed = new EmbedBuilder().setColor(up ? NV.IRRAD_GREEN : NV.AMBER).setTitle(up ? "Promoted" : "Demoted")
+      .setDescription(`**${interaction.user.username}** ${up ? "promoted" : "demoted"} **${playerId}** in **${faction}**: ${rankBadge(faction, current)} **${current}** → ${rankBadge(faction, newRank)} **${newRank}**.`);
+    brand(embed); await logAction(embed);
+    return interaction.reply({ embeds: [embed] });
+  }
 };

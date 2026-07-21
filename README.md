@@ -110,7 +110,7 @@ locked.
 |------|----------|
 | 🌐 Public | `/help` `/serverinfo` `/checkban` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
-| ⚔️ Whitelist Leader | `/whitelist add\|remove` |
+| ⚔️ Whitelist Leader | `/whitelist add\|remove` `/promotion` `/demotion` `/subclass` |
 | 🚔 Police Officer | `/warrant give\|remove\|check` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
 | 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
@@ -123,7 +123,12 @@ unrestricted.
 **Whitelist management is per-faction.** The general **Whitelist Leader**
 (`whitelist_leader_role`) manages every whitelist, while the **Gambino**
 (`gambino_role`) and **Colombo** (`colombo_role`) roles manage only their own
-whitelist. Mods, admins, and owners can manage any of them.
+whitelist. Mods, admins, and owners can manage any of them. A manager can
+`/promotion` / `/demotion` a member one rank up or down the faction's ladder, and
+`/subclass` assigns or removes a **sub-class** — an extra designation a member
+holds alongside their rank (NYPD ships with **Detective** and **Vice Officer**).
+New members join at the lowest rank; sub-classes survive promotions and are only
+cleared when the member leaves the whitelist.
 
 The **Police Officer** role (`police_role`) gates the warrant board. Warrants
 **stack** — a player can hold several. `/warrant give <player> <reason>` requires

@@ -69,6 +69,7 @@ function makeCtx(store) {
     getPlayerRanks: (f, pid) => { const r = store.rank[f]?.[pid.toLowerCase()]; return r ? [r] : []; },
     addPlayerToRankFile: (f, pid, r) => { store.rank[f][pid.toLowerCase()] = r; calls.push(["addPlayerToRankFile", f, pid, r]); return true; },
     removePlayerFromAllRankFiles: (f, pid) => { delete store.rank[f][pid.toLowerCase()]; calls.push(["removePlayerFromAllRankFiles", f, pid]); },
+    removePlayerFromAllSubclassFiles: (f, pid) => { calls.push(["removePlayerFromAllSubclassFiles", f, pid]); },
     setFactionRank: async (f, pid, r) => { store.rank[f][pid.toLowerCase()] = r; },
     removeFactionRank: async (f, pid) => { delete store.rank[f][pid.toLowerCase()]; },
     countFactionRank: (f, r) => Object.values(store.rank[f] || {}).filter(x => x === r).length,

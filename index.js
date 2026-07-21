@@ -573,6 +573,19 @@ function getPlayerRanks(faction, playerId) {
   });
 }
 
+// Sub-classes: extra designations (e.g. NYPD Detective / Vice Officer) a member can
+// hold alongside their rank. Each is its own FactionRoles .txt, like a rank file.
+function getFactionSubclasses(faction) {
+  return getFactionRankConfig(faction)?.subclasses ?? {};
+}
+// The sub-classes a player currently holds in a faction (from the sub-class files).
+function getPlayerSubclasses(faction, playerId) {
+  const id = playerId.toLowerCase();
+  return Object.entries(getFactionSubclasses(faction))
+    .filter(([, file]) => { const lines = readFactionFile(file); return lines && lines.some(l => l.toLowerCase() === id); })
+    .map(([name]) => name);
+}
+
 // The player's highest held rank (for sorting/weight/display), else the stored or default rank.
 function getFactionRank(faction, playerId) {
   const held = getPlayerRanks(faction, playerId);
@@ -963,6 +976,7 @@ function ensureFactionFiles() {
     if (SPAWN_FILE_MAP[faction]) names.add(SPAWN_FILE_MAP[faction]);
     const cfg = getFactionRankConfig(faction);
     if (cfg && cfg.rankFiles) for (const file of Object.values(cfg.rankFiles)) if (file) names.add(file);
+    if (cfg && cfg.subclasses) for (const file of Object.values(cfg.subclasses)) if (file) names.add(file);
   }
   // donator file may live outside FactionRoles (DONATOR_PATH) - handle separately
   let created = 0;
@@ -1838,6 +1852,8 @@ function removePlayerFromRankFile(faction, playerId, rank) {
 function removePlayerFromAllRankFiles(faction, playerId) {
   const cfg = getFactionRankConfig(faction);
   if (!cfg) return;
+  // Rank files ONLY - sub-classes are cleared separately so a promotion/demotion
+  // (which clears rank files before setting the new rank) keeps a member's sub-class.
   for (const rankFile of Object.values(cfg.rankFiles)) {
     if (rankFile === SPAWN_FILE_MAP[faction]) continue;   // membership roster is handled by the caller, never here
     const lines = readFactionFile(rankFile);
@@ -1845,6 +1861,35 @@ function removePlayerFromAllRankFiles(faction, playerId) {
     const updated = lines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
     if (updated.length !== lines.length) writeFactionFile(rankFile, updated);
   }
+}
+// Clear a player from every sub-class file - used on /whitelist remove (leaving the faction).
+function removePlayerFromAllSubclassFiles(faction, playerId) {
+  for (const file of Object.values(getFactionSubclasses(faction))) {
+    const lines = readFactionFile(file);
+    if (!lines) continue;
+    const updated = lines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
+    if (updated.length !== lines.length) writeFactionFile(file, updated);
+  }
+}
+
+// Add/remove a player to one sub-class file (its own FactionRoles .txt).
+function addPlayerToSubclassFile(faction, playerId, subclass) {
+  const file = getFactionSubclasses(faction)[subclass];
+  if (!file) return false;
+  const lines = readFactionFile(file);
+  if (lines === null) { logger.error("Faction", `Cannot read ${file} to add ${playerId}; aborting`); return false; }
+  if (lines.some(l => l.toLowerCase() === playerId.toLowerCase())) return true;
+  lines.push(playerId);
+  return writeFactionFile(file, lines);
+}
+function removePlayerFromSubclassFile(faction, playerId, subclass) {
+  const file = getFactionSubclasses(faction)[subclass];
+  if (!file) return false;
+  const lines = readFactionFile(file);
+  if (!lines) return true;
+  const updated = lines.filter(l => l.toLowerCase() !== playerId.toLowerCase());
+  if (updated.length === lines.length) return true;
+  return writeFactionFile(file, updated);
 }
 
 function getFactionMembers(faction) {
@@ -2403,7 +2448,8 @@ const { onInteraction } = require("./commands")({
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
-  getFactionRankOrder, getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
+  getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles,
+  getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt,
   isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer,
