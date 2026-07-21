@@ -1439,11 +1439,10 @@ function customEmoji(name) {
 // filtered to a real kill with a distinct killer, no suicides/environmental deaths).
 function postKillFeed(killer, killed) {
   if (!KILLFEED_CHANNEL) return;
-  const icon = customEmoji("vaultshotgun") || "☠️";
-  const embed = brand(new EmbedBuilder().setColor(NV.RUST_RED)
-    .setDescription(`${icon} **${killer}** eliminated **${killed}**`));
+  // Plain text, no embed and no emoji - one clean line per kill.
+  const content = `**${killer}** eliminated **${killed}**`;
   client.channels.fetch(KILLFEED_CHANNEL)
-    .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed], allowedMentions: { parse: [] } }))
+    .then(ch => ch?.isTextBased() && ch.send({ content, allowedMentions: { parse: [] } }))
     .catch(err => logger.warn("KillFeed", `post failed: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
