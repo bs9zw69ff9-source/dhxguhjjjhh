@@ -255,7 +255,7 @@ function removeBans(...ids) {
   return update(FILES.TEMPBAN, [], (bans) => bans.filter(b => !drop.includes(String(b.playerId).toLowerCase())))
     .then(r => { syncModsaveBanlist(); return r; });   // refresh the custom ban-message file
 }
-const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "", gambinoRoleId: "", colomboRoleId: "" });
+const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "", gambinoRoleId: "", colomboRoleId: "", nypdRoleId: "" });
 const saveRoles         = (d) => safeWrite(FILES.ROLES,         d);
 
 /* Police warrants: warrants STACK - a player can hold several. Keyed by lowercased
@@ -1096,7 +1096,7 @@ function hasPoliceRole(member) {
 // Per-faction whitelist management: the general Whitelist Leader role manages every
 // whitelist; a faction-specific role (Gambino/Colombo) manages only its own.
 // Owners/admins/mods are handled by the caller (they pass hasModRole).
-const FACTION_ROLE_KEY = { "Gambino": "gambinoRoleId", "Colombo": "colomboRoleId" };
+const FACTION_ROLE_KEY = { "Gambino": "gambinoRoleId", "Colombo": "colomboRoleId", "NYPD": "nypdRoleId" };
 function hasWhitelistManageRole(member, faction) {
   if (hasFactionLeaderRole(member)) return true;   // general whitelist leader (and owners)
   const roleId = loadRoles()[FACTION_ROLE_KEY[faction]];

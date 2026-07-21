@@ -58,7 +58,8 @@ module.exports = (ctx) => {
         const policeRole = interaction.options.getRole("police_role");
         const gambinoRole = interaction.options.getRole("gambino_role");
         const colomboRole = interaction.options.getRole("colombo_role");
-        if (!modRole && !adminRole && !flRole && !policeRole && !gambinoRole && !colomboRole) {
+        const nypdRole    = interaction.options.getRole("nypd_role");
+        if (!modRole && !adminRole && !flRole && !policeRole && !gambinoRole && !colomboRole && !nypdRole) {
           const c = loadRoles();
           return interaction.reply({ embeds: [
             new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Configuration")
@@ -70,6 +71,7 @@ module.exports = (ctx) => {
                 { name: "Police Officer", value: c.policeRoleId         ? `<@&${c.policeRoleId}>`        : "`not set`", inline: true },
                 { name: "Gambino",        value: c.gambinoRoleId        ? `<@&${c.gambinoRoleId}>`       : "`not set`", inline: true },
                 { name: "Colombo",        value: c.colomboRoleId        ? `<@&${c.colomboRoleId}>`       : "`not set`", inline: true },
+                { name: "NYPD",           value: c.nypdRoleId           ? `<@&${c.nypdRoleId}>`          : "`not set`", inline: true },
               ).setFooter({ text: "Pass role options to /setroles to update" })
           ], flags: MessageFlags.Ephemeral });
         }
@@ -80,8 +82,9 @@ module.exports = (ctx) => {
         if (policeRole)  c.policeRoleId        = policeRole.id;
         if (gambinoRole) c.gambinoRoleId       = gambinoRole.id;
         if (colomboRole) c.colomboRoleId       = colomboRole.id;
+        if (nypdRole)    c.nypdRoleId          = nypdRole.id;
         saveRoles(c);
-        const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Whitelist → <@&${flRole.id}>`, policeRole && `Police → <@&${policeRole.id}>`, gambinoRole && `Gambino → <@&${gambinoRole.id}>`, colomboRole && `Colombo → <@&${colomboRole.id}>`].filter(Boolean);
+        const changes = [modRole && `Mod → <@&${modRole.id}>`, adminRole && `Admin → <@&${adminRole.id}>`, flRole && `Whitelist → <@&${flRole.id}>`, policeRole && `Police → <@&${policeRole.id}>`, gambinoRole && `Gambino → <@&${gambinoRole.id}>`, colomboRole && `Colombo → <@&${colomboRole.id}>`, nypdRole && `NYPD → <@&${nypdRole.id}>`].filter(Boolean);
         const embed = new EmbedBuilder().setColor(NV.AMBER).setTitle("Role Permissions Updated")
           .setDescription(`${changes.join("\n")}\n\n— **${interaction.user.username}**`).setFooter({ text: "Takes effect immediately" });
         brand(embed); await logAction(embed);

@@ -117,13 +117,13 @@ locked.
 
 Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
 `/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`,
-`gambino_role`, `colombo_role`); an unset tier role means that tier is
-unrestricted.
+`gambino_role`, `colombo_role`, `nypd_role`); an unset tier role means that tier
+is unrestricted.
 
 **Whitelist management is per-faction.** The general **Whitelist Leader**
 (`whitelist_leader_role`) manages every whitelist, while the **Gambino**
-(`gambino_role`) and **Colombo** (`colombo_role`) roles manage only their own
-whitelist. Mods, admins, and owners can manage any of them. A manager can
+(`gambino_role`), **Colombo** (`colombo_role`), and **NYPD** (`nypd_role`) roles
+manage only their own whitelist. Mods, admins, and owners can manage any of them. A manager can
 `/promotion` / `/demotion` a member one rank up or down the faction's ladder, and
 `/subclass` assigns or removes a **sub-class** — an extra designation a member
 holds alongside their rank (NYPD ships with **Detective** and **Vice Officer**).

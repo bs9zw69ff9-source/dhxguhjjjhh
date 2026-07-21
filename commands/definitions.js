@@ -93,7 +93,8 @@ const commands = [
     .addRoleOption(o => o.setName("whitelist_leader_role").setDescription("Whitelist Leader role (manages every whitelist)"))
     .addRoleOption(o => o.setName("police_role").setDescription("Police Officer role (manages warrants)"))
     .addRoleOption(o => o.setName("gambino_role").setDescription("Gambino role (manages the Gambino whitelist)"))
-    .addRoleOption(o => o.setName("colombo_role").setDescription("Colombo role (manages the Colombo whitelist)")),
+    .addRoleOption(o => o.setName("colombo_role").setDescription("Colombo role (manages the Colombo whitelist)"))
+    .addRoleOption(o => o.setName("nypd_role").setDescription("NYPD role (manages the NYPD whitelist)")),
   new SlashCommandBuilder().setName("warrant")
     .setDescription("Police - Manage player warrants")
     .addSubcommand(s => s.setName("give")
