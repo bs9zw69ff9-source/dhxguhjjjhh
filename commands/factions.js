@@ -128,16 +128,10 @@ module.exports = (ctx) => {
         if (sub === "add") {
           const playerId = sanitizeId(interaction.options.getString("playerid"));
           const faction  = interaction.options.getString("whitelist");
-          const rawRank  = interaction.options.getString("rank");
-          const rank     = rawRank ?? getFactionDefaultRank(faction);
+          const rank     = getFactionDefaultRank(faction);   // always the lowest rank - rank is not chosen at add time
           const spawn    = SPAWN_FILE_MAP[faction];
           if (!spawn) return interaction.reply({ embeds: [errorEmbed("Unknown Whitelist", `Whitelist \`${faction}\` has no configured spawn file.`)], flags: MessageFlags.Ephemeral });
           if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
-          const validRanks = getFactionRankOrder(faction);
-          if (!validRanks.includes(rank)) {
-            return interaction.reply({ embeds: [errorEmbed("Invalid Rank",
-              `**${rank}** is not a valid rank for **${faction}**.\n\nValid ranks: ${validRanks.map(r => `**${r}**`).join(", ")}`)], flags: MessageFlags.Ephemeral });
-          }
           // One faction per player - block if they're already in a different faction.
           const otherFactions = (getPlayerFactions(playerId) || []).filter(f => f !== faction);
           if (otherFactions.length) {
