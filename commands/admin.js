@@ -348,7 +348,7 @@ module.exports = (ctx) => {
             { label: "Save whitelists",          value: "save_factions",  emoji: "💾", description: "Snapshot all whitelist spawn + rank files" },
             { label: "Load whitelists",          value: "load_factions",  emoji: "♻️", description: "Restore the last snapshot (overwrites current)" },
             // ── economy ──
-            { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Set every player's credits to 0 (irreversible)" },
+            { label: "Wipe ALL money",            value: "wipe_money",     emoji: "💰", description: "Delete every player's ledger file from ModSave (irreversible)" },
           );
         const panel = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Owner Control Panel")
           .setDescription(`${hero("Owner-only controls, all in one place.")}\nPick an action below - destructive ones ask you to confirm first.\n` +
@@ -382,7 +382,7 @@ module.exports = (ctx) => {
           if (choice === "wipe_money") {
             if (val.toUpperCase() !== "WIPE") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **WIPE** to confirm - no money was wiped."));
             const r = wipeAllMoney();
-            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Set **${r.wiped}** of ${r.total} player balance(s) to **0**.` : `Wipe failed: ${r.error}`))));
+            return audit(brand(new EmbedBuilder().setColor(NV.LEGION_RED).setTitle("Money Wiped").setDescription(hero(r.ok ? `Deleted **${r.wiped}** player ledger(s) from ModSave${r.failed ? ` (**${r.failed}** could not be deleted)` : ""}.` : `Wipe failed: ${r.error}`))));
           }
           if (choice === "load_factions") {
             if (val.toUpperCase() !== "LOAD") return brand(new EmbedBuilder().setColor(NV.NCR_TAN).setTitle("Cancelled").setDescription("Type **LOAD** to confirm - nothing was restored."));

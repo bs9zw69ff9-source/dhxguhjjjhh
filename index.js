@@ -1897,16 +1897,37 @@ function writePlayerBalance(playerId, amount) {
   logger.error("Balance", `Write failed for ${playerId}`);
   return false;
 }
-// Set EVERY player's caps to 0 (owner-only money wipe). Mirrors to all installs.
+// Owner-only money wipe: DELETE every player's ledger .txt from ModSave, across
+// every install. Folders (FactionRoles, RCON Plus, ...) are ignored - only top-
+// level files are touched, never recursed into. The ban-message file and the
+// RCON+/menu-access files are skipped. The cross-install sync never recreates a
+// deleted file, but a surviving copy in another install would propagate back, so
+// we unlink each ledger in every mirrored install.
 function wipeAllMoney() {
   const base = getModsavePath();
   if (!base) return { ok: false, error: "MODSAVE_PATH not set" };
-  let files;
-  try { files = fs.readdirSync(base).filter(f => f.endsWith(".txt") && f.toLowerCase() !== "banlist.txt"); }   // banlist.txt is the ban-message file, not a ledger
+  let entries;
+  try { entries = fs.readdirSync(base, { withFileTypes: true }); }
   catch (e) { return { ok: false, error: e.code || e.message }; }
-  let wiped = 0;
-  for (const f of files) { if (writePlayerBalance(path.basename(f, ".txt"), 0)) wiped++; }
-  return { ok: true, wiped, total: files.length };
+  let wiped = 0, failed = 0;
+  for (const ent of entries) {
+    if (!ent.isFile()) continue;                            // ignore folders (FactionRoles, RCON Plus, ...)
+    const lower = ent.name.toLowerCase();
+    if (!lower.endsWith(".txt")) continue;                  // ledgers are .txt
+    if (lower === "banlist.txt") continue;                  // ban-message file, not a ledger
+    if (MODSAVE_SYNC_SKIP.test(ent.name)) continue;         // RCON+ / menu-access files
+    const primary = path.join(base, ent.name);
+    try {
+      fs.unlinkSync(primary);
+      wiped++;
+      // drop the mirrored copies too, so newest-wins sync can't restore the ledger
+      for (const fp of mirrorPaths(primary)) if (fp !== primary) { try { fs.unlinkSync(fp); } catch {} }
+    } catch (e) {
+      if (e.code === "ENOENT") { wiped++; }                 // already gone - fine
+      else { failed++; logger.warn("WipeMoney", `unlink failed for ${ent.name}: ${e.message}`); }
+    }
+  }
+  return { ok: true, wiped, failed, total: wiped + failed };
 }
 
 // ---- casino/ledger: atomic caps debit/credit (extracted to ./casino/ledger) ----
