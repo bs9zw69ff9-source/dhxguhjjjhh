@@ -255,18 +255,41 @@ function removeBans(...ids) {
   return update(FILES.TEMPBAN, [], (bans) => bans.filter(b => !drop.includes(String(b.playerId).toLowerCase())))
     .then(r => { syncModsaveBanlist(); return r; });   // refresh the custom ban-message file
 }
-const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "" });
+const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "", gambinoRoleId: "", colomboRoleId: "" });
 const saveRoles         = (d) => safeWrite(FILES.ROLES,         d);
 
-/* Police warrants: one active warrant per player, keyed by lowercased id.
-   { [idLower]: { playerId, reason, by, byId, at } }. Serialized writes via update(). */
-const loadWarrants  = () => safeRead(FILES.WARRANTS, {});
-const getWarrant    = (playerId) => loadWarrants()[String(playerId).toLowerCase()] ?? null;
-function setWarrant(playerId, reason, by, byId) {
-  return update(FILES.WARRANTS, {}, (m) => { m[String(playerId).toLowerCase()] = { playerId, reason, by, byId, at: Date.now() }; return m; });
+/* Police warrants: warrants STACK - a player can hold several. Keyed by lowercased
+   id to a list: { [idLower]: [ { playerId, reason, by, byId, at }, ... ] }.
+   Serialized writes via update(). A pre-stacking single object is coerced to a
+   one-element list on read/write so old data keeps working. */
+const loadWarrants = () => safeRead(FILES.WARRANTS, {});
+const _asList = (v) => Array.isArray(v) ? v : (v ? [v] : []);
+const getWarrants = (playerId) => _asList(loadWarrants()[String(playerId).toLowerCase()]);
+// Append a warrant. Returns the player's new warrant count.
+async function addWarrant(playerId, reason, by, byId) {
+  let count = 0;
+  await update(FILES.WARRANTS, {}, (m) => {
+    const key = String(playerId).toLowerCase();
+    const list = _asList(m[key]);
+    list.push({ playerId, reason, by, byId, at: Date.now() });
+    m[key] = list; count = list.length; return m;
+  });
+  return count;
 }
-function removeWarrant(playerId) {
-  return update(FILES.WARRANTS, {}, (m) => { delete m[String(playerId).toLowerCase()]; return m; });
+// Remove one warrant by 1-based index, or ALL when index is null/undefined.
+// Returns { removed: [...], remaining: n }.
+async function removeWarrant(playerId, index = null) {
+  let removed = [], remaining = 0;
+  await update(FILES.WARRANTS, {}, (m) => {
+    const key  = String(playerId).toLowerCase();
+    const list = _asList(m[key]);
+    if (index == null) { removed = list.slice(); delete m[key]; return m; }
+    const i = Number(index) - 1;
+    if (i >= 0 && i < list.length) { removed = [list[i]]; list.splice(i, 1); }
+    if (list.length) { m[key] = list; remaining = list.length; } else { delete m[key]; }
+    return m;
+  });
+  return { removed, remaining };
 }
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
@@ -910,16 +933,16 @@ const DONATOR_FILE = process.env.DONATOR_PATH
 
 // Faction name -> its spawn-file name in FactionRoles/.
 const SPAWN_FILE_MAP = {
-  "Gambino":           "gambinospawn.txt",
-  "Colombo":           "colombospawn.txt",
-  "Police Department": "policespawn.txt",
+  "Gambino": "gambinospawn.txt",
+  "Colombo": "colombospawn.txt",
+  "NYPD":    "policespawn.txt",
 };
 
 // Reverse lookup: spawn-file basename (no .txt) -> faction name, used by the log tailer.
 const FACTION_SPAWN_MAP = {
   gambinospawn: "Gambino",
   colombospawn: "Colombo",
-  policespawn:  "Police Department",
+  policespawn:  "NYPD",
 };
 
 const ALL_FACTIONS = Object.keys(SPAWN_FILE_MAP);
@@ -1055,6 +1078,15 @@ function hasPoliceRole(member) {
   const { policeRoleId, adminRoleId } = loadRoles();
   if (_hasRole(member, adminRoleId)) return true;   // admins can manage warrants too
   return _hasRole(member, policeRoleId);
+}
+// Per-faction whitelist management: the general Whitelist Leader role manages every
+// whitelist; a faction-specific role (Gambino/Colombo) manages only its own.
+// Owners/admins/mods are handled by the caller (they pass hasModRole).
+const FACTION_ROLE_KEY = { "Gambino": "gambinoRoleId", "Colombo": "colomboRoleId" };
+function hasWhitelistManageRole(member, faction) {
+  if (hasFactionLeaderRole(member)) return true;   // general whitelist leader (and owners)
+  const roleId = loadRoles()[FACTION_ROLE_KEY[faction]];
+  return _hasRole(member, roleId);
 }
 
 // ---- command blacklist  (discord users barred from all bot commands) ----
@@ -2346,7 +2378,7 @@ const { onInteraction } = require("./commands")({
   dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
-  hasPoliceRole, loadWarrants, getWarrant, setWarrant, removeWarrant,
+  hasPoliceRole, hasWhitelistManageRole, loadWarrants, getWarrants, addWarrant, removeWarrant,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,

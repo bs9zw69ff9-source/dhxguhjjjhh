@@ -1,8 +1,8 @@
-/* Runtime flow test for /warrant give|check|remove.
+/* Runtime flow test for /warrant give|check|remove with STACKED warrants.
    Drives the real commands/warrant.js handler against a stubbed ctx backed by an
-   in-memory warrant store, asserting on the store state and the replies. Covers
-   the police-role gate, the required reason, give/check/remove, and the
-   no-warrant cases. */
+   in-memory warrant store (id -> list). Covers the police-role gate, required
+   reason, stacking, numbered check, remove-one-by-number, remove-all, and the
+   out-of-range / empty cases. */
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { disableValidators, EmbedBuilder } = require("discord.js");
@@ -10,6 +10,7 @@ disableValidators();
 
 function makeCtx(store, over = {}) {
   const calls = [];
+  const key = (p) => String(p).toLowerCase();
   const ctx = {
     EmbedBuilder, MessageFlags: { Ephemeral: 64 },
     NV: { RUST_RED: 1, IRRAD_GREEN: 2, AMBER: 3 },
@@ -23,11 +24,23 @@ function makeCtx(store, over = {}) {
     hasPoliceRole: () => true,
     logAction: async () => {}, writeModLog: (...a) => calls.push(["writeModLog", ...a]),
     paginate: async (interaction, lines, render) => { await interaction.reply({ embeds: [render(lines)] }); },
-    // in-memory warrant store
+    // in-memory stacked warrant store
     loadWarrants: () => ({ ...store }),
-    getWarrant: (pid) => store[String(pid).toLowerCase()] ?? null,
-    setWarrant: async (pid, reason, by, byId) => { store[String(pid).toLowerCase()] = { playerId: pid, reason, by, byId, at: Date.now() }; },
-    removeWarrant: async (pid) => { delete store[String(pid).toLowerCase()]; },
+    getWarrants: (p) => store[key(p)] ? [...store[key(p)]] : [],
+    addWarrant: async (p, reason, by, byId) => {
+      const list = store[key(p)] ?? (store[key(p)] = []);
+      list.push({ playerId: p, reason, by, byId, at: Date.now() });
+      return list.length;
+    },
+    removeWarrant: async (p, index = null) => {
+      const list = store[key(p)] ?? [];
+      let removed = [];
+      if (index == null) { removed = list.slice(); delete store[key(p)]; return { removed, remaining: 0 }; }
+      const i = Number(index) - 1;
+      if (i >= 0 && i < list.length) { removed = [list[i]]; list.splice(i, 1); }
+      if (!list.length) delete store[key(p)];
+      return { removed, remaining: store[key(p)]?.length ?? 0 };
+    },
     ...over,
   };
   return { ctx, calls };
@@ -41,6 +54,7 @@ function makeInteraction(sub, opts = {}) {
     options: {
       getSubcommand: () => sub,
       getString: (k) => opts.strings?.[k] ?? null,
+      getInteger: (k) => opts.integers?.[k] ?? null,
     },
     reply: async (p) => { out.replies.push(p); },
     editReply: async (p) => { out.replies.push(p); },
@@ -71,42 +85,55 @@ test("/warrant give requires a reason", async () => {
   assert.deepEqual(store, {}, "no warrant issued without a reason");
 });
 
-test("/warrant give -> check -> remove round trip", async () => {
+test("/warrant warrants stack, then remove one by number and the rest", async () => {
   const store = {};
   const { ctx, calls } = makeCtx(store);
   const h = require("../commands/warrant.js")(ctx);
-  // give
-  {
-    const { interaction, out } = makeInteraction("give", { strings: { playerid: "Perp", reason: "grand theft auto" } });
+  // give twice -> stacks to 2
+  for (const reason of ["speeding", "assault"]) {
+    const { interaction } = makeInteraction("give", { strings: { playerid: "Perp", reason } });
     await h.warrant(interaction, "warrant");
-    assert.match(text(out), /Warrant Issued - Perp/);
-    assert.equal(store["perp"].reason, "grand theft auto");
-    assert.ok(calls.some(c => c[0] === "writeModLog" && c[1].action === "warrant-give"));
   }
-  // check single (case-insensitive)
+  assert.equal(store["perp"].length, 2, "two stacked warrants");
+  assert.ok(calls.filter(c => c[0] === "writeModLog" && c[1].action === "warrant-give").length === 2);
+
+  // check shows both, numbered
   {
-    const { interaction, out } = makeInteraction("check", { strings: { playerid: "perp" } });
+    const { interaction, out } = makeInteraction("check", { strings: { playerid: "Perp" } });
     await h.warrant(interaction, "warrant");
-    assert.match(text(out), /Active Warrant - perp/);
-    assert.match(text(out), /grand theft auto/);
+    assert.match(text(out), /Active Warrants - Perp \(2\)/);
+    assert.match(text(out), /#1/); assert.match(text(out), /#2/);
+    assert.match(text(out), /speeding/); assert.match(text(out), /assault/);
   }
-  // check all
+  // remove #1 -> 1 remains (the assault one)
   {
-    const { interaction, out } = makeInteraction("check", { strings: {} });
+    const { interaction, out } = makeInteraction("remove", { strings: { playerid: "Perp" }, integers: { number: 1 } });
     await h.warrant(interaction, "warrant");
-    assert.match(text(out), /Active Warrants \(1\)/);
+    assert.match(text(out), /Warrant Cleared - Perp/);
+    assert.match(text(out), /\*\*1\*\* warrant left/);
+    assert.equal(store["perp"].length, 1);
+    assert.equal(store["perp"][0].reason, "assault");
   }
-  // remove
+  // remove all -> gone
   {
     const { interaction, out } = makeInteraction("remove", { strings: { playerid: "Perp" } });
     await h.warrant(interaction, "warrant");
-    assert.match(text(out), /Warrant Cleared - Perp/);
+    assert.match(text(out), /\*\*0\*\* warrants left/);
     assert.equal(store["perp"], undefined);
-    assert.ok(calls.some(c => c[0] === "writeModLog" && c[1].action === "warrant-remove"));
   }
 });
 
-test("/warrant check and remove handle a clean slate", async () => {
+test("/warrant remove: out-of-range number is rejected", async () => {
+  const store = { perp: [{ playerId: "Perp", reason: "x", by: "o", at: Date.now() }] };
+  const { ctx } = makeCtx(store);
+  const h = require("../commands/warrant.js")(ctx);
+  const { interaction, out } = makeInteraction("remove", { strings: { playerid: "Perp" }, integers: { number: 5 } });
+  await h.warrant(interaction, "warrant");
+  assert.match(text(out), /No Such Warrant/);
+  assert.equal(store["perp"].length, 1, "nothing removed");
+});
+
+test("/warrant check on a clean slate", async () => {
   const store = {};
   const { ctx } = makeCtx(store);
   const h = require("../commands/warrant.js")(ctx);
@@ -119,10 +146,5 @@ test("/warrant check and remove handle a clean slate", async () => {
     const { interaction, out } = makeInteraction("check", { strings: {} });
     await h.warrant(interaction, "warrant");
     assert.match(text(out), /No Active Warrants/);
-  }
-  {
-    const { interaction, out } = makeInteraction("remove", { strings: { playerid: "Nobody" } });
-    await h.warrant(interaction, "warrant");
-    assert.match(text(out), /No Warrant/);
   }
 });

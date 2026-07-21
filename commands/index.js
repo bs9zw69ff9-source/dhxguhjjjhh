@@ -14,7 +14,7 @@ module.exports = function createCommands(ctx) {
   ModalBuilder, NV, TextInputBuilder, TextInputStyle, adminOnlyEmbed, blacklistedEmbed,
   brand, checkRateLimit, client, commandPlayerCandidates, commands,
   errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
-  handleMenuPanelSubmit, hasAdminRole, hasFactionLeaderRole, hasModRole, isBlacklisted, isOwner,
+  handleMenuPanelSubmit, hasAdminRole, hasFactionLeaderRole, hasWhitelistManageRole, hasModRole, isBlacklisted, isOwner,
   logger, modOnlyEmbed,
   patchInteractionOutput, rateLimitEmbed, textify, writeModLog,
   } = ctx;
@@ -164,10 +164,14 @@ module.exports = function createCommands(ctx) {
       return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
     // /whitelist's read-only subcommands (list / audit / playtime) are public - only
-    // the mutating ones need the Whitelist Leader / Mod gate.
+    // the mutating ones need the Whitelist Leader / Mod gate. Management is
+    // per-faction: the general Whitelist Leader role manages every whitelist, while
+    // a faction role (Gambino/Colombo) manages only its own. Which faction is being
+    // touched comes from the `whitelist` option on the subcommand.
     const factionPublicSub = name === "whitelist" &&
       ["list", "playtime"].includes(interaction.options.getSubcommand(false));
-    if (FL_COMMANDS.includes(name) && !factionPublicSub && !hasModRole(interaction.member) && !hasFactionLeaderRole(interaction.member)) {
+    if (FL_COMMANDS.includes(name) && !factionPublicSub && !hasModRole(interaction.member)
+        && !hasWhitelistManageRole(interaction.member, interaction.options.getString("whitelist"))) {
       return interaction.reply({ embeds: [factionLeaderOnlyEmbed()], flags: MessageFlags.Ephemeral });
     }
     if (MOD_COMMANDS.includes(name) && !hasModRole(interaction.member)) {

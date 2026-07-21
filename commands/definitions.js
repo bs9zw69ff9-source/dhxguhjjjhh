@@ -80,8 +80,10 @@ const commands = [
     .setDescription("Admin - Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
-    .addRoleOption(o => o.setName("whitelist_leader_role").setDescription("Whitelist Leader role"))
-    .addRoleOption(o => o.setName("police_role").setDescription("Police Officer role (manages warrants)")),
+    .addRoleOption(o => o.setName("whitelist_leader_role").setDescription("Whitelist Leader role (manages every whitelist)"))
+    .addRoleOption(o => o.setName("police_role").setDescription("Police Officer role (manages warrants)"))
+    .addRoleOption(o => o.setName("gambino_role").setDescription("Gambino role (manages the Gambino whitelist)"))
+    .addRoleOption(o => o.setName("colombo_role").setDescription("Colombo role (manages the Colombo whitelist)")),
   new SlashCommandBuilder().setName("warrant")
     .setDescription("Police - Manage player warrants")
     .addSubcommand(s => s.setName("give")
@@ -89,8 +91,9 @@ const commands = [
       .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("reason").setDescription("Reason for the warrant").setRequired(true)))
     .addSubcommand(s => s.setName("remove")
-      .setDescription("Clear a player's warrant")
-      .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)))
+      .setDescription("Clear a player's warrant (a number clears just that one; omit to clear all)")
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
+      .addIntegerOption(o => o.setName("number").setDescription("Which warrant to clear (from /warrant check); omit to clear all").setRequired(false).setMinValue(1)))
     .addSubcommand(s => s.setName("check")
       .setDescription("Check a player's warrant, or list every active warrant")
       .addStringOption(o => o.setName("playerid").setDescription("Player ID (leave blank to list all)").setRequired(false).setAutocomplete(true))),

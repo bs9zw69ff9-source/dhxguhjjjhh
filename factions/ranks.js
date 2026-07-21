@@ -44,7 +44,7 @@ const FACTION_RANKS = {
       "Boss":        "colomboboss.txt",
     },
   },
-  "Police Department": {
+  "NYPD": {
     order:   ["Patrolman", "Corporal", "Sergeant", "Lieutenant", "Captain", "Deputy Chief", "Chief of Police"],
     default: "Patrolman",
     badges:  {

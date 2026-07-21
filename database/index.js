@@ -83,7 +83,7 @@ module.exports = function createDatabase({ logger, baseDir }) {
     [FILES.DONATOR_SUSPEND]: "{}",
     [FILES.SERVER_STATS]:   "{}",
     [FILES.WARRANTS]:       "{}",
-    [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "" }, null, 2),
+    [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "", gambinoRoleId: "", colomboRoleId: "" }, null, 2),
     [FILES.CASINO_CONFIG]:  JSON.stringify(CASINO_CONFIG_DEFAULTS, null, 2),
   };
 

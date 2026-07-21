@@ -116,11 +116,22 @@ locked.
 | 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
 Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
-`/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`);
-an unset tier role means that tier is unrestricted. The **Police Officer** role
-(`police_role`) gates the warrant board — `/warrant give` requires a reason,
-`/warrant check` shows one player's warrant or lists all active warrants, and
-`/warrant remove` clears one; admins and owners can manage warrants too.
+`/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`,
+`gambino_role`, `colombo_role`); an unset tier role means that tier is
+unrestricted.
+
+**Whitelist management is per-faction.** The general **Whitelist Leader**
+(`whitelist_leader_role`) manages every whitelist, while the **Gambino**
+(`gambino_role`) and **Colombo** (`colombo_role`) roles manage only their own
+whitelist. Mods, admins, and owners can manage any of them.
+
+The **Police Officer** role (`police_role`) gates the warrant board. Warrants
+**stack** — a player can hold several. `/warrant give <player> <reason>` requires
+a reason and adds one; `/warrant check <player>` shows that player's numbered
+stack (or lists everyone with warrants when blank); `/warrant remove <player>
+[number]` clears one warrant by its number, or all of them when no number is
+given. Admins and owners can manage warrants too.
+
 `/tempban` uses punishment presets that set the duration automatically.
 
 ### Automation
