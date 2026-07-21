@@ -80,7 +80,20 @@ const commands = [
     .setDescription("Admin - Configure role permissions")
     .addRoleOption(o => o.setName("mod_role").setDescription("Moderator role"))
     .addRoleOption(o => o.setName("admin_role").setDescription("Admin role"))
-    .addRoleOption(o => o.setName("whitelist_leader_role").setDescription("Whitelist Leader role")),
+    .addRoleOption(o => o.setName("whitelist_leader_role").setDescription("Whitelist Leader role"))
+    .addRoleOption(o => o.setName("police_role").setDescription("Police Officer role (manages warrants)")),
+  new SlashCommandBuilder().setName("warrant")
+    .setDescription("Police - Manage player warrants")
+    .addSubcommand(s => s.setName("give")
+      .setDescription("Put out a warrant for a player (reason required)")
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("reason").setDescription("Reason for the warrant").setRequired(true)))
+    .addSubcommand(s => s.setName("remove")
+      .setDescription("Clear a player's warrant")
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName("check")
+      .setDescription("Check a player's warrant, or list every active warrant")
+      .addStringOption(o => o.setName("playerid").setDescription("Player ID (leave blank to list all)").setRequired(false).setAutocomplete(true))),
   new SlashCommandBuilder().setName("announce")
     .setDescription("Mod - Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))

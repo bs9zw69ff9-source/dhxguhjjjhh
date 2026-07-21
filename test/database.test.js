@@ -13,12 +13,13 @@ const prevCwd = process.cwd();
 process.chdir(tmp);
 const db = require(path.join(prevCwd, "database"))({ logger: noLog, baseDir: tmp });
 
-test("registry: 30 datasets, defaults seeded", () => {
-  assert.equal(Object.keys(db.FILES).length, 30);
+test("registry: 31 datasets, defaults seeded", () => {
+  assert.equal(Object.keys(db.FILES).length, 31);
   assert.deepEqual(db.safeRead(db.FILES.TEMPBAN, []), []);
   assert.deepEqual(db.safeRead(db.FILES.PLAYTIME, {}), {});
+  assert.deepEqual(db.safeRead(db.FILES.WARRANTS, {}), {});
   const roles = db.safeRead(db.FILES.ROLES, {});
-  assert.ok("modRoleId" in roles && "adminRoleId" in roles);
+  assert.ok("modRoleId" in roles && "adminRoleId" in roles && "policeRoleId" in roles);
 });
 
 test("safeWrite/safeRead round-trip returns clones, not references", () => {
@@ -39,8 +40,8 @@ test("update: serialized read-modify-write", async () => {
 });
 
 test("exportDbToJson writes pretty backups to disk", () => {
-  // Only datasets with a seeded default (24 of 30) exist as kv rows on a fresh
-  // db — the other 6 appear lazily on first read/write.
+  // Only datasets with a seeded default (25 of 31) exist as kv rows on a fresh
+  // db — the others appear lazily on first read/write.
   const n = db.exportDbToJson();
   assert.ok(n >= 20, `expected >=20 exported, got ${n}`);
   const onDisk = JSON.parse(fs.readFileSync(path.join(tmp, "playtime.json"), "utf8"));

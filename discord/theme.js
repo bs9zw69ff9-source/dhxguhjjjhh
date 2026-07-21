@@ -236,6 +236,7 @@ module.exports = function createTheme({ getClient, buildId }) {
   function modOnlyEmbed()    { return deniedEmbed("Mods only", "You need the mod role to use this command."); }
   function factionLeaderOnlyEmbed()   { return deniedEmbed("Faction leaders only", "You need the faction leader role (or mod) to use this."); }
   function factionLeaderStrictEmbed() { return deniedEmbed("Faction leaders only", "Only faction leaders can change ranks."); }
+  function policeOnlyEmbed()          { return deniedEmbed("Police only", "You need the Police Officer role to manage warrants."); }
   function blacklistedEmbed(entry) {
     const reason = entry?.reason ? ` Reason: ${entry.reason}` : "";
     return deniedEmbed("Blacklisted", `You are blacklisted from this bot, so no commands will work for you.${reason}`);
@@ -254,7 +255,7 @@ module.exports = function createTheme({ getClient, buildId }) {
     bar, meter, pip, cell, hero, clinical,
     successEmbed, errorEmbed, warningEmbed, deniedEmbed,
     adminOnlyEmbed, ownerOnlyEmbed, modOnlyEmbed,
-    factionLeaderOnlyEmbed, factionLeaderStrictEmbed,
+    factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed,
     blacklistedEmbed, emptyIdEmbed, rateLimitEmbed,
   };
 };

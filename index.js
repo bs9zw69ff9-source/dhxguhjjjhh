@@ -255,8 +255,19 @@ function removeBans(...ids) {
   return update(FILES.TEMPBAN, [], (bans) => bans.filter(b => !drop.includes(String(b.playerId).toLowerCase())))
     .then(r => { syncModsaveBanlist(); return r; });   // refresh the custom ban-message file
 }
-const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "" });
+const loadRoles         = () => safeRead(FILES.ROLES,          { modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "" });
 const saveRoles         = (d) => safeWrite(FILES.ROLES,         d);
+
+/* Police warrants: one active warrant per player, keyed by lowercased id.
+   { [idLower]: { playerId, reason, by, byId, at } }. Serialized writes via update(). */
+const loadWarrants  = () => safeRead(FILES.WARRANTS, {});
+const getWarrant    = (playerId) => loadWarrants()[String(playerId).toLowerCase()] ?? null;
+function setWarrant(playerId, reason, by, byId) {
+  return update(FILES.WARRANTS, {}, (m) => { m[String(playerId).toLowerCase()] = { playerId, reason, by, byId, at: Date.now() }; return m; });
+}
+function removeWarrant(playerId) {
+  return update(FILES.WARRANTS, {}, (m) => { delete m[String(playerId).toLowerCase()]; return m; });
+}
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
 const loadModLog        = () => safeRead(FILES.MODLOG,         []);
@@ -986,7 +997,7 @@ const {
   bar, meter, pip, cell, hero, clinical,
   successEmbed, errorEmbed, warningEmbed, deniedEmbed,
   adminOnlyEmbed, ownerOnlyEmbed, modOnlyEmbed,
-  factionLeaderOnlyEmbed, factionLeaderStrictEmbed,
+  factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed,
   blacklistedEmbed, emptyIdEmbed, rateLimitEmbed,
 } = require("./discord/theme")({ getClient: () => client, buildId: BUILD_ID });
 
@@ -1038,6 +1049,12 @@ function hasFactionLeaderRole(member) {
   if (isOwner(member?.id ?? member?.user?.id)) return true;
   const { factionLeaderRoleId } = loadRoles();
   return _hasRole(member, factionLeaderRoleId);
+}
+function hasPoliceRole(member) {
+  if (isOwner(member?.id ?? member?.user?.id)) return true;
+  const { policeRoleId, adminRoleId } = loadRoles();
+  if (_hasRole(member, adminRoleId)) return true;   // admins can manage warrants too
+  return _hasRole(member, policeRoleId);
 }
 
 // ---- command blacklist  (discord users barred from all bot commands) ----
@@ -2328,7 +2345,8 @@ const { onInteraction } = require("./commands")({
   clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank, creditCaps,
   dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, easternClock, easternNoonUTC, emptyIdEmbed,
-  enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, firewallBlockIps,
+  enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
+  hasPoliceRole, loadWarrants, getWarrant, setWarrant, removeWarrant,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,

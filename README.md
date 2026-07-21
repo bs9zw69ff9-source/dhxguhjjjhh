@@ -111,12 +111,17 @@ locked.
 | 🌐 Public | `/help` `/serverinfo` `/checkban` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
 | ⚔️ Whitelist Leader | `/whitelist add\|remove` |
+| 🚔 Police Officer | `/warrant give\|remove\|check` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
 | 👑 Owner | `/configure` (control panel) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
 Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
-`/setroles`; an unset tier role means that tier is unrestricted. `/tempban`
-uses punishment presets that set the duration automatically.
+`/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`);
+an unset tier role means that tier is unrestricted. The **Police Officer** role
+(`police_role`) gates the warrant board — `/warrant give` requires a reason,
+`/warrant check` shows one player's warrant or lists all active warrants, and
+`/warrant remove` clears one; admins and owners can manage warrants too.
+`/tempban` uses punishment presets that set the duration automatically.
 
 ### Automation
 
