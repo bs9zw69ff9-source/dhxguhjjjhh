@@ -21,7 +21,7 @@ function makeCtx(over = {}) {
     parseDuration: (s) => { const m = String(s).match(/^(\d+)([smhd]?)$/); if (!m) return null; return +m[1] * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[m[2] || "m"]); },
     hasPoliceRole: () => true, hasModRole: () => true,
     getWarrants: () => [{ reason: "assault", by: "cop" }],
-    getArrests: () => [{ charges: [{ code: "1.02" }], minutes: 3, untilSober: false, at: Date.now() }],
+    getArrests: () => [{ charges: [{ code: "PC 200" }], minutes: 4, bail: 75, at: Date.now() }],
     totalJailServed: () => 12,
     suspendRank: async () => ({ ok: true, faction: "NYPD", rank: "Sergeant" }),
     recordArrest: async () => ({}), startSentence: () => {}, logPolice: () => {},

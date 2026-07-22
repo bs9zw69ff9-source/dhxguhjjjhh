@@ -142,9 +142,9 @@ given. Admins and owners can manage warrants too.
 ### Police RP (arrests & records)
 
 `/arrest <player>` opens an interactive booking: pick a penal-code section, then
-the charge(s) from it, with a running total sentence — add as many as needed,
-then **Confirm Arrest**. The charges + jail time are recorded, a sentence timer
-starts, and a booking notice posts to `ARREST_CHANNEL` (falls back to the mod-log);
+the charge(s) from it, with a running total for jail time and bail - add as many
+as needed, then **Confirm Arrest**. The charges, jail time, and bail are recorded,
+a sentence timer starts, and a booking notice posts to `ARREST_CHANNEL` (falls back to the mod-log);
 when the sentence ends the bot posts a release notice. The penal code lives in
 [`penal/codes.js`](penal/codes.js). `/backgroundcheck <player>` shows a player's
 active warrants, arrests, and total jail time served. Both are gated to the

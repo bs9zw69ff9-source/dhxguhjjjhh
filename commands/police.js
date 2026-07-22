@@ -14,7 +14,7 @@ module.exports = (ctx) => {
   suspendRank, writeModLog,
   } = ctx;
 
-  const chargeTime = (c) => c.untilSober ? "until sober" : `${c.min} min`;
+  const chargeTime = PENAL.chargeTime;
 
   return {
 
@@ -26,12 +26,12 @@ module.exports = (ctx) => {
         const picked = [];   // charge objects, deduped by code
 
         const bookingEmbed = () => {
-          const { minutes, untilSober } = PENAL.bookingTotal(picked.map(c => c.code));
+          const t = PENAL.bookingTotal(picked.map(c => c.code));
           const lines = picked.length
             ? picked.map(c => `\`${c.code}\`  ${c.name} - ${c.cls} • ${chargeTime(c)}`).join("\n")
             : "*No charges yet.*";
           return brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Booking: ${playerId}`)
-            .setDescription(`Pick a section, then pick the charge(s). Add as many as needed, then confirm.\n\n**Charges so far (Total: ${PENAL.sentenceLabel(minutes, untilSober)})**\n${lines}`));
+            .setDescription(`Pick a section, then pick the charge(s). Add as many as needed, then confirm.\n\n**Charges so far**\nJail: **${PENAL.sentenceLabel(t.minutes, t)}**  •  Bail: **${PENAL.bailLabel(t.bail, t)}**\n${lines}`));
         };
         const sectionRow = () => new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder().setCustomId("arr_section").setPlaceholder("Choose a penal code section...")
@@ -60,9 +60,9 @@ module.exports = (ctx) => {
             const entry = await recordArrest(playerId, picked, interaction.user.tag);
             const label = picked.length === 1 ? picked[0].name : `${picked.length} charges`;
             startSentence(playerId, label, entry.minutes, interaction.user.tag, interaction.user.id);
-            writeModLog({ action: "arrest", playerId, charges: picked.map(c => c.code).join(","), minutes: entry.minutes, by: interaction.user.tag });
+            writeModLog({ action: "arrest", playerId, charges: picked.map(c => c.code).join(","), minutes: entry.minutes, bail: entry.bail, by: interaction.user.tag });
             const summary = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`Arrest Confirmed: ${playerId}`)
-              .setDescription(`Booked by **${interaction.user.username}** on **${picked.length}** charge${picked.length !== 1 ? "s" : ""}.\nSentence: **${PENAL.sentenceLabel(entry.minutes, entry.untilSober)}**.\n\n${picked.map(c => `\`${c.code}\` ${c.name}`).join("\n")}`));
+              .setDescription(`Booked by **${interaction.user.username}** on **${picked.length}** charge${picked.length !== 1 ? "s" : ""}.\nJail: **${PENAL.sentenceLabel(entry.minutes, entry)}**  •  Bail: **${PENAL.bailLabel(entry.bail, entry)}**\n\n${picked.map(c => `\`${c.code}\` ${c.name}`).join("\n")}`));
             logPolice(summary);
             return interaction.editReply({ embeds: [summary], components: [] }).catch(() => {});
           }
@@ -89,7 +89,7 @@ module.exports = (ctx) => {
         const served   = totalJailServed(playerId);
         const warrantStr = warrants.length ? warrants.map((w, i) => `\`${i + 1}\` ${w.reason} *(by ${w.by})*`).join("\n").slice(0, 1000) : "*None*";
         const arrestStr  = arrests.length
-          ? arrests.slice(-10).reverse().map(a => `<t:${Math.floor(a.at / 1000)}:d> - ${a.charges.map(c => c.code).join(", ")} (${PENAL.sentenceLabel(a.minutes, a.untilSober)})`).join("\n").slice(0, 1000)
+          ? arrests.slice(-10).reverse().map(a => `<t:${Math.floor(a.at / 1000)}:d> - ${a.charges.map(c => c.code).join(", ")} (${PENAL.sentenceLabel(a.minutes, a)}, ${PENAL.bailLabel(a.bail, a)})`).join("\n").slice(0, 1000)
           : "*None*";
         const embed = brand(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle(`Background Check: ${playerId}`)
           .addFields(

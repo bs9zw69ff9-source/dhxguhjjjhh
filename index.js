@@ -300,8 +300,12 @@ const getArrests  = (playerId) => _asList(loadArrests()[String(playerId).toLower
 const totalJailServed = (playerId) => getArrests(playerId).reduce((s, a) => s + (Number(a.minutes) || 0), 0);
 async function recordArrest(playerId, charges, by) {
   const entry = {
-    charges: charges.map(c => ({ code: c.code, name: c.name, cls: c.cls, min: c.min, untilSober: !!c.untilSober })),
-    minutes: charges.reduce((s, c) => s + (c.min || 0), 0), untilSober: charges.some(c => c.untilSober), by, at: Date.now(),
+    charges: charges.map(c => ({ code: c.code, name: c.name, cls: c.cls, min: c.min, bail: c.bail ?? null, special: c.special || null })),
+    minutes: charges.reduce((s, c) => s + (c.min || 0), 0),
+    bail: charges.reduce((s, c) => s + (typeof c.bail === "number" ? c.bail : 0), 0),
+    execution: charges.some(c => c.special === "execution"),
+    variable: charges.some(c => c.special === "variable"),
+    by, at: Date.now(),
   };
   await update(FILES.ARRESTS, {}, (m) => { const k = String(playerId).toLowerCase(); m[k] = _asList(m[k]); m[k].push(entry); return m; });
   return entry;
