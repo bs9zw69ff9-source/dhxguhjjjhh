@@ -35,6 +35,8 @@ module.exports = (ctx) => {
           ["`/promotion <player>` / `/demotion <player>`", "Move a whitelisted player up or down one rank (whitelist leader)."],
           ["`/subclass <player> <sub-class>`", "Assign or remove a sub-class like NYPD Detective / Vice Officer (whitelist leader)."],
           ["`/warrant give|remove|check <player>`", "Issue, clear, or look up a player's warrant (police officer)."],
+          ["`/arrest <player>` / `/backgroundcheck <player>`", "Book a player on penal-code charges, or pull their record (police officer)."],
+          ["`/suspendrank <player> <time>`", "Pull a member's whitelist rank for a set time; it auto-restores (mod)."],
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],

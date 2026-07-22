@@ -22,7 +22,7 @@ module.exports = function createCommands(ctx) {
   // Command handlers, split by domain (each takes the same ctx).
   const _handlers = Object.assign({},
     require("./info")(ctx), require("./moderation")(ctx), require("./admin")(ctx),
-    require("./factions")(ctx), require("./economy")(ctx), require("./warrant")(ctx));
+    require("./factions")(ctx), require("./economy")(ctx), require("./warrant")(ctx), require("./police")(ctx));
 
 
   async function onInteraction(interaction) {

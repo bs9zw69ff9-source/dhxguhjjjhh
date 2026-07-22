@@ -291,6 +291,75 @@ async function removeWarrant(playerId, index = null) {
   });
   return { removed, remaining };
 }
+
+/* ---- police RP: arrests / sentences / rank suspensions ---- */
+const PENAL = require("./penal/codes");
+// Arrest history (permanent), stacked per player.
+const loadArrests = () => safeRead(FILES.ARRESTS, {});
+const getArrests  = (playerId) => _asList(loadArrests()[String(playerId).toLowerCase()]);
+const totalJailServed = (playerId) => getArrests(playerId).reduce((s, a) => s + (Number(a.minutes) || 0), 0);
+async function recordArrest(playerId, charges, by) {
+  const entry = {
+    charges: charges.map(c => ({ code: c.code, name: c.name, cls: c.cls, min: c.min, untilSober: !!c.untilSober })),
+    minutes: charges.reduce((s, c) => s + (c.min || 0), 0), untilSober: charges.some(c => c.untilSober), by, at: Date.now(),
+  };
+  await update(FILES.ARRESTS, {}, (m) => { const k = String(playerId).toLowerCase(); m[k] = _asList(m[k]); m[k].push(entry); return m; });
+  return entry;
+}
+// Active sentences drive the release timer.
+const loadSentences = () => safeRead(FILES.SENTENCES, {});
+function startSentence(playerId, label, minutes, by) {
+  if (!(minutes > 0)) return null;
+  const key = `${String(playerId).toLowerCase()}:${Date.now()}:${Math.random().toString(36).slice(2, 6)}`;
+  const rec = { playerId, label, minutes, expires: Date.now() + minutes * 60_000, by };
+  update(FILES.SENTENCES, {}, (m) => { m[key] = rec; return m; });
+  return rec;
+}
+async function sentenceSweep() {
+  const now = Date.now();
+  const due = Object.entries(loadSentences()).filter(([, s]) => s.expires <= now);
+  if (!due.length) return;
+  for (const [, s] of due) announceArrest(`⏰ **${s.playerId}**'s sentence for ${s.label} has ended. They have been released.`);
+  await update(FILES.SENTENCES, {}, (m) => { for (const [k] of due) delete m[k]; return m; });
+}
+// Post arrest bookings + release notices to the arrest channel (fallback mod-log).
+function announceArrest(text) {
+  const chId = ARREST_CHANNEL || process.env.MOD_LOG_CHANNEL;
+  if (!chId) return;
+  client.channels.fetch(chId).then(ch => ch?.isTextBased() && ch.send({ content: text, allowedMentions: { parse: [] } }))
+    .catch(err => logger.warn("Arrest", `announce failed: ${err.message}`));
+}
+
+// Suspend a player's whitelist rank for `minutes`, auto-restoring it on expiry.
+const loadRankSuspensions = () => safeRead(FILES.RANK_SUSPENSIONS, {});
+const getRankSuspension   = (playerId) => loadRankSuspensions()[String(playerId).toLowerCase()] ?? null;
+async function suspendRank(playerId, minutes, by) {
+  const faction = (getPlayerFactions(playerId) || [])[0];
+  if (!faction) return { ok: false, error: "not in a whitelist" };
+  const ranks = getPlayerRanks(faction, playerId);
+  const rank  = getFactionRank(faction, playerId);
+  removePlayerFromAllRankFiles(faction, playerId);
+  await removeFactionRank(faction, playerId);
+  await update(FILES.RANK_SUSPENSIONS, {}, (m) => { m[String(playerId).toLowerCase()] = { playerId, faction, rank, ranks, minutes, expires: Date.now() + minutes * 60_000, by, at: Date.now() }; return m; });
+  return { ok: true, faction, rank };
+}
+async function restoreRankSuspension(playerId) {
+  const key = String(playerId).toLowerCase();
+  const rec = loadRankSuspensions()[key];
+  if (!rec) return null;
+  for (const r of (rec.ranks?.length ? rec.ranks : [rec.rank]).filter(Boolean)) addPlayerToRankFile(rec.faction, rec.playerId, r);
+  if (rec.rank) await setFactionRank(rec.faction, rec.playerId, rec.rank);
+  await update(FILES.RANK_SUSPENSIONS, {}, (m) => { delete m[key]; return m; });
+  return rec;
+}
+async function rankSuspensionSweep() {
+  const now = Date.now();
+  for (const s of Object.values(loadRankSuspensions()).filter(s => s.expires <= now)) {
+    const r = await restoreRankSuspension(s.playerId);
+    if (r) announceArrest(`⏰ **${s.playerId}**'s rank suspension in **${s.faction}** has ended - **${s.rank}** restored.`);
+  }
+}
+
 const loadPlaytime      = () => safeRead(FILES.PLAYTIME,       {});
 const savePlaytime      = (d) => safeWrite(FILES.PLAYTIME,      d);
 const loadModLog        = () => safeRead(FILES.MODLOG,         []);
@@ -543,6 +612,9 @@ const KILLFEED_CHANNEL        = process.env.KILLFEED_CHANNEL || "152580132226216
 const VERIFY_CHANNEL         = process.env.VERIFY_CHANNEL       || "1529488781458014208";
 const VERIFY_STAFF_CHANNEL   = process.env.VERIFY_STAFF_CHANNEL || "1529488962282983485";
 const VERIFIED_ROLE          = process.env.VERIFIED_ROLE        || "1528754379417583668";
+/* Channel arrest bookings + sentence-release notices post to (falls back to
+   MOD_LOG_CHANNEL). */
+const ARREST_CHANNEL         = process.env.ARREST_CHANNEL       || "";
 
 // ---- faction-specific rank system ----
 // Rank registry (order/badges/rankFiles) extracted to ./factions/ranks.
@@ -2584,6 +2656,8 @@ if (DB_EXPORT_INTERVAL_MS > 0) {
 }
 setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
 setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
+setInterval(() => { sentenceSweep().catch(() => {}); }, 30_000);          // announce ended jail sentences
+setInterval(() => { rankSuspensionSweep().catch(() => {}); }, 30_000);    // restore expired rank suspensions
 // (ufw is manual-only via /firewall - no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
@@ -2677,6 +2751,7 @@ const { onInteraction } = require("./commands")({
   dmStatusField, dmUserForPavlov, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
   hasPoliceRole, hasWhitelistManageRole, loadWarrants, getWarrants, addWarrant, removeWarrant,
+  recordArrest, startSentence, announceArrest, getArrests, totalJailServed, suspendRank,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,

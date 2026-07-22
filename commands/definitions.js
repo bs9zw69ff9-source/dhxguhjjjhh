@@ -108,6 +108,16 @@ const commands = [
     .addSubcommand(s => s.setName("check")
       .setDescription("Check a player's warrant, or list every active warrant")
       .addStringOption(o => o.setName("playerid").setDescription("Player ID (leave blank to list all)").setRequired(false).setAutocomplete(true))),
+  new SlashCommandBuilder().setName("arrest")
+    .setDescription("Police - Book a player: pick penal-code charges, then confirm")
+    .addStringOption(o => o.setName("playerid").setDescription("Player to arrest").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("backgroundcheck")
+    .setDescription("Police - A player's warrants, arrests, and total jail time served")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true)),
+  new SlashCommandBuilder().setName("suspendrank")
+    .setDescription("Suspend a player's whitelist rank for a set time (auto-restores)")
+    .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
+    .addStringOption(o => o.setName("time").setDescription("Duration, e.g. 30m, 2h, 1d").setRequired(true)),
   new SlashCommandBuilder().setName("announce")
     .setDescription("Mod - Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))

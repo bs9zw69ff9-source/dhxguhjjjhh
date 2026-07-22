@@ -55,6 +55,9 @@ module.exports = function createDatabase({ logger, baseDir }) {
     WARRANTS: "./warrants.json",
     VERIFICATIONS: "./verifications.json",
     VERIFY_STATE: "./verify_state.json",
+    ARRESTS: "./arrests.json",
+    SENTENCES: "./sentences.json",
+    RANK_SUSPENSIONS: "./rank_suspensions.json",
   };
 
   // Bet limits and the global casino cooldown are all admin-tunable via /casino
@@ -87,6 +90,9 @@ module.exports = function createDatabase({ logger, baseDir }) {
     [FILES.WARRANTS]:       "{}",
     [FILES.VERIFICATIONS]:  "{}",
     [FILES.VERIFY_STATE]:   "{}",
+    [FILES.ARRESTS]:        "{}",
+    [FILES.SENTENCES]:      "{}",
+    [FILES.RANK_SUSPENSIONS]: "{}",
     [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "", gambinoRoleId: "", colomboRoleId: "", nypdRoleId: "" }, null, 2),
     [FILES.CASINO_CONFIG]:  JSON.stringify(CASINO_CONFIG_DEFAULTS, null, 2),
   };

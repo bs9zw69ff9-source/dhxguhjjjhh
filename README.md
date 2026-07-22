@@ -111,7 +111,7 @@ locked.
 | 🌐 Public | `/help` `/serverinfo` `/checkban` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
 | ⚔️ Whitelist Leader | `/whitelist add\|remove` `/promotion` `/demotion` `/subclass` |
-| 🚔 Police Officer | `/warrant give\|remove\|check` |
+| 🚔 Police Officer | `/warrant give\|remove\|check` `/arrest` `/backgroundcheck` |
 | 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
 | 👑 Owner | `/configure` (control panel — incl. wipe money / wipe all player data) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
@@ -138,6 +138,20 @@ stack (or lists everyone with warrants when blank); `/warrant remove <player>
 given. Admins and owners can manage warrants too.
 
 `/tempban` uses punishment presets that set the duration automatically.
+
+### Police RP (arrests & records)
+
+`/arrest <player>` opens an interactive booking: pick a penal-code section, then
+the charge(s) from it, with a running total sentence — add as many as needed,
+then **Confirm Arrest**. The charges + jail time are recorded, a sentence timer
+starts, and a booking notice posts to `ARREST_CHANNEL` (falls back to the mod-log);
+when the sentence ends the bot posts a release notice. The penal code lives in
+[`penal/codes.js`](penal/codes.js). `/backgroundcheck <player>` shows a player's
+active warrants, arrests, and total jail time served. Both are gated to the
+**Police Officer** role. `/suspendrank <player> <time>` (mod) pulls a member's
+whitelist rank for a duration (`30m`, `2h`, `1d`) and auto-restores it when it
+expires. *Note:* the bot records/announces the sentence — it does not itself jail
+or ban the player in-game.
 
 ### Verification
 
