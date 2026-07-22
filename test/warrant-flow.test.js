@@ -22,7 +22,7 @@ function makeCtx(store, over = {}) {
     policeOnlyEmbed: () => new EmbedBuilder().setTitle("Police only"),
     sanitizeId: (x) => String(x ?? "").trim(),
     hasPoliceRole: () => true,
-    logAction: async () => {}, writeModLog: (...a) => calls.push(["writeModLog", ...a]),
+    logAction: async () => {}, logPolice: () => {}, writeModLog: (...a) => calls.push(["writeModLog", ...a]),
     paginate: async (interaction, lines, render) => { await interaction.reply({ embeds: [render(lines)] }); },
     // in-memory stacked warrant store
     loadWarrants: () => ({ ...store }),

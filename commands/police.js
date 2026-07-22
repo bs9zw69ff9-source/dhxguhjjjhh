@@ -10,8 +10,8 @@ module.exports = (ctx) => {
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags, NV,
   brand, emptyIdEmbed, errorEmbed, warningEmbed,
   sanitizeId, parseDuration, hasPoliceRole, hasModRole, policeOnlyEmbed, modOnlyEmbed,
-  recordArrest, startSentence, announceArrest, getArrests, totalJailServed, getWarrants,
-  suspendRank, logAction, writeModLog,
+  recordArrest, startSentence, logPolice, getArrests, totalJailServed, getWarrants,
+  suspendRank, writeModLog,
   } = ctx;
 
   const chargeTime = (c) => c.untilSober ? "until sober" : `${c.min} min`;
@@ -63,8 +63,7 @@ module.exports = (ctx) => {
             writeModLog({ action: "arrest", playerId, charges: picked.map(c => c.code).join(","), minutes: entry.minutes, by: interaction.user.tag });
             const summary = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`Arrest Confirmed: ${playerId}`)
               .setDescription(`Booked by **${interaction.user.username}** on **${picked.length}** charge${picked.length !== 1 ? "s" : ""}.\nSentence: **${PENAL.sentenceLabel(entry.minutes, entry.untilSober)}**.\n\n${picked.map(c => `\`${c.code}\` ${c.name}`).join("\n")}`));
-            announceArrest(`🚔 **${playerId}** booked on ${picked.length} charge${picked.length !== 1 ? "s" : ""} — sentence **${PENAL.sentenceLabel(entry.minutes, entry.untilSober)}** (by ${interaction.user.username}).`);
-            await logAction(summary);
+            logPolice(summary);
             return interaction.editReply({ embeds: [summary], components: [] }).catch(() => {});
           }
           if (i.isStringSelectMenu() && i.customId === "arr_section") {
@@ -115,7 +114,7 @@ module.exports = (ctx) => {
         writeModLog({ action: "suspendrank", playerId, faction: r.faction, rank: r.rank, minutes, by: interaction.user.tag });
         const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle(`Rank Suspended: ${playerId}`)
           .setDescription(`**${interaction.user.username}** suspended **${playerId}**'s ${r.rank ? `**${r.rank}** ` : ""}rank in **${r.faction}** for **${minutes} min**. It restores automatically <t:${Math.floor((Date.now() + ms) / 1000)}:R>.`));
-        await logAction(embed);
+        logPolice(embed);
         return interaction.reply({ embeds: [embed] });
         },
 

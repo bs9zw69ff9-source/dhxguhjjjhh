@@ -11,7 +11,7 @@ module.exports = (ctx) => {
   emptyIdEmbed, errorEmbed, successEmbed, warningEmbed,
   sanitizeId, hasPoliceRole, policeOnlyEmbed,
   loadWarrants, getWarrants, addWarrant, removeWarrant,
-  writeModLog, logAction, paginate,
+  writeModLog, logPolice, paginate,
   } = ctx;
 
   const fmtWhen = (at) => `<t:${Math.floor((at || Date.now()) / 1000)}:R>`;
@@ -38,7 +38,7 @@ module.exports = (ctx) => {
             .setTitle(`Warrant Issued - ${playerId}`)
             .setDescription(`**${interaction.user.username}** put out a warrant on **${playerId}**.\nReason: ${reason}\nThey now have **${count}** active warrant${count !== 1 ? "s" : ""}.`)
             .setFooter({ text: "Police warrant" });
-          brand(embed); await logAction(embed);
+          brand(embed); logPolice(embed);
           return interaction.reply({ embeds: [embed] });
         }
 
@@ -61,7 +61,7 @@ module.exports = (ctx) => {
             .setTitle(`Warrant Cleared - ${playerId}`)
             .setDescription(`**${interaction.user.username}** cleared ${what} for **${playerId}**.\n**${remaining}** warrant${remaining !== 1 ? "s" : ""} left.`)
             .setFooter({ text: "Police warrant" });
-          brand(embed); await logAction(embed);
+          brand(embed); logPolice(embed);
           return interaction.reply({ embeds: [embed] });
         }
 

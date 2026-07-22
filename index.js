@@ -322,12 +322,19 @@ async function sentenceSweep() {
   for (const [, s] of due) announceArrest(`⏰ **${s.playerId}**'s sentence for ${s.label} has ended. They have been released.`);
   await update(FILES.SENTENCES, {}, (m) => { for (const [k] of due) delete m[k]; return m; });
 }
-// Post arrest bookings + release notices to the arrest channel (fallback mod-log).
+// Every police-related log goes to the police channel (fallback mod-log).
+const policeChannelId = () => POLICE_LOG_CHANNEL || ARREST_CHANNEL || process.env.MOD_LOG_CHANNEL;
 function announceArrest(text) {
-  const chId = ARREST_CHANNEL || process.env.MOD_LOG_CHANNEL;
+  const chId = policeChannelId();
   if (!chId) return;
   client.channels.fetch(chId).then(ch => ch?.isTextBased() && ch.send({ content: text, allowedMentions: { parse: [] } }))
-    .catch(err => logger.warn("Arrest", `announce failed: ${err.message}`));
+    .catch(err => logger.warn("Police", `announce failed: ${err.message}`));
+}
+function logPolice(embed) {
+  const chId = policeChannelId();
+  if (!chId) return;
+  client.channels.fetch(chId).then(ch => ch?.isTextBased() && ch.send({ embeds: [embed], allowedMentions: { parse: [] } }))
+    .catch(err => logger.warn("Police", `log failed: ${err.message}`));
 }
 
 // Suspend a player's whitelist rank for `minutes`, auto-restoring it on expiry.
@@ -612,8 +619,10 @@ const KILLFEED_CHANNEL        = process.env.KILLFEED_CHANNEL || "152580132226216
 const VERIFY_CHANNEL         = process.env.VERIFY_CHANNEL       || "1529488781458014208";
 const VERIFY_STAFF_CHANNEL   = process.env.VERIFY_STAFF_CHANNEL || "1529488962282983485";
 const VERIFIED_ROLE          = process.env.VERIFIED_ROLE        || "1528754379417583668";
-/* Channel arrest bookings + sentence-release notices post to (falls back to
-   MOD_LOG_CHANNEL). */
+/* Channel every police-related log posts to - arrests, sentence releases,
+   warrants, rank suspensions (override with POLICE_LOG_CHANNEL). ARREST_CHANNEL
+   is an optional override just for arrest bookings; both fall back to MOD_LOG. */
+const POLICE_LOG_CHANNEL     = process.env.POLICE_LOG_CHANNEL   || "1529535040168398979";
 const ARREST_CHANNEL         = process.env.ARREST_CHANNEL       || "";
 
 // ---- faction-specific rank system ----
@@ -2751,7 +2760,7 @@ const { onInteraction } = require("./commands")({
   dmStatusField, dmUserForPavlov, easternClock, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
   hasPoliceRole, hasWhitelistManageRole, loadWarrants, getWarrants, addWarrant, removeWarrant,
-  recordArrest, startSentence, announceArrest, getArrests, totalJailServed, suspendRank,
+  recordArrest, startSentence, announceArrest, logPolice, getArrests, totalJailServed, suspendRank,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,

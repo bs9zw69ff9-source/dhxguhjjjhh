@@ -24,8 +24,8 @@ function makeCtx(over = {}) {
     getArrests: () => [{ charges: [{ code: "1.02" }], minutes: 3, untilSober: false, at: Date.now() }],
     totalJailServed: () => 12,
     suspendRank: async () => ({ ok: true, faction: "NYPD", rank: "Sergeant" }),
-    recordArrest: async () => ({}), startSentence: () => {}, announceArrest: () => {},
-    logAction: async () => {}, writeModLog: (...a) => calls.push(["modlog", ...a]),
+    recordArrest: async () => ({}), startSentence: () => {}, logPolice: () => {},
+    writeModLog: (...a) => calls.push(["modlog", ...a]),
     ...over,
   };
   return { ctx, calls };
