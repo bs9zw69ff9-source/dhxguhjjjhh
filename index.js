@@ -2306,6 +2306,14 @@ async function handleMenuPanelSubmit(interaction) {
 const { verificationConflict } = require("./verify/rules");
 const loadVerifications = () => safeRead(FILES.VERIFICATIONS, {});
 const getVerification   = (discordId) => loadVerifications()[String(discordId)] ?? null;
+// Reverse lookup: which Discord user verified this Pavlov name (case-insensitive)?
+function verifiedDiscordForName(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  if (!key) return null;
+  for (const [discordId, rec] of Object.entries(loadVerifications()))
+    if (String(rec?.name ?? "").toLowerCase() === key) return { discordId, ...rec };
+  return null;
+}
 function setVerification(discordId, data) { return update(FILES.VERIFICATIONS, {}, (m) => { m[String(discordId)] = data; return m; }); }
 const loadVerifyState = () => safeRead(FILES.VERIFY_STATE, {});
 function saveVerifyState(patch) { return update(FILES.VERIFY_STATE, {}, (m) => ({ ...m, ...patch })); }
@@ -2669,6 +2677,7 @@ const { onInteraction } = require("./commands")({
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
   getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles,
+  verifiedDiscordForName,
   getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, handleVerifySubmit, handleVerifyDecision, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt,

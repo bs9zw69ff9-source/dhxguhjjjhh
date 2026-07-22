@@ -11,7 +11,7 @@ module.exports = (ctx) => {
   easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
   firewallUnblockIps, formatTimeLeft, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
-  isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, log,
+  isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, verifiedDiscordForName, log,
   logAction, logBan, logger, modOnlyEmbed, ownerOnlyEmbed, paginate,
   preserveBalanceAcrossKick, punishDurationLabel, randomQuote, removeBans, sanitizeBanName,
   sanitizeId, sendRcon, serverLabel, successEmbed, suspendDonator,
@@ -520,10 +520,16 @@ module.exports = (ctx) => {
         if (rec?.bypass)             flags.push("Untracked (ignore-list) - no IP logging/auto-ban");
 
         const joinCap = (arr) => arr.length ? arr.map(x => `\`${x}\``).join("  -  ").slice(0, 1000) : null;
+        const verified = verifiedDiscordForName(rec?.name || playerId);
+        const discordVal = verified
+          ? `<@${verified.discordId}> \`${verified.discordId}\`\nVerified <t:${Math.floor((verified.at || Date.now()) / 1000)}:R> by ${verified.by || "?"}` +
+            (verified.ips?.length ? `\nLinked IP(s): ${verified.ips.map(x => `\`${x}\``).join(", ").slice(0, 600)}` : "")
+          : "*not verified*";
         const embed = new EmbedBuilder().setColor(rec?.flagged ? NV.LEGION_RED : NV.BLUE_VATS)
           .setTitle(`Inspect - ${rec?.name || playerId}`)
           .addFields(
             { name: "EOS / Unique ID", value: rec?.id ? `\`${rec.id}\`` : "*unknown (no confirmed disconnect yet)*", inline: false },
+            { name: "Discord (verified)", value: discordVal, inline: false },
             { name: `All IPs (${allIps.length})`,        value: joinCap(allIps) ?? "*none on record*",   inline: false },
             { name: `Confirmed IPs (${cIps.length})`,    value: joinCap(cIps)   ?? "*none confirmed yet*", inline: false },
             { name: "VPN / Proxy detection",             value: vpnLines.length ? vpnLines.join("\n").slice(0, 1000) : "*no IPs to check (or IPHUB_API_KEY unset)*", inline: false },
