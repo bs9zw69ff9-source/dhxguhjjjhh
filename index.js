@@ -308,10 +308,10 @@ async function recordArrest(playerId, charges, by) {
 }
 // Active sentences drive the release timer.
 const loadSentences = () => safeRead(FILES.SENTENCES, {});
-function startSentence(playerId, label, minutes, by) {
+function startSentence(playerId, label, minutes, by, byId) {
   if (!(minutes > 0)) return null;
   const key = `${String(playerId).toLowerCase()}:${Date.now()}:${Math.random().toString(36).slice(2, 6)}`;
-  const rec = { playerId, label, minutes, expires: Date.now() + minutes * 60_000, by };
+  const rec = { playerId, label, minutes, expires: Date.now() + minutes * 60_000, by, byId };
   update(FILES.SENTENCES, {}, (m) => { m[key] = rec; return m; });
   return rec;
 }
@@ -319,15 +319,19 @@ async function sentenceSweep() {
   const now = Date.now();
   const due = Object.entries(loadSentences()).filter(([, s]) => s.expires <= now);
   if (!due.length) return;
-  for (const [, s] of due) announceArrest(`⏰ **${s.playerId}**'s sentence for ${s.label} has ended. They have been released.`);
+  for (const [, s] of due) {
+    const mention = s.byId ? `<@${s.byId}> — ` : "";
+    announceArrest(`⏰ ${mention}**${s.playerId}**'s sentence for ${s.label} has ended. They have been released.`, s.byId);
+  }
   await update(FILES.SENTENCES, {}, (m) => { for (const [k] of due) delete m[k]; return m; });
 }
 // Every police-related log goes to the police channel (fallback mod-log).
 const policeChannelId = () => POLICE_LOG_CHANNEL || ARREST_CHANNEL || process.env.MOD_LOG_CHANNEL;
-function announceArrest(text) {
+function announceArrest(text, pingUserId) {
   const chId = policeChannelId();
   if (!chId) return;
-  client.channels.fetch(chId).then(ch => ch?.isTextBased() && ch.send({ content: text, allowedMentions: { parse: [] } }))
+  const allowedMentions = pingUserId ? { users: [String(pingUserId)] } : { parse: [] };
+  client.channels.fetch(chId).then(ch => ch?.isTextBased() && ch.send({ content: text, allowedMentions }))
     .catch(err => logger.warn("Police", `announce failed: ${err.message}`));
 }
 function logPolice(embed) {

@@ -59,7 +59,7 @@ module.exports = (ctx) => {
             await i.deferUpdate().catch(() => {});
             const entry = await recordArrest(playerId, picked, interaction.user.tag);
             const label = picked.length === 1 ? picked[0].name : `${picked.length} charges`;
-            startSentence(playerId, label, entry.minutes, interaction.user.tag);
+            startSentence(playerId, label, entry.minutes, interaction.user.tag, interaction.user.id);
             writeModLog({ action: "arrest", playerId, charges: picked.map(c => c.code).join(","), minutes: entry.minutes, by: interaction.user.tag });
             const summary = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`Arrest Confirmed: ${playerId}`)
               .setDescription(`Booked by **${interaction.user.username}** on **${picked.length}** charge${picked.length !== 1 ? "s" : ""}.\nSentence: **${PENAL.sentenceLabel(entry.minutes, entry.untilSober)}**.\n\n${picked.map(c => `\`${c.code}\` ${c.name}`).join("\n")}`));
