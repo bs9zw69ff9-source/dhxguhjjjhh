@@ -37,6 +37,7 @@ module.exports = (ctx) => {
           ["`/warrant give|remove|check <player>`", "Issue, clear, or look up a player's warrant (police officer)."],
           ["`/arrest <player>` / `/backgroundcheck <player>`", "Book a player on penal-code charges, or pull their record (police officer)."],
           ["`/suspendrank <player> <time>`", "Pull a member's whitelist rank for a set time; it auto-restores (mod)."],
+          ["`/bail increase|decrease|reset|show <percent>`", "Scale every charge's bail price by a percentage (mod)."],
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],

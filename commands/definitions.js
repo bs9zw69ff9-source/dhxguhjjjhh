@@ -118,6 +118,18 @@ const commands = [
     .setDescription("Suspend a player's whitelist rank for a set time (auto-restores)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("time").setDescription("Duration, e.g. 30m, 2h, 1d").setRequired(true)),
+  new SlashCommandBuilder().setName("bail")
+    .setDescription("Adjust bail prices for every penal-code charge by a percentage")
+    .addSubcommand(s => s.setName("increase")
+      .setDescription("Raise all bail prices by a percentage (rounds to the nearest dollar)")
+      .addNumberOption(o => o.setName("percent").setDescription("Percent to raise prices, e.g. 10 for +10%").setRequired(true).setMinValue(0.1).setMaxValue(1000)))
+    .addSubcommand(s => s.setName("decrease")
+      .setDescription("Lower all bail prices by a percentage (rounds to the nearest dollar)")
+      .addNumberOption(o => o.setName("percent").setDescription("Percent to lower prices, e.g. 10 for -10%").setRequired(true).setMinValue(0.1).setMaxValue(99)))
+    .addSubcommand(s => s.setName("reset")
+      .setDescription("Reset bail back to the base penal-code prices"))
+    .addSubcommand(s => s.setName("show")
+      .setDescription("Show the current bail price multiplier with examples")),
   new SlashCommandBuilder().setName("announce")
     .setDescription("Mod - Broadcast a message via RCON Notify")
     .addStringOption(o => o.setName("message").setDescription("Message to broadcast (max 200 chars)").setRequired(true))

@@ -11,7 +11,7 @@ function makeCtx(over = {}) {
   const ctx = {
     EmbedBuilder, ActionRowBuilder: class {}, ButtonBuilder: class {}, ButtonStyle: {},
     StringSelectMenuBuilder: class {}, MessageFlags: { Ephemeral: 64 },
-    NV: { AMBER: 1, RUST_RED: 2, BLUE_VATS: 3, NCR_TAN: 4 }, brand: (e) => e,
+    NV: { AMBER: 1, RUST_RED: 2, BLUE_VATS: 3, NCR_TAN: 4, GOLD: 0xFACC15 }, brand: (e) => e,
     emptyIdEmbed: () => new EmbedBuilder().setTitle("need id"),
     errorEmbed: (t, d) => new EmbedBuilder().setTitle(`err ${t}`).setDescription(String(d)),
     warningEmbed: (t, d) => new EmbedBuilder().setTitle(`warn ${t}`).setDescription(String(d)),
@@ -25,6 +25,8 @@ function makeCtx(over = {}) {
     totalJailServed: () => 12,
     suspendRank: async () => ({ ok: true, faction: "NYPD", rank: "Sergeant" }),
     recordArrest: async () => ({}), startSentence: () => {}, logPolice: () => {},
+    successEmbed: (t, d) => new EmbedBuilder().setTitle(`ok ${t}`).setDescription(String(d)),
+    getBailRate: () => 1, setBailRate: async (r) => r,
     writeModLog: (...a) => calls.push(["modlog", ...a]),
     ...over,
   };
@@ -35,7 +37,11 @@ function makeInteraction(opts = {}) {
   const out = { replies: [] };
   const interaction = {
     user: { id: "u1", tag: "Cop#1", username: "Cop" }, member: { id: "u1" }, guild: null,
-    options: { getString: (k) => opts.strings?.[k] ?? null },
+    options: {
+      getString: (k) => opts.strings?.[k] ?? null,
+      getNumber: (k) => opts.numbers?.[k] ?? null,
+      getSubcommand: () => opts.sub ?? null,
+    },
     reply: async (p) => { out.replies.push(p); }, editReply: async (p) => { out.replies.push(p); }, deferReply: async () => {},
   };
   return { interaction, out };
@@ -94,4 +100,50 @@ test("/suspendrank on a non-whitelisted player is refused", async () => {
   const { interaction, out } = makeInteraction({ strings: { playerid: "Nobody", time: "1h" } });
   await h.suspendrank(interaction, "suspendrank");
   assert.match(text(out), /No Rank to Suspend/);
+});
+
+test("/bail increase|decrease scales the rate, compounds, and gates to mod", async () => {
+  {
+    const { ctx } = makeCtx({ hasModRole: () => false });
+    const h = require("../commands/police.js")(ctx);
+    const { interaction, out } = makeInteraction({ sub: "increase", numbers: { percent: 10 } });
+    await h.bail(interaction, "bail");
+    assert.match(text(out), /Mods only/);
+  }
+  {
+    let rate = 1;
+    const { ctx, calls } = makeCtx({ getBailRate: () => rate, setBailRate: async (r) => { rate = r; return r; } });
+    const h = require("../commands/police.js")(ctx);
+    // +10% then +10% again compounds to 1.21
+    for (let n = 0; n < 2; n++) {
+      const { interaction, out } = makeInteraction({ sub: "increase", numbers: { percent: 10 } });
+      await h.bail(interaction, "bail");
+      assert.match(text(out), /Bail Prices Raised/);
+    }
+    assert.ok(Math.abs(rate - 1.21) < 1e-9, `expected 1.21, got ${rate}`);
+    // -50% lands at 0.605
+    const { interaction } = makeInteraction({ sub: "decrease", numbers: { percent: 50 } });
+    await h.bail(interaction, "bail");
+    assert.ok(Math.abs(rate - 0.605) < 1e-9, `expected 0.605, got ${rate}`);
+    assert.ok(calls.some(c => c[0] === "modlog" && c[1].action === "bail-increase"));
+  }
+});
+
+test("/bail reset returns to base and /bail decrease 100% is refused", async () => {
+  {
+    let rate = 2;
+    const { ctx } = makeCtx({ getBailRate: () => rate, setBailRate: async (r) => { rate = r; return r; } });
+    const h = require("../commands/police.js")(ctx);
+    const { interaction, out } = makeInteraction({ sub: "reset" });
+    await h.bail(interaction, "bail");
+    assert.match(text(out), /Bail Prices Reset/);
+    assert.equal(rate, 1);
+  }
+  {
+    const { ctx } = makeCtx();
+    const h = require("../commands/police.js")(ctx);
+    const { interaction, out } = makeInteraction({ sub: "decrease", numbers: { percent: 100 } });
+    await h.bail(interaction, "bail");
+    assert.match(text(out), /Too Much/);
+  }
 });

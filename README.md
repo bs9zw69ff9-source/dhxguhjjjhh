@@ -150,7 +150,9 @@ when the sentence ends the bot posts a release notice. The penal code lives in
 active warrants, arrests, and total jail time served. Both are gated to the
 **Police Officer** role. `/suspendrank <player> <time>` (mod) pulls a member's
 whitelist rank for a duration (`30m`, `2h`, `1d`) and auto-restores it when it
-expires. *Note:* the bot records/announces the sentence — it does not itself jail
+expires. `/bail increase|decrease <percent>` (mod) scales the bail price on every
+charge by a percentage (compounding, rounded to the nearest dollar); `/bail reset`
+returns to the base prices and `/bail show` prints the current multiplier. *Note:* the bot records/announces the sentence — it does not itself jail
 or ban the player in-game.
 
 ### Verification

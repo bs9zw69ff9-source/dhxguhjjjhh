@@ -114,8 +114,13 @@ const sectionList = () => Object.keys(SECTIONS)
 
 const getCharge = (code) => BY_CODE.get(String(code)) || null;
 
-// Total jail + bail for a set of charge codes, plus the special-case flags.
-function bookingTotal(codes) {
+// One charge's bail at the current rate, rounded to the nearest dollar. null when
+// the charge has no set figure (execution / variable). rate 1 = the base price.
+const chargeBail = (c, rate = 1) => (typeof c.bail === "number" ? Math.round(c.bail * rate) : null);
+
+// Total jail + bail for a set of charge codes, plus the special-case flags. `rate`
+// scales every bail figure (the admin-tunable multiplier), rounded per charge.
+function bookingTotal(codes, rate = 1) {
   let minutes = 0, bail = 0, execution = false, variable = false;
   const charges = [];
   for (const code of codes) {
@@ -123,7 +128,7 @@ function bookingTotal(codes) {
     if (!ch) continue;
     charges.push(ch);
     minutes += ch.min || 0;
-    if (typeof ch.bail === "number") bail += ch.bail;
+    if (typeof ch.bail === "number") bail += Math.round(ch.bail * rate);
     if (ch.special === "execution") execution = true;
     if (ch.special === "variable")  variable = true;
   }
@@ -148,10 +153,10 @@ function bailLabel(bail, opts = {}) {
   return `$${Number(bail || 0).toLocaleString()}`;
 }
 
-// One charge as a short line for menus/summaries: jail + bail.
-const chargeTime = (c) =>
+// One charge as a short line for menus/summaries: jail + bail (at the given rate).
+const chargeTime = (c, rate = 1) =>
   c.special === "execution" ? "Execution"
   : c.special === "variable" ? "Jail/bail by charge"
-  : `${c.min > 0 ? `${c.min} min` : "No jail"} • $${Number(c.bail || 0).toLocaleString()}`;
+  : `${c.min > 0 ? `${c.min} min` : "No jail"} • $${chargeBail(c, rate).toLocaleString()}`;
 
-module.exports = { SECTION_TITLES, CHARGES, SECTIONS, CLS, sectionList, getCharge, sectionOf, bookingTotal, sentenceLabel, bailLabel, chargeTime };
+module.exports = { SECTION_TITLES, CHARGES, SECTIONS, CLS, sectionList, getCharge, sectionOf, chargeBail, bookingTotal, sentenceLabel, bailLabel, chargeTime };

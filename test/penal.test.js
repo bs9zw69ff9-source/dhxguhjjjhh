@@ -71,6 +71,17 @@ test("infractions carry bail but no jail time", () => {
   assert.equal(P.bailLabel(t.bail, t), "$10");
 });
 
+test("a bail rate scales prices and rounds each charge to the nearest dollar", () => {
+  // PC 205 base bail $250 -> +21% = $302.5 -> rounds to $303 (nearest dollar).
+  assert.equal(P.chargeBail(P.getCharge("PC 205"), 1.21), 303);
+  assert.equal(P.chargeBail(P.getCharge("PC 205"), 1), 250);          // rate 1 = base
+  assert.equal(P.chargeBail(P.getCharge("PC 210"), 1.5), null);       // execution: no bail
+  // Total rounds per charge, then sums: $25*1.1=27.5->28, $30*1.1=33 -> 61
+  const t = P.bookingTotal(["PC 100", "PC 104"], 1.1);
+  assert.equal(t.bail, 61);
+  assert.equal(t.minutes, 4);   // jail time is unaffected by the bail rate
+});
+
 test("sentenceLabel and bailLabel format the plain cases", () => {
   assert.equal(P.sentenceLabel(9, {}), "9 min");
   assert.equal(P.sentenceLabel(0, {}), "No jail time");

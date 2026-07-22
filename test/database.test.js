@@ -13,11 +13,12 @@ const prevCwd = process.cwd();
 process.chdir(tmp);
 const db = require(path.join(prevCwd, "database"))({ logger: noLog, baseDir: tmp });
 
-test("registry: 36 datasets, defaults seeded", () => {
-  assert.equal(Object.keys(db.FILES).length, 36);
+test("registry: 37 datasets, defaults seeded", () => {
+  assert.equal(Object.keys(db.FILES).length, 37);
   assert.deepEqual(db.safeRead(db.FILES.TEMPBAN, []), []);
   assert.deepEqual(db.safeRead(db.FILES.PLAYTIME, {}), {});
   assert.deepEqual(db.safeRead(db.FILES.WARRANTS, {}), {});
+  assert.deepEqual(db.safeRead(db.FILES.POLICE_CONFIG, {}), { bailRate: 1 });
   const roles = db.safeRead(db.FILES.ROLES, {});
   assert.ok("modRoleId" in roles && "adminRoleId" in roles && "policeRoleId" in roles);
 });

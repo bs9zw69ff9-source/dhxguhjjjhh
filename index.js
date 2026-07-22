@@ -294,15 +294,26 @@ async function removeWarrant(playerId, index = null) {
 
 /* ---- police RP: arrests / sentences / rank suspensions ---- */
 const PENAL = require("./penal/codes");
+// Bail-price multiplier: 1 = the base penal-code prices. /bail increase|decrease
+// scales it (compounding); every booking reads it and rounds each charge's bail.
+const loadPoliceConfig = () => safeRead(FILES.POLICE_CONFIG, { bailRate: 1 });
+const getBailRate = () => { const r = Number(loadPoliceConfig().bailRate); return Number.isFinite(r) && r > 0 ? r : 1; };
+async function setBailRate(rate) {
+  const clamped = Math.min(100, Math.max(0.01, Number(rate) || 1));
+  await update(FILES.POLICE_CONFIG, { bailRate: 1 }, (m) => { m.bailRate = clamped; return m; });
+  return clamped;
+}
 // Arrest history (permanent), stacked per player.
 const loadArrests = () => safeRead(FILES.ARRESTS, {});
 const getArrests  = (playerId) => _asList(loadArrests()[String(playerId).toLowerCase()]);
 const totalJailServed = (playerId) => getArrests(playerId).reduce((s, a) => s + (Number(a.minutes) || 0), 0);
-async function recordArrest(playerId, charges, by) {
+async function recordArrest(playerId, charges, by, rate = 1) {
   const entry = {
     charges: charges.map(c => ({ code: c.code, name: c.name, cls: c.cls, min: c.min, bail: c.bail ?? null, special: c.special || null })),
     minutes: charges.reduce((s, c) => s + (c.min || 0), 0),
-    bail: charges.reduce((s, c) => s + (typeof c.bail === "number" ? c.bail : 0), 0),
+    // Bail is stamped at the rate in effect when the arrest was made, so history
+    // stays accurate even if prices change later.
+    bail: charges.reduce((s, c) => s + (typeof c.bail === "number" ? Math.round(c.bail * rate) : 0), 0),
     execution: charges.some(c => c.special === "execution"),
     variable: charges.some(c => c.special === "variable"),
     by, at: Date.now(),
@@ -2769,6 +2780,7 @@ const { onInteraction } = require("./commands")({
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
   hasPoliceRole, hasWhitelistManageRole, loadWarrants, getWarrants, addWarrant, removeWarrant,
   recordArrest, startSentence, announceArrest, logPolice, getArrests, totalJailServed, suspendRank,
+  getBailRate, setBailRate,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
   formatUptime, fs, getFactionCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
