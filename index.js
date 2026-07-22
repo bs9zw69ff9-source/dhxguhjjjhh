@@ -2322,15 +2322,10 @@ function saveVerifyState(patch) { return update(FILES.VERIFY_STATE, {}, (m) => (
 function addPendingVerify(token, data) { return update(FILES.VERIFY_STATE, {}, (m) => { m.pending = m.pending || {}; m.pending[token] = data; return m; }); }
 const getPendingVerify = (token) => loadVerifyState().pending?.[token] ?? null;
 function removePendingVerify(token) { return update(FILES.VERIFY_STATE, {}, (m) => { if (m.pending) delete m.pending[token]; return m; }); }
-// EVERY IP on record for a Pavlov name - confirmed (cips) AND best-effort join
-// correlation (ips), across all EOS ids that name has used. Uses all available
-// data to link/alt-check, not just confirmed disconnect pairings.
-function ipsForName(name) {
-  try {
-    const rec = ipBans.getRecord(name);
-    if (!rec) return [];
-    return [...new Set([...(rec.cips || []), ...(rec.ips || [])])];
-  } catch { return []; }
+// Confirmed IPs for a Pavlov name (trustworthy same-line id<->ip pairings only).
+function confirmedIpsForName(name) {
+  try { const rec = ipBans.getRecord(name); return rec ? (rec.cips || []) : []; }
+  catch { return []; }
 }
 
 // Post/refresh the Verify button panel in #verify (idempotent).
@@ -2350,9 +2345,11 @@ async function ensureVerifyPanel() {
   catch (e) { logger.warn("Verify", `panel post failed: ${e.message}`); }
 }
 
-// Create the Unverified role if missing, and lock every channel except #verify
-// behind the Verified role (deny @everyone View, allow Verified + the bot).
-// Idempotent - skips channels already locked. Needs Manage Roles + Manage Channels.
+// Create the Unverified role if missing, then gate WITHOUT making channels private:
+// channels stay visible to @everyone; only the Unverified role is denied View on
+// every channel except #verify (where it's allowed, so they can verify). Also
+// undoes the old Verified-lock overwrites (@everyone deny / Verified allow) so
+// everyone can view again. Idempotent. Needs Manage Roles + Manage Channels.
 async function ensureUnverifiedSetup() {
   if (!VERIFY_CHANNEL) return;
   let verifyCh; try { verifyCh = await client.channels.fetch(VERIFY_CHANNEL); } catch { return; }
@@ -2371,22 +2368,28 @@ async function ensureUnverifiedSetup() {
       logger.info("Verify", `created Unverified role ${role.id}`);
     } catch (e) { logger.warn("Verify", `could not create Unverified role: ${e.message}`); }
   }
+  if (!unverifiedRoleId) return;
+  const V = PermissionFlagsBits.ViewChannel;
   const everyone = guild.roles.everyone.id;
-  let locked = 0;
+  let updated = 0;
   for (const ch of guild.channels.cache.values()) {
-    if (ch.id === VERIFY_CHANNEL || ch.id === VERIFY_STAFF_CHANNEL) continue;   // keep verify + staff review reachable
     if (typeof ch.permissionOverwrites?.edit !== "function") continue;   // e.g. threads
-    const cur = ch.permissionOverwrites.cache.get(everyone);
-    if (cur && cur.deny.has(PermissionFlagsBits.ViewChannel)) continue;  // already locked
+    const wantUnverifiedView = ch.id === VERIFY_CHANNEL;   // Unverified can see ONLY #verify
+    const evOw  = ch.permissionOverwrites.cache.get(everyone);
+    const vfOw  = ch.permissionOverwrites.cache.get(VERIFIED_ROLE);
+    const unOw  = ch.permissionOverwrites.cache.get(unverifiedRoleId);
+    const everyoneDenied = !!evOw && evOw.deny.has(V);                    // leftover of the old private lock
+    const verifiedAllow  = !!vfOw && vfOw.allow.has(V);                   // leftover of the old private lock
+    const unOk = unOw && (wantUnverifiedView ? unOw.allow.has(V) : unOw.deny.has(V));
+    if (!everyoneDenied && !verifiedAllow && unOk) continue;              // already correct
     try {
-      await ch.permissionOverwrites.edit(everyone, { ViewChannel: false });
-      await ch.permissionOverwrites.edit(VERIFIED_ROLE, { ViewChannel: true });
-      await ch.permissionOverwrites.edit(me.id, { ViewChannel: true });  // never lock the bot out
-      locked++;
-    } catch (e) { logger.warn("Verify", `lock ${ch.name} failed: ${e.message}`); }
+      if (everyoneDenied) await ch.permissionOverwrites.edit(everyone, { ViewChannel: null });   // un-private: everyone can view
+      if (verifiedAllow)  await ch.permissionOverwrites.edit(VERIFIED_ROLE, { ViewChannel: null });
+      await ch.permissionOverwrites.edit(unverifiedRoleId, { ViewChannel: wantUnverifiedView });
+      updated++;
+    } catch (e) { logger.warn("Verify", `perms on ${ch.name} failed: ${e.message}`); }
   }
-  try { await verifyCh.permissionOverwrites.edit(everyone, { ViewChannel: true }); } catch {}   // #verify stays visible
-  if (locked) logger.info("Verify", `locked ${locked} channel(s) behind the Verified role`);
+  if (updated) logger.info("Verify", `reset ${updated} channel(s): public view, Unverified role blocked`);
 }
 
 // Modal submit: validate the name + alt rules, then send a staff request.
@@ -2396,8 +2399,8 @@ async function handleVerifySubmit(interaction) {
   if (!name) return reply(warningEmbed("Need your name", "Enter your exact Pavlov in-game name."));
   const already = getVerification(interaction.user.id);
   if (already) return reply(warningEmbed("Already Verified", `You're already verified as \`${already.name}\`.`));
-  const ips = ipsForName(name);
-  if (!ips.length) return reply(warningEmbed("Join the server first", `We couldn't find any record for \`${name}\` yet. Connect to the Pavlov server once so we can confirm your identity, then verify.`));
+  const ips = confirmedIpsForName(name);
+  if (!ips.length) return reply(warningEmbed("Join the server first", `We couldn't find a confirmed connection for \`${name}\` yet. Connect to the Pavlov server once so we can confirm your identity, then verify.`));
   const conflict = verificationConflict(loadVerifications(), interaction.user.id, name, ips);
   if (conflict) return reply(errorEmbed("Can't Verify", conflict.reason));
   let staff; try { staff = await client.channels.fetch(VERIFY_STAFF_CHANNEL); } catch {}
@@ -2431,7 +2434,7 @@ async function handleVerifyDecision(interaction) {
   const { uid, name } = pending;
   await removePendingVerify(token);
   if (tag === "verifyreq_ok") {
-    const ips = ipsForName(name);
+    const ips = confirmedIpsForName(name);
     const conflict = verificationConflict(loadVerifications(), uid, name, ips);
     if (conflict && conflict.code !== "self") {
       const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Verification Void").setDescription(`${conflict.reason}\nNothing was changed.`));
