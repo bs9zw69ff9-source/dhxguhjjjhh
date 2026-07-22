@@ -30,7 +30,7 @@ module.exports = (ctx) => {
           ["`/kick <player>` / `/flush <server>`", "Kick a player, or randomly kick one online player (mod)."],
           ["`/tempban <player> <reason>` / `/unban <player>`", "Ban - the punishment preset sets the length - or lift a ban (mod)."],
           ["`/announce <message> <target>`", "Broadcast an RCON notice to a player or everyone (mod)."],
-          ["`/givecaps <player> <amount>`", "Give credits to a player (mod)."],
+          ["`/givecaps <player> <amount>`", "Give dollars to a player (mod)."],
           ["`/whitelist add|remove <player> <name>`", "Add or remove a player from a whitelist (whitelist leader)."],
           ["`/promotion <player>` / `/demotion <player>`", "Move a whitelisted player up or down one rank (whitelist leader)."],
           ["`/subclass <player> <sub-class>`", "Assign or remove a sub-class like NYPD Detective / Vice Officer (whitelist leader)."],

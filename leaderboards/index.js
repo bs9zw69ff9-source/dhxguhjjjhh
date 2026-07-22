@@ -48,15 +48,15 @@ function buildLeaderboardEmbed() {
     .setDescription(`${hero("Economy records inaccessible.")}\n\`MODSAVE_PATH\` not configured or unreadable - check your \`.env\`.`),
     { footer: { text: `Updated every 30s` } });
   if (!entries.length) return brand(embed.setColor(NV.IRRAD_GREEN)
-    .setDescription(`${hero("No ledgers found.")}\nNo cap records on file yet.`),
+    .setDescription(`${hero("No ledgers found.")}\nNo dollar records on file yet.`),
     { footer: { text: `Updated every 30s` } });
   const top = entries[0]?.balance || 1;
   const body = entries.map((e, i) => {
     const meter = i < 5 ? `  \`${bar(e.balance, top, 8)}\`` : "";
-    return `${rankLabel(i)}  **${e.playerId}**  -  ${e.balance.toLocaleString()} credits${meter}`;
+    return `${rankLabel(i)}  **${e.playerId}**  -  $${e.balance.toLocaleString()}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: ${(entries.totalCaps ?? 0).toLocaleString()} credits** across **${entries.totalPlayers ?? entries.length}** ledgers\n${body}`),
+    `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: $${(entries.totalCaps ?? 0).toLocaleString()}** across **${entries.totalPlayers ?? entries.length}** ledgers\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 

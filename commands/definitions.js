@@ -178,14 +178,14 @@ const commands = [
     .setDescription("Admin - Send a raw RCON command")
     .addStringOption(o => o.setName("command").setDescription("Raw RCON signal").setRequired(true)),
   new SlashCommandBuilder().setName("givecaps")
-    .setDescription("Give credits to a player (whitelist leader / mod command)")
+    .setDescription("Give dollars to a player (whitelist leader / mod command)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Credits to give").setRequired(true).setMinValue(1).setMaxValue(10000))
+    .addIntegerOption(o => o.setName("amount").setDescription("Dollars to give").setRequired(true).setMinValue(1).setMaxValue(10000))
     .addStringOption(o => o.setName("reason").setDescription("Reason (shown in logs)")),
   new SlashCommandBuilder().setName("adjustcaps")
-    .setDescription("Admin - Manually add or subtract credits from a player's ledger")
+    .setDescription("Admin - Manually add or subtract dollars from a player's ledger")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addIntegerOption(o => o.setName("amount").setDescription("Credits to add (positive) or subtract (negative)").setRequired(true))
+    .addIntegerOption(o => o.setName("amount").setDescription("Dollars to add (positive) or subtract (negative)").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason for adjustment (logged)")),
   // Owner-only deep inspection (gated in the handler; not listed in /help). Discord
   // requires a non-empty description - a zero-width one gets the whole PUT rejected.

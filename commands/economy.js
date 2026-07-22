@@ -25,8 +25,8 @@ module.exports = (ctx) => {
         if (!r.ok) return interaction.editReply({ embeds: [errorEmbed("Ledger Write Failed", "Check `MODSAVE_PATH`.")] });
         const newBal = r.after;
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
-        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Credits Given")
-          .setDescription(`**${interaction.user.username}** gave **${playerId}** **+${amount.toLocaleString()} credits** - new balance **${newBal.toLocaleString()} credits**. ${reason}`)
+        const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Dollars Given")
+          .setDescription(`**${interaction.user.username}** gave **${playerId}** **+$${amount.toLocaleString()}** - new balance **$${newBal.toLocaleString()}**. ${reason}`)
           .setFooter({ text: randomQuote("caps") });
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
@@ -52,9 +52,9 @@ module.exports = (ctx) => {
         writeModLog({ action: "adjustcaps", playerId, amount, reason, by: interaction.user.tag });
         const pos = amount >= 0;
         const embed = new EmbedBuilder().setColor(pos ? NV.IRRAD_GREEN : NV.RUST_RED)
-          .setTitle(`Credits ${pos ? "Credited" : "Debited"}`)
-          .setDescription(`**${interaction.user.username}** ${pos ? "credited" : "debited"} **${playerId}** **${pos ? "+" : ""}${amount.toLocaleString()} credits** - new balance **${newBal.toLocaleString()} credits**. ${reason}`)
-          .setFooter({ text: "Manual cap adjustment - logged" });
+          .setTitle(`Dollars ${pos ? "Credited" : "Debited"}`)
+          .setDescription(`**${interaction.user.username}** ${pos ? "credited" : "debited"} **${playerId}** **${pos ? "+$" : "-$"}${Math.abs(amount).toLocaleString()}** - new balance **$${newBal.toLocaleString()}**. ${reason}`)
+          .setFooter({ text: "Manual dollar adjustment - logged" });
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },

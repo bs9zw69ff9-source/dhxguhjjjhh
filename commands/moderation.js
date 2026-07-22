@@ -126,7 +126,7 @@ module.exports = (ctx) => {
         const summary = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${a}: ${n}`).join(" - ");
         const lines = matches.slice().reverse().map(e => {
           const ts     = Math.floor(e.at / 1000);
-          const detail = e.reason ? ` - ${e.reason}` : e.amount ? ` - ${e.amount > 0 ? "+" : ""}${e.amount} credits` : e.faction ? ` - ${e.faction}` : "";
+          const detail = e.reason ? ` - ${e.reason}` : e.amount ? ` - ${e.amount > 0 ? "+$" : "-$"}${Math.abs(e.amount).toLocaleString()}` : e.faction ? ` - ${e.faction}` : "";
           const who    = e.playerId ? ` - ${e.playerId}` : "";
           return `\`${e.action}\`${who}${detail} - <t:${ts}:R>`;
         });

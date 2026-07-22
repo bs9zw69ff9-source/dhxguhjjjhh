@@ -3,7 +3,7 @@
 A theme-neutral Discord moderation bot for **Pavlov VR** RP servers. It drives
 the game servers over RCON and adds native bans/kicks with punishment presets,
 ban-evasion + VPN/proxy detection with optional OS-firewall blocking, whitelists
-and ranks, a credits economy, a caps leaderboard, donator management,
+and ranks, a dollar economy, a wealth leaderboard, donator management,
 self-service RCON menus, and a layered owner/admin/mod/whitelist permission
 model — all behind slash commands.
 
