@@ -539,6 +539,15 @@ const UPDATE_LOG_CHANNEL      = process.env.UPDATE_LOG_CHANNEL || "1526601109362
    (override with KILLFEED_CHANNEL). */
 const KILLFEED_CHANNEL        = process.env.KILLFEED_CHANNEL || "1525801322262167623";
 
+/* ---- verification ----
+   VERIFY_CHANNEL: public channel with the Verify button (visible to unverified).
+   VERIFY_STAFF_CHANNEL: private channel where staff accept/deny requests.
+   VERIFIED_ROLE: the role granted on approval (grants channel access). The
+   Unverified role is auto-created and its id stored in FILES.VERIFY_STATE. */
+const VERIFY_CHANNEL         = process.env.VERIFY_CHANNEL       || "1529488781458014208";
+const VERIFY_STAFF_CHANNEL   = process.env.VERIFY_STAFF_CHANNEL || "1529488962282983485";
+const VERIFIED_ROLE          = process.env.VERIFIED_ROLE        || "1528754379417583668";
+
 // ---- faction-specific rank system ----
 // Rank registry (order/badges/rankFiles) extracted to ./factions/ranks.
 const { FACTION_RANKS } = require("./factions/ranks");
@@ -2285,6 +2294,159 @@ async function handleMenuPanelSubmit(interaction) {
   return interaction.editReply({ embeds: [embed] });
 }
 
+/* ================================================================
+   MEMBER VERIFICATION
+   ================================================================
+   #verify has a Verify button -> modal for the user's exact Pavlov name -> the bot
+   links that name to their confirmed IP (from ipBans) and sends an accept/deny
+   request to the staff channel. On accept: grant the Verified role, store the link,
+   and log Discord->IP to the connection webhook. One person per name, and no alts
+   (a confirmed IP already tied to another verified member is rejected). Access
+   gating is via the Verified role - every channel except #verify is locked to it. */
+const { verificationConflict } = require("./verify/rules");
+const loadVerifications = () => safeRead(FILES.VERIFICATIONS, {});
+const getVerification   = (discordId) => loadVerifications()[String(discordId)] ?? null;
+function setVerification(discordId, data) { return update(FILES.VERIFICATIONS, {}, (m) => { m[String(discordId)] = data; return m; }); }
+const loadVerifyState = () => safeRead(FILES.VERIFY_STATE, {});
+function saveVerifyState(patch) { return update(FILES.VERIFY_STATE, {}, (m) => ({ ...m, ...patch })); }
+// Pending requests keyed by a short token (kept out of the button customId, which
+// Discord caps at 100 chars - a long Pavlov name would blow the budget).
+function addPendingVerify(token, data) { return update(FILES.VERIFY_STATE, {}, (m) => { m.pending = m.pending || {}; m.pending[token] = data; return m; }); }
+const getPendingVerify = (token) => loadVerifyState().pending?.[token] ?? null;
+function removePendingVerify(token) { return update(FILES.VERIFY_STATE, {}, (m) => { if (m.pending) delete m.pending[token]; return m; }); }
+// Confirmed IPs for a Pavlov name (trustworthy same-line id<->ip pairings).
+function confirmedIpsForName(name) {
+  try { const rec = ipBans.getRecord(name); return rec ? (rec.cips || []) : []; }
+  catch { return []; }
+}
+
+// Post/refresh the Verify button panel in #verify (idempotent).
+async function ensureVerifyPanel() {
+  if (!VERIFY_CHANNEL) return;
+  let ch; try { ch = await client.channels.fetch(VERIFY_CHANNEL); } catch { return; }
+  if (!ch?.isTextBased()) return;
+  const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN)
+    .setTitle("✅ Verify to unlock the server")
+    .setDescription(`Press **Verify** and enter your **exact** Pavlov in-game name.\n\nA staff member reviews each request; once approved you get access to the rest of the server.\n\nOne account per person - alts can't be verified.`));
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("verify_start").setLabel("Verify").setStyle(ButtonStyle.Success));
+  const payload = { content: "", embeds: [embed], components: [row] };
+  const saved = loadVerifyState();
+  if (saved.panelMsgId) { try { const m = await ch.messages.fetch(saved.panelMsgId); await m.edit(payload); return; } catch { /* gone - repost */ } }
+  try { const m = await ch.send(payload); await saveVerifyState({ panelMsgId: m.id }); }
+  catch (e) { logger.warn("Verify", `panel post failed: ${e.message}`); }
+}
+
+// Create the Unverified role if missing, and lock every channel except #verify
+// behind the Verified role (deny @everyone View, allow Verified + the bot).
+// Idempotent - skips channels already locked. Needs Manage Roles + Manage Channels.
+async function ensureUnverifiedSetup() {
+  if (!VERIFY_CHANNEL) return;
+  let verifyCh; try { verifyCh = await client.channels.fetch(VERIFY_CHANNEL); } catch { return; }
+  const guild = verifyCh?.guild;
+  if (!guild) return;
+  const me = guild.members.me;
+  if (!me?.permissions.has(PermissionFlagsBits.ManageRoles) || !me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    logger.warn("Verify", "skipping verification setup - bot needs Manage Roles + Manage Channels");
+    return;
+  }
+  let { unverifiedRoleId } = loadVerifyState();
+  if (!unverifiedRoleId || !guild.roles.cache.has(unverifiedRoleId)) {
+    try {
+      const role = await guild.roles.create({ name: "Unverified", color: 0x2b2d31, hoist: false, mentionable: false, reason: "Verification gating" });
+      unverifiedRoleId = role.id; await saveVerifyState({ unverifiedRoleId });
+      logger.info("Verify", `created Unverified role ${role.id}`);
+    } catch (e) { logger.warn("Verify", `could not create Unverified role: ${e.message}`); }
+  }
+  const everyone = guild.roles.everyone.id;
+  let locked = 0;
+  for (const ch of guild.channels.cache.values()) {
+    if (ch.id === VERIFY_CHANNEL || ch.id === VERIFY_STAFF_CHANNEL) continue;   // keep verify + staff review reachable
+    if (typeof ch.permissionOverwrites?.edit !== "function") continue;   // e.g. threads
+    const cur = ch.permissionOverwrites.cache.get(everyone);
+    if (cur && cur.deny.has(PermissionFlagsBits.ViewChannel)) continue;  // already locked
+    try {
+      await ch.permissionOverwrites.edit(everyone, { ViewChannel: false });
+      await ch.permissionOverwrites.edit(VERIFIED_ROLE, { ViewChannel: true });
+      await ch.permissionOverwrites.edit(me.id, { ViewChannel: true });  // never lock the bot out
+      locked++;
+    } catch (e) { logger.warn("Verify", `lock ${ch.name} failed: ${e.message}`); }
+  }
+  try { await verifyCh.permissionOverwrites.edit(everyone, { ViewChannel: true }); } catch {}   // #verify stays visible
+  if (locked) logger.info("Verify", `locked ${locked} channel(s) behind the Verified role`);
+}
+
+// Modal submit: validate the name + alt rules, then send a staff request.
+async function handleVerifySubmit(interaction) {
+  const name  = sanitizeMessage(interaction.fields.getTextInputValue("verify_name")).trim();
+  const reply = (embed) => interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  if (!name) return reply(warningEmbed("Need your name", "Enter your exact Pavlov in-game name."));
+  const already = getVerification(interaction.user.id);
+  if (already) return reply(warningEmbed("Already Verified", `You're already verified as \`${already.name}\`.`));
+  const ips = confirmedIpsForName(name);
+  if (!ips.length) return reply(warningEmbed("Join the server first", `We couldn't find a connection for \`${name}\` yet. Connect to the Pavlov server once so we can confirm your identity, then verify.`));
+  const conflict = verificationConflict(loadVerifications(), interaction.user.id, name, ips);
+  if (conflict) return reply(errorEmbed("Can't Verify", conflict.reason));
+  let staff; try { staff = await client.channels.fetch(VERIFY_STAFF_CHANNEL); } catch {}
+  if (!staff?.isTextBased()) return reply(errorEmbed("Verification Unavailable", "The staff review channel isn't set up. Tell an admin."));
+  const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  await addPendingVerify(token, { uid: interaction.user.id, name, at: Date.now() });
+  const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Verification Request")
+    .setDescription(`<@${interaction.user.id}> wants to verify as \`${name}\`.`)
+    .addFields(
+      { name: "Discord", value: `<@${interaction.user.id}> \`${interaction.user.id}\``, inline: false },
+      { name: "Pavlov name", value: `\`${name}\``, inline: true },
+      { name: "IP(s)", value: ips.map(x => `\`${x}\``).join(", ").slice(0, 1000), inline: true },
+    ).setFooter({ text: "Sensitive - staff only" }));
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`verifyreq_ok:${token}`).setLabel("Accept").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`verifyreq_no:${token}`).setLabel("Deny").setStyle(ButtonStyle.Danger));
+  try { await staff.send({ embeds: [embed], components: [row], allowedMentions: { parse: [] } }); }
+  catch (e) { logger.warn("Verify", `staff post failed: ${e.message}`); return reply(errorEmbed("Couldn't Submit", "Something went wrong sending your request. Try again.")); }
+  return reply(successEmbed("Request Sent", `Your verification as \`${name}\` was sent to staff. You'll get the role once it's approved.`));
+}
+
+// Staff accept / deny button in the staff channel.
+async function handleVerifyDecision(interaction) {
+  if (!hasModRole(interaction.member)) return interaction.reply({ embeds: [modOnlyEmbed()], flags: MessageFlags.Ephemeral }).catch(() => {});
+  const [tag, token] = interaction.customId.split(":");
+  const pending = getPendingVerify(token);
+  if (!pending) {
+    const gone = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Request Expired").setDescription("This verification request is no longer valid (already handled or the bot restarted)."));
+    return interaction.update({ embeds: [gone], components: [] }).catch(() => {});
+  }
+  const { uid, name } = pending;
+  await removePendingVerify(token);
+  if (tag === "verifyreq_ok") {
+    const ips = confirmedIpsForName(name);
+    const conflict = verificationConflict(loadVerifications(), uid, name, ips);
+    if (conflict && conflict.code !== "self") {
+      const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Verification Void").setDescription(`${conflict.reason}\nNothing was changed.`));
+      return interaction.update({ embeds: [stale], components: [] }).catch(() => {});
+    }
+    try {
+      const member = await interaction.guild.members.fetch(uid);
+      await member.roles.add(VERIFIED_ROLE, "Verified");
+      const { unverifiedRoleId } = loadVerifyState();
+      if (unverifiedRoleId && member.roles.cache.has(unverifiedRoleId)) { try { await member.roles.remove(unverifiedRoleId, "Verified"); } catch {} }
+      await setVerification(uid, { name, ips, at: Date.now(), by: interaction.user.tag });
+      writeModLog({ action: "verify", targetUserId: uid, playerId: name, ips: ips.join(","), by: interaction.user.tag });
+      if (feedHook) { feedHook.send({ embeds: [brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Verified")
+        .setDescription(`<@${uid}> \`${uid}\` verified as \`${name}\``)
+        .addFields({ name: "IP(s)", value: (ips.map(x => `\`${x}\``).join(", ") || "*none*").slice(0, 1000), inline: false }))], allowedMentions: { parse: [] } }).catch(() => {}); }
+      try { const u = await client.users.fetch(uid); await u.send(`You're verified as \`${name}\` - welcome in.`); } catch {}
+      const done = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Verification Approved").setDescription(`**${interaction.user.username}** approved <@${uid}> as \`${name}\`.`));
+      return interaction.update({ embeds: [done], components: [] }).catch(() => {});
+    } catch (e) {
+      logger.warn("Verify", `approve failed: ${e.message}`);
+      return interaction.reply({ embeds: [errorEmbed("Approve Failed", e.message)], flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+  }
+  try { const u = await client.users.fetch(uid); await u.send(`Your verification as \`${name}\` was denied by staff.`); } catch {}
+  const done = brand(new EmbedBuilder().setColor(NV.RUST_RED).setTitle("Verification Denied").setDescription(`**${interaction.user.username}** denied <@${uid}>'s request to verify as \`${name}\`.`));
+  return interaction.update({ embeds: [done], components: [] }).catch(() => {});
+}
+
 // ---- menu grant persistence ----
 function addMenuGrant(playerId, server, menuValue, menuId, grantedBy) {
   const key = playerId.toLowerCase();
@@ -2451,7 +2613,7 @@ const {  } = require("./events")({
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
-  clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, feedHook,
+  clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
@@ -2503,7 +2665,7 @@ const { onInteraction } = require("./commands")({
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
   getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles,
   getLastSeen, getOnlinePlayers, getPlayerChoices, getPlayerFactions,
-  getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, hasAdminRole,
+  getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, handleVerifySubmit, handleVerifyDecision, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt,
   isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer,
   loadBans, loadFactionAudit, loadFactionBackup, loadMenuGrants,

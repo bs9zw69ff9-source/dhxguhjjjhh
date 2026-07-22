@@ -13,8 +13,8 @@ const prevCwd = process.cwd();
 process.chdir(tmp);
 const db = require(path.join(prevCwd, "database"))({ logger: noLog, baseDir: tmp });
 
-test("registry: 31 datasets, defaults seeded", () => {
-  assert.equal(Object.keys(db.FILES).length, 31);
+test("registry: 33 datasets, defaults seeded", () => {
+  assert.equal(Object.keys(db.FILES).length, 33);
   assert.deepEqual(db.safeRead(db.FILES.TEMPBAN, []), []);
   assert.deepEqual(db.safeRead(db.FILES.PLAYTIME, {}), {});
   assert.deepEqual(db.safeRead(db.FILES.WARRANTS, {}), {});

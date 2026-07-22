@@ -6,7 +6,7 @@ module.exports = function(ctx) {
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
-  clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, feedHook,
+  clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
   healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
@@ -201,6 +201,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   setTimeout(enforceBansSweep, 10_000);   // clear any banned players already online at startup
   setTimeout(reconcileBans,    15_000);   // rebuild the server ban list from the DB on startup
   ensureMenuPanel();
+  try { await ensureUnverifiedSetup(); } catch (e) { logger.warn("Verify", `unverified setup failed: ${e.message}`); }
+  try { await ensureVerifyPanel(); } catch (e) { logger.warn("Verify", `verify panel failed: ${e.message}`); }
   // Wipe stale leaderboard/player-list messages from the previous run, then post fresh.
   try { await refreshLeaderboardChannels(); } catch (e) { logger.warn("Purge", `leaderboard refresh failed: ${e.message}`); }
 });

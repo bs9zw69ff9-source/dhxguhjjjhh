@@ -14,7 +14,7 @@ module.exports = function createCommands(ctx) {
   ModalBuilder, NV, TextInputBuilder, TextInputStyle, adminOnlyEmbed, blacklistedEmbed,
   brand, checkRateLimit, client, commandPlayerCandidates, commands,
   errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
-  handleMenuPanelSubmit, hasAdminRole, hasFactionLeaderRole, hasWhitelistManageRole, hasModRole, isBlacklisted, isOwner,
+  handleMenuPanelSubmit, handleVerifySubmit, handleVerifyDecision, hasAdminRole, hasFactionLeaderRole, hasWhitelistManageRole, hasModRole, isBlacklisted, isOwner,
   logger, modOnlyEmbed,
   patchInteractionOutput, rateLimitEmbed, textify, writeModLog,
   } = ctx;
@@ -58,6 +58,20 @@ module.exports = function createCommands(ctx) {
   }
   if (interaction.isModalSubmit() && interaction.customId === "menu_modal") {
     return handleMenuPanelSubmit(interaction).catch(modalFail("MenuPanel"));
+  }
+  /* ── verification: button -> name modal -> staff accept/deny (persistent) ── */
+  if (interaction.isButton() && interaction.customId === "verify_start") {
+    const modal = new ModalBuilder().setCustomId("verify_modal").setTitle("Verify")
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId("verify_name").setLabel("Your exact Pavlov in-game name")
+          .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(64)));
+    return interaction.showModal(modal).catch(() => {});
+  }
+  if (interaction.isModalSubmit() && interaction.customId === "verify_modal") {
+    return handleVerifySubmit(interaction).catch(modalFail("Verify"));
+  }
+  if (interaction.isButton() && interaction.customId.startsWith("verifyreq_")) {
+    return handleVerifyDecision(interaction).catch(e => logger.warn("Verify", `decision failed: ${e.message}`));
   }
 
   // Any OTHER component belongs to a command's collector (paginator, confirm
