@@ -130,8 +130,7 @@ const commands = [
     .setDescription("Admin - Set the Discord roles that grant each RCON menu (self-service panel)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addRoleOption(o => o.setName("high_staff_role").setDescription("Role that grants the High Staff menu"))
-    .addRoleOption(o => o.setName("staff_role").setDescription("Role that grants the Staff menu"))
-    .addRoleOption(o => o.setName("whitelist_role").setDescription("Role that grants the Whitelist menu")),
+    .addRoleOption(o => o.setName("staff_role").setDescription("Role that grants the Staff menu")),
   /* ── WHITELIST ─────────────────────────────────────────── */
   new SlashCommandBuilder()
     .setName("whitelist")

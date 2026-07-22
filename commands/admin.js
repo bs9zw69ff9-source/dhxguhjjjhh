@@ -300,18 +300,15 @@ module.exports = (ctx) => {
         if (!hasAdminRole(interaction.member) && !isOwner(interaction.user.id)) return interaction.reply({ embeds: [adminOnlyEmbed()], flags: MessageFlags.Ephemeral });
         const hs = interaction.options.getRole("high_staff_role");
         const st = interaction.options.getRole("staff_role");
-        const fa = interaction.options.getRole("whitelist_role");
         if (hs) await setMenuRole("highstaff", hs.id);
         if (st) await setMenuRole("staff", st.id);
-        if (fa) await setMenuRole("faction", fa.id);
         const m = loadMenuRoles();
         const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("RCON Menu Roles")
-          .setDescription((hs || st || fa) ? "Updated. Members who press **Get Menu** get the menu of their highest role below." : "Current mapping. Pass role options to change. Members get the menu of their **highest** role.")
+          .setDescription((hs || st) ? "Updated. Members who press **Get Menu** get the menu of their highest role below." : "Current mapping. Pass role options to change. Members get the menu of their **highest** role.")
           .addFields(
             { name: "High Staff", value: m.highstaff ? `<@&${m.highstaff}>` : "*(unset)*", inline: true },
             { name: "Staff",       value: m.staff     ? `<@&${m.staff}>`     : "*(unset)*", inline: true },
-            { name: "Faction",     value: m.faction   ? `<@&${m.faction}>`   : "*(unset)*", inline: true },
-          ).setFooter({ text: "Priority: High Staff > Staff > Whitelist" }));
+          ).setFooter({ text: "Priority: High Staff > Staff" }));
         await logAction(embed);
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },

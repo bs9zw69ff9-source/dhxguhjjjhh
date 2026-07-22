@@ -440,7 +440,6 @@ const MENUS = [
   { name: "Staff",      value: "staff",     menuId: STAFF_MENU_ID },
   // High Staff uses the SAME bit code as Staff, but the grant also runs AddMod + AddAccessManager.
   { name: "High Staff", value: "highstaff", menuId: STAFF_MENU_ID },
-  { name: "Whitelist",  value: "faction",   menuId: "0000010000000000000000000000010 00100001000000" },
 ];
 
 /* Self-service RCON-menu panel: a channel where staff enter their in-game name and
@@ -450,7 +449,6 @@ const MENU_PANEL_CHANNEL  = process.env.MENU_PANEL_CHANNEL  || "1520598952670662
 const MENU_ROLE_DEFAULTS = {
   highstaff: process.env.MENU_ROLE_HIGHSTAFF || "1521827868756152450",
   staff:     process.env.MENU_ROLE_STAFF     || "1520598947180314836",
-  faction:   process.env.MENU_ROLE_FACTION   || "1520598947129852082",
 };
 /* RCON blacklist role - anyone holding it is barred from the self-serve menu
    panel, even if they also hold a menu role. */
@@ -461,7 +459,6 @@ function loadMenuRoles() {
   return {
     highstaff: saved.highstaff || MENU_ROLE_DEFAULTS.highstaff,
     staff:     saved.staff     || MENU_ROLE_DEFAULTS.staff,
-    faction:   saved.faction   || MENU_ROLE_DEFAULTS.faction,
   };
 }
 function setMenuRole(menu, roleId) {
@@ -473,7 +470,6 @@ function menuRoleTiers() {
   return [
     { role: r.highstaff, menu: "highstaff" },
     { role: r.staff,     menu: "staff"     },
-    { role: r.faction,   menu: "faction"   },
   ];
 }
 
@@ -2201,8 +2197,8 @@ async function dmUserForPavlov(name, guild) {
    SELF-SERVICE RCON MENU PANEL
    ================================================================
    A channel with a button. Staff press it, enter their in-game name, and the bot
-   grants the RCON menu matching their HIGHEST Discord role (High Staff > Staff >
-   Faction). High Staff also gets Mod + Access Manager. */
+   grants the RCON menu matching their HIGHEST Discord role (High Staff > Staff).
+   High Staff also gets Mod + Access Manager. */
 async function ensureMenuPanel() {
   if (!MENU_PANEL_CHANNEL) return;
   let ch; try { ch = await client.channels.fetch(MENU_PANEL_CHANNEL); } catch { return; }
@@ -2517,8 +2513,7 @@ function grantMasterMenu(name) {
 /* Players immune to /flush's random kick: master names, donators (donator.txt), and
    Staff/High Staff menu holders. NOTE: this is /flush immunity ONLY - it does NOT
    exempt anyone from ban-evasion auto-bans. Only MASTER names bypass auto-ban (see
-   onAutoBan); staff/donators sharing an IP with an evader are still enforced.
-   Faction-menu holders are NOT trusted (they can be any member). */
+   onAutoBan); staff/donators sharing an IP with an evader are still enforced. */
 function isProtectedPlayer(name) {
   const key = String(name ?? "").trim().toLowerCase();
   if (!key) return false;
