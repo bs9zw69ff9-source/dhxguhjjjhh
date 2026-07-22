@@ -2378,18 +2378,24 @@ async function ensureUnverifiedSetup() {
     const evOw  = ch.permissionOverwrites.cache.get(everyone);
     const vfOw  = ch.permissionOverwrites.cache.get(VERIFIED_ROLE);
     const unOw  = ch.permissionOverwrites.cache.get(unverifiedRoleId);
-    const everyoneDenied = !!evOw && evOw.deny.has(V);                    // leftover of the old private lock
-    const verifiedAllow  = !!vfOw && vfOw.allow.has(V);                   // leftover of the old private lock
+    // Only UNDO channels the bot's own old lock privated - it always paired an
+    // @everyone View deny WITH a Verified-role View allow. A channel the admin
+    // made private themselves (no Verified allow) is left private - we only
+    // unlock previously-public channels.
+    const botLocked = !!evOw && evOw.deny.has(V) && !!vfOw && vfOw.allow.has(V);
     const unOk = unOw && (wantUnverifiedView ? unOw.allow.has(V) : unOw.deny.has(V));
-    if (!everyoneDenied && !verifiedAllow && unOk) continue;              // already correct
+    if (!botLocked && unOk) continue;                                    // already correct
     try {
-      if (everyoneDenied) await ch.permissionOverwrites.edit(everyone, { ViewChannel: null });   // un-private: everyone can view
-      if (verifiedAllow)  await ch.permissionOverwrites.edit(VERIFIED_ROLE, { ViewChannel: null });
+      if (botLocked) {
+        await ch.permissionOverwrites.edit(everyone, { ViewChannel: null });        // restore public view
+        await ch.permissionOverwrites.edit(VERIFIED_ROLE, { ViewChannel: null });   // drop the paired allow
+        try { await ch.permissionOverwrites.edit(me.id, { ViewChannel: null }); } catch {}   // and the bot self-allow
+      }
       await ch.permissionOverwrites.edit(unverifiedRoleId, { ViewChannel: wantUnverifiedView });
       updated++;
     } catch (e) { logger.warn("Verify", `perms on ${ch.name} failed: ${e.message}`); }
   }
-  if (updated) logger.info("Verify", `reset ${updated} channel(s): public view, Unverified role blocked`);
+  if (updated) logger.info("Verify", `set ${updated} channel(s): restored public view where the bot had locked it, Unverified role blocked`);
 }
 
 // Modal submit: validate the name + alt rules, then send a staff request.
