@@ -5,19 +5,19 @@
    grouped into sections by the number before the dot (1.xx -> section 1). */
 
 const SECTION_TITLES = {
-  "1":  "Crimes Against Persons",
-  "2":  "Property Crimes",
-  "3":  "Public Decency",
-  "4":  "Obstruction of Justice",
-  "5":  "Public Order",
-  "6":  "Controlled Substances",
-  "7":  "Vehicular",
-  "8":  "Weapons",
-  "9":  "Commercial Vehicles",
-  "10": "Aircraft",
-  "11": "Organized Crime",
-  "12": "Terrorism",
-  "13": "Narcotics Influence",
+  "1":  "Crime Against Persons",
+  "2":  "Burglary, Theft, and Property",
+  "3":  "Sexual Crimes",
+  "4":  "Legal and Investigatory",
+  "5":  "Public Peace",
+  "6":  "Controlled Substances and Alcohol",
+  "7":  "Vehicle Codes",
+  "8":  "Firearms and Explosives",
+  "9":  "Commercial Vehicle Codes",
+  "10": "Civil Aviation Code",
+  "11": "Gang Related Crimes",
+  "12": "National Security",
+  "13": "Health and Safety",
 };
 
 // [code, name, class("M"|"F"), minutes]  -  "sober" minutes = indefinite (until sober)
