@@ -320,7 +320,7 @@ async function sentenceSweep() {
   const due = Object.entries(loadSentences()).filter(([, s]) => s.expires <= now);
   if (!due.length) return;
   for (const [, s] of due) {
-    const mention = s.byId ? `<@${s.byId}> — ` : "";
+    const mention = s.byId ? `<@${s.byId}> ` : "";
     announceArrest(`⏰ ${mention}**${s.playerId}**'s sentence for ${s.label} has ended. They have been released.`, s.byId);
   }
   await update(FILES.SENTENCES, {}, (m) => { for (const [k] of due) delete m[k]; return m; });
