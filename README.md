@@ -146,10 +146,11 @@ An optional member-gate. Set `VERIFY_CHANNEL` (public), `VERIFY_STAFF_CHANNEL`
 the verify channel, auto-creates an **Unverified** role, and locks every other
 channel behind the Verified role (needs *Manage Roles* + *Manage Channels*, and
 the bot's role above the Verified role). A member presses **Verify**, enters
-their exact Pavlov name, and the bot links that name to their **confirmed IP**
-(from the connection tracker) and posts an accept/deny request to the staff
-channel. **One person per name, and no alts** — a name or a confirmed IP already
-tied to another verified member is rejected. On approval the member gets the
+their exact Pavlov name, and the bot links that name to **every IP on record**
+for it (from the connection tracker — confirmed and best-effort) and posts an
+accept/deny request to the staff channel. **One person per name, and no alts** —
+a name or any known IP already tied to another verified member is rejected. On
+approval the member gets the
 Verified role and the Discord→IP link is logged to the `CONNECT_WEBHOOK_URL`
 feed. Nothing else changes (no whitelist/rank side effects).
 

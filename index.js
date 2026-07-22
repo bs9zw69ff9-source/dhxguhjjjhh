@@ -2314,10 +2314,15 @@ function saveVerifyState(patch) { return update(FILES.VERIFY_STATE, {}, (m) => (
 function addPendingVerify(token, data) { return update(FILES.VERIFY_STATE, {}, (m) => { m.pending = m.pending || {}; m.pending[token] = data; return m; }); }
 const getPendingVerify = (token) => loadVerifyState().pending?.[token] ?? null;
 function removePendingVerify(token) { return update(FILES.VERIFY_STATE, {}, (m) => { if (m.pending) delete m.pending[token]; return m; }); }
-// Confirmed IPs for a Pavlov name (trustworthy same-line id<->ip pairings).
-function confirmedIpsForName(name) {
-  try { const rec = ipBans.getRecord(name); return rec ? (rec.cips || []) : []; }
-  catch { return []; }
+// EVERY IP on record for a Pavlov name - confirmed (cips) AND best-effort join
+// correlation (ips), across all EOS ids that name has used. Uses all available
+// data to link/alt-check, not just confirmed disconnect pairings.
+function ipsForName(name) {
+  try {
+    const rec = ipBans.getRecord(name);
+    if (!rec) return [];
+    return [...new Set([...(rec.cips || []), ...(rec.ips || [])])];
+  } catch { return []; }
 }
 
 // Post/refresh the Verify button panel in #verify (idempotent).
@@ -2383,8 +2388,8 @@ async function handleVerifySubmit(interaction) {
   if (!name) return reply(warningEmbed("Need your name", "Enter your exact Pavlov in-game name."));
   const already = getVerification(interaction.user.id);
   if (already) return reply(warningEmbed("Already Verified", `You're already verified as \`${already.name}\`.`));
-  const ips = confirmedIpsForName(name);
-  if (!ips.length) return reply(warningEmbed("Join the server first", `We couldn't find a connection for \`${name}\` yet. Connect to the Pavlov server once so we can confirm your identity, then verify.`));
+  const ips = ipsForName(name);
+  if (!ips.length) return reply(warningEmbed("Join the server first", `We couldn't find any record for \`${name}\` yet. Connect to the Pavlov server once so we can confirm your identity, then verify.`));
   const conflict = verificationConflict(loadVerifications(), interaction.user.id, name, ips);
   if (conflict) return reply(errorEmbed("Can't Verify", conflict.reason));
   let staff; try { staff = await client.channels.fetch(VERIFY_STAFF_CHANNEL); } catch {}
@@ -2418,7 +2423,7 @@ async function handleVerifyDecision(interaction) {
   const { uid, name } = pending;
   await removePendingVerify(token);
   if (tag === "verifyreq_ok") {
-    const ips = confirmedIpsForName(name);
+    const ips = ipsForName(name);
     const conflict = verificationConflict(loadVerifications(), uid, name, ips);
     if (conflict && conflict.code !== "self") {
       const stale = brand(new EmbedBuilder().setColor(NV.DEAD_GREY).setTitle("Verification Void").setDescription(`${conflict.reason}\nNothing was changed.`));
