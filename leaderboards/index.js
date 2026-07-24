@@ -170,7 +170,7 @@ const postPlayerList = () => autopost("playerList", PLAYERLIST_CHANNEL, async ()
 
 // Delete every message in a channel - used on startup so stale leaderboard/player-list
 // messages from previous runs don't pile up (the bot re-posts a fresh one). Bulk-deletes
-async function purgeChannel(channelId) {
+async function purgeChannel(channelId, keepIds = new Set()) {
   if (!channelId) return 0;
   let channel;
   try { channel = await client.channels.fetch(channelId); } catch { return 0; }
@@ -180,10 +180,14 @@ async function purgeChannel(channelId) {
     let msgs;
     try { msgs = await channel.messages.fetch({ limit: 100 }); } catch { break; }
     if (!msgs.size) break;
+    // Never delete a tracked board message - leaving it lets the poster EDIT it in
+    // place instead of reposting (which is what made the board "reset" on restart).
+    const targets = keepIds.size ? msgs.filter(m => !keepIds.has(m.id)) : msgs;
+    if (!targets.size) break;                          // only kept messages remain
     let removed = 0;
-    try { const d = await channel.bulkDelete(msgs, true); removed = d.size; } catch {}   // true = ignore >14d
-    if (removed < msgs.size) {                         // leftovers are >14d - bulkDelete skips them
-      for (const m of msgs.values()) { try { await m.delete(); removed++; } catch {} }
+    try { const d = await channel.bulkDelete(targets, true); removed = d.size; } catch {}   // true = ignore >14d
+    if (removed < targets.size) {                      // leftovers are >14d - bulkDelete skips them
+      for (const m of targets.values()) { try { await m.delete(); removed++; } catch {} }
     }
     total += removed;
     if (removed === 0) break;                          // nothing deletable (e.g. missing permission) - stop
@@ -200,8 +204,11 @@ async function purgeChannel(channelId) {
 // partially succeeds can't result in a duplicate the way an unconditional reset would.
 async function refreshLeaderboardChannels() {
   const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, ARREST_LEADERBOARD_CHANNEL, PLAYERLIST_CHANNEL, DASHBOARD_CHANNEL].filter(Boolean))];
+  // Keep the tracked board messages so a restart edits them in place rather than
+  // deleting + reposting - only stray/orphan messages get cleared.
+  const keepIds = new Set(["leaderboard", "arrestBoard", "playerList", "dashboard"].map(getAutopostMsgId).filter(Boolean));
   for (const ch of channels) {
-    try { const n = await purgeChannel(ch); if (n) logger.info("Purge", `Cleared ${n} old message(s) from channel ${ch}`); }
+    try { const n = await purgeChannel(ch, keepIds); if (n) logger.info("Purge", `Cleared ${n} old message(s) from channel ${ch}`); }
     catch (e) { logger.warn("Purge", `Could not purge ${ch}: ${e.message}`); }
   }
   postLeaderboard(); postArrestBoard(); postPlayerList(); if (DASHBOARD_CHANNEL) postDashboard();
