@@ -167,6 +167,28 @@ test("/subclass assigns and removes, and rejects duplicates / bad sub-classes", 
   }
 });
 
+test("a member can hold at most one sub-class", async () => {
+  const store = makeStore(); store.member.NYPD.add("max"); store.sub.NYPD["max"] = new Set(["Detective"]);
+  const { ctx } = makeCtx(store);
+  const h = require("../commands/factions.js")(ctx);
+  // assigning a SECOND, different sub-class is refused
+  {
+    const { interaction, out } = makeInteraction({ strings: { playerid: "Max", subclass: "Tactical Response Unit" } });
+    await h.subclass(interaction);
+    assert.match(text(out), /Already Has a Sub-class/);
+    assert.deepEqual([...store.sub.NYPD["max"]], ["Detective"], "second sub-class not added");
+  }
+  // but removing the first, then assigning the new one works
+  {
+    const r = makeInteraction({ strings: { playerid: "Max", subclass: "Detective" }, booleans: { remove: true } });
+    await h.subclass(r.interaction);
+    const a = makeInteraction({ strings: { playerid: "Max", subclass: "Tactical Response Unit" } });
+    await h.subclass(a.interaction);
+    assert.match(text(a.out), /Sub-class Assigned/);
+    assert.deepEqual([...store.sub.NYPD["max"]], ["Tactical Response Unit"]);
+  }
+});
+
 test("/subclass and /promotion require manage permission", async () => {
   const store = makeStore(); store.member.NYPD.add("tony");
   const { ctx } = makeCtx(store, { hasModRole: () => false, hasWhitelistManageRole: () => false });

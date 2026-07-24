@@ -234,16 +234,24 @@ module.exports = (ctx) => {
           const list = Object.keys(subs);
           return interaction.reply({ embeds: [errorEmbed("No Such Sub-class", `**${faction}** has ${list.length ? `these sub-classes: ${list.map(s => `**${s}**`).join(", ")}` : "no sub-classes"}.`)], flags: MessageFlags.Ephemeral });
         }
-        const has = getPlayerSubclasses(faction, playerId).includes(subclass);
+        const held = getPlayerSubclasses(faction, playerId);
+        const has  = held.includes(subclass);
         if (removing && !has) return interaction.reply({ embeds: [warningEmbed("Not Assigned", `\`${playerId}\` does not hold the **${subclass}** sub-class.`)], flags: MessageFlags.Ephemeral });
         if (!removing && has) return interaction.reply({ embeds: [warningEmbed("Already Assigned", `\`${playerId}\` already holds the **${subclass}** sub-class.`)], flags: MessageFlags.Ephemeral });
+        // A member may hold their rank plus at most ONE sub-class.
+        if (!removing) {
+          const others = held.filter(s => s !== subclass);
+          if (others.length) {
+            return interaction.reply({ embeds: [errorEmbed("Already Has a Sub-class", `\`${playerId}\` already holds the **${others.join(", ")}** sub-class. A member can only hold one sub-class - remove that first (\`/subclass\` with \`remove\` set to true), then assign **${subclass}**.`)], flags: MessageFlags.Ephemeral });
+          }
+        }
         const ok = removing ? removePlayerFromSubclassFile(faction, playerId, subclass) : addPlayerToSubclassFile(faction, playerId, subclass);
         if (!ok) return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the **${subclass}** file for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });
         writeFactionAudit({ action: removing ? "subclass-remove" : "subclass-add", faction, playerId, subclass, by: interaction.user.tag });
         writeModLog({ action: removing ? "faction-subclass-remove" : "faction-subclass-add", playerId, faction, subclass, by: interaction.user.tag });
-        const held = getPlayerSubclasses(faction, playerId);
+        const heldNow = getPlayerSubclasses(faction, playerId);
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle(removing ? "Sub-class Removed" : "Sub-class Assigned")
-          .setDescription(`**${interaction.user.username}** ${removing ? "removed" : "assigned"} the **${subclass}** sub-class ${removing ? "from" : "to"} **${playerId}** in **${faction}**.\nSub-classes held: ${held.length ? held.map(s => `**${s}**`).join(", ") : "none"}.`);
+          .setDescription(`**${interaction.user.username}** ${removing ? "removed" : "assigned"} the **${subclass}** sub-class ${removing ? "from" : "to"} **${playerId}** in **${faction}**.\nSub-classes held: ${heldNow.length ? heldNow.map(s => `**${s}**`).join(", ") : "none"}.`);
         brand(embed); await logAction(embed);
         return interaction.reply({ embeds: [embed] });
         },
