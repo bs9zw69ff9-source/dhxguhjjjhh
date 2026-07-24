@@ -5,7 +5,7 @@ module.exports = (ctx) => {
   const {
   ALL_FACTIONS, DIVIDER, EmbedBuilder, FACTION_BAK_DIR, MessageFlags, NV,
   SPAWN_FILE_MAP, addPlayerToRankFile, bar, brand, confirmDialog,
-  countFactionRank, emptyIdEmbed, errorEmbed, factionLeaderOnlyEmbed, formatPlaytime, getFactionCap,
+  countFactionRank, emptyIdEmbed, errorEmbed, factionLeaderOnlyEmbed, formatPlaytime, getFactionCap, getFactionRankCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
   getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, getPlayerFactions,
   addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles, hasModRole, hasWhitelistManageRole,
@@ -77,7 +77,8 @@ module.exports = (ctx) => {
           const summary = getFactionRankOrder(faction).slice().reverse().map(r => {
             const n = countFactionRank(faction, r);   // file-based: counts every holder (a member may hold several ranks)
             if (!n) return null;
-            return `${getFactionRankBadge(faction, r)} ${r}: **${n}**`;
+            const rc = getFactionRankCap(faction, r);
+            return `${getFactionRankBadge(faction, r)} ${r}: **${n}${Number.isFinite(rc) ? `/${rc}` : ""}**`;
           }).filter(Boolean).join("  -  ");
           const lines = members.map((m, i) =>
             `\`${String(i + 1).padStart(2, "0")}\`  ${getFactionRankBadge(faction, m.rank)}  **${m.playerId}**  -  *${(m.ranks || [m.rank]).join(", ")}*`);
@@ -147,6 +148,11 @@ module.exports = (ctx) => {
           const cap = getFactionCap(faction);
           if (lines.length >= cap) {
             return interaction.reply({ embeds: [errorEmbed("Whitelist Full", `**${faction}** is at capacity (**${lines.length}/${cap}** members).\n\nUse \`/whitelist setcap\` to increase the limit, or remove a member first.`)], flags: MessageFlags.Ephemeral });
+          }
+          // Per-rank limit: new members always join at the lowest rank.
+          const rankCap = getFactionRankCap(faction, rank);
+          if (countFactionRank(faction, rank) >= rankCap) {
+            return interaction.reply({ embeds: [errorEmbed(`${rank} Slots Full`, `**${faction}** already has the maximum **${rankCap}** ${rank}${rankCap !== 1 ? "s" : ""}. Promote or remove someone before adding another.`)], flags: MessageFlags.Ephemeral });
           }
           lines.push(playerId);
           if (!writeFactionFile(spawn, lines)) {
@@ -257,6 +263,11 @@ module.exports = (ctx) => {
     if (nidx < 0)            return interaction.reply({ embeds: [warningEmbed("Lowest Rank", `\`${playerId}\` is already at the lowest rank in **${faction}** (**${order[0]}**).`)], flags: MessageFlags.Ephemeral });
     if (nidx >= order.length) return interaction.reply({ embeds: [warningEmbed("Highest Rank", `\`${playerId}\` is already at the highest rank in **${faction}** (**${order[order.length - 1]}**).`)], flags: MessageFlags.Ephemeral });
     const newRank = order[nidx];
+    // Per-rank limit: refuse to move someone into a rank that's already full.
+    const rankCap = getFactionRankCap(faction, newRank);
+    if (countFactionRank(faction, newRank) >= rankCap) {
+      return interaction.reply({ embeds: [errorEmbed(`${newRank} Slots Full`, `**${faction}** already has the maximum **${rankCap}** ${newRank}${rankCap !== 1 ? "s" : ""}. ${dir > 0 ? "Free up a slot before promoting into it." : "Move someone out of it first."}`)], flags: MessageFlags.Ephemeral });
+    }
     removePlayerFromAllRankFiles(faction, playerId);        // one rank at a time - clear old rank files (sub-classes are untouched)
     if (!addPlayerToRankFile(faction, playerId, newRank)) {
       return interaction.reply({ embeds: [errorEmbed("Write Failed", `Could not update the rank files for **${faction}**. Nothing was changed.`)], flags: MessageFlags.Ephemeral });

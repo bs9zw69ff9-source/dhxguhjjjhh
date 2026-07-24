@@ -73,6 +73,7 @@ function makeCtx(store) {
     setFactionRank: async (f, pid, r) => { store.rank[f][pid.toLowerCase()] = r; },
     removeFactionRank: async (f, pid) => { delete store.rank[f][pid.toLowerCase()]; },
     countFactionRank: (f, r) => Object.values(store.rank[f] || {}).filter(x => x === r).length,
+    getFactionRankCap: (f, r) => { const c = FACTION_RANKS[f]?.rankCaps?.[r]; return Number.isFinite(c) ? c : Infinity; },
   };
   return { ctx, calls };
 }

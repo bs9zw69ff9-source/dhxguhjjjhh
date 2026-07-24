@@ -44,6 +44,7 @@ function makeCtx(store, over = {}) {
     ALL_FACTIONS: Object.keys(FACTION_RANKS), SPAWN_FILE_MAP: {}, getFactionRankConfig: (f) => FACTION_RANKS[f],
     getFactionDefaultRank: (f) => FACTION_RANKS[f]?.default, getFactionMembers: () => null, getFactionRankBadge: () => "",
     getFactionCap: () => 50, countFactionRank: () => 0, getPlayerRanks: () => [], readFactionFile: () => [],
+    getFactionRankCap: (f, r) => { const c = FACTION_RANKS[f]?.rankCaps?.[r]; return Number.isFinite(c) ? c : Infinity; },
     writeFactionFile: () => true, removeFactionRank: async () => {}, removePlayerFromAllSubclassFiles: () => {},
     isOwner: () => false, loadPlaytime: () => ({}), paginate: async () => {}, confirmDialog: async () => true,
     wipeFaction: async () => ({}), successEmbed: (t, d) => new EmbedBuilder().setTitle(t).setDescription(String(d)),
@@ -108,6 +109,27 @@ test("/promotion on a non-member is refused", async () => {
   const { interaction, out } = makeInteraction({ strings: { playerid: "Ghost" } });
   await h.promotion(interaction);
   assert.match(text(out), /Not Whitelisted/);
+});
+
+test("mafia rank caps block a promotion into a full rank", async () => {
+  const store = makeStore(); store.member.Gambino.add("vito"); store.rank.Gambino["vito"] = "Soldier";
+  // Capo cap is 3 (from FACTION_RANKS.rankCaps); pretend all 3 slots are taken.
+  const { ctx } = makeCtx(store, { countFactionRank: (f, r) => (f === "Gambino" && r === "Capo") ? 3 : 0 });
+  const h = require("../commands/factions.js")(ctx);
+  const { interaction, out } = makeInteraction({ strings: { playerid: "Vito" } });
+  await h.promotion(interaction);          // Soldier -> Capo, but Capo is full
+  assert.match(text(out), /Capo Slots Full/);
+  assert.equal(store.rank.Gambino["vito"], "Soldier", "rank unchanged when the target is full");
+});
+
+test("an uncapped mafia rank (Consigliere) is never limited", async () => {
+  const store = makeStore(); store.member.Gambino.add("paul"); store.rank.Gambino["paul"] = "Capo";
+  const { ctx } = makeCtx(store, { countFactionRank: () => 99 });   // everything looks "full"
+  const h = require("../commands/factions.js")(ctx);
+  const { interaction, out } = makeInteraction({ strings: { playerid: "Paul" } });
+  await h.promotion(interaction);          // Capo -> Consigliere (no cap)
+  assert.match(text(out), /Consigliere/);
+  assert.equal(store.rank.Gambino["paul"], "Consigliere");
 });
 
 test("/subclass assigns and removes, and rejects duplicates / bad sub-classes", async () => {

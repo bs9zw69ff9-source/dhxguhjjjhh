@@ -23,6 +23,14 @@ const FACTION_RANKS = {
       "Underboss":   "gambinounderboss.txt",
       "Boss":        "gambinoboss.txt",
     },
+    // Per-rank member limits. A rank not listed here is uncapped (Consigliere).
+    rankCaps: {
+      "Associate": 18,
+      "Soldier":   12,
+      "Capo":       3,
+      "Underboss":  1,
+      "Boss":       1,
+    },
   },
   "Colombo": {
     order:   ["Associate", "Soldier", "Capo", "Consigliere", "Underboss", "Boss"],
@@ -42,6 +50,14 @@ const FACTION_RANKS = {
       "Consigliere": "colomboconsigliere.txt",
       "Underboss":   "colombounderboss.txt",
       "Boss":        "colomboboss.txt",
+    },
+    // Per-rank member limits. A rank not listed here is uncapped (Consigliere).
+    rankCaps: {
+      "Associate": 18,
+      "Soldier":   12,
+      "Capo":       3,
+      "Underboss":  1,
+      "Boss":       1,
     },
   },
   "NYPD": {

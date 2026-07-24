@@ -737,6 +737,12 @@ function countFactionRank(faction, rank) {
   return members.filter(m => m.rank === rank).length;
 }
 
+/** Per-rank member limit for a faction rank, or Infinity when that rank is uncapped. */
+function getFactionRankCap(faction, rank) {
+  const cap = FACTION_RANKS[faction]?.rankCaps?.[rank];
+  return Number.isFinite(cap) ? cap : Infinity;
+}
+
 /* Pavlov server installs, kept in sync. Every game file the bot writes (bans,
    faction roles, donator, economy) is mirrored into EVERY install so all servers
    stay identical. By default we auto-detect every "pavlovserver*" directory next
@@ -2787,7 +2793,7 @@ const { onInteraction } = require("./commands")({
   recordArrest, startSentence, announceArrest, logPolice, getArrests, totalJailServed, suspendRank,
   getBailRate, setBailRate,
   firewallStatus, firewallUnblockIps, formatKD, formatPlaytime, formatTimeLeft,
-  formatUptime, fs, getFactionCap,
+  formatUptime, fs, getFactionCap, getFactionRankCap,
   getFactionDefaultRank, getFactionMembers, getFactionRank, getFactionRankBadge, getFactionRankConfig,
   getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles,
   verifiedDiscordForName,
