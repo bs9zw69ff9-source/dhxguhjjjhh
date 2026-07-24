@@ -68,7 +68,7 @@ function makeInteraction(opts = {}) {
 const text = (out) => out.replies.map(p => (p.embeds ?? []).map(e => `${e.data.title ?? ""} ${e.data.description ?? ""}`).join(" ")).join(" ");
 
 test("/promotion and /demotion walk the NYPD rank ladder", async () => {
-  const store = makeStore(); store.member.NYPD.add("tony");   // starts at Patrolman (default)
+  const store = makeStore(); store.member.NYPD.add("tony"); store.rank.NYPD["tony"] = "Patrolman";
   const { ctx } = makeCtx(store);
   const h = require("../commands/factions.js")(ctx);
 
@@ -84,7 +84,7 @@ test("/promotion and /demotion walk the NYPD rank ladder", async () => {
 });
 
 test("/demotion at the lowest rank is refused", async () => {
-  const store = makeStore(); store.member.NYPD.add("rook");   // Patrolman
+  const store = makeStore(); store.member.NYPD.add("rook");   // Cadet (lowest, default)
   const { ctx } = makeCtx(store);
   const h = require("../commands/factions.js")(ctx);
   const { interaction, out } = makeInteraction({ strings: { playerid: "Rook" } });

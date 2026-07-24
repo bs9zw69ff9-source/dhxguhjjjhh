@@ -61,9 +61,10 @@ const FACTION_RANKS = {
     },
   },
   "NYPD": {
-    order:   ["Patrolman", "Corporal", "Sergeant", "Lieutenant", "Captain", "Deputy Chief", "Chief of Police"],
-    default: "Patrolman",
+    order:   ["Cadet", "Patrolman", "Corporal", "Sergeant", "Lieutenant", "Captain", "Deputy Chief", "Chief of Police"],
+    default: "Cadet",
     badges:  {
+      "Cadet":           "",
       "Patrolman":       "",
       "Corporal":        "",
       "Sergeant":        "",
@@ -73,6 +74,7 @@ const FACTION_RANKS = {
       "Chief of Police": "",
     },
     rankFiles: {
+      "Cadet":           "policecadet.txt",
       "Patrolman":       "policepatrolman.txt",
       "Corporal":        "policecorporal.txt",
       "Sergeant":        "policesergeant.txt",
@@ -81,11 +83,23 @@ const FACTION_RANKS = {
       "Deputy Chief":    "policedeputychief.txt",
       "Chief of Police": "policechief.txt",
     },
+    // Per-rank member limits. Every NYPD rank is capped.
+    rankCaps: {
+      "Cadet":           50,
+      "Patrolman":       20,
+      "Corporal":        15,
+      "Sergeant":        20,
+      "Lieutenant":       8,
+      "Captain":          4,
+      "Deputy Chief":     1,
+      "Chief of Police":  1,
+    },
     // Sub-classes are NOT ranks - a member keeps their rank and can also be
-    // assigned one of these (its own FactionRoles .txt), via /subclass.
+    // assigned one of these (its own FactionRoles .txt whitelist), via /subclass.
     subclasses: {
-      "Vice Officer": "policevice.txt",
-      "Detective":    "policedetective.txt",
+      "Vice Officer":           "policevice.txt",
+      "Detective":              "policedetective.txt",
+      "Tactical Response Unit": "policetacticalresponse.txt",
     },
   },
 };
