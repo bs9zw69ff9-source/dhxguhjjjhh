@@ -3,7 +3,7 @@
    (a plain object built in index.js). Usage: require("./leaderboards")(ctx). */
 module.exports = function(ctx) {
   const {
-  ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
+  ACTIVE_SERVERS, ARREST_LEADERBOARD_CHANNEL, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
   GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
   bar, brand, cell, client, loadMenuGrants,
   fs, getModsavePath, hero, logger, meter,
@@ -83,6 +83,60 @@ async function postLeaderboard() {
   try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("leaderboard", m.id); } catch {}
 }
 
+/* ---- arrests / jail-time "most wanted" board ---- */
+// Rank players by total jail time served (then arrest count) from the arrests
+// registry. Each stored arrest has { playerId, minutes, ... }; the map key is the
+// lowercased name, so we prefer the display-case playerId off the entries.
+const jailMin = (a) => Number(a.minutes) || 0;
+function buildArrestBoardData() {
+  const all = safeRead(FILES.ARRESTS, {});
+  const rows = [];
+  for (const [key, list] of Object.entries(all)) {
+    const arr = Array.isArray(list) ? list : (list ? [list] : []);
+    if (!arr.length) continue;
+    rows.push({
+      playerId: arr[arr.length - 1]?.playerId || key,
+      arrests:  arr.length,
+      jail:     arr.reduce((s, a) => s + jailMin(a), 0),
+    });
+  }
+  rows.sort((a, b) => b.jail - a.jail || b.arrests - a.arrests);
+  const top = rows.slice(0, LEADERBOARD_TOP_N);
+  top.totalArrests = rows.reduce((s, r) => s + r.arrests, 0);
+  top.totalJail    = rows.reduce((s, r) => s + r.jail, 0);
+  top.totalPlayers = rows.length;
+  return top;
+}
+
+function buildArrestBoardEmbed() {
+  const rows = buildArrestBoardData();
+  const embed = new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`Most Wanted - Top ${LEADERBOARD_TOP_N}`);
+  if (!rows.length) return brand(embed.setColor(NV.IRRAD_GREEN)
+    .setDescription(`${hero("A quiet night in town.")}\nNo arrests on record yet.`),
+    { footer: { text: "Updated every 30s" } });
+  const topJail = rows[0]?.jail || 1;
+  const body = rows.map((e, i) => {
+    const m = i < 5 ? `  \`${bar(e.jail, topJail, 8)}\`` : "";
+    return `${rankLabel(i)}  **${e.playerId}**  -  ${e.arrests} arrest${e.arrests !== 1 ? "s" : ""}, ${e.jail.toLocaleString()} min${m}`;
+  }).join("\n");
+  return brand(embed.setDescription(
+    `${hero("The rap sheet never forgets.")}\n${GLYPH.rank} **Combined: ${rows.totalArrests.toLocaleString()} arrest${rows.totalArrests !== 1 ? "s" : ""}, ${rows.totalJail.toLocaleString()} min served** across **${rows.totalPlayers}** offender${rows.totalPlayers !== 1 ? "s" : ""}\n${body}`),
+    { footer: { text: "Updated every 30s" } });
+}
+
+async function postArrestBoard() {
+  if (!ARREST_LEADERBOARD_CHANNEL) return;
+  let channel;
+  try { channel = await client.channels.fetch(ARREST_LEADERBOARD_CHANNEL); } catch { return; }
+  const embed = buildArrestBoardEmbed();
+  const existingId = getAutopostMsgId("arrestBoard");
+  if (existingId) {
+    try { const m = await channel.messages.fetch(existingId); await m.edit({ embeds: [embed] }); return; }
+    catch { setAutopostMsgId("arrestBoard", null); }
+  }
+  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("arrestBoard", m.id); } catch {}
+}
+
 /* Live player list - edits its own message in a channel every 30s. */
 function buildPlayerListEmbed() {
   // Tag connected players who hold a Staff / High Staff RCON menu (granted through
@@ -155,12 +209,12 @@ async function purgeChannel(channelId) {
 // limit), postLeaderboard() et al. will still find and edit it - so a purge that only
 // partially succeeds can't result in a duplicate the way an unconditional reset would.
 async function refreshLeaderboardChannels() {
-  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, PLAYERLIST_CHANNEL, DASHBOARD_CHANNEL].filter(Boolean))];
+  const channels = [...new Set([process.env.LEADERBOARD_CHANNEL, ARREST_LEADERBOARD_CHANNEL, PLAYERLIST_CHANNEL, DASHBOARD_CHANNEL].filter(Boolean))];
   for (const ch of channels) {
     try { const n = await purgeChannel(ch); if (n) logger.info("Purge", `Cleared ${n} old message(s) from channel ${ch}`); }
     catch (e) { logger.warn("Purge", `Could not purge ${ch}: ${e.message}`); }
   }
-  postLeaderboard(); postPlayerList(); if (DASHBOARD_CHANNEL) postDashboard();
+  postLeaderboard(); postArrestBoard(); postPlayerList(); if (DASHBOARD_CHANNEL) postDashboard();
 }
 
 // Live server-status dashboard: one self-refreshing embed with per-server
@@ -230,5 +284,5 @@ async function postDashboard() {
 }
 
 
-  return { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId };
+  return { buildArrestBoardData, buildArrestBoardEmbed, buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postArrestBoard, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId };
 };

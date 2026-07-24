@@ -309,6 +309,7 @@ const getArrests  = (playerId) => _asList(loadArrests()[String(playerId).toLower
 const totalJailServed = (playerId) => getArrests(playerId).reduce((s, a) => s + (Number(a.minutes) || 0), 0);
 async function recordArrest(playerId, charges, by, rate = 1) {
   const entry = {
+    playerId,   // display-case name, so the arrests board doesn't show the lowercased key
     charges: charges.map(c => ({ code: c.code, name: c.name, cls: c.cls, min: c.min, bail: c.bail ?? null, special: c.special || null })),
     minutes: charges.reduce((s, c) => s + (c.min || 0), 0),
     // Bail is stamped at the rate in effect when the arrest was made, so history
@@ -622,6 +623,8 @@ const PLAYERLIST_CHANNEL      = process.env.PLAYERLIST_CHANNEL || "1520598950787
 const PLAYERLIST_INTERVAL_MS  = 30 * 1000;
 const DASHBOARD_CHANNEL       = process.env.DASHBOARD_CHANNEL || "";
 const DASHBOARD_INTERVAL_MS   = 30 * 1000;
+/* Channel the arrests / jail-time "most wanted" board auto-updates in, every 30s. */
+const ARREST_LEADERBOARD_CHANNEL = process.env.ARREST_LEADERBOARD_CHANNEL || "1530235619631173773";
 const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 /* Channel a short changelog posts to whenever the bot restarts on a new commit
    (override with UPDATE_LOG_CHANNEL). */
@@ -2269,8 +2272,8 @@ async function processExpiredBans() {
 }
 
 // ---- leaderboards: caps/playtime boards, player list, live dashboard (extracted to ./leaderboards) ----
-const { buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
-  ACTIVE_SERVERS, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
+const { buildArrestBoardData, buildArrestBoardEmbed, buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postArrestBoard, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId } = require("./leaderboards")({
+  ACTIVE_SERVERS, ARREST_LEADERBOARD_CHANNEL, DASHBOARD_CHANNEL, DASHBOARD_INTERVAL_MS, DIVIDER, EmbedBuilder, FILES,
   GLYPH, LEADERBOARD_TOP_N, NV, PLAYERLIST_CHANNEL, allCachedPlayers,
   bar, brand, cell, client, loadMenuGrants,
   fs, getModsavePath, hero, logger, meter,
@@ -2688,6 +2691,7 @@ setInterval(() => { sentenceSweep().catch(() => {}); }, 30_000);          // ann
 setInterval(() => { rankSuspensionSweep().catch(() => {}); }, 30_000);    // restore expired rank suspensions
 // (ufw is manual-only via /firewall - no periodic auto-block/reconcile of ban IPs)
 setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
+if (ARREST_LEADERBOARD_CHANNEL) setInterval(postArrestBoard, LEADERBOARD_INTERVAL_MS);
 setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
 if (DASHBOARD_CHANNEL) setInterval(postDashboard, DASHBOARD_INTERVAL_MS);
 setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
@@ -2711,6 +2715,7 @@ setTimeout(() => {
 }, 30_000);
 
 setTimeout(postLeaderboard, 20_000);
+if (ARREST_LEADERBOARD_CHANNEL) setTimeout(postArrestBoard, 20_000);
 }
 
 
