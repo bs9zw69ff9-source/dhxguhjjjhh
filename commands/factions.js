@@ -280,7 +280,7 @@ module.exports = (ctx) => {
     writeFactionAudit({ action: up ? "promote" : "demote", faction, playerId, from: current, to: newRank, by: interaction.user.tag });
     writeModLog({ action: up ? "faction-promote" : "faction-demote", playerId, faction, from: current, to: newRank, by: interaction.user.tag });
     const embed = new EmbedBuilder().setColor(up ? NV.IRRAD_GREEN : NV.AMBER).setTitle(up ? "Promoted" : "Demoted")
-      .setDescription(`**${interaction.user.username}** ${up ? "promoted" : "demoted"} **${playerId}** in **${faction}**: ${rankBadge(faction, current)} **${current}** → ${rankBadge(faction, newRank)} **${newRank}**.`);
+      .setDescription(`**${interaction.user.username}** ${up ? "promoted" : "demoted"} **${playerId}** in **${faction}**: ${rankBadge(faction, current)} → ${rankBadge(faction, newRank)}.`);
     brand(embed); await logAction(embed);
     return interaction.reply({ embeds: [embed] });
   }
