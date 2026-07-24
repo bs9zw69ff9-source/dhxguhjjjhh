@@ -46,6 +46,13 @@ ban_reconcile_state.json
 autopost_state.json
 vpn_checks.json
 server_stats.json
+warrants.json
+verifications.json
+verify_state.json
+arrests.json
+sentences.json
+rank_suspensions.json
+police_config.json
 
 # Runtime state (ipBans.js)
 ip_registry.json
