@@ -1172,7 +1172,7 @@ function healTreeOwnership() {
 // Extracted to ./discord/theme.js. getClient is lazy so this module loads before
 // the Discord client exists; the avatar/version footer resolve at send time.
 const {
-  NV, CLIN, QUOTES, randomQuote,
+  NV, CLIN,
   DIVIDER, RULE, BRAND_NAME, GLYPH,
   brandIcon, brand, clampEmbed,
   bar, meter, pip, cell, hero, clinical,
@@ -1568,7 +1568,7 @@ function logBan(embed) {
 const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
   ACTIVE_SERVERS, CLIN, DIVIDER, EmbedBuilder, FILES, NV,
   banWithIp, brand, clinical, hero, isMasterName,
-  logAction, logBan, logger, postFeed, randomQuote, safeRead,
+  logAction, logBan, logger, postFeed, safeRead,
   update, upsertPermBan, writeModLog, isAutobanExempt: (...a) => isAutobanExempt(...a),
 });
 
@@ -2741,7 +2741,7 @@ const {  } = require("./events")({
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
-  mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged, randomQuote,
+  mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
@@ -2800,7 +2800,7 @@ const { onInteraction } = require("./commands")({
   extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
   modOnlyEmbed, ownerOnlyEmbed, paginate, parseDuration, parseRcon,
-  patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, punishDurationLabel, randomQuote,
+  patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, punishDurationLabel,
   rankBadge, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
   readPlayerBalance, refreshPlayerCache, removeBans, removeDonator, removeFactionRank,
   removeMenuGrant, removePlayerFromAllRankFiles, removePlayerFromRankFile, removeUserBlacklist, sanitizeBanName, sanitizeId,

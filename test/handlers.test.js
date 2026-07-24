@@ -28,7 +28,7 @@ function makeCtx(over = {}) {
     ownerOnlyEmbed: () => new EmbedBuilder().setTitle("owner only"),
     sanitizeId: (x) => String(x ?? "").trim(), sanitizeBanName: (x) => String(x ?? "").trim(),
     serverLabel: (s) => "Server 1", punishDurationLabel: (p) => "2 days", easternNoonUTC: () => null,
-    formatTimeLeft: () => "1d", randomQuote: () => "q",
+    formatTimeLeft: () => "1d",
     isMasterName: (n) => String(n).toLowerCase() === "master",
     isAutobanExempt: () => false, isProtectedPlayer: () => false,
     isDonator: () => false, isMasterIp: () => false, isOwner: () => false,

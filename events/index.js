@@ -10,7 +10,7 @@ module.exports = function(ctx) {
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
   healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
-  mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged, randomQuote,
+  mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
@@ -181,7 +181,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       logger.warn("IPGuard", `Auto-banned ${name} - ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
       const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red)
         .setTitle("Auto-Ban - Ban Evasion")
-        .setDescription(`${hero(randomQuote("autoban"))}\n\n**${name}** was auto-banned for ${banReason} - caught by ${reason || "match"}${ip ? ` from \`${ip}\`` : ""}${uniqueId ? ` (id \`${uniqueId}\`)` : ""}. Banned and kicked on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s).`),
+        .setDescription(`**${name}** was auto-banned for ${banReason} - caught by ${reason || "match"}${ip ? ` from \`${ip}\`` : ""}${uniqueId ? ` (id \`${uniqueId}\`)` : ""}. Banned and kicked on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s).`),
         "Auto-ban - native RCON ban - all servers");
       await logBan(banEmbed);   // dedicated ban-log channel (falls back to mod-log)
       postFeed(banEmbed);       // also surface it in the connection feed

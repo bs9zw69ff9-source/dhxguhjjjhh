@@ -27,7 +27,7 @@ function makeCtx(store) {
     NV: { GOLD: 1, IRRAD_GREEN: 2, NCR_TAN: 3, AMBER: 4, RUST_RED: 5 },
     ALL_FACTIONS: Object.keys(SPAWN_FILE_MAP), SPAWN_FILE_MAP, FACTION_BAK_DIR: "/tmp/bak",
     DIVIDER: "", bar: () => "", meter: () => "", path: require("path"), spawn: () => {},
-    brand: (e) => e, randomQuote: () => "q", rankLabel: (i) => `#${i}`,
+    brand: (e) => e, rankLabel: (i) => `#${i}`,
     formatPlaytime: (m) => `${m}m`, loadPlaytime: () => ({}),
     emptyIdEmbed: () => new EmbedBuilder().setTitle("need id"),
     errorEmbed: (t, d) => new EmbedBuilder().setTitle(`err ${t}`).setDescription(String(d)),

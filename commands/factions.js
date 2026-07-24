@@ -10,7 +10,7 @@ module.exports = (ctx) => {
   getFactionRankOrder, getFactionSubclasses, getPlayerSubclasses, getPlayerFactions,
   addPlayerToSubclassFile, removePlayerFromSubclassFile, removePlayerFromAllSubclassFiles, hasModRole, hasWhitelistManageRole,
   isOwner, loadPlaytime, logAction, logger, meter,
-  ownerOnlyEmbed, paginate, path, randomQuote, rankBadge,
+  ownerOnlyEmbed, paginate, path, rankBadge,
   rankLabel, readFactionFile, removeFactionRank, removePlayerFromAllRankFiles,
   sanitizeId, setFactionRank, spawn, successEmbed,
   update, warningEmbed, wipeFaction, writeFactionAudit, writeFactionFile, writeModLog,

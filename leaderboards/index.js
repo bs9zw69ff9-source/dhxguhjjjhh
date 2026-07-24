@@ -56,7 +56,7 @@ function buildLeaderboardEmbed() {
     return `${rankLabel(i)}  **${e.playerId}**  -  $${e.balance.toLocaleString()}${meter}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("Fortunes rise and fall. The ledger keeps score.")}\n${GLYPH.caps} **Combined: $${(entries.totalCaps ?? 0).toLocaleString()}** across **${entries.totalPlayers ?? entries.length}** ledgers\n${body}`),
+    `${hero("Players ranked by account balance, highest first.")}\n${GLYPH.caps} **Combined: $${(entries.totalCaps ?? 0).toLocaleString()}** across **${entries.totalPlayers ?? entries.length}** ledgers\n${body}`),
     { thumb: true, footer: { text: `Updated every 30s` } });
 }
 
@@ -112,7 +112,7 @@ function buildArrestBoardEmbed() {
   const rows = buildArrestBoardData();
   const embed = new EmbedBuilder().setColor(NV.RUST_RED).setTitle(`Most Wanted - Top ${LEADERBOARD_TOP_N}`);
   if (!rows.length) return brand(embed.setColor(NV.IRRAD_GREEN)
-    .setDescription(`${hero("A quiet night in town.")}\nNo arrests on record yet.`),
+    .setDescription(hero("No arrests have been recorded yet.")),
     { footer: { text: "Updated every 30s" } });
   const topJail = rows[0]?.jail || 1;
   const body = rows.map((e, i) => {
@@ -120,7 +120,7 @@ function buildArrestBoardEmbed() {
     return `${rankLabel(i)}  **${e.playerId}**  -  ${e.arrests} arrest${e.arrests !== 1 ? "s" : ""}, ${e.jail.toLocaleString()} min${m}`;
   }).join("\n");
   return brand(embed.setDescription(
-    `${hero("The rap sheet never forgets.")}\n${GLYPH.rank} **Combined: ${rows.totalArrests.toLocaleString()} arrest${rows.totalArrests !== 1 ? "s" : ""}, ${rows.totalJail.toLocaleString()} min served** across **${rows.totalPlayers}** offender${rows.totalPlayers !== 1 ? "s" : ""}\n${body}`),
+    `${hero("Players ranked by total jail time served.")}\n${GLYPH.rank} **Combined: ${rows.totalArrests.toLocaleString()} arrest${rows.totalArrests !== 1 ? "s" : ""}, ${rows.totalJail.toLocaleString()} min served** across **${rows.totalPlayers}** offender${rows.totalPlayers !== 1 ? "s" : ""}\n${body}`),
     { footer: { text: "Updated every 30s" } });
 }
 

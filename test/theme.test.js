@@ -72,14 +72,8 @@ test("bar renders monotonic fills at fixed width", () => {
   }
 });
 
-test("quotes are RP-neutral (no Fallout terms) and category-complete", () => {
+test("no flavour quote system is exported (professional tone)", () => {
   const t = theme();
-  const all = JSON.stringify(t.QUOTES);
-  assert.ok(!/Mojave|Vegas|Securitron|Mr\. House|the Strip|Vault|Pip-Boy|Lucky|RobCo|wasteland/i.test(all));
-  for (const cat of ["ban", "unban", "warn", "caps", "system", "wages", "announce", "faction", "kick", "connect", "autoban", "casino"]) {
-    assert.ok(Array.isArray(t.QUOTES[cat]) && t.QUOTES[cat].length > 0, `missing quotes: ${cat}`);
-    assert.ok(t.QUOTES[cat].includes(t.randomQuote(cat)) || true);
-  }
-  // unknown category falls back to system pool
-  assert.ok(t.QUOTES.system.includes(t.randomQuote("nope")));
+  assert.equal(t.QUOTES, undefined);
+  assert.equal(t.randomQuote, undefined);
 });

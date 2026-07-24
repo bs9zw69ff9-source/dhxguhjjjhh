@@ -1,15 +1,14 @@
-/* ---------------- discord/theme: visual system (RP-neutral) ----------------
-   Extracted from index.js. Holds the colour palette, flavour quotes, glyphs, the
-   embed "brand" stamp, and every shared embed builder (success/error/denied/...).
-   Theme-neutral by design so the bot fits ANY RP server: the display name comes
-   from BOT_NAME (env), and the quotes are generic RP-moderation flavour.
+/* ---------------- discord/theme: visual system ----------------
+   Extracted from index.js. Holds the colour palette, glyphs, the embed "brand"
+   stamp, and every shared embed builder (success/error/denied/...). The display
+   name comes from BOT_NAME (env) so the bot can be branded per server.
    The only outside coupling is Discord's EmbedBuilder plus the bot's avatar/version
    for the brand footer - injected as a lazy client accessor + buildId so this loads
    before the Discord client exists and resolves the avatar at send time.
 
    Usage:
      const theme = require("./discord/theme")({ getClient: () => client, buildId: BUILD_ID });
-     const { brand, successEmbed, NV, GLYPH, randomQuote, ... } = theme;
+     const { brand, successEmbed, NV, GLYPH, ... } = theme;
 */
 const { EmbedBuilder } = require("discord.js");
 
@@ -42,98 +41,6 @@ module.exports = function createTheme({ getClient, buildId }) {
     red:   0xF43F5E,   // rose-500   - ban / block / active
     green: 0x4ADE80,   // green-400  - cleared / lifted / no bans
     grey:  0xFBBF24,   // amber-400  - neutral info (lists, checks, connection log)
-  };
-
-  const QUOTES = {
-    ban:     [
-      '"Banned. The rules were posted; you walked past them."',
-      '"You made your choices. This one was made for you."',
-      '"Every server has a line. You crossed it."',
-      '"Access revoked. Actions have consequences."',
-      '"The door is closed, and it locks from our side."',
-      '"You gambled on nobody watching. The house was watching."',
-      '"Out you go. Take the lesson with you."',
-      '"Your name goes in the book - the one nobody wants to be in."',
-    ],
-    unban:   [
-      '"Everyone deserves a second chance. Don\'t waste yours."',
-      '"The gates open once more. Don\'t make us regret it."',
-      '"Exile lifted. Welcome back - play it straight this time."',
-      '"Begin again. The slate is clean, this once."',
-      '"Reinstated. Walk the line."',
-      '"The ban is lifted. The memory isn\'t."',
-    ],
-    warn:    [
-      '"Consider this a warning, friend. We\'re watching."',
-      '"There are eyes everywhere. Don\'t test us again."',
-      '"One more strike and it\'s handled personally."',
-      '"Toe the line - we keep ledgers, and yours has a mark."',
-      '"That\'s one on the record. Collect enough and you\'re done."',
-      '"We\'ve got your number, and it\'s climbing. Slow down."',
-    ],
-    caps:    [
-      '"Fortunes change. Ledgers remember."',
-      '"The economy always collects. Today, it pays."',
-      '"Wealth is just influence you can count."',
-      '"Every balance tells a story."',
-      '"Currency is the only rumor everyone believes."',
-    ],
-    system:  [
-      '"All systems nominal. Monitoring active."',
-      '"Maintenance cycle complete. The server never sleeps."',
-      '"Always watching. Always logging."',
-      '"Terminals online. Perimeter sealed."',
-      '"Reticulating splines..."',
-    ],
-    wages:   [
-      '"The house always pays its debts - eventually."',
-      '"Wages distributed. The economy endures."',
-      '"A fair day\'s work for a fair day\'s pay."',
-      '"Payday. Don\'t spend it all in one place."',
-    ],
-    announce: [
-      '"Attention all players..."',
-      '"Message from the administration..."',
-      '"Broadcast from headquarters..."',
-      '"Now hear this - news from the top..."',
-      '"Cutting through the static with an announcement..."',
-    ],
-    faction: [
-      '"Allegiances are written in blood and coin."',
-      '"Every faction needs soldiers. Every soldier needs orders."',
-      '"The server belongs to those who organise."',
-      '"Rank is earned. Loyalty is proven."',
-      '"Pick your banner and stand by it."',
-    ],
-    kick:    [
-      '"Get out. Don\'t make us ask twice."',
-      '"Shown the door. Mind the step on your way out."',
-      '"You\'re not welcome tonight. Beat it."',
-      '"Ejected. Take a walk and cool off."',
-    ],
-    connect: [
-      '"A new arrival steps in."',
-      '"Boots on the ground. Every arrival is logged."',
-      '"Another wanderer joins the fray."',
-      '"The doors open. Someone\'s come to play."',
-    ],
-    autoban: [
-      '"A barred player tried to slip back in. Denied."',
-      '"We remember every face. Yours wasn\'t welcome."',
-      '"Ban evasion detected. Cheats are not tolerated."',
-      '"Nice try. Long memory, longer reach."',
-    ],
-    casino:  [
-      '"The house always wins. Eventually."',
-      '"Casinos are built on losing streaks just like yours."',
-      '"Fortune favors the bold - and the house favors the odds."',
-      '"Every chip on this table has a story. Most of them end badly."',
-      '"Luck is just another word for a spin no one\'s rigged yet."',
-    ],
-  };
-  const randomQuote = (cat) => {
-    const pool = QUOTES[cat] ?? QUOTES.system;
-    return pool[Math.floor(Math.random() * pool.length)];
   };
 
   // ---- embed builders ----
@@ -249,7 +156,7 @@ module.exports = function createTheme({ getClient, buildId }) {
   }
 
   return {
-    NV, CLIN, QUOTES, randomQuote,
+    NV, CLIN,
     DIVIDER, RULE, BRAND_NAME, GLYPH,
     brandIcon, brand, clampEmbed,
     bar, meter, pip, cell, hero, clinical,

@@ -64,5 +64,5 @@ test("falls back to the map key when an entry has no display name", () => {
 test("empty registry renders the quiet-night board", () => {
   const b = makeBoards({});
   assert.equal(b.buildArrestBoardData().length, 0);
-  assert.match(embedText(b.buildArrestBoardEmbed()), /No arrests on record yet/);
+  assert.match(embedText(b.buildArrestBoardEmbed()), /No arrests have been recorded yet/);
 });

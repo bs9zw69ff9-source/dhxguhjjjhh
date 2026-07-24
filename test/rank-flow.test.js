@@ -48,7 +48,7 @@ function makeCtx(store, over = {}) {
     isOwner: () => false, loadPlaytime: () => ({}), paginate: async () => {}, confirmDialog: async () => true,
     wipeFaction: async () => ({}), successEmbed: (t, d) => new EmbedBuilder().setTitle(t).setDescription(String(d)),
     ownerOnlyEmbed: () => new EmbedBuilder().setTitle("owner"), bar: () => "", meter: () => "", rankLabel: () => "",
-    formatPlaytime: () => "", randomQuote: () => "", path: require("path"), spawn: () => {}, update: async () => {},
+    formatPlaytime: () => "", path: require("path"), spawn: () => {}, update: async () => {},
     DIVIDER: "", FACTION_BAK_DIR: "/tmp", addPlayerToRankFile2: null,
     ...over,
   };

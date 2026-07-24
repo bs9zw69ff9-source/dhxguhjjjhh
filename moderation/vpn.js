@@ -5,7 +5,7 @@ module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, CLIN, DIVIDER, EmbedBuilder, FILES, NV,
   banWithIp, brand, clinical, hero, isAutobanExempt,
-  isMasterName, logAction, logBan, logger, postFeed, randomQuote,
+  isMasterName, logAction, logBan, logger, postFeed,
   safeRead, update, upsertPermBan, writeModLog,
   } = ctx;
 
@@ -179,7 +179,7 @@ async function checkVpnAndAlert(name, ip) {
   logger.warn("VPN", `Auto-banned ${name} - ${label}, ip ${ip}`);
   const embed = clinical(new EmbedBuilder().setColor(CLIN.red)
     .setTitle("Auto-Ban - VPN/Proxy Detected")
-    .setDescription(`${hero(randomQuote("autoban"))}`)
+    .setDescription(hero(`\`${name}\` was automatically banned: a VPN or proxy connection was detected.`))
     .addFields(
       { name: "Player", value: `\`${name}\``, inline: true },
       { name: "IP",      value: `\`${ip}\``,   inline: true },

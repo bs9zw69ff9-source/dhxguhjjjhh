@@ -5,7 +5,7 @@ module.exports = (ctx) => {
   const {
   EmbedBuilder, MessageFlags, NV,
   brand, emptyIdEmbed, errorEmbed,
-  logAction, mutateBalance, randomQuote, sanitizeId,
+  logAction, mutateBalance, sanitizeId,
   writeModLog,
   } = ctx;
 
@@ -26,8 +26,7 @@ module.exports = (ctx) => {
         const newBal = r.after;
         writeModLog({ action: "givecaps", playerId, amount, reason, by: interaction.user.tag });
         const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Dollars Given")
-          .setDescription(`**${interaction.user.username}** gave **${playerId}** **+$${amount.toLocaleString()}** - new balance **$${newBal.toLocaleString()}**. ${reason}`)
-          .setFooter({ text: randomQuote("caps") });
+          .setDescription(`**${interaction.user.username}** gave **${playerId}** **+$${amount.toLocaleString()}** - new balance **$${newBal.toLocaleString()}**. ${reason}`);
         brand(embed); await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },

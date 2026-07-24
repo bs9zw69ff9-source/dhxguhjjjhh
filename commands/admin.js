@@ -10,7 +10,7 @@ module.exports = (ctx) => {
   _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole,
   hasModRole, hero, ipBans, isOwner,
   loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
-  ownerOnlyEmbed, paginate, parseRcon, path, randomQuote, readDonatorFile, redactPrivateInfo, sendRcon,
+  ownerOnlyEmbed, paginate, parseRcon, path, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,

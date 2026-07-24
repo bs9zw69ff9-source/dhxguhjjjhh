@@ -13,7 +13,7 @@ module.exports = (ctx) => {
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
   isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, verifiedDiscordForName, log,
   logAction, logBan, logger, modOnlyEmbed, ownerOnlyEmbed, paginate,
-  preserveBalanceAcrossKick, punishDurationLabel, randomQuote, removeBans, sanitizeBanName,
+  preserveBalanceAcrossKick, punishDurationLabel, removeBans, sanitizeBanName,
   sanitizeId, sendRcon, serverLabel, successEmbed, suspendDonator,
   unbanEverywhere, update, upsertPermBan, upsertTempBan, warningEmbed,
   writeModLog,
@@ -185,7 +185,7 @@ module.exports = (ctx) => {
         });
         const embed = brand(new EmbedBuilder().setColor(NV.AMBER)
           .setTitle(`Staff Leaderboard - ${label.replace(/^\w/, c => c.toUpperCase())}`)
-          .setDescription(`${hero("Who's carrying the moderation load.")}\n**${grand}** moderation action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${lines.join("\n")}`)
+          .setDescription(`${hero("Staff ranked by moderation actions taken.")}\n**${grand}** moderation action${grand !== 1 ? "s" : ""} across **${ranked.length}** staff\n${lines.join("\n")}`)
           .setFooter({ text: "Mod log - bans/kicks/mutes only - automated actions excluded" }));
         return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },
