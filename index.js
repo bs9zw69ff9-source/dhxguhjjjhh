@@ -2088,7 +2088,11 @@ function readPlayerBalance(playerId) {
 function writePlayerBalance(playerId, amount) {
   const fp = getPlayerFilePath(playerId);
   if (!fp) return false;
-  if (writeGameFile(fp, String(Math.max(0, Math.floor(amount))))) return true;   // mirrored to both installs
+  // Refuse a non-finite amount: writing "NaN" would corrupt the ledger file (it
+  // reads back as unparseable, then as 0). Guard at the write boundary.
+  const n = Math.max(0, Math.floor(Number(amount)));
+  if (!Number.isFinite(n)) { logger.error("Balance", `Refused non-numeric balance write for ${playerId}: ${amount}`); return false; }
+  if (writeGameFile(fp, String(n))) return true;   // mirrored to both installs
   logger.error("Balance", `Write failed for ${playerId}`);
   return false;
 }
@@ -2769,7 +2773,6 @@ async function shutdown(signal) {
 process.on("SIGINT",  () => { shutdown("SIGINT").catch(() => process.exit(1)); });
 process.on("SIGTERM", () => { shutdown("SIGTERM").catch(() => process.exit(1)); });
 process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, { stack: err.stack }));
-process.on("unhandledRkick", r   => logger.error("Unhandled", String(r)));
 
 // ---- interactions ----
 // ---- interactions (handler extracted to ./commands) ----

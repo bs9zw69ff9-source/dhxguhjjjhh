@@ -25,7 +25,11 @@ function mutateBalance(playerId, mutator) {
     logger.error("Ledger", `mutateBalance failed for ${playerId}: ${err.message}`);
     return { ok: false, before: 0, after: 0 };
   });
-  _ledgerQueues.set(key, next.catch(() => {}));
+  // Track the chain tail so writes stay serialized, then drop the entry once the
+  // chain goes idle - otherwise the Map grows one entry per unique player forever.
+  const tail = next.catch(() => {});
+  _ledgerQueues.set(key, tail);
+  tail.finally(() => { if (_ledgerQueues.get(key) === tail) _ledgerQueues.delete(key); });
   return next;
 }
 function debitCaps(playerId, amount)  { return mutateBalance(playerId, (bal) => bal >= amount ? bal - amount : null); }

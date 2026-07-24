@@ -74,8 +74,11 @@ module.exports = (ctx) => {
             ], flags: MessageFlags.Ephemeral });
           }
           const cap = getFactionCap(faction);
+          // Count per (top) rank from the roster we already loaded, instead of calling
+          // countFactionRank per rank - each of those re-reads every rank file from disk.
+          const rankCounts = members.reduce((acc, m) => { acc[m.rank] = (acc[m.rank] || 0) + 1; return acc; }, {});
           const summary = getFactionRankOrder(faction).slice().reverse().map(r => {
-            const n = countFactionRank(faction, r);   // file-based: counts every holder (a member may hold several ranks)
+            const n = rankCounts[r] || 0;
             if (!n) return null;
             const rc = getFactionRankCap(faction, r);
             return `${getFactionRankBadge(faction, r)} ${r}: **${n}${Number.isFinite(rc) ? `/${rc}` : ""}**`;

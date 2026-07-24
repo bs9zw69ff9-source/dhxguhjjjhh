@@ -69,19 +69,27 @@ const loadAutopostState = () => safeRead(FILES.AUTOPOST_STATE, {});
 function getAutopostMsgId(key) { return loadAutopostState()[key] || null; }
 function setAutopostMsgId(key, id) { safeWrite(FILES.AUTOPOST_STATE, { ...loadAutopostState(), [key]: id }); }
 
-async function postLeaderboard() {
-  const channelId = process.env.LEADERBOARD_CHANNEL;
+/* Shared "edit one message in place, or post it fresh" auto-post loop. Every board
+   (leaderboard, arrests, player list, dashboard) does the same dance: fetch the
+   channel, build the embed, edit the tracked message if it still exists (drop the
+   stale id if it doesn't), else send a new one and remember its id. `getEmbed` may
+   be sync or async; a falsy return skips the post. */
+async function autopost(key, channelId, getEmbed) {
   if (!channelId) return;
   let channel;
   try { channel = await client.channels.fetch(channelId); } catch { return; }
-  const embed = buildLeaderboardEmbed();
-  const existingId = getAutopostMsgId("leaderboard");
+  let embed;
+  try { embed = await getEmbed(); } catch (e) { logger.warn("Autopost", `${key} build failed: ${e.message}`); return; }
+  if (!embed) return;
+  const existingId = getAutopostMsgId(key);
   if (existingId) {
     try { const m = await channel.messages.fetch(existingId); await m.edit({ embeds: [embed] }); return; }
-    catch { setAutopostMsgId("leaderboard", null); }
+    catch { setAutopostMsgId(key, null); }
   }
-  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("leaderboard", m.id); } catch {}
+  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId(key, m.id); } catch {}
 }
+
+const postLeaderboard = () => autopost("leaderboard", process.env.LEADERBOARD_CHANNEL, buildLeaderboardEmbed);
 
 /* ---- arrests / jail-time "most wanted" board ---- */
 // Rank players by total jail time served (then arrest count) from the arrests
@@ -124,18 +132,7 @@ function buildArrestBoardEmbed() {
     { footer: { text: "Updated every 30s" } });
 }
 
-async function postArrestBoard() {
-  if (!ARREST_LEADERBOARD_CHANNEL) return;
-  let channel;
-  try { channel = await client.channels.fetch(ARREST_LEADERBOARD_CHANNEL); } catch { return; }
-  const embed = buildArrestBoardEmbed();
-  const existingId = getAutopostMsgId("arrestBoard");
-  if (existingId) {
-    try { const m = await channel.messages.fetch(existingId); await m.edit({ embeds: [embed] }); return; }
-    catch { setAutopostMsgId("arrestBoard", null); }
-  }
-  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("arrestBoard", m.id); } catch {}
-}
+const postArrestBoard = () => autopost("arrestBoard", ARREST_LEADERBOARD_CHANNEL, buildArrestBoardEmbed);
 
 /* Live player list - edits its own message in a channel every 30s. */
 function buildPlayerListEmbed() {
@@ -164,19 +161,12 @@ function buildPlayerListEmbed() {
   }
   return brand(embed.setFooter({ text: "Updates every 30s" }));
 }
-async function postPlayerList() {
-  if (!PLAYERLIST_CHANNEL) return;
-  let channel;
-  try { channel = await client.channels.fetch(PLAYERLIST_CHANNEL); } catch { return; }
+const postPlayerList = () => autopost("playerList", PLAYERLIST_CHANNEL, async () => {
+  // Refresh each server's live roster first (best-effort - a failed refresh still
+  // renders the board from the last known cache).
   try { for (const srv of ACTIVE_SERVERS) await refreshPlayerCache(srv); } catch {}
-  const embed = buildPlayerListEmbed();
-  const existingId = getAutopostMsgId("playerList");
-  if (existingId) {
-    try { const m = await channel.messages.fetch(existingId); await m.edit({ embeds: [embed] }); return; }
-    catch { setAutopostMsgId("playerList", null); }
-  }
-  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("playerList", m.id); } catch {}
-}
+  return buildPlayerListEmbed();
+});
 
 // Delete every message in a channel - used on startup so stale leaderboard/player-list
 // messages from previous runs don't pile up (the bot re-posts a fresh one). Bulk-deletes
@@ -271,17 +261,7 @@ function buildDashboardEmbed(snaps) {
 async function dashboardSnapshots() {
   return Promise.all(ACTIVE_SERVERS.map(serverSnapshot));
 }
-async function postDashboard() {
-  if (!DASHBOARD_CHANNEL) return;
-  let channel; try { channel = await client.channels.fetch(DASHBOARD_CHANNEL); } catch { return; }
-  const embed = buildDashboardEmbed(await dashboardSnapshots());
-  const existingId = getAutopostMsgId("dashboard");
-  if (existingId) {
-    try { const m = await channel.messages.fetch(existingId); await m.edit({ embeds: [embed] }); return; }
-    catch { setAutopostMsgId("dashboard", null); }
-  }
-  try { const m = await channel.send({ embeds: [embed] }); setAutopostMsgId("dashboard", m.id); } catch {}
-}
+const postDashboard = () => autopost("dashboard", DASHBOARD_CHANNEL, async () => buildDashboardEmbed(await dashboardSnapshots()));
 
 
   return { buildArrestBoardData, buildArrestBoardEmbed, buildDashboardEmbed, buildLeaderboardData, buildLeaderboardEmbed, buildPlayerListEmbed, dashboardSnapshots, getAutopostMsgId, hudRow, loadAutopostState, postArrestBoard, postDashboard, postLeaderboard, postPlayerList, purgeChannel, rankLabel, refreshLeaderboardChannels, serverSnapshot, setAutopostMsgId };
