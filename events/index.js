@@ -110,16 +110,48 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       }
       const lastActivity = Math.max(rec.lastSeen || 0, conns[0]?.ts || 0) || null;
 
-      // VPN/proxy verdict for the IP they connected from (from the check above).
-      const vpnField = !vpnDetectionEnabled()       ? "Not configured (set a detector API key)"
-        : !vpnResult                                ? "Not checked"
-        : !vpnResult.flagged                        ? "Clean"
-        : vpnResult.confirmed === false             ? "IPHub flagged - IPQS disputes (likely false positive)"
-        : vpnResult.confirmed === true              ? "VPN/Proxy - IPHub + IPQS agree"
-        :                                             "Flagged by IPHub";
-      const vpnProv   = vpnResult?.provider ? ` - provider: ${vpnResult.provider}` : "";
-      const vpnIsp    = vpnResult?.isp  ? ` - ${vpnResult.isp}` : "";
-      const vpnDetail = vpnResult?.ipqs ? ` - vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : "";
+      /* VPN/proxy verdict. Spells out the consensus explicitly: when every regular
+         check agrees the IP is clean it says so (and no IPQS lookup was spent); when
+         any of them flags it, the IP is escalated to IPQS for final confirmation and
+         the outcome of that escalation is shown. */
+      const vpnLines = (() => {
+        if (!vpnDetectionEnabled()) return ["Not configured (set a detector API key)"];
+        if (!vpnResult) return ["Not checked"];
+        const dets   = vpnResult.detectors ?? [];
+        const t1     = dets.filter(d => d.tier === 1);
+        const t2     = dets.filter(d => d.tier === 2);
+        const hits   = vpnResult.screenHits ?? 0;
+        const of     = vpnResult.screenAnswered ?? t1.length;
+        const pip    = (d) => `${d.flagged ? "🔴" : "🟢"} ${d.name}`;
+        const out    = [];
+
+        if (!vpnResult.flagged) {
+          // Every regular check answered clean - state it, and that nothing escalated.
+          out.push(of ? `**Clean** - all ${of} regular check${of !== 1 ? "s" : ""} confirm no VPN` : "**Clean**");
+          if (t1.length) out.push(t1.map(pip).join("  "));
+          if (t2.length === 0 && of) out.push("*Not escalated to IPQS - no regular check flagged it.*");
+        } else if (vpnResult.confirmed === true && t2.length) {
+          out.push(`🚫 **VPN/Proxy CONFIRMED** - ${hits}/${of} regular check${of !== 1 ? "s" : ""} flagged it, IPQS confirmed (${vpnResult.confirmHits}/${vpnResult.confirmAnswered})`);
+          if (t1.length) out.push(t1.map(pip).join("  "));
+          out.push(`→ final: ${t2.map(pip).join("  ")}`);
+        } else if (vpnResult.confirmed === false) {
+          out.push(`⚠️ **Disputed** - ${hits}/${of} regular check${of !== 1 ? "s" : ""} flagged it, but IPQS cleared it (not banned)`);
+          if (t1.length) out.push(t1.map(pip).join("  "));
+          out.push(`→ final: ${t2.map(pip).join("  ")}`);
+        } else {
+          // Flagged by screening, but nothing could confirm (IPQS unset or unreachable).
+          out.push(`⚠️ **Flagged by ${hits}/${of} regular check${of !== 1 ? "s" : ""}** - IPQS ${t2.length ? "gave no verdict" : "not configured"}, so unconfirmed`);
+          if (t1.length) out.push(t1.map(pip).join("  "));
+        }
+        const meta = [
+          vpnResult.provider ? `provider: **${vpnResult.provider}**` : null,
+          vpnResult.isp || null,
+          vpnResult.ipqs ? `vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : null,
+        ].filter(Boolean);
+        if (meta.length) out.push(meta.join("  -  "));
+        return out;
+      })();
+      const vpnField = vpnLines.join("\n");
 
       const embed = clinical(new EmbedBuilder().setColor(CLIN.green)
         .setTitle(`Player Information: ${name}`)
@@ -136,7 +168,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Server",          value: srvName,                             inline: true },
           { name: "Log Scan Results", value: rec.flagged ? "Flagged - matches the blacklist (auto-banned)"
             : "No matches", inline: false },
-          { name: "VPN / Proxy",     value: (vpnField + vpnProv + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
+          { name: "VPN / Proxy",     value: vpnField.slice(0, 1024),             inline: false },
           { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },
