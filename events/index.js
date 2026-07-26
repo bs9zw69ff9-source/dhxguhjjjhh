@@ -117,6 +117,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
         : vpnResult.confirmed === false             ? "IPHub flagged - IPQS disputes (likely false positive)"
         : vpnResult.confirmed === true              ? "VPN/Proxy - IPHub + IPQS agree"
         :                                             "Flagged by IPHub";
+      const vpnProv   = vpnResult?.provider ? ` - provider: ${vpnResult.provider}` : "";
       const vpnIsp    = vpnResult?.isp  ? ` - ${vpnResult.isp}` : "";
       const vpnDetail = vpnResult?.ipqs ? ` - vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : "";
 
@@ -133,7 +134,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Server",          value: srvName,                             inline: true },
           { name: "Log Scan Results", value: rec.flagged ? "Flagged - matches the blacklist (auto-banned)"
             : "No matches", inline: false },
-          { name: "VPN / Proxy",     value: (vpnField + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
+          { name: "VPN / Proxy",     value: (vpnField + vpnProv + vpnIsp + vpnDetail).slice(0, 1024), inline: false },
           { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
           { name: "Recent Connections", value: "```\n" + (connLines.length ? connLines.join("\n") : "no records").slice(0, 1000) + "\n```", inline: false },

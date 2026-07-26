@@ -28,6 +28,26 @@ module.exports = function(ctx) {
 const IPHUB_API_KEY  = process.env.IPHUB_API_KEY || "";
 const IPQS_API_KEY   = process.env.IPQS_API_KEY  || "";
 const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional - higher ipinfo.io free quota
+// proxycheck.io names the actual VPN provider (e.g. "NordVPN"). Optional: works
+// keyless (100/day), a free key raises it to 1000/day. Queried only on flagged IPs.
+const PROXYCHECK_API_KEY = process.env.PROXYCHECK_API_KEY || "";
+// Look up the VPN provider name for an IP. `operator.name` is the consumer brand
+// (NordVPN, IVPN, ...); `provider` is the underlying network - prefer the brand.
+async function proxycheckLookup(ip) {
+  try {
+    const key = PROXYCHECK_API_KEY ? `&key=${PROXYCHECK_API_KEY}` : "";
+    const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1${key}`, { headers: { Accept: "application/json" } });
+    const data = await res.json();
+    if (!data || (data.status !== "ok" && data.status !== "warning")) return null;
+    const rec = data[ip];
+    if (!rec) return null;
+    return rec.operator?.name || rec.provider || null;
+  } catch (err) {
+    const msg = PROXYCHECK_API_KEY ? String(err.message ?? err).split(PROXYCHECK_API_KEY).join("***") : String(err.message ?? err);
+    logger.warn("VPN", `proxycheck lookup failed for ${ip}: ${msg}`);
+    return null;
+  }
+}
 const _regionName    = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
 const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
 function saveVpnCheck(ip, data) {
@@ -90,7 +110,7 @@ async function _doVpnCheck(ip) {
   const gwho = await geoLookup(ip);
 
   // VPN detection - optional, only when IPHUB_API_KEY is set.
-  let iphub = null, iphubFailed = false, flagged = false, confirmed = null, ipqs = null;
+  let iphub = null, iphubFailed = false, flagged = false, confirmed = null, ipqs = null, provider = null;
   if (IPHUB_API_KEY) {
     try {
       const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
@@ -100,19 +120,22 @@ async function _doVpnCheck(ip) {
       iphubFailed = true;
     }
     flagged = iphub?.block === 1;
-    // IPQS only cross-checks IPHub-flagged IPs - its free tier is ~35/day, so spend it
-    // where it counts (disputing a flag), not on geolocation (ipwho.is covers that).
-    if (flagged && IPQS_API_KEY) {
-      try {
-        const res  = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
-        const data = await res.json();
-        if (data?.success) {
-          ipqs = { vpn: !!data.vpn, proxy: !!data.proxy, tor: !!data.tor, fraudScore: data.fraud_score ?? null };
-          confirmed = !!(data.vpn || data.proxy || data.tor);
-        }
-      } catch (err) {
-        logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`);
+    // On an IPHub-flagged IP, cross-check with IPQS and look up the provider name via
+    // proxycheck.io - both reserved for the flagged subset to conserve their free tiers.
+    if (flagged) {
+      const [ipqsRes, providerRes] = await Promise.all([
+        IPQS_API_KEY
+          ? fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`)
+              .then(r => r.json())
+              .catch(err => { logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`); return null; })
+          : Promise.resolve(null),
+        proxycheckLookup(ip),
+      ]);
+      if (ipqsRes?.success) {
+        ipqs = { vpn: !!ipqsRes.vpn, proxy: !!ipqsRes.proxy, tor: !!ipqsRes.tor, fraudScore: ipqsRes.fraud_score ?? null };
+        confirmed = !!(ipqsRes.vpn || ipqsRes.proxy || ipqsRes.tor);
       }
+      provider = providerRes;
     }
   }
 
@@ -124,7 +147,7 @@ async function _doVpnCheck(ip) {
   if (!geo) return null;                           // no location at all - don't cache, retry next time
   if (IPHUB_API_KEY && iphubFailed) return null;   // VPN enabled but IPHub down - retry to capture the flag
 
-  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp || null, ipqs, geo };
+  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp || null, provider, ipqs, geo };
   await saveVpnCheck(ip, result);
   return { ...result, checkedAt: Date.now() };
 }
@@ -162,6 +185,7 @@ async function checkVpnAndAlert(name, ip) {
       .setTitle("VPN Flag Disputed - No Action")
       .setDescription(`**${name}** connected from an IP IPHub flagged, but IPQS checked it and disagreed.`)
       .addFields(
+        { name: "VPN Provider", value: result.provider || "unknown", inline: true },
         { name: "ISP",         value: result.isp || "unknown",        inline: true },
         { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
         { name: "IPQS", value: `vpn:${result.ipqs.vpn} - proxy:${result.ipqs.proxy} - tor:${result.ipqs.tor} - fraud:${result.ipqs.fraudScore}`, inline: true },
@@ -184,6 +208,7 @@ async function checkVpnAndAlert(name, ip) {
       { name: "Player", value: `\`${name}\``, inline: true },
       { name: "IP",      value: `\`${ip}\``,   inline: true },
       { name: "Status",  value: label,          inline: false },
+      { name: "VPN Provider", value: result.provider || "unknown", inline: true },
       { name: "ISP",         value: result.isp || "unknown",        inline: true },
       { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
       ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} - proxy:${result.ipqs.proxy} - tor:${result.ipqs.tor} - fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
@@ -195,5 +220,5 @@ async function checkVpnAndAlert(name, ip) {
 }
 
 
-  return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck };
+  return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, PROXYCHECK_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, proxycheckLookup, saveVpnCheck };
 };

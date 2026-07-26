@@ -508,7 +508,7 @@ module.exports = (ctx) => {
             : v.flagged                        ? "flagged by IPHub"
             :                                    "clean";
           const q = v.ipqs ? ` - vpn:${v.ipqs.vpn} proxy:${v.ipqs.proxy} tor:${v.ipqs.tor} fraud:${v.ipqs.fraudScore}` : "";
-          return `\`${ip}\` - ${verdict}${v.isp ? ` - ${v.isp}` : ""}${q}`;
+          return `\`${ip}\` - ${verdict}${v.provider ? ` - ${v.provider}` : ""}${v.isp ? ` - ${v.isp}` : ""}${q}`;
         });
 
         const tb       = loadBans().find(b => String(b.playerId).toLowerCase() === playerId.toLowerCase());
