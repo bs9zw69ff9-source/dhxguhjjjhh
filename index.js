@@ -211,7 +211,34 @@ const {
 } = require("./database")({ logger, baseDir: __dirname });
 
 /* ---- Typed loaders / savers ---- */
-const loadBans          = () => safeRead(FILES.TEMPBAN,        []);
+/* Ban records drive every enforcement decision (join checks, the 30s sweep, reconcile,
+   /banlist), so a corrupted entry would silently poison all of them - a missing
+   playerId makes String(undefined) match a player literally named "undefined", and a
+   garbage expiry makes a ban look active forever (or never). Validate on READ: hand
+   callers only usable records and REPORT the rest instead of failing silently.
+   Deliberately non-destructive - the raw rows stay on disk so a bad entry can be
+   inspected and repaired by hand rather than being quietly deleted. */
+function isValidBanEntry(b) {
+  return !!b && typeof b === "object" && !Array.isArray(b)
+    && typeof b.playerId === "string" && b.playerId.trim() !== ""
+    && (b.permanent === true || Number.isFinite(Number(b.expires)));
+}
+let _lastBanCorruptReport = 0;
+function loadBans() {
+  const raw = safeRead(FILES.TEMPBAN, []);
+  if (!Array.isArray(raw)) {
+    logger.error("Bans", `CORRUPT ban store - expected an array, got ${raw === null ? "null" : typeof raw}. Treating as EMPTY: no bans will enforce until this is repaired.`);
+    return [];
+  }
+  const good = [], bad = [];
+  for (const b of raw) (isValidBanEntry(b) ? good : bad).push(b);
+  if (bad.length && Date.now() - _lastBanCorruptReport > 300_000) {   // throttle: this runs every 30s
+    _lastBanCorruptReport = Date.now();
+    const sample = bad.slice(0, 3).map(b => { try { return JSON.stringify(b).slice(0, 120); } catch { return String(b); } }).join(" | ");
+    logger.error("Bans", `CORRUPT ban entr${bad.length === 1 ? "y" : "ies"} SKIPPED (${bad.length} of ${raw.length}) - they enforce nothing until fixed. Sample: ${sample}${bad.length > 3 ? " ..." : ""}`);
+  }
+  return good;
+}
 /* Serialized temp-ban mutations - go through update() so concurrent commands
    and the 60s expiry sweep can't clobber each other's writes. */
 const _sameId = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -2268,7 +2295,7 @@ async function processExpiredBans() {
       writeModLog({ action: "auto-unban", playerId: ban.playerId, reason: "Sentence served" });
       await logBan(
         clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Sentence Served - Player Released")
-          .setDescription(`> *"Every soul deserves a second chance in the server."*\n\n**${ban.playerId}** served **${ban.durationLabel ?? "Unknown"}** for ${ban.reason} - originally banned by ${ban.moderator}.`),
+          .setDescription(`**${ban.playerId}** served **${ban.durationLabel ?? "Unknown"}** for ${ban.reason} - originally banned by ${ban.moderator}.`),
           "Exile expired - access restored automatically")
       );
     } catch (err) {

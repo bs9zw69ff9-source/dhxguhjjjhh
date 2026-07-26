@@ -20,17 +20,40 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   // Native RCON Ban + Kick by USERNAME on every server. NO blacklist.txt.
   // NOTE: the OS firewall (ufw) is deliberately NOT touched here - ufw deny/allow
   // is a manual owner action via /firewall, never applied automatically on a ban.
-  let enforced = { servers: 0 };
-  try { enforced = await hardEnforce(name); }
-  catch (err) { logger.warn("Bans", `RCON ban failed for "${name}": ${err.message}`); }
-  logger.info("Bans", `Native-banned "${name}" on ${enforced.servers}/${ACTIVE_SERVERS.length} server(s)`);
+  // Resolve what we know about the account up front so the audit line can name the
+  // EOS id / IPs even when enforcement or flagging fails.
+  let known = null;
+  try { known = ipBans.getRecord(name); } catch (e) { logger.warn("Bans", `registry lookup failed for "${name}": ${e.message}`); }
+  const kind = opts.permanent === true ? "permanent" : "temporary";
+
+  let enforced = { servers: 0, target: null };
+  try { enforced = await hardEnforce(name, { uniqueId: known?.id || null }); }
+  catch (err) { logger.error("Bans", `RCON ban FAILED for "${name}": ${err.message}`); }
   scheduleBanRecheck(name);                     // 30s: blacklist.txt backup + re-enforce
   // Flag their EXACT confirmed IP(s) + EOS id so an alt/reconnect re-triggers the ban.
   let enf;
   // EOS-id flags are PERMANENT-ban only (ipBans contract): a temp ban flags the
   // IPs but must not brand the account id forever.
   try { enf = ipBans.blacklistPlayer(name, { flagId: opts.permanent === true }); }
-  catch (err) { logger.warn("IPBan", `IP flag failed for ${name}: ${err.message}`); enf = { ids: [], ips: [], alts: [], field: null }; }
+  catch (err) { logger.error("IPBan", `IP/EOS flag FAILED for "${name}": ${err.message} - the ban record stands but alts will NOT be caught`); enf = { ids: [], ips: [], alts: [], field: null }; }
+
+  /* Single structured audit line per ban: who, which identifiers, which server(s),
+     what was flagged, and whether it actually landed. This is the line to grep when
+     asking "why did this ban not stick?". */
+  const okAll = enforced.servers === ACTIVE_SERVERS.length;
+  logger[enforced.servers ? (okAll ? "info" : "warn") : "error"]("BanAudit",
+    `${kind} ban | player="${name}" | target="${enforced.target ?? "none"}"` +
+    ` | eos=${enf.ids?.length ? enf.ids.join(",") : (known?.id || "unknown")}` +
+    ` | ip=${opts.ip || (known?.cips?.length ? known.cips.join(",") : "none-confirmed")}` +
+    ` | server=${server}` +
+    ` | flagged: ips=${enf.ips?.length ?? 0} eosIds=${opts.permanent === true ? (enf.ids?.length ?? 0) : 0}${opts.permanent === true ? "" : " (temp ban - EOS id deliberately not flagged)"}` +
+    ` | alts=${enf.alts?.length ? enf.alts.join(",") : "none"}` +
+    ` | rcon=${enforced.servers}/${ACTIVE_SERVERS.length} accepted` +
+    ` | result=${enforced.servers ? (okAll ? "ENFORCED" : "PARTIAL") : "NOT ENFORCED"}` +
+    ` | at=${new Date().toISOString()}`);
+  if (!enf.ips?.length && !(opts.permanent === true && enf.ids?.length)) {
+    logger.warn("BanAudit", `"${name}" has NO confirmed IP and no EOS flag yet - they were likely never seen disconnecting. Their IP will be flagged automatically the moment their disconnect confirms it (pending flag, persisted across restarts).`);
+  }
   return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall: null };
 }
 
@@ -39,10 +62,23 @@ async function banWithIp(playerId, server = "both", opts = {}) {
 /* Force-ban + remove a player by USERNAME on every server - native RCON `Ban` + `Kick`,
    NO blacklist.txt - logging the server's response to each so `pm2 logs` shows exactly
    what landed. Returns { servers } = how many servers accepted a command. */
-async function hardEnforce(name, { banToo = true, kick = true } = {}) {
-  const target = sanitizeId(name);
-  if (!target) return { servers: 0 };
-  preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps
+async function hardEnforce(name, { banToo = true, kick = true, uniqueId = null } = {}) {
+  /* Pavlov's `Ban`/`Kick` take the player's UniqueId (on Shack that's the Oculus
+     username). Prefer an explicit UniqueId from RefreshList when the caller has one -
+     a DISPLAY name can differ from it (and can contain spaces, which sanitizeId
+     strips, producing a target the server has never heard of). */
+  const target = sanitizeId(uniqueId || name);
+  if (!target) {
+    logger.error("Bans", `ENFORCE FAILED - no usable RCON target for "${name}" (uniqueId=${uniqueId ?? "none"}): the identifier sanitized to empty`);
+    return { servers: 0, target: null };
+  }
+  // Loud diagnostic: the identifier we send differs from the real one, so a silent
+  // no-op ban is explainable instead of looking like the server ignored us.
+  const source = uniqueId || name;
+  if (String(source) !== target) {
+    logger.warn("Bans", `ENFORCE TARGET REWRITTEN for "${source}" -> "${target}" (sanitizer stripped characters). If the ban does not land, this mismatch is why - the server knows them as "${source}".`);
+  }
+  preserveBalanceAcrossKick(name);             // don't let the kick wipe their caps (ledger is keyed on the display name)
   let ok = 0;
   const perServer = async (srv) => {
     const verbs = [];
@@ -60,7 +96,8 @@ async function hardEnforce(name, { banToo = true, kick = true } = {}) {
     if (served) ok++;
   };
   await Promise.all(ACTIVE_SERVERS.map(perServer));
-  return { servers: ok };
+  if (!ok) logger.error("Bans", `ENFORCE FAILED - "${target}" was accepted by 0/${ACTIVE_SERVERS.length} server(s) (every RCON call errored; the player is NOT removed)`);
+  return { servers: ok, target };
 }
 
 /* 30s after a ban, back it up: write the name into blacklist.txt (reconnect block that
@@ -92,18 +129,34 @@ async function enforceBansSweep() {
     const banned = new Set(loadBans()
       .filter(b => b.permanent || (b.expires && b.expires > now))
       .map(b => String(b.playerId).toLowerCase()));
+    /* hardEnforce already issues Ban+Kick on EVERY server, so a player sitting on
+       several servers only needs enforcing ONCE per sweep. Without this, an N-server
+       setup fired N enforcements x N servers = N^2 RCON connections per offender. */
+    const handled = new Set();
     for (const srv of ACTIVE_SERVERS) {
       let players;
-      try { players = await getOnlinePlayers(srv); } catch { continue; }
+      try { players = await getOnlinePlayers(srv); } catch (e) { logger.warn("BanSweep", `RefreshList failed on ${srv}: ${e.message} - cannot sweep that server this pass`); continue; }
       for (const p of players) {
         const nm = p.name;
         if (!nm || isMasterName(nm) || isAutobanExempt(nm)) continue;   // never sweep an unban-exempt player
+        if (handled.has(nm.toLowerCase())) continue;                    // already enforced across all servers this pass
         const nameBanned = banned.has(nm.toLowerCase());
-        let flaggedHit = false;
-        if (!nameBanned) { try { flaggedHit = !!ipBans.getRecord(nm)?.flagged; } catch {} }   // flagged IP/EOS
+        let flaggedHit = false, why = nameBanned ? "ban record" : null;
+        if (!nameBanned) {
+          // Flagged IP / EOS id - resolve once so the log can say WHICH signal hit.
+          try {
+            const rec = ipBans.getRecord(nm);
+            flaggedHit = !!rec?.flagged;
+            if (flaggedHit) why = `flagged ${rec?.ids?.length ? `EOS/IP (eos=${rec.id})` : "IP"}`;
+          } catch (e) { logger.warn("BanSweep", `flag lookup failed for ${nm}: ${e.message}`); }
+        }
         if (nameBanned || flaggedHit) {
-          logger.warn("BanSweep", `${nm} is banned/flagged but ONLINE on ${srv} - force-removing`);
-          await hardEnforce(nm);                // native Ban + Kick by username, responses logged
+          logger.warn("BanSweep", `ENFORCING - "${nm}" [uid=${p.id || "unknown"}] is online on ${srv} but matches a ${why} - removing`);
+          // Enforce against the UniqueId RefreshList gave us (what Ban/Kick expect),
+          // falling back to the display name when the server didn't report one.
+          handled.add(nm.toLowerCase());
+          const r = await hardEnforce(nm, { uniqueId: p.id || null });
+          logger.info("BanSweep", `RESULT - "${nm}" [uid=${p.id || "unknown"}] target="${r.target ?? "none"}" reason="${why}" accepted=${r.servers}/${ACTIVE_SERVERS.length} server(s) -> ${r.servers ? "removed" : "FAILED"}`);
           // NOTE: the sweep does NOT create a ban RECORD - the IP/EOS flag already
           // persists the auto-ban and re-catches them on join. Recording here made a
           // flagged/shared IP mass-create ban entries wrongly attributed to a person.
@@ -229,16 +282,32 @@ function autoBanDecision(existing, reason, now = Date.now()) {
 // Lift a ban: remove the name from blacklist.txt on both installs + clear IP flags.
 function unbanEverywhere(playerId) {
   const name = sanitizeBanName(playerId);
+  let known = null;
+  try { known = ipBans.getRecord(name); } catch {}
   let bl = { name, removed: 0 };
-  try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist remove failed for "${name}": ${err.message}`); }
+  try { bl = blacklistRemove(name); } catch (err) { logger.error("Bans", `blacklist.txt remove FAILED for "${name}": ${err.message}`); }
   let cleared = null;
   // NOTE: the OS firewall (ufw) is NOT touched on unban - any ufw deny is an
   // owner-managed manual rule, removed only via /firewall unblock.
-  try { cleared = ipBans.unblacklistPlayer(name); } catch {}
-  // Lift the native RCON ban too (auto-bans issue `Ban <username>`), by USERNAME.
-  const _uname = sanitizeId(name);
-  if (_uname) (async () => { for (const srv of ACTIVE_SERVERS) { try { await sendRcon(`Unban ${_uname}`, srv, 2500, 1); } catch {} } })().catch(() => {});
-  return { blacklist: bl, cleared: cleared?.cleared ?? { ips: 0, names: 0 } };
+  try { cleared = ipBans.unblacklistPlayer(name); }
+  catch (err) { logger.error("IPBan", `IP/EOS unflag FAILED for "${name}": ${err.message} - stale flags may re-catch them`); }
+  // Lift the native RCON ban too, against the UniqueId when we know it.
+  const _uname = sanitizeId(known?.id || name);
+  const c = cleared?.cleared ?? { ips: 0, names: 0, ids: 0 };
+  logger.info("BanAudit",
+    `unban | player="${name}" | target="${_uname || "none"}" | eos=${known?.id || "unknown"}` +
+    ` | cleared: ips=${c.ips ?? 0} names=${c.names ?? 0} eosIds=${c.ids ?? 0} blacklistTxt=${bl.removed ?? 0}` +
+    ` | at=${new Date().toISOString()}`);
+  if (!_uname) logger.error("BanAudit", `unban for "${name}" has NO usable RCON target - the native server ban was NOT lifted`);
+  // Fire-and-forget so the reply isn't blocked, but report per-server failures
+  // instead of swallowing them (a silent failure leaves them natively banned).
+  if (_uname) (async () => {
+    for (const srv of ACTIVE_SERVERS) {
+      try { await sendRcon(`Unban ${_uname}`, srv, 2500, 1); logger.info("BanAudit", `unban RCON accepted | "${_uname}" | ${srv}`); }
+      catch (e) { logger.error("BanAudit", `unban RCON FAILED | "${_uname}" | ${srv} | ${e.message} - they may still be natively banned on that server`); }
+    }
+  })().catch(() => {});
+  return { blacklist: bl, cleared: c };
 }
 
 function parseRcon(raw) {

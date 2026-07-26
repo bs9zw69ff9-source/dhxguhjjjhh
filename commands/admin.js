@@ -112,7 +112,7 @@ module.exports = (ctx) => {
           return paginate(interaction, out, (pageLines) =>
             new EmbedBuilder().setColor(NV.GOLD)
               .setTitle(`Donators - ${lines.length}`)
-              .setDescription(`> *"The House remembers its most generous patrons."*\n\n${pageLines.join("\n")}`)
+              .setDescription(pageLines.join("\n"))
               .setFooter({ text: DONATOR_FILE }),
             { perPage: 20, ephemeral: true });
         }
@@ -126,7 +126,7 @@ module.exports = (ctx) => {
           if (already) return interaction.reply({ embeds: [warningEmbed("Already a Donator", `\`${playerId}\` is already in the donator file.`)], flags: MessageFlags.Ephemeral });
           writeModLog({ action: "donator-add", playerId, by: interaction.user.tag });
           const embed = new EmbedBuilder().setColor(NV.GOLD).setTitle("Donator Added")
-            .setDescription(`> *"A generous soul joins the ranks of the server's patrons."*\n\n**${interaction.user.username}** added **${playerId}** to the donator file.`)
+            .setDescription(`**${interaction.user.username}** added **${playerId}** to the donator file.`)
             .setFooter({ text: DONATOR_FILE });
           brand(embed); await logAction(embed);
           return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });

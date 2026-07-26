@@ -62,6 +62,7 @@ ip_flagged_ids.json
 ip_untracked.json
 ip_untracked_ids.json
 ip_cutoff.json
+ip_pending_flag.json
 ip_manual.json
 kd.json
 kill_log.json

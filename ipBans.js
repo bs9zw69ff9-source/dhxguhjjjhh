@@ -42,6 +42,7 @@ const FIDS_PATH      = path.join(__dirname, "ip_flagged_ids.json");    // flagge
 const UNTRACKED_PATH = path.join(__dirname, "ip_untracked.json");   // usernames to never track
 const UNTRACKED_IDS_PATH = path.join(__dirname, "ip_untracked_ids.json"); // ids resolved to those names (persisted - registry entries are purged)
 const CUTOFF_PATH    = path.join(__dirname, "ip_cutoff.json");      // ignore log lines older than this (set by "wipe all IP data")
+const PENDING_FLAG_PATH = path.join(__dirname, "ip_pending_flag.json"); // ids banned while online, awaiting their confirmed IP
 const KD_PATH        = path.join(__dirname, "kd.json");            // per-player kills/deaths
 const KILLLOG_PATH   = path.join(__dirname, "kill_log.json");      // per-killer victim tallies (for faction kill counts)
 const LOG_TAIL       = path.join("Pavlov", "Saved", "Logs", "Pavlov.log");
@@ -163,7 +164,16 @@ const pendingSet  = {};           // per-file: distinct IPs accepted since the l
 const recentJoin  = new Map();    // name  -> ts  (join feed dedupe)
 const recentConfirm = new Map();  // id    -> ts  (confirm feed dedupe - collapse a disconnect's multiple close lines)
 const recentAuto  = new Map();    // id    -> ts  (auto-ban dedupe)
-const pendingFlag = new Map();    // id    -> ts  (banned with no confirmed IP yet - flag it when the kick confirms one)
+/* id -> ts. A player banned while still ONLINE has no confirmed IP yet, so there is
+   nothing to flag at ban time; this remembers them so the IP their disconnect confirms
+   gets flagged (within PENDING_FLAG_MS). PERSISTED: this used to be memory-only, so a
+   bot restart inside that window silently dropped the pending flag and the banned
+   player's IP was never flagged - a ban-evasion hole (ban someone online -> restart ->
+   they disconnect -> alt from the same IP walks in unflagged). */
+const pendingFlag = new Map(Object.entries(loadJSON(PENDING_FLAG_PATH, {}) || {})
+  .map(([id, ts]) => [cleanId(id), Number(ts) || 0])
+  .filter(([id, ts]) => id && ts && Date.now() - ts <= PENDING_FLAG_MS));   // drop entries already stale at load
+function savePendingFlag() { saveJSON(PENDING_FLAG_PATH, Object.fromEntries(pendingFlag)); }
 const pendingKill = {};           // per-file: { killer, killed } accumulated across a KillData block's lines
 let lastTs = 0, saveTimer = null, dirty = false;
 let cutoffTs = Number(loadJSON(CUTOFF_PATH, 0)) || 0;   // log lines at/older than this are ignored (post-wipe)
@@ -313,9 +323,12 @@ function record(id, name, ip, ts, sure) {
     e.cips.push(ip); changed = true;                                             // confirmed pairing
     // recently banned with no IP flagged yet? flag this confirmed IP now (catches alts of a never-disconnected ban)
     const pf = pendingFlag.get(id);
-    if (pf && Date.now() - pf <= PENDING_FLAG_MS && !flagged.has(ip)) {
-      flagged.add(ip); saveFlagged();
-      if (live) console.log(`[ipBans] flagged confirmed IP ${ip} for recently-banned ${e.name || id}`);
+    if (pf && Date.now() - pf <= PENDING_FLAG_MS) {
+      if (!flagged.has(ip)) {
+        flagged.add(ip); saveFlagged();
+        console.log(`[ipBans] BAN-FLAG confirmed IP ${ip} for recently-banned ${e.name || id} [${id}] (pending ${Math.round((Date.now() - pf) / 1000)}s)`);
+      }
+      pendingFlag.delete(id); savePendingFlag();    // satisfied - don't re-flag on later disconnects
     }
   }
   e.lastSeen = Math.max(e.lastSeen || 0, ts || Date.now());
@@ -350,6 +363,7 @@ function blacklistPlayer(input, opts = {}) {
   // remember the player so the IP the kick confirms is flagged too (if none yet).
   // NOTE: we deliberately do NOT auto-flag the username here. A flagged username
   for (const id of ids) pendingFlag.set(id, Date.now());
+  if (ids.length) savePendingFlag();               // survive a restart inside the window
   // Flag the EOS/unique id(s) ONLY for permanent bans (flagId). Temp bans, warn
   // escalations and in-game-detected bans must NOT permanently flag an account id -
   // that's what was auto-banning innocent/returning players.
@@ -384,7 +398,7 @@ function unblacklistPlayer(input) {
     const nm = norm(registry[id]?.name);
     if (nm && flaggedNames.delete(nm)) nName++;
     if (flaggedIds.delete(id)) nId++;
-    pendingFlag.delete(id);
+    if (pendingFlag.delete(id)) savePendingFlag();   // an unban cancels a pending IP flag
   }
   // also clear a raw name/ip/id token (e.g. unbanning by a value not in the registry)
   const raw = String(input ?? "").trim();
@@ -440,7 +454,7 @@ function getBlacklist() { return { ips: [...flagged], names: [...flaggedNames], 
 function clearFlags() {
   const n = flagged.size + flaggedNames.size + flaggedIds.size;
   flagged.clear(); flaggedNames.clear(); flaggedIds.clear(); manualIps.clear(); pendingFlag.clear();
-  saveFlagged(); saveFNames(); saveFIds(); saveManualIps();
+  saveFlagged(); saveFNames(); saveFIds(); saveManualIps(); savePendingFlag();
   return n;
 }
 // Clear only the flagged USERNAMES (keep flagged IPs). Stops "blacklisted
@@ -473,7 +487,7 @@ function clearAll() {
   for (const k of Object.keys(registry)) delete registry[k];
   flagged.clear(); flaggedNames.clear(); flaggedIds.clear(); manualIps.clear(); pendingFlag.clear();
   cutoffTs = Math.max(cutoffTs, lastTs || Date.now());
-  flushRegistry(); saveFlagged(); saveFNames(); saveFIds(); saveManualIps(); saveCutoff();
+  flushRegistry(); saveFlagged(); saveFNames(); saveFIds(); saveManualIps(); savePendingFlag(); saveCutoff();
   return { ids, flagged: fl };
 }
 
@@ -740,7 +754,9 @@ function pruneDebounceMaps() {
   sweep(recentJoin,    JOIN_DEBOUNCE_MS * 2);
   sweep(recentConfirm, CONFIRM_DEBOUNCE_MS * 2);
   sweep(recentAuto,    AUTO_DEBOUNCE_MS * 2);
+  const beforePF = pendingFlag.size;
   sweep(pendingFlag,   PENDING_FLAG_MS * 2);
+  if (pendingFlag.size !== beforePF) savePendingFlag();   // keep the persisted copy in step
 }
 
 /* ---------------- log discovery ---------------- */
