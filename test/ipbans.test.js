@@ -61,3 +61,48 @@ test("untracked list add/remove round-trips (case-insensitive)", () => {
   assert.equal(ipBans.removeUntracked("somecourier"), true);
   assert.ok(!ipBans.getUntracked().includes("somecourier"));
 });
+
+// Two accounts that shared a CONFIRMED IP (same-line disconnect pairing). This is
+// exactly the state the connection-feed webhook renders as "Possible Alts".
+function seedAltPair() {
+  ipBans.clearAll();
+  const now = Date.now();
+  const id1 = "0002aaaaaaaaaaaaaaaaaaaaaaaaaaa1";
+  const id2 = "0002bbbbbbbbbbbbbbbbbbbbbbbbbbb2";
+  ipBans.registry[id1] = { name: "MainAcct", ips: ["1.2.3.4"], cips: ["1.2.3.4"], firstSeen: now, lastSeen: now, logins: 3, recent: [] };
+  ipBans.registry[id2] = { name: "AltAcct",  ips: ["1.2.3.4"], cips: ["1.2.3.4"], firstSeen: now, lastSeen: now, logins: 1, recent: [] };
+  return { id1, id2 };
+}
+
+test("known alts surface in getRecord (the webhook feed's Possible Alts)", () => {
+  seedAltPair();
+  const rec = ipBans.getRecord("MainAcct");
+  assert.deepEqual(rec.alts, ["AltAcct"]);
+  assert.deepEqual(ipBans.getAltNamesOf("MainAcct"), ["AltAcct"]);
+  // alt detection is symmetric
+  assert.deepEqual(ipBans.getRecord("AltAcct").alts, ["MainAcct"]);
+  ipBans.clearAll();
+});
+
+test("a permanent ban flags the EOS id, and it re-enforces on join/sweep", () => {
+  const { id1 } = seedAltPair();
+  ipBans.blacklistPlayer("MainAcct", { flagId: true });   // /permban path
+  assert.ok(ipBans.getBlacklist().ids.includes(id1), "EOS id flagged");
+  // getRecord().flagged is what the join check (line 647) and the online sweep
+  // (bans.js: getRecord(nm).flagged) both read to re-enforce a name-changed ban.
+  assert.equal(ipBans.getRecord("MainAcct").flagged, true);
+  // the alt sharing the confirmed IP is caught too
+  assert.equal(ipBans.getRecord("AltAcct").flagged, true);
+  ipBans.clearAll();
+});
+
+test("a temp ban flags IPs but NOT the EOS id (never brands the account forever)", () => {
+  const now = Date.now();
+  ipBans.clearAll();
+  const id = "0002cccccccccccccccccccccccccccc3";
+  ipBans.registry[id] = { name: "TempGuy", ips: ["9.9.9.9"], cips: ["9.9.9.9"], firstSeen: now, lastSeen: now, logins: 1, recent: [] };
+  ipBans.blacklistPlayer("TempGuy", { flagId: false });   // /tempban path
+  assert.ok(!ipBans.getBlacklist().ids.includes(id), "temp ban must not flag the EOS id");
+  assert.ok(ipBans.getBlacklist().ips.includes("9.9.9.9"), "but it does flag the confirmed IP");
+  ipBans.clearAll();
+});
