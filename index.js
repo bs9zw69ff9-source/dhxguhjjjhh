@@ -342,7 +342,7 @@ async function sentenceSweep() {
   await update(FILES.SENTENCES, {}, (m) => { for (const [k] of due) delete m[k]; return m; });
 }
 // Every police-related log goes to the police channel (fallback mod-log).
-const policeChannelId = () => POLICE_LOG_CHANNEL || ARREST_CHANNEL || process.env.MOD_LOG_CHANNEL;
+const policeChannelId = () => POLICE_LOG_CHANNEL || ARREST_CHANNEL || STAFF_LOG_CHANNEL;
 function announceArrest(text, pingUserId) {
   const chId = policeChannelId();
   if (!chId) return;
@@ -646,6 +646,12 @@ const VERIFIED_ROLE          = process.env.VERIFIED_ROLE        || "152875437941
    is an optional override just for arrest bookings; both fall back to MOD_LOG. */
 const POLICE_LOG_CHANNEL     = process.env.POLICE_LOG_CHANNEL   || "1529535040168398979";
 const ARREST_CHANNEL         = process.env.ARREST_CHANNEL       || "";
+/* Staff logs: general staff actions (kicks, warnings, faction/economy/config/menu
+   changes) go to STAFF_LOG_CHANNEL; punishments (bans, temp-bans, unbans, auto-bans)
+   go to the dedicated STAFF_PUNISHMENT_LOG_CHANNEL. MOD_LOG_CHANNEL / BAN_LOG_CHANNEL
+   env vars still override the defaults. */
+const STAFF_LOG_CHANNEL            = process.env.MOD_LOG_CHANNEL || "1528754477861961760";
+const STAFF_PUNISHMENT_LOG_CHANNEL = process.env.BAN_LOG_CHANNEL || "1530538514121359471";
 
 // ---- faction-specific rank system ----
 // Rank registry (order/badges/rankFiles) extracted to ./factions/ranks.
@@ -1531,10 +1537,10 @@ function logAction(embed) {
   // Always returns a promise that never rejects, so callers can `await` it OR
   // chain `.catch` without risking "Cannot read properties of undefined". It's
   // still fire-and-forget - never block a command's reply on a log post.
-  if (!process.env.MOD_LOG_CHANNEL) return Promise.resolve();
-  return client.channels.fetch(process.env.MOD_LOG_CHANNEL)
+  if (!STAFF_LOG_CHANNEL) return Promise.resolve();
+  return client.channels.fetch(STAFF_LOG_CHANNEL)
     .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
-    .catch(err => logger.warn("Log", `Failed to post mod log: ${err.message}`));
+    .catch(err => logger.warn("Log", `Failed to post staff log: ${err.message}`));
 }
 // Connection feed: post via the webhook if CONNECT_WEBHOOK_URL is set (no-op otherwise).
 function postFeed(embed) {
@@ -1562,12 +1568,12 @@ function postKillFeed(killer, killed) {
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
 function logBan(embed) {
-  const channelId = process.env.BAN_LOG_CHANNEL;
+  const channelId = STAFF_PUNISHMENT_LOG_CHANNEL;
   if (!channelId) return logAction(embed);
   // fire-and-forget (see logAction)
   client.channels.fetch(channelId)
     .then(ch => ch?.isTextBased() && ch.send({ embeds: [embed] }))
-    .catch(err => logger.warn("Log", `Failed to post ban log: ${err.message}`));
+    .catch(err => logger.warn("Log", `Failed to post punishment log: ${err.message}`));
 }
 
 // ---- moderation/vpn: IPHub/IPQS proxy detection + geolocation + auto-ban (extracted to ./moderation/vpn) ----
