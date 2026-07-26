@@ -118,6 +118,9 @@ const commands = [
     .setDescription("Suspend a player's whitelist rank for a set time (auto-restores)")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
     .addStringOption(o => o.setName("time").setDescription("Duration, e.g. 30m, 2h, 1d").setRequired(true)),
+  new SlashCommandBuilder().setName("vpncheck")
+    .setDescription("Owner - VPN detection health: which detectors are up and what role each plays")
+    .addStringOption(o => o.setName("ip").setDescription("IP to probe every detector against (default: a known-clean IP)").setRequired(false)),
   new SlashCommandBuilder().setName("bail")
     .setDescription("Adjust bail prices for every penal-code charge by a percentage")
     .addSubcommand(s => s.setName("increase")

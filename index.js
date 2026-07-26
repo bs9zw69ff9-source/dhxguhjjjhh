@@ -1612,7 +1612,7 @@ function logBan(embed) {
 }
 
 // ---- moderation/vpn: IPHub/IPQS proxy detection + geolocation + auto-ban (extracted to ./moderation/vpn) ----
-const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, vpnDetectionEnabled, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
+const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, vpnDetectionEnabled, probeDetectors, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
   ACTIVE_SERVERS, CLIN, DIVIDER, EmbedBuilder, FILES, NV,
   banWithIp, brand, clinical, hero, isMasterName,
   logAction, logBan, logger, postFeed, safeRead,
@@ -2850,7 +2850,7 @@ const { onInteraction } = require("./commands")({
   extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
   modOnlyEmbed, ownerOnlyEmbed, paginate, parseDuration, parseRcon,
-  patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, punishDurationLabel,
+  patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, probeDetectors, punishDurationLabel,
   rankBadge, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
   readPlayerBalance, refreshPlayerCache, removeBans, removeDonator, removeFactionRank,
   removeMenuGrant, removePlayerFromAllRankFiles, removePlayerFromRankFile, removeUserBlacklist, sanitizeBanName, sanitizeId,

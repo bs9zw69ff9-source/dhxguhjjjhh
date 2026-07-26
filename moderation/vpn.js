@@ -12,14 +12,14 @@ module.exports = function(ctx) {
 /* ---------------- VPN / proxy detection (two-tier, consensus based) ----------------
    Detection runs in two stacked tiers so accuracy is high without burning quota:
 
-     TIER 1 - SCREENING (high daily quotas, run on every not-yet-checked IP)
-       • IPHub      1,000/day   block==1 = hosting/proxy/non-residential
-       • vpnapi.io  1,000/day   security.{vpn,proxy,tor,relay}
-       • ipapi.is   1,000/day   is_vpn / is_proxy / is_tor  (works keyless)
+     TIER 1 - REGULAR CHECK (high daily quotas, run on EVERY not-yet-checked IP)
+       • IPHub         1,000/day   block==1 = hosting/proxy/non-residential
+       • vpnapi.io     1,000/day   security.{vpn,proxy,tor,relay}
+       • ipapi.is      1,000/day   is_vpn / is_proxy / is_tor  (works keyless)
+       • proxycheck.io   100/day   proxy=yes + risk + the VPN BRAND name (keyless)
 
-     TIER 2 - CONFIRMATION (small quotas, high accuracy, ONLY on a screening hit)
+     TIER 2 - FINAL CONFIRMATION (small quota, highest accuracy, ONLY on a screen hit)
        • IPQualityScore  ~35/day   vpn/proxy/tor + fraud score
-       • proxycheck.io   100/day   proxy=yes + risk + the VPN brand name
 
    A clean screen ends the check immediately, so tier 2's tiny quota is only ever
    spent on IPs that already look suspicious. Verdict:
@@ -86,7 +86,11 @@ const DETECTORS = [
                isp: d.ISP || null,
                ipqs: { vpn: !!d.vpn, proxy: !!d.proxy, tor: !!d.tor, fraudScore: d.fraud_score ?? null } };
     } },
-  { name: "proxycheck", tier: 2, enabled: () => true, async run(ip) {    // keyless-capable
+  /* Tier 1: runs on EVERY IP. It is the only source of the consumer VPN brand name
+     ("NordVPN"), so screening every connection means the feed can show the provider
+     even for IPs that come back clean. Keyless is 100/day - set PROXYCHECK_API_KEY
+     for 1,000/day if the server sees more unique IPs than that per day. */
+  { name: "proxycheck", tier: 1, enabled: () => true, async run(ip) {    // keyless-capable
       const key = PROXYCHECK_API_KEY ? `&key=${PROXYCHECK_API_KEY}` : "";
       const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1${key}`, { headers: { Accept: "application/json" } });
       const d = await res.json();
@@ -125,6 +129,40 @@ async function runTier(tier, ip) {
     results: settled,
   };
 }
+/* Human label for a detector's role, used by /vpncheck. */
+const TIER_ROLE = { 1: "Regular check (every IP)", 2: "Final confirmation (flagged IPs only)" };
+
+/* Live health probe for /vpncheck: hits EVERY detector (both tiers, ignoring the
+   normal tier gating) against one IP and reports per-detector status. Diagnostic
+   only - it spends one lookup per configured detector, so it is owner-gated. */
+async function probeDetectors(ip) {
+  const out = await Promise.all(DETECTORS.map(async (d) => {
+    const base = { name: d.name, tier: d.tier, role: TIER_ROLE[d.tier], configured: d.enabled() };
+    if (!d.enabled()) return { ...base, status: "not configured" };
+    const t0 = Date.now();
+    try {
+      const r = await d.run(ip);
+      const ms = Date.now() - t0;
+      if (!r) return { ...base, status: "no verdict", ms };
+      return { ...base, status: "up", ms, flagged: !!r.flagged, detail: r.detail ?? null, provider: r.provider ?? null };
+    } catch (err) {
+      return { ...base, status: "down", ms: Date.now() - t0,
+               error: _scrub(err.message ?? err, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY, IPHUB_API_KEY).slice(0, 120) };
+    }
+  }));
+  return {
+    ip,
+    detectors: out,
+    screenActive:  out.filter(d => d.tier === 1 && d.configured).length,
+    screenTotal:   out.filter(d => d.tier === 1).length,
+    confirmActive: out.filter(d => d.tier === 2 && d.configured).length,
+    confirmTotal:  out.filter(d => d.tier === 2).length,
+    up:   out.filter(d => d.status === "up").length,
+    down: out.filter(d => d.status === "down" || d.status === "no verdict").length,
+    thresholds: { screenMin: VPN_SCREEN_MIN, confirmMin: VPN_CONFIRM_MIN, screenBanMin: VPN_SCREEN_BAN_MIN },
+  };
+}
+
 // Kept for callers that only want the provider name for a single IP.
 async function proxycheckLookup(ip) {
   const d = DETECTORS.find(x => x.name === "proxycheck");
@@ -339,6 +377,6 @@ async function checkVpnAndAlert(name, ip) {
 
 
   return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY,
-    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_SCREEN_BAN_MIN, DETECTORS, tierDetectors, vpnDetectionEnabled, runTier,
+    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_SCREEN_BAN_MIN, DETECTORS, TIER_ROLE, tierDetectors, vpnDetectionEnabled, runTier, probeDetectors,
     _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, proxycheckLookup, saveVpnCheck };
 };

@@ -10,7 +10,7 @@ module.exports = (ctx) => {
   _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole,
   hasModRole, hero, ipBans, isOwner,
   loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
-  ownerOnlyEmbed, paginate, parseRcon, path, readDonatorFile, redactPrivateInfo, sendRcon,
+  ownerOnlyEmbed, paginate, parseRcon, path, probeDetectors, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,
@@ -49,6 +49,60 @@ module.exports = (ctx) => {
         return interaction.editReply({ embeds: [brand(new EmbedBuilder()
           .setColor(ok ? NV.IRRAD_GREEN : NV.AMBER).setTitle("🩺 Bot Health")
           .setDescription(lines.join("\n")))] });
+        },
+
+  /* ─────────────────────────────────────────────────────
+         VPNCHECK - owner: probe every VPN detector and show its role
+         ───────────────────────────────────────────────────── */
+  "vpncheck": async (interaction, name) => {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        // 1.1.1.1 is a well-known clean resolver - a safe default probe target that
+        // every detector recognises, so a "flagged" result here means a misconfiguration.
+        const ip = sanitizeId(interaction.options.getString("ip")) || "1.1.1.1";
+        let p;
+        try { p = await probeDetectors(ip); }
+        catch (e) { return interaction.editReply({ embeds: [errorEmbed("Probe Failed", e.message)] }); }
+
+        const icon = (d) => d.status === "up" ? "🟢" : d.status === "not configured" ? "⬜" : "🔴";
+        const row  = (d) => {
+          const bits = [];
+          if (d.status === "up") bits.push(d.flagged ? "**flagged**" : "clean", d.detail || null, `${d.ms}ms`);
+          else if (d.status === "not configured") bits.push("*no API key set*");
+          else if (d.status === "no verdict") bits.push("*responded but gave no verdict*");
+          else bits.push(`*${d.error || "unreachable"}*`);
+          return `${icon(d)} **${d.name}** - ${bits.filter(Boolean).join(" - ")}`;
+        };
+        const tierField = (tier) => {
+          const rows = p.detectors.filter(d => d.tier === tier);
+          return rows.length ? rows.map(row).join("\n").slice(0, 1024) : "*none*";
+        };
+        const allScreenUp = p.detectors.filter(d => d.tier === 1 && d.configured).every(d => d.status === "up");
+        const anyScreen   = p.screenActive > 0;
+        const colour = !anyScreen ? NV.RUST_RED : (allScreenUp && p.down === 0) ? NV.IRRAD_GREEN : NV.AMBER;
+        const t = p.thresholds;
+        const summary = [
+          `Probed \`${ip}\` against every detector.`,
+          `**${p.up}** up  -  **${p.down}** failing  -  **${p.detectors.length - p.up - p.down}** not configured`,
+          `Regular check: **${p.screenActive}/${p.screenTotal}** active  -  Final confirmation: **${p.confirmActive}/${p.confirmTotal}** active`,
+        ];
+        if (!anyScreen) summary.push("🔴 **No regular-check detector is configured - VPN detection is OFF.**");
+        else if (!p.confirmActive) summary.push(`⚠️ No final-confirmation detector configured: a ban needs **${t.screenBanMin}** regular checks to agree.`);
+        const provider = p.detectors.find(d => d.provider)?.provider;
+
+        const embed = brand(new EmbedBuilder().setColor(colour).setTitle("VPN Detection Health")
+          .setDescription(summary.join("\n"))
+          .addFields(
+            { name: `Regular Check - runs on EVERY IP (${p.screenActive}/${p.screenTotal})`, value: tierField(1), inline: false },
+            { name: `Final Confirmation - only on a flagged IP (${p.confirmActive}/${p.confirmTotal})`, value: tierField(2), inline: false },
+            { name: "Consensus rules", value:
+              `• Escalate to final confirmation at **${t.screenMin}+** regular-check hit(s)\n` +
+              `• Auto-ban at **${t.confirmMin}+** final-confirmation hit(s)\n` +
+              `• With no confirmation available, auto-ban needs **${t.screenBanMin}+** regular checks agreeing\n` +
+              `• A unanimous confirmation all-clear **disputes** the flag (logged, never banned)`, inline: false },
+            ...(provider ? [{ name: "Provider lookup", value: `Reported \`${provider}\` for this IP`, inline: false }] : []),
+          ).setFooter({ text: "Each probe spends one lookup per configured detector" }));
+        return interaction.editReply({ embeds: [embed] });
         },
 
   "setroles": async (interaction, name) => {

@@ -1,7 +1,7 @@
 /* Tests for the two-tier VPN detection consensus.
 
-   TIER 1 (screening, high quota): iphub, vpnapi, ipapi.is
-   TIER 2 (confirmation, low quota, high accuracy): ipqs, proxycheck
+   TIER 1 "regular check"       (every IP):        iphub, vpnapi, ipapi.is, proxycheck
+   TIER 2 "final confirmation"  (flagged IPs only): ipqs
 
    The properties that matter:
      - a clean screen must NOT spend any tier-2 quota
@@ -49,20 +49,16 @@ const CLEAN_SCREEN = {
   "iphub.info": { block: 0, isp: "Windstream" },
   "vpnapi.io":  { ip: "1.2.3.4", security: { vpn: false, proxy: false, tor: false, relay: false } },
   "ipapi.is":   { ip: "1.2.3.4", is_vpn: false, is_proxy: false, is_tor: false, is_datacenter: false, is_abuser: false },
+  "proxycheck.io": { status: "ok", "1.2.3.4": { proxy: "no", provider: "Windstream" } },
 };
 const HIT_SCREEN = {
   "iphub.info": { block: 1, isp: "M247" },
   "vpnapi.io":  { ip: "1.2.3.4", security: { vpn: true, proxy: false, tor: false, relay: false }, network: { autonomous_system_organization: "M247" } },
   "ipapi.is":   { ip: "1.2.3.4", is_vpn: true, is_proxy: false, is_tor: false, is_datacenter: true, is_abuser: false, company: { name: "M247" } },
+  "proxycheck.io": { status: "ok", "1.2.3.4": { proxy: "yes", type: "VPN", risk: 90, operator: { name: "NordVPN" } } },
 };
-const TIER2_HIT = {
-  "ipqualityscore": { success: true, vpn: true, proxy: true, tor: false, fraud_score: 88, ISP: "M247" },
-  "proxycheck.io":  { status: "ok", "1.2.3.4": { proxy: "yes", type: "VPN", risk: 90, operator: { name: "NordVPN" } } },
-};
-const TIER2_CLEAN = {
-  "ipqualityscore": { success: true, vpn: false, proxy: false, tor: false, fraud_score: 10, ISP: "Comcast" },
-  "proxycheck.io":  { status: "ok", "1.2.3.4": { proxy: "no", provider: "Comcast" } },
-};
+const TIER2_HIT   = { "ipqualityscore": { success: true, vpn: true,  proxy: true,  tor: false, fraud_score: 88, ISP: "M247" } };
+const TIER2_CLEAN = { "ipqualityscore": { success: true, vpn: false, proxy: false, tor: false, fraud_score: 10, ISP: "Comcast" } };
 
 test("a clean screen spends no tier-2 quota", async () => {
   const { vpn } = makeVpn();
@@ -70,9 +66,9 @@ test("a clean screen spends no tier-2 quota", async () => {
   const r = await vpn._doVpnCheck("1.2.3.4");
   assert.equal(r.flagged, false);
   assert.equal(r.screenHits, 0);
-  assert.equal(r.screenAnswered, 3, "all three screeners answered");
-  assert.ok(!called.includes("ipqualityscore"), "IPQS must not be called on a clean screen");
-  assert.ok(!called.includes("proxycheck.io"), "proxycheck must not be called on a clean screen");
+  assert.equal(r.screenAnswered, 4, "all four regular checks answered");
+  assert.ok(called.includes("proxycheck.io"), "proxycheck is a regular check - must run on every IP");
+  assert.ok(!called.includes("ipqualityscore"), "final confirmation must not be spent on a clean screen");
 });
 
 test("screen hit + tier-2 agreement = CONFIRMED, and reports the consumer brand", async () => {
@@ -81,8 +77,8 @@ test("screen hit + tier-2 agreement = CONFIRMED, and reports the consumer brand"
   const r = await vpn._doVpnCheck("1.2.3.4");
   assert.equal(r.flagged, true);
   assert.equal(r.confirmed, true);
-  assert.equal(r.screenHits, 3);
-  assert.equal(r.confirmHits, 2);
+  assert.equal(r.screenHits, 4);
+  assert.equal(r.confirmHits, 1);
   // "NordVPN" (proxycheck operator brand) must win over "M247" (the network).
   assert.equal(r.provider, "NordVPN");
   assert.equal(r.detectors.length, 5, "all five detectors recorded");
@@ -90,40 +86,37 @@ test("screen hit + tier-2 agreement = CONFIRMED, and reports the consumer brand"
 
 test("screen hit + unanimous tier-2 clean = DISPUTED (no ban)", async () => {
   const { vpn } = makeVpn();
-  mockFetch({ "ipinfo.io": GEO, ...HIT_SCREEN, "iphub.info": { block: 1, isp: "Comcast" },
-              "vpnapi.io": CLEAN_SCREEN["vpnapi.io"], "ipapi.is": CLEAN_SCREEN["ipapi.is"], ...TIER2_CLEAN });
+  mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN, "iphub.info": { block: 1, isp: "Comcast" }, ...TIER2_CLEAN });
   const r = await vpn._doVpnCheck("1.2.3.4");
   assert.equal(r.flagged, true, "screening flagged it");
   assert.equal(r.confirmed, false, "tier 2 disputed it -> must not ban");
   assert.equal(r.confirmHits, 0);
-  assert.equal(r.confirmAnswered, 2, "both confirmers answered");
+  assert.equal(r.confirmAnswered, 1, "the confirmer answered");
 });
 
 test("a total screening outage is not cached as clean", async () => {
   const { vpn } = makeVpn();
   mockFetch({ "ipinfo.io": GEO,
-    "iphub.info": new Error("503"), "vpnapi.io": new Error("timeout"), "ipapi.is": new Error("refused") });
+    "iphub.info": new Error("503"), "vpnapi.io": new Error("timeout"),
+    "ipapi.is": new Error("refused"), "proxycheck.io": new Error("down") });
   const r = await vpn._doVpnCheck("1.2.3.4");
   assert.equal(r, null, "null = retry next connection, never a cached all-clear");
 });
 
 test("one screener failing still yields a verdict from the others", async () => {
   const { vpn } = makeVpn();
-  mockFetch({ "ipinfo.io": GEO, "iphub.info": new Error("503"),
-              "vpnapi.io": HIT_SCREEN["vpnapi.io"], "ipapi.is": HIT_SCREEN["ipapi.is"], ...TIER2_HIT });
+  mockFetch({ "ipinfo.io": GEO, ...HIT_SCREEN, "iphub.info": new Error("503"), ...TIER2_HIT });
   const r = await vpn._doVpnCheck("1.2.3.4");
-  assert.equal(r.screenAnswered, 2, "the dead screener is not counted as clean");
-  assert.equal(r.screenHits, 2);
+  assert.equal(r.screenAnswered, 3, "the dead screener is not counted as clean");
+  assert.equal(r.screenHits, 3);
   assert.equal(r.confirmed, true);
 });
 
 test("with no tier-2 configured, banning needs screening consensus (>=2)", async () => {
-  // IPQS unset; proxycheck is keyless so force it to fail to leave tier 2 empty-handed.
+  // IPQS unset -> the final-confirmation tier is empty, so screening must carry it.
   const { vpn } = makeVpn({ IPQS_API_KEY: null });
-  mockFetch({ "ipinfo.io": GEO,
-    "iphub.info": { block: 1, isp: "M247" },                                   // 1 hit only
-    "vpnapi.io": CLEAN_SCREEN["vpnapi.io"], "ipapi.is": CLEAN_SCREEN["ipapi.is"],
-    "proxycheck.io": new Error("quota") });
+  mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN,
+    "iphub.info": { block: 1, isp: "M247" } });                                // exactly 1 hit
   const r = await vpn._doVpnCheck("1.2.3.4");
   assert.equal(r.flagged, true);
   assert.notEqual(r.confirmed, true, "a lone screening hit must not ban when nothing could confirm it");
