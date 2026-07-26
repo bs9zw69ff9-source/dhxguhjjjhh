@@ -3,7 +3,7 @@
    (a plain object built in index.js). Usage: require("./events")(ctx). */
 module.exports = function(ctx) {
   const {
-  ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
+  ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY, vpnDetectionEnabled,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
@@ -74,7 +74,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // join IP so a mis-correlated IP can't kick the wrong player; checkVpnAndAlert
       // caches per IP and re-checks nothing. The disconnect (onConfirm) check remains a
       // backstop for ambiguous joins. Masters already returned above.
-      if (ip && confident && IPHUB_API_KEY && !isAutobanExempt(name)) {
+      if (ip && confident && vpnDetectionEnabled() && !isAutobanExempt(name)) {
         checkVpnAndAlert(name, ip).catch(err => logger.warn("VPN", `join check failed for ${name}: ${err.message}`));
       }
     },
@@ -111,7 +111,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const lastActivity = Math.max(rec.lastSeen || 0, conns[0]?.ts || 0) || null;
 
       // VPN/proxy verdict for the IP they connected from (from the check above).
-      const vpnField = !IPHUB_API_KEY               ? "Not configured (set IPHUB_API_KEY)"
+      const vpnField = !vpnDetectionEnabled()       ? "Not configured (set a detector API key)"
         : !vpnResult                                ? "Not checked"
         : !vpnResult.flagged                        ? "Clean"
         : vpnResult.confirmed === false             ? "IPHub flagged - IPQS disputes (likely false positive)"

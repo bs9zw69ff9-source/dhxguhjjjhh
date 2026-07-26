@@ -1612,7 +1612,7 @@ function logBan(embed) {
 }
 
 // ---- moderation/vpn: IPHub/IPQS proxy detection + geolocation + auto-ban (extracted to ./moderation/vpn) ----
-const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
+const { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, vpnDetectionEnabled, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, saveVpnCheck } = require("./moderation/vpn")({
   ACTIVE_SERVERS, CLIN, DIVIDER, EmbedBuilder, FILES, NV,
   banWithIp, brand, clinical, hero, isMasterName,
   logAction, logBan, logger, postFeed, safeRead,
@@ -2785,7 +2785,7 @@ const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./c
 
 // ---- events: clientReady handler + ipBans join/leave/kill/auto-ban callbacks (extracted to ./events) ----
 const {  } = require("./events")({
-  ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY,
+  ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY, vpnDetectionEnabled,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
@@ -2821,7 +2821,7 @@ const { onInteraction } = require("./commands")({
   ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_REASON_LABELS, BLACKLIST_IDS,
   BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, redactPrivateInfo,
   DASHBOARD_INTERVAL_MS, DAY_MS, DIVIDER, DONATOR_FILE, EmbedBuilder, FACTION_BAK_DIR,
-  FILES, GLYPH, IPHUB_API_KEY,
+  FILES, GLYPH, IPHUB_API_KEY, vpnDetectionEnabled,
   MENUS, MessageFlags,
   ModalBuilder, NV, PUNISH_BY_VALUE, SPAWN_FILE_MAP,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UFW_BLOCK,

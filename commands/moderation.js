@@ -4,7 +4,7 @@
 module.exports = (ctx) => {
   const {
   BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES, GLYPH,
-  IPHUB_API_KEY, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
+  IPHUB_API_KEY, vpnDetectionEnabled, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
   addAutobanExempt, banWithIp, blacklistHas, brand, canOverride, checkVpn,
   commandTier, commandTierName,
   clinical, confirmDialog, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
@@ -498,7 +498,7 @@ module.exports = (ctx) => {
         // any missing checks now - owner command, worth the lookups. checkVpn caches, so
         // already-checked IPs cost nothing, and it's a no-op when IPHUB_API_KEY is unset.
         const ipsToShow = (cIps.length ? cIps : allIps).slice(0, 12);
-        if (IPHUB_API_KEY) { try { await Promise.all(ipsToShow.map(ip => checkVpn(ip).catch(() => null))); } catch {} }
+        if (vpnDetectionEnabled()) { try { await Promise.all(ipsToShow.map(ip => checkVpn(ip).catch(() => null))); } catch {} }
         const vpn    = loadVpnChecks();
         const vpnLines = ipsToShow.map(ip => {
           const v = vpn[ip];
@@ -532,7 +532,7 @@ module.exports = (ctx) => {
             { name: "Discord (verified)", value: discordVal, inline: false },
             { name: `All IPs (${allIps.length})`,        value: joinCap(allIps) ?? "*none on record*",   inline: false },
             { name: `Confirmed IPs (${cIps.length})`,    value: joinCap(cIps)   ?? "*none confirmed yet*", inline: false },
-            { name: "VPN / Proxy detection",             value: vpnLines.length ? vpnLines.join("\n").slice(0, 1000) : "*no IPs to check (or IPHUB_API_KEY unset)*", inline: false },
+            { name: "VPN / Proxy detection",             value: vpnLines.length ? vpnLines.join("\n").slice(0, 1000) : "*no IPs to check (or no detector configured)*", inline: false },
             { name: "Known alts (shared confirmed IP)",  value: joinCap(alts) ?? "*none*",                inline: false },
             { name: "Sessions",   value: String(rec?.logins ?? 0),                                              inline: true },
             { name: "First seen", value: rec?.firstSeen ? `<t:${Math.floor(rec.firstSeen / 1000)}:R>` : "*n/a*", inline: true },

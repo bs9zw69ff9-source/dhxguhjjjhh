@@ -9,44 +9,127 @@ module.exports = function(ctx) {
   safeRead, update, upsertPermBan, writeModLog,
   } = ctx;
 
-/* ---------------- VPN / proxy detection ----------------
-   IPHub is the free baseline check, run on a given IP exactly ONCE, ever. Only when
-   IPHub flags it (block==1: hosting/proxy/non-residential) do we spend an
-   IPQualityScore lookup to cross-reference it - IPQS is more accurate but its free
-   tier is far more limited than IPHub's, so it's reserved for the flagged subset
-   instead of running on every connection. The result is cached per-IP permanently -
-   once an IP is checked, it's never re-queried against either API again: a clean
-   result means that IP is trusted for good, a confirmed VPN means it's already been
-   acted on. The check is keyed on the IP itself, not the account or EOS id - a clean
-   IP is clean no matter who connects from it next.
-   A confirmed VPN/proxy auto-bans the connecting player (native RCON Ban+Kick, IP+EOS
-   flagged same as any other ban). If IPHub flags but IPQS explicitly disputes it
-   (checked, came back clean), that's treated as a likely false positive and only
-   logged, not banned - the whole point of the cross-check. If IPQS isn't configured,
-   an IPHub flag alone is enough to ban.
-   Entirely optional - a no-op if IPHUB_API_KEY isn't set. */
+/* ---------------- VPN / proxy detection (two-tier, consensus based) ----------------
+   Detection runs in two stacked tiers so accuracy is high without burning quota:
+
+     TIER 1 - SCREENING (high daily quotas, run on every not-yet-checked IP)
+       • IPHub      1,000/day   block==1 = hosting/proxy/non-residential
+       • vpnapi.io  1,000/day   security.{vpn,proxy,tor,relay}
+       • ipapi.is   1,000/day   is_vpn / is_proxy / is_tor  (works keyless)
+
+     TIER 2 - CONFIRMATION (small quotas, high accuracy, ONLY on a screening hit)
+       • IPQualityScore  ~35/day   vpn/proxy/tor + fraud score
+       • proxycheck.io   100/day   proxy=yes + risk + the VPN brand name
+
+   A clean screen ends the check immediately, so tier 2's tiny quota is only ever
+   spent on IPs that already look suspicious. Verdict:
+
+     confirmHits >= VPN_CONFIRM_MIN                -> CONFIRMED  (auto-ban)
+     tier 2 ran and all came back clean            -> DISPUTED   (log only, no ban)
+     tier 2 not configured, screenHits >= ban min  -> CONFIRMED by screen consensus
+     screenHits < VPN_SCREEN_MIN                   -> CLEAN
+
+   Results are cached per-IP forever (an IP is checked once, ever - keyed on the IP,
+   not the account, so a clean IP stays clean whoever connects from it next).
+   Every detector is optional; the whole subsystem is a no-op with none configured. */
 const IPHUB_API_KEY  = process.env.IPHUB_API_KEY || "";
 const IPQS_API_KEY   = process.env.IPQS_API_KEY  || "";
 const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional - higher ipinfo.io free quota
-// proxycheck.io names the actual VPN provider (e.g. "NordVPN"). Optional: works
-// keyless (100/day), a free key raises it to 1000/day. Queried only on flagged IPs.
 const PROXYCHECK_API_KEY = process.env.PROXYCHECK_API_KEY || "";
-// Look up the VPN provider name for an IP. `operator.name` is the consumer brand
-// (NordVPN, IVPN, ...); `provider` is the underlying network - prefer the brand.
+const VPNAPI_KEY     = process.env.VPNAPI_KEY   || "";
+const IPAPIIS_KEY    = process.env.IPAPIIS_KEY  || "";    // ipapi.is works keyless too
+
+// How many detectors must agree. Defaults are deliberately conservative.
+const VPN_SCREEN_MIN     = Math.max(1, Number(process.env.VPN_SCREEN_MIN)     || 1);   // hits needed to escalate to tier 2
+const VPN_CONFIRM_MIN    = Math.max(1, Number(process.env.VPN_CONFIRM_MIN)    || 1);   // tier-2 hits needed to ban
+const VPN_SCREEN_BAN_MIN = Math.max(1, Number(process.env.VPN_SCREEN_BAN_MIN) || 2);   // screen-only consensus needed to ban when tier 2 is unconfigured
+
+const _scrub = (s, ...keys) => keys.filter(Boolean).reduce((acc, k) => acc.split(k).join("***"), String(s ?? ""));
+
+/* Each detector: { name, tier, enabled, run(ip) -> { flagged, provider?, detail? } }.
+   `run` must never throw - it returns null when the lookup itself failed, which is
+   tracked separately from "answered clean" so an outage can't be read as innocence. */
+const DETECTORS = [
+  { name: "iphub", tier: 1, enabled: () => !!IPHUB_API_KEY, async run(ip) {
+      const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
+      const d = await res.json();
+      if (!d || d.block === undefined) return null;
+      return { flagged: d.block === 1, detail: `block:${d.block}`, isp: d.isp || null, block: d.block };
+    } },
+  { name: "vpnapi", tier: 1, enabled: () => !!VPNAPI_KEY, async run(ip) {
+      const res = await fetch(`https://vpnapi.io/api/${encodeURIComponent(ip)}?key=${VPNAPI_KEY}`, { headers: { Accept: "application/json" } });
+      const d = await res.json();
+      const s = d?.security;
+      if (!s) return null;
+      const hits = ["vpn", "proxy", "tor", "relay"].filter(k => s[k]);
+      return { flagged: hits.length > 0, detail: hits.length ? hits.join("+") : "clean",
+               isp: d?.network?.autonomous_system_organization || null };
+    } },
+  { name: "ipapi.is", tier: 1, enabled: () => true, async run(ip) {      // keyless-capable
+      const key = IPAPIIS_KEY ? `&key=${IPAPIIS_KEY}` : "";
+      const res = await fetch(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}${key}`, { headers: { Accept: "application/json" } });
+      const d = await res.json();
+      if (!d || d.is_vpn === undefined) return null;
+      // Anonymising signals only. is_datacenter alone is NOT a hit - plenty of
+      // legitimate players sit behind carrier/cloud ranges - but it is reported.
+      const hits = [["vpn", d.is_vpn], ["proxy", d.is_proxy], ["tor", d.is_tor], ["abuser", d.is_abuser]]
+        .filter(([, v]) => v).map(([k]) => k);
+      return { flagged: hits.length > 0, detail: (hits.length ? hits.join("+") : "clean") + (d.is_datacenter ? " (datacenter)" : ""),
+               provider: d.company?.name || null, isp: d.asn?.org || d.company?.name || null };
+    } },
+  { name: "ipqs", tier: 2, enabled: () => !!IPQS_API_KEY, async run(ip) {
+      const res = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
+      const d = await res.json();
+      if (!d?.success) return null;
+      const flagged = !!(d.vpn || d.proxy || d.tor);
+      return { flagged, detail: `vpn:${!!d.vpn} proxy:${!!d.proxy} tor:${!!d.tor} fraud:${d.fraud_score ?? "?"}`,
+               isp: d.ISP || null,
+               ipqs: { vpn: !!d.vpn, proxy: !!d.proxy, tor: !!d.tor, fraudScore: d.fraud_score ?? null } };
+    } },
+  { name: "proxycheck", tier: 2, enabled: () => true, async run(ip) {    // keyless-capable
+      const key = PROXYCHECK_API_KEY ? `&key=${PROXYCHECK_API_KEY}` : "";
+      const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1${key}`, { headers: { Accept: "application/json" } });
+      const d = await res.json();
+      if (!d || (d.status !== "ok" && d.status !== "warning")) return null;
+      const rec = d[ip];
+      if (!rec) return null;
+      return { flagged: String(rec.proxy).toLowerCase() === "yes",
+               detail: `proxy:${rec.proxy}${rec.type ? ` type:${rec.type}` : ""}${rec.risk !== undefined ? ` risk:${rec.risk}` : ""}`,
+               // operator.name is the consumer brand (NordVPN, IVPN); provider is the network.
+               provider: rec.operator?.name || rec.provider || null };
+    } },
+];
+const tierDetectors = (tier) => DETECTORS.filter(d => d.tier === tier && d.enabled());
+// True when ANY detector is usable - what gates the whole subsystem.
+const vpnDetectionEnabled = () => DETECTORS.some(d => d.enabled());
+
+/* Run one tier in parallel. Returns { hits, answered, failed, results[] } where
+   `answered` counts detectors that actually returned a verdict (so a total outage is
+   distinguishable from a unanimous all-clear). */
+async function runTier(tier, ip) {
+  const dets = tierDetectors(tier);
+  const settled = await Promise.all(dets.map(async (d) => {
+    try {
+      const out = await d.run(ip);
+      return out ? { name: d.name, tier, ...out } : { name: d.name, tier, error: "no verdict" };
+    } catch (err) {
+      return { name: d.name, tier, error: _scrub(err.message ?? err, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY, IPHUB_API_KEY) };
+    }
+  }));
+  for (const r of settled) if (r.error) logger.warn("VPN", `${r.name} lookup failed for ${ip}: ${r.error}`);
+  const answered = settled.filter(r => !r.error);
+  return {
+    hits: answered.filter(r => r.flagged).length,
+    answered: answered.length,
+    failed: settled.length - answered.length,
+    results: settled,
+  };
+}
+// Kept for callers that only want the provider name for a single IP.
 async function proxycheckLookup(ip) {
-  try {
-    const key = PROXYCHECK_API_KEY ? `&key=${PROXYCHECK_API_KEY}` : "";
-    const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1${key}`, { headers: { Accept: "application/json" } });
-    const data = await res.json();
-    if (!data || (data.status !== "ok" && data.status !== "warning")) return null;
-    const rec = data[ip];
-    if (!rec) return null;
-    return rec.operator?.name || rec.provider || null;
-  } catch (err) {
-    const msg = PROXYCHECK_API_KEY ? String(err.message ?? err).split(PROXYCHECK_API_KEY).join("***") : String(err.message ?? err);
-    logger.warn("VPN", `proxycheck lookup failed for ${ip}: ${msg}`);
-    return null;
-  }
+  const d = DETECTORS.find(x => x.name === "proxycheck");
+  try { return (await d.run(ip))?.provider ?? null; }
+  catch (err) { logger.warn("VPN", `proxycheck lookup failed for ${ip}: ${_scrub(err.message ?? err, PROXYCHECK_API_KEY)}`); return null; }
 }
 const _regionName    = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
 const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
@@ -106,48 +189,71 @@ async function geoLookup(ip) {
   }
 }
 async function _doVpnCheck(ip) {
-  // Geolocation first - free/keyless, for every IP regardless of the VPN keys.
+  // Geolocation first - free/keyless, for every IP regardless of the detector keys.
   const gwho = await geoLookup(ip);
+  const enabled = vpnDetectionEnabled();
 
-  // VPN detection - optional, only when IPHUB_API_KEY is set.
-  let iphub = null, iphubFailed = false, flagged = false, confirmed = null, ipqs = null, provider = null;
-  if (IPHUB_API_KEY) {
-    try {
-      const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
-      iphub = await res.json();
-    } catch (err) {
-      logger.warn("VPN", `IPHub lookup failed for ${ip}: ${err.message}`);
-      iphubFailed = true;
+  let flagged = false, confirmed = null, screen = null, conf = null;
+  if (enabled) {
+    /* TIER 1 - screening. All high-quota detectors in parallel. */
+    screen = await runTier(1, ip);
+    if (screen.answered === 0) {
+      logger.warn("VPN", `every screening detector failed for ${ip} - not caching, will retry on the next connection`);
+      return null;                                   // an outage must never be cached as "clean"
     }
-    flagged = iphub?.block === 1;
-    // On an IPHub-flagged IP, cross-check with IPQS and look up the provider name via
-    // proxycheck.io - both reserved for the flagged subset to conserve their free tiers.
+    flagged = screen.hits >= VPN_SCREEN_MIN;
+
+    /* TIER 2 - confirmation. Only spent on an IP the screen already flagged. */
     if (flagged) {
-      const [ipqsRes, providerRes] = await Promise.all([
-        IPQS_API_KEY
-          ? fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`)
-              .then(r => r.json())
-              .catch(err => { logger.warn("VPN", `IPQS lookup failed for ${ip}: ${String(err.message ?? err).split(IPQS_API_KEY).join("***")}`); return null; })
-          : Promise.resolve(null),
-        proxycheckLookup(ip),
-      ]);
-      if (ipqsRes?.success) {
-        ipqs = { vpn: !!ipqsRes.vpn, proxy: !!ipqsRes.proxy, tor: !!ipqsRes.tor, fraudScore: ipqsRes.fraud_score ?? null };
-        confirmed = !!(ipqsRes.vpn || ipqsRes.proxy || ipqsRes.tor);
+      conf = await runTier(2, ip);
+      if (conf.answered > 0) {
+        confirmed = conf.hits >= VPN_CONFIRM_MIN;     // true = agreed, false = disputed
+      } else if (tierDetectors(2).length) {
+        confirmed = null;                             // configured but all failed - inconclusive
+        logger.warn("VPN", `every confirmation detector failed for ${ip} - falling back to screen consensus (${screen.hits} hit(s))`);
       }
-      provider = providerRes;
+      // No tier-2 detectors configured at all: fall back to screen consensus.
+      if (confirmed === null && !tierDetectors(2).length) {
+        confirmed = screen.hits >= Math.min(VPN_SCREEN_BAN_MIN, screen.answered) ? true : null;
+      }
     }
   }
 
-  // Prefer the whois geo (city-level); fall back to IPHub's country when whois is down.
-  const geo = gwho || (iphub ? {
-    city: null, region: null, country: iphub.countryName || null, countryCode: iphub.countryCode || null,
-    zip: null, isp: iphub.isp || null, org: null, asn: null, timezone: null, lat: null, lon: null,
-  } : null);
-  if (!geo) return null;                           // no location at all - don't cache, retry next time
-  if (IPHUB_API_KEY && iphubFailed) return null;   // VPN enabled but IPHub down - retry to capture the flag
+  // Merge whatever ISP / provider name the detectors reported.
+  const all = [...(screen?.results ?? []), ...(conf?.results ?? [])].filter(r => !r.error);
+  /* Provider name: prefer proxycheck's `operator.name` - that's the CONSUMER BRAND
+     ("NordVPN") which is what staff actually want to read. Other detectors only know
+     the underlying network ("M247", "Datacamp"), so they're the fallback. */
+  const provider = all.find(r => r.name === "proxycheck" && r.provider)?.provider
+    ?? all.map(r => r.provider).find(Boolean) ?? null;
+  const detIsp   = all.map(r => r.isp).find(Boolean) ?? null;
+  const iphubRes = all.find(r => r.name === "iphub");
+  const ipqsRes  = all.find(r => r.name === "ipqs");
 
-  const result = { ip, flagged, confirmed, iphubBlock: iphub?.block ?? null, isp: geo.isp || null, provider, ipqs, geo };
+  // Prefer the whois geo (city-level); fall back to a detector's country when whois is down.
+  const geo = gwho || (detIsp ? {
+    city: null, region: null, country: null, countryCode: null,
+    zip: null, isp: detIsp, org: null, asn: null, timezone: null, lat: null, lon: null,
+  } : null);
+  if (!geo) return null;                             // no location at all - retry next time
+
+  const result = {
+    ip, flagged, confirmed,
+    iphubBlock: iphubRes?.block ?? null,             // kept for backwards compatibility
+    isp: geo.isp || detIsp || null,
+    provider,
+    ipqs: ipqsRes?.ipqs ?? null,                     // kept for backwards compatibility
+    geo,
+    // Full per-detector audit so the feed / /inspect can show exactly who said what.
+    detectors: all.map(r => ({ name: r.name, tier: r.tier, flagged: !!r.flagged, detail: r.detail ?? null })),
+    screenHits: screen?.hits ?? 0, screenAnswered: screen?.answered ?? 0,
+    confirmHits: conf?.hits ?? 0,  confirmAnswered: conf?.answered ?? 0,
+  };
+  logger.info("VPN", `${ip} -> screen ${result.screenHits}/${result.screenAnswered}` +
+    (conf ? ` | confirm ${result.confirmHits}/${result.confirmAnswered}` : "") +
+    ` | verdict=${!flagged ? "CLEAN" : confirmed === true ? "CONFIRMED" : confirmed === false ? "DISPUTED" : "FLAGGED (inconclusive)"}` +
+    (provider ? ` | provider=${provider}` : "") +
+    ` | ${result.detectors.map(d => `${d.name}:${d.flagged ? "HIT" : "clean"}`).join(" ")}`);
   await saveVpnCheck(ip, result);
   return { ...result, checkedAt: Date.now() };
 }
@@ -164,7 +270,7 @@ function formatFullLocation(geo) {
 // the next player from that IP can still be actioned once the entry ages out.
 const VPN_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 async function checkVpnAndAlert(name, ip) {
-  if (!ip || !IPHUB_API_KEY) return null;
+  if (!ip || !vpnDetectionEnabled()) return null;
   const prev = loadVpnChecks()[ip];
   const alreadyChecked = !!prev && (Date.now() - (prev.checkedAt || 0) < VPN_ACTION_TTL_MS);
   const result = await checkVpn(ip).catch(() => null);
@@ -179,22 +285,33 @@ async function checkVpnAndAlert(name, ip) {
     return result;
   }
 
-  const disputed = result.confirmed === false;   // IPHub flagged it, IPQS actively said clean
+  // One-line-per-detector breakdown, grouped by tier, for the alert embeds.
+  const breakdown = (tier) => {
+    const rows = (result.detectors ?? []).filter(d => d.tier === tier);
+    if (!rows.length) return "*none configured*";
+    return rows.map(d => `${d.flagged ? "🔴" : "🟢"} **${d.name}** - ${d.detail ?? (d.flagged ? "flagged" : "clean")}`).join("\n").slice(0, 1024);
+  };
+  const tally = `Screening **${result.screenHits ?? 0}/${result.screenAnswered ?? 0}** - Confirmation **${result.confirmHits ?? 0}/${result.confirmAnswered ?? 0}**`;
+
+  const disputed = result.confirmed === false;   // screening flagged it, confirmation tier said clean
   if (disputed) {
     const embed = brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
       .setTitle("VPN Flag Disputed - No Action")
-      .setDescription(`**${name}** connected from an IP IPHub flagged, but IPQS checked it and disagreed.`)
+      .setDescription(`**${name}** connected from an IP the screening tier flagged, but every high-accuracy confirmation detector checked it and disagreed.\n${tally}`)
       .addFields(
         { name: "VPN Provider", value: result.provider || "unknown", inline: true },
         { name: "ISP",         value: result.isp || "unknown",        inline: true },
-        { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
-        { name: "IPQS", value: `vpn:${result.ipqs.vpn} - proxy:${result.ipqs.proxy} - tor:${result.ipqs.tor} - fraud:${result.ipqs.fraudScore}`, inline: true },
+        { name: "Screening (tier 1)",    value: breakdown(1), inline: false },
+        { name: "Confirmation (tier 2)", value: breakdown(2), inline: false },
       ).setFooter({ text: "Likely false positive - not banned" }));
     await logAction(embed);
     return result;
   }
 
-  const label = result.confirmed === true ? "Confirmed VPN/proxy (IPHub + IPQS agree)" : "Flagged by IPHub (IPQS not configured to cross-check)";
+  const label = result.confirmed === true
+    ? (result.confirmAnswered ? `Confirmed VPN/proxy - ${result.confirmHits}/${result.confirmAnswered} confirmation detector(s) agree`
+                              : `Confirmed by screening consensus - ${result.screenHits}/${result.screenAnswered} detectors agree`)
+    : `Flagged by ${result.screenHits}/${result.screenAnswered} screening detector(s) (confirmation inconclusive)`;
   let res;
   try { res = await banWithIp(name, "both", { permanent: true, ip }); }
   catch (err) { logger.warn("VPN", `auto-ban failed for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
@@ -210,8 +327,9 @@ async function checkVpnAndAlert(name, ip) {
       { name: "Status",  value: label,          inline: false },
       { name: "VPN Provider", value: result.provider || "unknown", inline: true },
       { name: "ISP",         value: result.isp || "unknown",        inline: true },
-      { name: "IPHub block", value: String(result.iphubBlock ?? "?"), inline: true },
-      ...(result.ipqs ? [{ name: "IPQS", value: `vpn:${result.ipqs.vpn} - proxy:${result.ipqs.proxy} - tor:${result.ipqs.tor} - fraud:${result.ipqs.fraudScore}`, inline: true }] : []),
+      { name: "Consensus",   value: tally,                          inline: true },
+      { name: "Screening (tier 1)",    value: breakdown(1), inline: false },
+      { name: "Confirmation (tier 2)", value: breakdown(2), inline: false },
       { name: "Enforced", value: `RCON Ban+Kick on ${res?.blacklist?.servers ?? 0}/${ACTIVE_SERVERS.length} server(s)`, inline: false },
     ), "Auto-ban - native RCON ban - all servers");
   await logBan(embed);
@@ -220,5 +338,7 @@ async function checkVpnAndAlert(name, ip) {
 }
 
 
-  return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, PROXYCHECK_API_KEY, _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, proxycheckLookup, saveVpnCheck };
+  return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY,
+    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_SCREEN_BAN_MIN, DETECTORS, tierDetectors, vpnDetectionEnabled, runTier,
+    _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, proxycheckLookup, saveVpnCheck };
 };
