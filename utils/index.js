@@ -52,6 +52,31 @@ function easternClock(d = new Date()) {
   const hh = p.hour === "24" ? "00" : p.hour;   // some ICU builds emit 24 at midnight
   return { date: `${p.year}-${p.month}-${p.day}`, hm: `${hh}:${p.minute}` };
 }
+/* Every human-readable timestamp the bot prints is Eastern (America/New_York,
+   DST-aware so it reads EST in winter and EDT in summer) - the server's local time.
+   toISOString() is deliberately NOT used for display: it always renders UTC, which
+   is what made connection-feed times look 4-5 hours off. Discord's own <t:...:R>
+   markers are left alone - those auto-localize to each viewer. */
+const _EASTERN_STAMP = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+});
+/** "YYYY-MM-DD HH:MM:SS" in Eastern time. No argument = now; a null/0/invalid
+    timestamp returns "unknown" rather than silently rendering the 1970 epoch. */
+function easternStamp(ms = Date.now()) {
+  if (!ms || !Number.isFinite(Number(ms))) return "unknown";   // 0/null/NaN = never seen
+  try {
+    const p = Object.fromEntries(_EASTERN_STAMP.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+    const hh = p.hour === "24" ? "00" : p.hour;                 // some ICU builds emit 24 at midnight
+    return `${p.year}-${p.month}-${p.day} ${hh}:${p.minute}:${p.second}`;
+  } catch { return "unknown"; }
+}
+/** "YYYY-MM-DD" in Eastern time - the Eastern calendar day, not the UTC one. */
+function easternDate(ms = Date.now()) {
+  const s = easternStamp(ms);
+  return s === "unknown" ? s : s.slice(0, 10);
+}
+
 // Parse "18:30", "6:30pm", "3pm", "0:00" -> normalized "HH:MM" (24h), or null.
 function parseClockTime(raw) {
   const s = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, "");
@@ -81,5 +106,5 @@ function redactPrivateInfo(text) {
 
 module.exports = {
   sanitizeId, sanitizeMessage, md5, formatTimeLeft,
-  parseDuration, easternClock, parseClockTime, redactPrivateInfo,
+  parseDuration, easternClock, easternStamp, easternDate, parseClockTime, redactPrivateInfo,
 };

@@ -9,7 +9,7 @@ module.exports = (ctx) => {
   commandTier, commandTierName,
   clinical, confirmDialog, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
   easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
-  firewallUnblockIps, formatTimeLeft, getOnlinePlayers, hasModRole,
+  easternDate, firewallUnblockIps, formatTimeLeft, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
   isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, verifiedDiscordForName, log,
   logAction, logBan, logger, modOnlyEmbed, ownerOnlyEmbed, paginate,
@@ -212,8 +212,8 @@ module.exports = (ctx) => {
             "For **Other**, add the `date` option (`YYYY-MM-DD`) - the ban lifts at 12pm Eastern that day.")], flags: MessageFlags.Ephemeral });
           expires = easternNoonUTC(dateStr);
           if (!expires || expires <= Date.now()) return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
-            `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)}\`). The ban lifts at **12pm Eastern** that day.`)], flags: MessageFlags.Ephemeral });
-          label = `until ${new Date(expires).toISOString().slice(0, 10)}`;
+            `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${easternDate(Date.now() + 7 * 864e5)}\`). The ban lifts at **12pm Eastern** that day.`)], flags: MessageFlags.Ephemeral });
+          label = `until ${easternDate(expires)}`;
         } else if (punish?.ms) {
           expires = Date.now() + punish.ms; label = punishDurationLabel(punish);
         } else {

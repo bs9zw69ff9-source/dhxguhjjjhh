@@ -24,6 +24,7 @@ function makeBans(over = {}) {
       unblacklistPlayer: () => ({ cleared: { ips: 1, names: 0, ids: 1 } }),
     },
     isAutobanExempt: () => false, isMasterName: () => false, loadBans: () => [],
+    easternStamp: () => "2026-07-26 17:02:03",
     logger: {
       info: (t, m) => logs.push({ lvl: "info", t, m }),
       warn: (t, m) => logs.push({ lvl: "warn", t, m }),

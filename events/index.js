@@ -8,7 +8,7 @@ module.exports = function(ctx) {
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
-  healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
+  easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
   mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
@@ -95,7 +95,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const srvName = serverNameByLabel.get(String(server)) || "Server 1";
       // everything Pavlov.log knows about this player (resolved by id inside ipBans)
       const rec = record || { ips: [], cips: [], alts: [], firstSeen: null, lastSeen: null, recent: [], logins: 0, bypass: false, flagged: false };
-      const fmt = (ms) => { if (!ms) return "unknown"; try { return new Date(ms).toISOString().replace("T", " ").slice(0, 19); } catch { return "unknown"; } };
+      const fmt = (ms) => (ms ? easternStamp(ms) : "unknown");   // Eastern time, not UTC
 
       // recent connections - newest first; fold in this live join, dedupe near-duplicates
       const conns = [];
@@ -125,6 +125,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
         .setTitle(`Player Information: ${name}`)
         .setDescription(`${name} just connected on ${srvName}.`)
         .addFields(
+          // IP first, then EOS ID - both in inline code so they're one-tap copyable.
+          { name: "IP Address",      value: ip ? `\`${ip}\`` : "unknown",         inline: false },
           { name: "EOS ID",          value: rec.id ? `\`${rec.id}\`` : "unknown", inline: false },
           { name: "First Seen",      value: fmt(rec.firstSeen),                  inline: true },
           { name: "Last Seen",       value: fmt(rec.lastSeen),                   inline: true },

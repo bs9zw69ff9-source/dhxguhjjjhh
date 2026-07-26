@@ -3,7 +3,7 @@
    (a plain object built in index.js). Usage: require("./moderation/bans")(ctx). */
 module.exports = function(ctx) {
   const {
-  ACTIVE_SERVERS, FILES, _sameId, blacklistAdd, blacklistRemove,
+  ACTIVE_SERVERS, FILES, _sameId, blacklistAdd, blacklistRemove, easternStamp,
   getOnlinePlayers, ipBans, isAutobanExempt, isMasterName,
   loadBans, logger, preserveBalanceAcrossKick, removeAutobanExempt, safeRead, safeWrite,
   sanitizeBanName, sanitizeId, sendRcon, update,
@@ -50,7 +50,7 @@ async function banWithIp(playerId, server = "both", opts = {}) {
     ` | alts=${enf.alts?.length ? enf.alts.join(",") : "none"}` +
     ` | rcon=${enforced.servers}/${ACTIVE_SERVERS.length} accepted` +
     ` | result=${enforced.servers ? (okAll ? "ENFORCED" : "PARTIAL") : "NOT ENFORCED"}` +
-    ` | at=${new Date().toISOString()}`);
+    ` | at=${easternStamp()}`);
   if (!enf.ips?.length && !(opts.permanent === true && enf.ids?.length)) {
     logger.warn("BanAudit", `"${name}" has NO confirmed IP and no EOS flag yet - they were likely never seen disconnecting. Their IP will be flagged automatically the moment their disconnect confirms it (pending flag, persisted across restarts).`);
   }
@@ -297,7 +297,7 @@ function unbanEverywhere(playerId) {
   logger.info("BanAudit",
     `unban | player="${name}" | target="${_uname || "none"}" | eos=${known?.id || "unknown"}` +
     ` | cleared: ips=${c.ips ?? 0} names=${c.names ?? 0} eosIds=${c.ids ?? 0} blacklistTxt=${bl.removed ?? 0}` +
-    ` | at=${new Date().toISOString()}`);
+    ` | at=${easternStamp()}`);
   if (!_uname) logger.error("BanAudit", `unban for "${name}" has NO usable RCON target - the native server ban was NOT lifted`);
   // Fire-and-forget so the reply isn't blocked, but report per-server failures
   // instead of swallowing them (a silent failure leaves them natively banned).

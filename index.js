@@ -1,8 +1,16 @@
 // Pavlov VR moderation bot for RP servers (theme-neutral; skin via BOT_NAME).
 // (c) 2026 bs9zw69ff9-source. Private project, please don't redistribute.
 require("dotenv").config();
+/* The bot runs on Eastern time: every date it formats, schedules against, or prints
+   is America/New_York (DST-aware - EST in winter, EDT in summer). Set before anything
+   reads a clock so date maths, log stamps and cron-style comparisons all agree.
+   Override with TZ in the environment if you ever run it elsewhere. */
+process.env.TZ = process.env.TZ || "America/New_York";
 const fs     = require("fs");
 const path   = require("path");
+// Eastern-time stamps, required up here because the logger (defined below) uses them
+// long before the main ./utils destructure runs. ./utils is pure - safe to load early.
+const { easternStamp, easternDate } = require("./utils");
 const { execFileSync, execFile, spawn } = require("child_process");
 const ipBans = require("./ipBans");
 const {
@@ -51,7 +59,7 @@ const BOT_START_MS = Date.now();
    the LICENSE. Removing or altering it violates the license terms. */
 const BOT_AUTHOR    = "bs9zw69ff9-source";
 const BOT_COPYRIGHT = `2026 ${BOT_AUTHOR} - All rights reserved`;
-const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${new Date(BOT_START_MS).toISOString().slice(0, 10)}`;
+const BUILD_ID      = process.env.BUILD_ID || `v${BOT_VERSION}-${easternDate(BOT_START_MS)}`;
 
 // ---- owners  (super-users - top of every permission) ----
 // Overridable via OWNER_IDS / SUPER_OWNER_IDS in .env (comma/space separated);
@@ -102,7 +110,7 @@ const CURRENT_LOG_LEVEL = LOG_LEVEL[process.env.LOG_LEVEL?.toUpperCase()] ?? LOG
 function log(level, tag, message, extra) {
   const levelName = Object.keys(LOG_LEVEL).find(k => LOG_LEVEL[k] === level) ?? "INFO";
   if (level < CURRENT_LOG_LEVEL) return;
-  const ts   = new Date().toISOString();
+  const ts   = easternStamp();          // Eastern, not UTC - matches the server clock
   const line = `[${ts}] [${levelName.padEnd(5)}] [${tag}] ${message}${extra ? " " + JSON.stringify(extra) : ""}`;
   console.log(line);
   try { fs.appendFileSync(LOG_FILE, line + "\n"); } catch {}
@@ -1537,7 +1545,7 @@ const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallStatu
 
 // ---- moderation/bans: native RCON ban/kick enforcement, reconcile, unban (extracted to ./moderation/bans) ----
 const { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere } = require("./moderation/bans")({
-  ACTIVE_SERVERS, FILES, UFW_BLOCK, _sameId, blacklistAdd, blacklistRemove,
+  ACTIVE_SERVERS, FILES, UFW_BLOCK, _sameId, blacklistAdd, blacklistRemove, easternStamp,
   firewallBlockIps, firewallUnblockIps, ipBans, isMasterName, loadBans, logger,
   preserveBalanceAcrossKick, safeRead, safeWrite, sanitizeBanName, sanitizeId, sendRcon,
   update, getOnlinePlayers: (...a) => getOnlinePlayers(...a), isAutobanExempt: (...a) => isAutobanExempt(...a), removeAutobanExempt: (...a) => removeAutobanExempt(...a),
@@ -2194,7 +2202,7 @@ function modsaveBanlistPath() {
   return process.env.MODSAVE_BLACKLIST_PATH || path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/banlist.txt");
 }
 function buildModsaveBanlist() {
-  const fmtDate = (ms) => { try { return new Date(ms).toISOString().slice(0, 10); } catch { return "unknown"; } };
+  const fmtDate = (ms) => easternDate(ms);   // Eastern calendar day (the unban date players read)
   const blocks = [];
   for (const b of loadBans()) {
     const unban = (b.permanent || !b.expires) ? "Permanent" : fmtDate(b.expires);
@@ -2782,7 +2790,7 @@ const {  } = require("./events")({
   autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
-  hasServer3, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
+  hasServer3, easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
   mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
@@ -2823,7 +2831,7 @@ const { onInteraction } = require("./commands")({
   cell, checkRateLimit, checkVpn, client,
   clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank, creditCaps,
   dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, dmPunishmentNotice,
-  dmStatusField, dmUserForPavlov, easternClock, easternNoonUTC, emptyIdEmbed,
+  dmStatusField, dmUserForPavlov, easternClock, easternDate, easternStamp, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
   hasPoliceRole, hasWhitelistManageRole, loadWarrants, getWarrants, addWarrant, removeWarrant,
   recordArrest, startSentence, announceArrest, logPolice, getArrests, totalJailServed, suspendRank,

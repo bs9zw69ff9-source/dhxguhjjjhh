@@ -10,7 +10,7 @@
 */
 module.exports = function createCommands(ctx) {
   const {
-  ALL_RANK_NAMES, ActionRowBuilder, DIVIDER, EmbedBuilder, MessageFlags,
+  ALL_RANK_NAMES, ActionRowBuilder, DIVIDER, EmbedBuilder, MessageFlags, easternDate,
   ModalBuilder, NV, TextInputBuilder, TextInputStyle, adminOnlyEmbed, blacklistedEmbed,
   brand, checkRateLimit, client, commandPlayerCandidates, commands,
   errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
@@ -99,7 +99,8 @@ module.exports = function createCommands(ctx) {
     // /tempban date - quick calendar suggestions (always future dates, YYYY-MM-DD)
     if (focused.name === "date" && cmdName === "tempban") {
       const q = focused.value.trim();
-      const iso = (days) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+      // Eastern calendar day - late-evening ET would otherwise suggest tomorrow's UTC date.
+      const iso = (days) => easternDate(Date.now() + days * 86_400_000);
       const opts = [
         { name: `Tomorrow (${iso(1)})`,  value: iso(1) },
         { name: `In 3 days (${iso(3)})`, value: iso(3) },
