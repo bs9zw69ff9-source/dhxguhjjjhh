@@ -10,7 +10,7 @@ module.exports = function(ctx) {
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
   easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
-  mainCommands, path, postFeed, postUpdateLogIfChanged,
+  mainCommands, path, postFeed, postJoinLog, postLeaveLog, postKillLog, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
@@ -105,7 +105,9 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     masters: [...MASTER_NAMES],   // never IP-logged / fed / auto-banned
     // Fired on every LIVE join - re-grant recorded RCON menus (the server drops a
     // player's menu on disconnect, so a rejoin needs the grant re-applied).
-    onConnect: async ({ name, ip, confident }) => {
+    onConnect: async ({ name, ip, server, confident }) => {
+      // Plain-text join log (no IP / account data - safe in a public channel).
+      try { postJoinLog(name, serverNameByLabel.get(String(server)) || null); } catch {}
       // Pull the newest caps ledger onto every install BEFORE this server reads it,
       // so a hop from another server carries their money over.
       try { syncPlayerLedger(name); } catch (e) { logger.warn("Sync", `join ledger sync failed for ${name}: ${e.message}`); }
@@ -127,6 +129,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // Fired once a player's IP is CONFIRMED (the same-line disconnect pairing) -
     // posts an accurate name, ID, IP entry to the connection-feed webhook.
     onConfirm: async ({ name, ip, server, record }) => {
+      // Plain-text leave log - onConfirm fires on the disconnect line.
+      try { postLeaveLog(name, serverNameByLabel.get(String(server)) || null); } catch {}
       // The economy mod saves the balance at disconnect - propagate it to the other
       // installs now (and once more a few seconds later for a slow save write), so
       // the caps are already there if they hop to another server.
@@ -254,6 +258,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     },
     // Fired on every live PvP kill (ipBans already filters out suicides/environmental
     // deaths - killer is always distinct from and present alongside the victim).
+    // Fired on every live PvP kill (ipBans already filters suicides/environmental deaths).
+    onKill: async ({ killer, killed }) => { try { postKillLog(killer, killed); } catch {} },
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, uniqueId, ip, reason }) => {

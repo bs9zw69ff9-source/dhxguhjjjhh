@@ -50,6 +50,17 @@ if (process.env.CONNECT_WEBHOOK_URL) {
   try { feedHook = new WebhookClient({ url: process.env.CONNECT_WEBHOOK_URL }); console.log("[Feed] connection feed enabled"); }
   catch (e) { console.warn(`[Feed] invalid CONNECT_WEBHOOK_URL: ${e.message}`); feedHook = null; }
 }
+/* Plain-text join/leave and kill logs, each on its own webhook. Separate from the
+   connection feed above: those carry no IP or account data, so they are safe in a
+   public channel. A webhook URL is a CREDENTIAL - it goes in .env, never in the repo. */
+function makeHook(envVar, label) {
+  const url = process.env[envVar];
+  if (!url) return null;
+  try { const h = new WebhookClient({ url }); console.log(`[${label}] enabled`); return h; }
+  catch (e) { console.warn(`[${label}] invalid ${envVar}: ${e.message}`); return null; }
+}
+const joinHook = makeHook("JOIN_WEBHOOK_URL", "JoinLog");
+const killHook = makeHook("KILL_WEBHOOK_URL", "KillLog");
 
 // ---- version & startup ----
 const BOT_VERSION  = "3.2.2";
@@ -1559,6 +1570,17 @@ function postFeed(embed) {
   // Webhook feed keeps REAL embeds (everything else in the bot is plain text).
   feedHook.send({ embeds: [embed] }).catch(err => logger.warn("Feed", `webhook post failed: ${err.message}`));
 }
+/* Plain-text logs. One line each, no embeds and no emoji, mentions suppressed so a
+   player called "@everyone" can't ping the server. Every send is fire-and-forget and
+   swallows its own failure - a dead webhook must never interrupt a join or a kill. */
+const _plain = (hook, tag, content) => {
+  if (!hook || !content) return;
+  hook.send({ content: content.slice(0, 1900), allowedMentions: { parse: [] } })
+    .catch(err => logger.warn(tag, `webhook post failed: ${err.message}`));
+};
+function postJoinLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} joined ${server || "the server"}`); }
+function postLeaveLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} left ${server || "the server"}`); }
+function postKillLog(killer, killed) { _plain(killHook, "KillLog", `[${easternStamp()}] ${killer} killed ${killed}`); }
 // Looks up a custom guild emoji by name (from any guild the bot's in) and returns
 // its Discord markup (<:name:id>), or null if the bot has no emoji with that name -
 // callers should always have a plain-unicode fallback ready.
@@ -2758,7 +2780,7 @@ const {  } = require("./events")({
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
-  mainCommands, path, postFeed, postUpdateLogIfChanged,
+  mainCommands, path, postFeed, postJoinLog, postLeaveLog, postKillLog, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
