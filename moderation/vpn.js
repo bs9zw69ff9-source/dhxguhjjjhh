@@ -54,7 +54,11 @@ const DETECTORS = [
       const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
       const d = await res.json();
       if (!d || d.block === undefined) return null;
-      return { flagged: d.block === 1, detail: `block:${d.block}`, isp: d.isp || null, block: d.block };
+      // block: 0 residential/unclassified, 1 non-residential (hosting/proxy), 2 unknown.
+      return { flagged: d.block === 1, detail: `block:${d.block}`, block: d.block,
+               isp: d.isp || null, asn: d.asn ? `AS${String(d.asn).replace(/^AS/i, "")}` : null,
+               organization: d.isp || null, country: d.countryName || null, countryCode: d.countryCode || null,
+               hosting: d.block === 1 || null, residential: d.block === 0 || null };
     } },
   { name: "vpnapi", tier: 1, enabled: () => !!VPNAPI_KEY, async run(ip) {
       const res = await fetch(`https://vpnapi.io/api/${encodeURIComponent(ip)}?key=${VPNAPI_KEY}`, { headers: { Accept: "application/json" } });
@@ -62,8 +66,14 @@ const DETECTORS = [
       const s = d?.security;
       if (!s) return null;
       const hits = ["vpn", "proxy", "tor", "relay"].filter(k => s[k]);
+      const n = d.network || {}, l = d.location || {};
       return { flagged: hits.length > 0, detail: hits.length ? hits.join("+") : "clean",
-               isp: d?.network?.autonomous_system_organization || null };
+               vpn: !!s.vpn, proxy: !!s.proxy, tor: !!s.tor, relay: !!s.relay,
+               asn: n.autonomous_system_number ? `AS${String(n.autonomous_system_number).replace(/^AS/i, "")}` : null,
+               organization: n.autonomous_system_organization || null,
+               isp: n.autonomous_system_organization || null,
+               country: l.country || null, countryCode: l.country_code || null,
+               region: l.region || null, city: l.city || null };
     } },
   { name: "ipapi.is", tier: 1, enabled: () => true, async run(ip) {      // keyless-capable
       const key = IPAPIIS_KEY ? `&key=${IPAPIIS_KEY}` : "";
@@ -74,16 +84,42 @@ const DETECTORS = [
       // legitimate players sit behind carrier/cloud ranges - but it is reported.
       const hits = [["vpn", d.is_vpn], ["proxy", d.is_proxy], ["tor", d.is_tor], ["abuser", d.is_abuser]]
         .filter(([, v]) => v).map(([k]) => k);
+      const l = d.location || {};
       return { flagged: hits.length > 0, detail: (hits.length ? hits.join("+") : "clean") + (d.is_datacenter ? " (datacenter)" : ""),
-               provider: d.company?.name || null, isp: d.asn?.org || d.company?.name || null };
+               vpn: !!d.is_vpn, proxy: !!d.is_proxy, tor: !!d.is_tor,
+               hosting: !!d.is_datacenter, abuser: !!d.is_abuser,
+               mobile: d.is_mobile ?? null,
+               residential: d.company?.type ? d.company.type === "isp" : null,
+               provider: d.company?.name || null,
+               asn: d.asn?.asn ? `AS${String(d.asn.asn).replace(/^AS/i, "")}` : null,
+               organization: d.asn?.org || d.company?.name || null,
+               isp: d.asn?.org || d.company?.name || null,
+               country: l.country || null, countryCode: l.country_code || null,
+               region: l.state || l.region || null, city: l.city || null };
     } },
   { name: "ipqs", tier: 2, enabled: () => !!IPQS_API_KEY, async run(ip) {
       const res = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
       const d = await res.json();
       if (!d?.success) return null;
       const flagged = !!(d.vpn || d.proxy || d.tor);
+      /* connection_type is the most direct residential/mobile/datacenter signal any
+         provider gives. Only trust it when it is actually present - and NEVER use
+         IPQS `host`, which is the IP's hostname string, not a hosting flag (truthy on
+         nearly every IP, which would mark the whole player base as datacenter). When
+         connection_type IS present, report explicit false rather than null, so
+         "provider says not mobile" is not confused with "nobody knows". */
+      const ct = String(d.connection_type || "").toLowerCase();
       return { flagged, detail: `vpn:${!!d.vpn} proxy:${!!d.proxy} tor:${!!d.tor} fraud:${d.fraud_score ?? "?"}`,
-               isp: d.ISP || null,
+               vpn: !!d.vpn, proxy: !!d.proxy, tor: !!d.tor,
+               hosting:     ct ? ct.includes("data center") : null,
+               residential: ct ? ct.includes("residential") : null,
+               mobile:      ct ? (!!d.mobile || ct.includes("mobile")) : (d.mobile === undefined ? null : !!d.mobile),
+               threatScore: Number.isFinite(d.fraud_score) ? d.fraud_score : null,
+               recentAbuse: !!d.recent_abuse,
+               asn: d.ASN ? `AS${String(d.ASN).replace(/^AS/i, "")}` : null,
+               organization: d.organization || d.ISP || null, isp: d.ISP || null,
+               country: d.country_code || null, countryCode: d.country_code || null,
+               region: d.region || null, city: d.city || null,
                ipqs: { vpn: !!d.vpn, proxy: !!d.proxy, tor: !!d.tor, fraudScore: d.fraud_score ?? null } };
     } },
   /* Tier 1: runs on EVERY IP. It is the only source of the consumer VPN brand name
@@ -92,15 +128,26 @@ const DETECTORS = [
      for 1,000/day if the server sees more unique IPs than that per day. */
   { name: "proxycheck", tier: 1, enabled: () => true, async run(ip) {    // keyless-capable
       const key = PROXYCHECK_API_KEY ? `&key=${PROXYCHECK_API_KEY}` : "";
-      const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1${key}`, { headers: { Accept: "application/json" } });
+      // asn=1 adds the ASN, organisation and city/region/country block; risk=1 adds the score.
+      const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1&asn=1${key}`, { headers: { Accept: "application/json" } });
       const d = await res.json();
       if (!d || (d.status !== "ok" && d.status !== "warning")) return null;
       const rec = d[ip];
       if (!rec) return null;
+      const type = String(rec.type || "").toLowerCase();     // VPN | Business | Residential | Public Proxy | Compromised Server ...
       return { flagged: String(rec.proxy).toLowerCase() === "yes",
                detail: `proxy:${rec.proxy}${rec.type ? ` type:${rec.type}` : ""}${rec.risk !== undefined ? ` risk:${rec.risk}` : ""}`,
+               vpn: type === "vpn" || null,
+               tor: type.includes("tor") || null,
+               hosting: (type === "business" || type.includes("hosting") || type.includes("server")) || null,
+               residential: type === "residential" || null,
+               threatScore: Number.isFinite(rec.risk) ? rec.risk : null,
                // operator.name is the consumer brand (NordVPN, IVPN); provider is the network.
-               provider: rec.operator?.name || rec.provider || null };
+               provider: rec.operator?.name || rec.provider || null,
+               asn: rec.asn || null, organization: rec.organisation || rec.provider || null,
+               isp: rec.provider || rec.organisation || null,
+               country: rec.country || null, countryCode: rec.isocode || null,
+               region: rec.region || null, city: rec.city || null };
     } },
 ];
 const tierDetectors = (tier) => DETECTORS.filter(d => d.tier === tier && d.enabled());
@@ -185,7 +232,23 @@ function saveVpnCheck(ip, data) {
    nothing to display, so a previously-seen IP showed a bare "Clean" with no breakdown.
    The cache is keyed by IP, not by player, so this hit brand-new players too. An
    incomplete entry is now re-checked once and overwritten, which self-heals the file. */
-const isCompleteCheck = (c) => !!c?.geo && (c.local === true || Array.isArray(c.detectors));
+/* Bumped whenever the cached record shape changes in a way that needs a re-lookup.
+   An entry from an older schema is refreshed on next contact instead of being
+   trusted forever - that is what left pre-upgrade rows stuck with no detector data. */
+const CHECK_SCHEMA = 2;
+/* Entries go stale: an IP that was a clean residential address a year ago may be a
+   VPN exit node today (and vice versa - people get un-blacklisted). Anything older
+   than this is re-checked on next contact. 0 disables refreshing (cache forever). */
+const VPN_CACHE_TTL_MS = Math.max(0, Number(process.env.VPN_CACHE_TTL_DAYS ?? 30)) * 86_400_000;
+
+const isCompleteCheck = (c) => {
+  if (!c?.geo) return false;
+  if (c.local === true) return true;                       // private address - never expires
+  if (!Array.isArray(c.detectors)) return false;           // pre-upgrade row - no detector data
+  if ((c.schema ?? 1) < CHECK_SCHEMA) return false;        // older record shape - refresh it
+  if (VPN_CACHE_TTL_MS && Date.now() - (c.checkedAt || 0) > VPN_CACHE_TTL_MS) return false;  // stale
+  return true;
+};
 const _vpnInFlight = new Map();   // ip -> Promise
 async function checkVpn(ip) {
   if (!ip) return null;                            // geolocation runs even without the VPN keys
@@ -193,7 +256,12 @@ async function checkVpn(ip) {
   if (isCompleteCheck(cached)) return cached;
   const inflight = _vpnInFlight.get(ip);
   if (inflight) return inflight;                   // a check for this exact IP is already running - reuse it
-  if (cached) logger.info("VPN", `${ip} has a pre-upgrade cache entry (no detector data) - re-screening it once to refresh`);
+  if (cached) {
+    const why = !Array.isArray(cached.detectors) ? "pre-upgrade entry (no detector data)"
+      : (cached.schema ?? 1) < CHECK_SCHEMA      ? `older record schema (v${cached.schema ?? 1} < v${CHECK_SCHEMA})`
+      : `stale (last checked ${Math.round((Date.now() - (cached.checkedAt || 0)) / 86400000)}d ago)`;
+    logger.info("VPN", `${ip} cache refresh - ${why}`);
+  }
   /* Always a FULL re-check: a geo-only backfill would leave the entry incomplete, so
      it would re-check on every single connection instead of healing. Any action stamp
      is carried over so re-screening can't re-arm an auto-ban we already issued. */
@@ -350,8 +418,53 @@ async function _doVpnCheck(ip) {
   } : null);
   if (!geo) return null;                             // no location at all - retry next time
 
+  /* Merge every detector's signals into ONE normalised record. `pick` takes the first
+     non-null answer in detector order, `anyTrue` ORs a boolean across providers (one
+     provider knowing an IP is Tor is enough), and `firstNum` takes the first numeric
+     threat score. Providers disagree and each knows different things, so nothing is
+     assumed from a single source. */
+  const pick    = (k) => all.map(r => r[k]).find(v => v !== null && v !== undefined) ?? null;
+  const anyTrue = (k) => (all.some(r => r[k] === true) ? true : (all.some(r => r[k] === false) ? false : null));
+  /* Some fields have an authoritative source rather than "whoever answered first":
+     IPQS's fraud_score is a calibrated 0-100 risk score and beats proxycheck's, and
+     the ASN-derived org names are fuller than IPHub's short ISP label. */
+  const preferring = (names, k) => {
+    for (const n of names) { const v = all.find(r => r.name === n)?.[k]; if (v !== null && v !== undefined) return v; }
+    return pick(k);
+  };
+  const preferNum = (names, k) => {
+    for (const n of names) { const v = all.find(r => r.name === n)?.[k]; if (Number.isFinite(v)) return v; }
+    return all.map(r => r[k]).find(v => Number.isFinite(v)) ?? null;
+  };
+  /* hosting / residential are CLASSIFICATIONS, not "did anyone flag it" - so they use
+     the most precise source rather than an OR. IPQS's connection_type ("Residential" /
+     "Data Center" / "Mobile") and ipapi.is's is_datacenter are direct classifications;
+     IPHub's block==1 only means "non-residential", which is coarse and noisy, so it is
+     the last resort. ORing would let IPHub's rough flag override IPQS saying the IP is
+     plainly residential. */
+  const hosting        = preferring(["ipqs", "ipapi.is", "proxycheck", "iphub"], "hosting");
+  const residentialRaw = preferring(["ipqs", "proxycheck", "ipapi.is", "iphub"], "residential");
   const result = {
     ip, flagged, confirmed, actionable, decision: reason,
+    /* ---- normalised intelligence record (stable public shape) ---- */
+    vpn:          anyTrue("vpn") ?? (flagged || null),
+    proxy:        anyTrue("proxy"),
+    tor:          anyTrue("tor"),
+    hosting,
+    datacenter:   hosting,                                   // alias - same signal
+    // A hosting IP is by definition not residential, even if no provider said so.
+    residential:  hosting === true ? false : (residentialRaw ?? null),
+    mobile:       anyTrue("mobile"),
+    threatScore:  preferNum(["ipqs", "proxycheck"], "threatScore"),
+    asn:          pick("asn") ?? gwho?.asn ?? null,
+    organization: preferring(["ipqs", "vpnapi", "proxycheck", "ipapi.is"], "organization") ?? gwho?.org ?? null,
+    country:      gwho?.country      ?? pick("country")     ?? null,
+    countryCode:  gwho?.countryCode  ?? pick("countryCode") ?? null,
+    region:       gwho?.region       ?? pick("region")      ?? null,
+    city:         gwho?.city         ?? pick("city")        ?? null,
+    lastChecked:  new Date().toISOString(),
+    lookupSource: all.map(r => r.name).join(","),            // which providers contributed
+    schema: CHECK_SCHEMA,
     iphubBlock: iphubRes?.block ?? null,             // kept for backwards compatibility
     isp: geo.isp || detIsp || null,
     provider,
@@ -471,6 +584,6 @@ async function checkVpnAndAlert(name, ip) {
 
 
   return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY,
-    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_SCREEN_BAN_MIN, DETECTORS, TIER_ROLE, tierDetectors, vpnDetectionEnabled, runTier, probeDetectors,
+    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_SCREEN_BAN_MIN, VPN_CACHE_TTL_MS, CHECK_SCHEMA, isCompleteCheck, DETECTORS, TIER_ROLE, tierDetectors, vpnDetectionEnabled, runTier, probeDetectors,
     _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, proxycheckLookup, saveVpnCheck };
 };

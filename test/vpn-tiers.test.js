@@ -311,3 +311,67 @@ test("re-screening a legacy entry keeps its action stamp (no double ban)", async
   await vpn.checkVpnAndAlert("SomeoneElse", "45.1.1.1");
   assert.deepEqual(bans, [], "still inside the TTL - must not re-ban after healing");
 });
+
+/* ---- normalised intelligence record + staleness ---- */
+
+test("the stored record carries the full normalised intelligence schema", async () => {
+  const { vpn } = makeAlertable();
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("ipinfo")) return { json: async () => ({ ip: "45.83.91.14", city: "Stockholm", region: "Stockholm", country: "SE", loc: "59,18", org: "AS9009 M247 Europe SRL", timezone: "Europe/Stockholm" }) };
+    if (u.includes("iphub")) return { json: async () => ({ block: 1, isp: "M247", asn: 9009, countryName: "Sweden", countryCode: "SE" }) };
+    if (u.includes("vpnapi")) return { json: async () => ({ security: { vpn: true, proxy: false, tor: false, relay: false }, network: { autonomous_system_number: "AS9009", autonomous_system_organization: "M247 Europe SRL" }, location: { country: "Sweden", country_code: "SE", region: "Stockholm", city: "Stockholm" } }) };
+    if (u.includes("ipapi.is")) return { json: async () => ({ is_vpn: true, is_proxy: false, is_tor: false, is_datacenter: true, is_abuser: false, company: { name: "M247", type: "hosting" }, asn: { asn: 9009, org: "M247 Europe SRL" }, location: { country: "Sweden", country_code: "SE", state: "Stockholm", city: "Stockholm" } }) };
+    if (u.includes("proxycheck")) return { json: async () => ({ status: "ok", "45.83.91.14": { asn: "AS9009", provider: "M247 Europe SRL", organisation: "M247 Ltd", country: "Sweden", isocode: "SE", region: "Stockholm", city: "Stockholm", proxy: "yes", type: "VPN", risk: 73, operator: { name: "NordVPN" } } }) };
+    if (u.includes("ipqualityscore")) return { json: async () => ({ success: true, vpn: true, proxy: true, tor: false, fraud_score: 92, ISP: "M247", organization: "M247 Europe SRL", ASN: 9009, country_code: "SE", region: "Stockholm", city: "Stockholm", connection_type: "Data Center", mobile: false, host: "host.m247.com", recent_abuse: true }) };
+    throw new Error("unrouted " + u);
+  };
+  const r = await vpn._doVpnCheck("45.83.91.14");
+  for (const k of ["ip", "vpn", "proxy", "tor", "hosting", "datacenter", "residential", "mobile",
+                   "threatScore", "asn", "organization", "provider", "country", "countryCode",
+                   "region", "city", "lastChecked", "lookupSource", "schema"]) {
+    assert.ok(k in r, `record is missing ${k}`);
+  }
+  assert.equal(r.vpn, true);
+  assert.equal(r.hosting, true);
+  assert.equal(r.datacenter, true);
+  assert.equal(r.residential, false, "a hosting IP can never be residential");
+  assert.equal(r.mobile, false, "an explicit provider 'no' must not read as unknown");
+  assert.equal(r.threatScore, 92, "IPQS's calibrated score beats proxycheck's risk");
+  assert.equal(r.organization, "M247 Europe SRL", "full ASN org, not IPHub's short label");
+  assert.equal(r.provider, "NordVPN");
+  assert.equal(r.asn, "AS9009");
+  assert.equal(r.city, "Stockholm");
+  assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(r.lastChecked), "lastChecked is an ISO timestamp");
+  assert.ok(r.lookupSource.includes("ipqs"), "lookupSource names the contributing providers");
+});
+
+test("IPQS's hostname string is never mistaken for a hosting flag", async () => {
+  // `host` is the IP's hostname, truthy on most IPs - using it as a datacenter signal
+  // would have marked nearly every player as hosting.
+  const { vpn } = makeAlertable();
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("ipinfo")) return { json: async () => ({ ip: "9.9.9.9", city: "Boston", country: "US", loc: "42,-71", org: "AS1 Comcast" }) };
+    if (u.includes("iphub")) return { json: async () => ({ block: 1, isp: "Comcast" }) };
+    if (u.includes("vpnapi")) return { json: async () => ({ security: { vpn: false, proxy: false, tor: false, relay: false } }) };
+    if (u.includes("ipapi.is")) return { json: async () => ({ is_vpn: false, is_proxy: false, is_tor: false, is_datacenter: false, is_abuser: false, company: { name: "Comcast", type: "isp" } }) };
+    if (u.includes("proxycheck")) return { json: async () => ({ status: "ok", "9.9.9.9": { proxy: "no", type: "Residential", risk: 0 } }) };
+    if (u.includes("ipqualityscore")) return { json: async () => ({ success: true, vpn: false, proxy: false, tor: false, fraud_score: 5, connection_type: "Residential", mobile: false, host: "c-9-9-9-9.comcast.net" }) };
+    throw new Error("unrouted " + u);
+  };
+  const r = await vpn._doVpnCheck("9.9.9.9");
+  assert.equal(r.hosting, false, "a residential IP with a hostname must not be hosting");
+  assert.equal(r.residential, true);
+});
+
+test("cache entries expire and are refreshed", () => {
+  const { vpn } = makeAlertable();
+  const geo = { city: "X" }, dets = [{ name: "iphub", tier: 1, flagged: false }], day = 86400000;
+  const now = Date.now();
+  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: 2, checkedAt: now - day }), true, "fresh");
+  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: 2, checkedAt: now - 400 * day }), false, "stale");
+  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: 1, checkedAt: now }), false, "old schema");
+  assert.equal(vpn.isCompleteCheck({ geo, schema: 2, checkedAt: now }), false, "no detector data");
+  assert.equal(vpn.isCompleteCheck({ geo, local: true, checkedAt: now - 999 * day }), true, "private never expires");
+});
