@@ -607,38 +607,7 @@ function menuRoleTiers() {
   ];
 }
 
-/* Punishment presets - each reason carries its own sentence, so a mod picks the
-   offence and the duration is applied automatically (no manually-typed date, except
-   "Other", which takes a custom unban date). Hard R is permanent. */
 const DAY_MS = 86_400_000;
-const PUNISHMENTS = [
-  { name: "MassRDM in Protected Zone",     value: "massrdm_protected", ms: 3 * DAY_MS },
-  { name: "Spawn Killing - Whitelist Spawn", value: "sk_faction",      ms: 5 * DAY_MS },
-  { name: "Spawn Killing - Civ Spawn",     value: "sk_civ",            ms: 7 * DAY_MS },
-  { name: "Hard R",                        value: "hard_r",            permanent: true },
-  { name: "Soft A",                        value: "soft_a",            ms: 3 * DAY_MS },
-  { name: "Slur",                          value: "slur",              ms: 1 * DAY_MS },
-  { name: "Exploiting",                    value: "exploiting",        ms: 2 * DAY_MS },
-  { name: "Harassment",                    value: "harassment",        ms: 1 * DAY_MS },
-  { name: "ERP",                           value: "erp",               ms: 1 * DAY_MS },
-  { name: "Sexually Explicit",             value: "sexually_explicit", ms: 7 * DAY_MS },
-  { name: "Donator Abuse",                 value: "donator_abuse",     ms: 7 * DAY_MS, donatorSuspendMs: 14 * DAY_MS },
-  { name: "Other",                         value: "other",             custom: true },
-];
-const PUNISH_BY_VALUE = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p]));
-// Human sentence for a punishment (embeds/logs): "Permanent", "1 Week", "3 Days", ...
-function punishDurationLabel(p) {
-  if (!p || p.custom) return "Custom";
-  if (p.permanent) return "Permanent";
-  const d = Math.round(p.ms / DAY_MS);
-  return d % 7 === 0 ? `${d / 7} Week${d / 7 !== 1 ? "s" : ""}` : `${d} Day${d !== 1 ? "s" : ""}`;
-}
-// Slash-command choices, sentence shown in the label (Discord: ≤25 choices, ≤100 chars).
-const PUNISH_CHOICES = PUNISHMENTS.map(p => ({
-  name: `${p.name}${p.custom ? " (custom time)" : ` - ${punishDurationLabel(p)}`}`,
-  value: p.value,
-}));
-const BAN_REASON_LABELS = Object.fromEntries(PUNISHMENTS.map(p => [p.value, p.name]));
 
 const BAN_DURATIONS = {
   "1h":  { ms: 3_600_000,          label: "1 Hour"   },
@@ -653,6 +622,12 @@ const BAN_DURATIONS = {
   "6mo": { ms: 15_552_000_000,     label: "6 Months" },
   "1y":  { ms: 31_536_000_000,     label: "1 Year"   },
 };
+/* The /tempban duration picker: every BAN_DURATIONS entry plus an explicit
+   Permanent option, so a moderator chooses a LENGTH rather than typing a date. */
+const DURATION_CHOICES = [
+  ...Object.entries(BAN_DURATIONS).map(([value, d]) => ({ name: d.label, value })),
+  { name: "Permanent", value: "permanent" },
+];
 
 const LEADERBOARD_INTERVAL_MS = 30 * 1000;   // caps + playtime leaderboards refresh every 30s
 const LEADERBOARD_TOP_N       = 30;
@@ -2771,7 +2746,7 @@ function autoBackupFactions() {
 // ---- commands/definitions: every slash-command builder (registration payload) (extracted to ./commands/definitions) ----
 const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./commands/definitions")({
   ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, PermissionFlagsBits, SlashCommandBuilder,
-  PUNISH_CHOICES, MENUS,
+  DURATION_CHOICES, MENUS,
 });
 
 // ---- events: clientReady handler + ipBans join/leave/kill/auto-ban callbacks (extracted to ./events) ----
@@ -2809,12 +2784,12 @@ process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, {
 // ---- interactions ----
 // ---- interactions (handler extracted to ./commands) ----
 const { onInteraction } = require("./commands")({
-  ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_REASON_LABELS, BLACKLIST_IDS,
+  ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_DURATIONS, BLACKLIST_IDS,
   BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, redactPrivateInfo,
   DASHBOARD_INTERVAL_MS, DAY_MS, DIVIDER, DONATOR_FILE, EmbedBuilder, FACTION_BAK_DIR,
   FILES, GLYPH, IPHUB_API_KEY, vpnDetectionEnabled,
   MENUS, MessageFlags,
-  ModalBuilder, NV, PUNISH_BY_VALUE, SPAWN_FILE_MAP,
+  ModalBuilder, NV, SPAWN_FILE_MAP,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UFW_BLOCK,
   _IPV4_RE, addAutobanExempt, addDonator, addMenuGrant, addPlayerToRankFile,
   addUserBlacklist, adminOnlyEmbed, awaitOwnedComponent, banWithIp, bar, blacklistHas,
@@ -2841,7 +2816,7 @@ const { onInteraction } = require("./commands")({
   extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
   modOnlyEmbed, ownerOnlyEmbed, paginate, parseDuration, parseRcon,
-  patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, probeDetectors, punishDurationLabel,
+  patchInteractionOutput, path, playerCache, preserveBalanceAcrossKick, probeDetectors,
   rankBadge, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
   readPlayerBalance, refreshPlayerCache, removeBans, removeDonator, removeFactionRank,
   removeMenuGrant, removePlayerFromAllRankFiles, removePlayerFromRankFile, removeUserBlacklist, sanitizeBanName, sanitizeId,

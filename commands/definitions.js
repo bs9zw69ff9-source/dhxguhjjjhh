@@ -4,7 +4,7 @@
 module.exports = function(ctx) {
   const {
   ALL_FACTIONS, FACTION_BOT, FACTION_RANKS, PermissionFlagsBits, SlashCommandBuilder,
-  PUNISH_CHOICES, MENUS,
+  DURATION_CHOICES, MENUS,
   } = ctx;
 
 // ---- slash command definitions ----
@@ -58,10 +58,10 @@ const commands = [
         { name: "Last 24 hours", value: "24h" },
       )),
   new SlashCommandBuilder().setName("tempban")
-    .setDescription("Ban a player - the punishment sets the duration (Hard R = permanent; Other = custom date)")
+    .setDescription("Ban a player for a set length of time")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID or username").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("reason").setDescription("Punishment - sets the ban length automatically").setRequired(true).addChoices(...PUNISH_CHOICES))
-    .addStringOption(o => o.setName("date").setDescription("Only for 'Other': unban date YYYY-MM-DD (lifts 12pm Eastern that day)").setRequired(false))
+    .addStringOption(o => o.setName("reason").setDescription("Why they are being banned").setRequired(true).setMaxLength(200))
+    .addStringOption(o => o.setName("duration").setDescription("How long the ban lasts").setRequired(true).addChoices(...DURATION_CHOICES))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("unban")
     .setDescription("Lift a player's ban")
@@ -72,7 +72,7 @@ const commands = [
   new SlashCommandBuilder().setName("permban")
     .setDescription("Admin - Permanently ban a player")
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true))
-    .addStringOption(o => o.setName("reason").setDescription("Grounds").setRequired(true).addChoices(...PUNISH_CHOICES))
+    .addStringOption(o => o.setName("reason").setDescription("Why they are being banned").setRequired(true).setMaxLength(200))
     .addStringOption(o => o.setName("notes").setDescription("Additional context"))
     .addUserOption(o => o.setName("discord_user").setDescription("Discord account to DM the punishment details to")),
   new SlashCommandBuilder().setName("cleartempbans").setDescription("Admin - Clear all temporary bans (confirmation required)"),

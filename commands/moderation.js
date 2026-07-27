@@ -3,17 +3,17 @@
    closes over the shared ctx (injected from index.js via the dispatcher). */
 module.exports = (ctx) => {
   const {
-  BAN_REASON_LABELS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES, GLYPH,
-  IPHUB_API_KEY, vpnDetectionEnabled, MessageFlags, NV, PUNISH_BY_VALUE, UFW_BLOCK, _IPV4_RE, bar,
+  BAN_DURATIONS, CLIN, DAY_MS, DIVIDER, EmbedBuilder, FILES, GLYPH,
+  IPHUB_API_KEY, vpnDetectionEnabled, MessageFlags, NV, UFW_BLOCK, _IPV4_RE, bar, sanitizeMessage,
   addAutobanExempt, banWithIp, blacklistHas, brand, canOverride, checkVpn,
   commandTier, commandTierName,
   clinical, confirmDialog, dmPunishmentNotice, dmStatusField, dmUserForPavlov,
-  easternNoonUTC, emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
+  emptyIdEmbed, enforceBansSweep, errorEmbed, firewallBlockIps, firewallStatus,
   easternDate, firewallUnblockIps, formatTimeLeft, getOnlinePlayers, hasModRole,
   hero, ipBans, isAutobanExempt, isDonator, isMasterName, isMasterIp,
   isOwner, isProtectedPlayer, loadBans, loadModLog, loadVpnChecks, verifiedDiscordForName, log,
   logAction, logBan, logger, modOnlyEmbed, ownerOnlyEmbed, paginate,
-  preserveBalanceAcrossKick, punishDurationLabel, removeBans, sanitizeBanName,
+  preserveBalanceAcrossKick, removeBans, sanitizeBanName,
   sanitizeId, sendRcon, serverLabel, successEmbed, suspendDonator,
   unbanEverywhere, update, upsertPermBan, upsertTempBan, warningEmbed,
   writeModLog,
@@ -196,28 +196,21 @@ module.exports = (ctx) => {
   "tempban": async (interaction, name) => {
         const playerId  = sanitizeBanName(interaction.options.getString("playerid"));
         const server    = "both"   /* server option removed - applies to all servers */;
-        const reasonKey = interaction.options.getString("reason");
-        const punish    = PUNISH_BY_VALUE[reasonKey];
-        const reason    = punish?.name ?? BAN_REASON_LABELS[reasonKey] ?? reasonKey;
+        const reason      = sanitizeMessage(interaction.options.getString("reason"));
+        const durationKey = interaction.options.getString("duration");
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (!reason.trim()) return interaction.reply({ embeds: [errorEmbed("Reason Required", "Say why they are being banned.")], flags: MessageFlags.Ephemeral });
         if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be banned.`)], flags: MessageFlags.Ephemeral });
 
-        // The punishment sets the sentence; "Other" takes a manual unban date.
+        /* The moderator picks a LENGTH from the duration list - no presets deciding the
+           sentence for them, and no calendar date to work out. "permanent" never expires. */
         let expires = null, permanent = false, label = "";
-        if (punish?.permanent) {
+        if (durationKey === "permanent") {
           permanent = true; label = "Permanent";
-        } else if (punish?.custom) {
-          const dateStr = interaction.options.getString("date");
-          if (!dateStr) return interaction.reply({ embeds: [errorEmbed("Date Required",
-            "For **Other**, add the `date` option (`YYYY-MM-DD`) - the ban lifts at 12pm Eastern that day.")], flags: MessageFlags.Ephemeral });
-          expires = easternNoonUTC(dateStr);
-          if (!expires || expires <= Date.now()) return interaction.reply({ embeds: [errorEmbed("Invalid Unban Date",
-            `Enter a **future** date as \`YYYY-MM-DD\` (e.g. \`${easternDate(Date.now() + 7 * 864e5)}\`). The ban lifts at **12pm Eastern** that day.`)], flags: MessageFlags.Ephemeral });
-          label = `until ${easternDate(expires)}`;
-        } else if (punish?.ms) {
-          expires = Date.now() + punish.ms; label = punishDurationLabel(punish);
         } else {
-          return interaction.reply({ embeds: [errorEmbed("Unknown Punishment", "Pick a punishment from the list.")], flags: MessageFlags.Ephemeral });
+          const d = BAN_DURATIONS[durationKey];
+          if (!d) return interaction.reply({ embeds: [errorEmbed("Unknown Duration", "Pick a ban length from the list.")], flags: MessageFlags.Ephemeral });
+          expires = Date.now() + d.ms; label = d.label;
         }
 
         await interaction.deferReply();
@@ -245,18 +238,9 @@ module.exports = (ctx) => {
           .setTitle(permanent ? "Permanent Ban Issued" : "Player Banned")
           .setDescription(`**${interaction.user.username}** banned **${playerId}** ${sentence} (reason: \`${reason}\`).${liftLine}`),
           replaced ? `Replaced earlier ban: ${replaced.reason}` : (permanent ? undefined : "Auto-lifted when timer expires"));
-        if (punish?.note) embed.addFields({ name: "Reminder", value: punish.note });
-
-        // Timed donator-perk suspension (e.g. Donator Abuse): pull perks now, auto-restore later.
-        if (punish?.donatorSuspendMs) {
-          const sus   = await suspendDonator(playerId, punish.donatorSuspendMs, interaction.user.tag);
-          const weeks = Math.round(punish.donatorSuspendMs / (7 * DAY_MS));
-          const rTs   = Math.floor(sus.restoreAt / 1000);
-          embed.addFields({ name: "Donator Perks", value: sus.wasDonator
-            ? `Removed - auto-restored <t:${rTs}:R> (${weeks} week${weeks !== 1 ? "s" : ""}).`
-            : "Player wasn't a donator - nothing to remove." });
-          if (sus.wasDonator) writeModLog({ action: "donator-suspend", playerId, by: interaction.user.tag, restoreAt: sus.restoreAt });
-        }
+        /* NOTE: the automatic donator-perk suspension used to be driven by the
+           "Donator Abuse" punishment preset. With free-text reasons there is nothing to
+           key it off, so it is no longer applied automatically - use /donator remove. */
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
@@ -351,10 +335,10 @@ module.exports = (ctx) => {
   "permban": async (interaction, name) => {
         const playerId  = sanitizeBanName(interaction.options.getString("playerid"));
         const server    = "both"   /* server option removed - applies to all servers */;
-        const reasonKey = interaction.options.getString("reason");
         const notes     = interaction.options.getString("notes") ?? null;
-        const reason    = BAN_REASON_LABELS[reasonKey] ?? reasonKey;
+        const reason    = sanitizeMessage(interaction.options.getString("reason"));
         if (!playerId) return interaction.reply({ embeds: [emptyIdEmbed()], flags: MessageFlags.Ephemeral });
+        if (!reason.trim()) return interaction.reply({ embeds: [errorEmbed("Reason Required", "Say why they are being banned.")], flags: MessageFlags.Ephemeral });
         if (isMasterName(playerId)) return interaction.reply({ embeds: [warningEmbed("Protected Name", `\`${playerId}\` is a master name and cannot be banned.`)], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();
         const ipEnf = await banWithIp(playerId, server, { permanent: true });

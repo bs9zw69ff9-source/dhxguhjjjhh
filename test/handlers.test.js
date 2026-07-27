@@ -17,8 +17,9 @@ function makeCtx(over = {}) {
     NV: { NCR_TAN: 1, RUST_RED: 2, IRRAD_GREEN: 3, AMBER: 4, BLUE_VATS: 5, GOLD: 6, LEGION_RED: 7, DEAD_GREY: 8 },
     CLIN: { red: 1, green: 2, grey: 3 }, GLYPH: { deny: "🚫", dot: "•" },
     ACTIVE_SERVERS: ["server1"],
-    PUNISH_BY_VALUE: { vdm: { name: "VDM", ms: 2 * 86400000 }, hardr: { name: "Hard R", permanent: true } },
-    BAN_REASON_LABELS: {},
+    // /tempban now takes a free-text reason + a picked DURATION (no presets, no date).
+    BAN_DURATIONS: { "1d": { ms: 86400000, label: "1 Day" }, "1w": { ms: 604800000, label: "1 Week" } },
+    sanitizeMessage: (x) => String(x ?? "").slice(0, 200),
     brand: (e) => e, clinical: (e) => e, hero: (t) => t,
     emptyIdEmbed: () => new EmbedBuilder().setTitle("need id"),
     warningEmbed: (t, d) => new EmbedBuilder().setTitle(`warn ${t}`).setDescription(String(d)),
@@ -27,7 +28,7 @@ function makeCtx(over = {}) {
     modOnlyEmbed: () => new EmbedBuilder().setTitle("mods only"),
     ownerOnlyEmbed: () => new EmbedBuilder().setTitle("owner only"),
     sanitizeId: (x) => String(x ?? "").trim(), sanitizeBanName: (x) => String(x ?? "").trim(),
-    serverLabel: (s) => "Server 1", punishDurationLabel: (p) => "2 days", easternNoonUTC: () => null,
+    serverLabel: (s) => "Server 1",
     formatTimeLeft: () => "1d",
     isMasterName: (n) => String(n).toLowerCase() === "master",
     isAutobanExempt: () => false, isProtectedPlayer: () => false,
@@ -91,7 +92,7 @@ test("/kick refuses master names and never sends RCON", async () => {
 test("/kick kicks on every active server and logs it", async () => {
   const { ctx, calls } = makeCtx();
   const h = require("../commands/moderation.js")(ctx);
-  const { interaction } = makeInteraction({ strings: { playerid: "Griefer", reason: "vdm" } });
+  const { interaction } = makeInteraction({ strings: { playerid: "Griefer", reason: "Vehicle deathmatch", duration: "1d" } });
   await h.kick(interaction, "kick");
   assert.ok(calls.some(c => c[0] === "sendRcon" && c[1] === "Kick Griefer"));
   assert.ok(calls.some(c => c[0] === "writeModLog" && c[1].action === "kick"));
@@ -100,7 +101,7 @@ test("/kick kicks on every active server and logs it", async () => {
 test("/tempban records the actor's tier on the ban", async () => {
   const { ctx, calls } = makeCtx({ commandTier: () => TIER.ADMIN });
   const h = require("../commands/moderation.js")(ctx);
-  const { interaction } = makeInteraction({ strings: { playerid: "Griefer", reason: "vdm" } });
+  const { interaction } = makeInteraction({ strings: { playerid: "Griefer", reason: "Vehicle deathmatch", duration: "1d" } });
   await h.tempban(interaction, "tempban");
   const up = calls.find(c => c[0] === "upsertTempBan");
   assert.ok(up, "tempban record written");
@@ -114,7 +115,7 @@ test("/tempban: a mod cannot replace a super owner's existing ban", async () => 
     loadBans: () => [{ playerId: "griefer", permanent: true, moderatorRank: TIER.SUPER_OWNER, reason: "x" }],
   });
   const h = require("../commands/moderation.js")(ctx);
-  const { interaction, out } = makeInteraction({ strings: { playerid: "Griefer", reason: "vdm" } });
+  const { interaction, out } = makeInteraction({ strings: { playerid: "Griefer", reason: "Vehicle deathmatch", duration: "1d" } });
   await h.tempban(interaction, "tempban");
   assert.match(text(out), /Super Owner/);
   assert.ok(!calls.some(c => c[0] === "banWithIp"), "ban must not proceed");
@@ -160,10 +161,10 @@ test("/checkban shows the flag warning to mods but not to regular users", async 
   }
 });
 
-test("/tempban permanent preset writes a perm ban and flags accordingly", async () => {
+test("/tempban with the permanent duration writes a perm ban and flags accordingly", async () => {
   const { ctx, calls } = makeCtx({ commandTier: () => TIER.ADMIN });
   const h = require("../commands/moderation.js")(ctx);
-  const { interaction } = makeInteraction({ strings: { playerid: "Slur", reason: "hardr" } });
+  const { interaction } = makeInteraction({ strings: { playerid: "Slur", reason: "Slur", duration: "permanent" } });
   await h.tempban(interaction, "tempban");
   assert.ok(calls.some(c => c[0] === "upsertPermBan"), "permanent preset -> perm ban record");
   const bw = calls.find(c => c[0] === "banWithIp");
