@@ -45,6 +45,7 @@ module.exports = (ctx) => {
           ["`/setroles` / `/manual <command>`", "Set tier roles, or send a raw RCON command (admin)."],
           ["`/configure` / `/firewall block|unblock|status` / `/health`", "Owner control panel, manual OS-firewall (ufw) control, and bot health (owner)."],
           ["`/vpncheck [ip]`", "Probe every VPN detector: which are up and each one's role (owner)."],
+          ["`/stats`", "Memory, CPU, hardware, and which datasets use the most memory (owner)."],
           ["`/stripmenuall` / `/clearallbans` / `/whitelist wipe [name]`", "Clear all menu access, unban everyone, or reset whitelists (owner)."],
         ];
         const embed = new EmbedBuilder().setColor(color)

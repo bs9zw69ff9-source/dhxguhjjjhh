@@ -12,7 +12,7 @@ module.exports = (ctx) => {
   loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
   ownerOnlyEmbed, paginate, parseRcon, path, probeDetectors, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
-  sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel,
+  sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel, sysStats, meter,
   setMenuRole, spawn, textify, update, upsertPermBan, warningEmbed,
   wipeAllMoney, wipeAllPlayerData, writeModLog,
   BLACKLIST_IDS, BOT_START_MS,
@@ -49,6 +49,53 @@ module.exports = (ctx) => {
         return interaction.editReply({ embeds: [brand(new EmbedBuilder()
           .setColor(ok ? NV.IRRAD_GREEN : NV.AMBER).setTitle("🩺 Bot Health")
           .setDescription(lines.join("\n")))] });
+        },
+
+  /* ─────────────────────────────────────────────────────
+         STATS - owner: process + host resources, and the biggest data consumers
+         ───────────────────────────────────────────────────── */
+  "stats": async (interaction, name) => {
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const B   = sysStats.bytes;
+        const mem = sysStats.processMemory();
+        const sys = sysStats.systemInfo();
+        const cpu = await sysStats.processCpuPercent(250);   // sampled window, not since-boot average
+        const ds  = sysStats.datasetSizes(8);
+        const dbSize = sysStats.dbFileSize();
+
+        // Host CPU pressure from the 1-minute load average, normalised to core count.
+        const loadPct = sys.cores ? Math.round((sys.loadAvg[0] / sys.cores) * 100) : 0;
+
+        const proc = [
+          `**RSS ${B(mem.rss)}** resident  -  heap **${B(mem.heapUsed)} / ${B(mem.heapTotal)}** (${mem.heapPct}%)`,
+          `External (buffers, SQLite): **${B(mem.external)}**`,
+          `CPU: **${cpu.ofOneCore}%** of one core  -  **${cpu.ofAllCores}%** of all ${sys.cores}`,
+          `Bot uptime: **${formatUptime(Date.now() - BOT_START_MS)}**`,
+        ].join("\n");
+
+        const host = [
+          `${sys.cpuModel}`,
+          `**${sys.cores}** cores${sys.cpuSpeedMhz ? ` @ ${(sys.cpuSpeedMhz / 1000).toFixed(2)} GHz` : ""}  -  load **${sys.loadAvg.join("  ")}** (${loadPct}% of capacity)`,
+          `RAM: ${meter(Math.round(sys.memUsed / 1048576), Math.round(sys.memTotal / 1048576), 12)}  -  **${B(sys.memUsed)} / ${B(sys.memTotal)}**`,
+          `${sys.platform}  -  Node ${sys.nodeVersion}  -  host up ${formatUptime(sys.osUptime)}`,
+        ].join("\n");
+
+        // The measured answer to "what is using the most memory": every stored dataset
+        // ranked by size. These rows are exactly what the in-memory read cache holds.
+        const top = ds.rows.length
+          ? ds.rows.map((r, i) =>
+              `\`${String(i + 1).padStart(2)}\` **${r.name}**  -  ${B(r.bytes)}  \`${bar(r.bytes, ds.rows[0].bytes, 10)}\` ${r.pct}%`).join("\n")
+          : "*No stored datasets yet.*";
+
+        const embed = brand(new EmbedBuilder().setColor(NV.BLUE_VATS).setTitle("Resource Usage")
+          .addFields(
+            { name: "Bot process",  value: proc, inline: false },
+            { name: "Host hardware", value: host, inline: false },
+            { name: `Largest datasets (${B(ds.total)} across ${ds.count}, on disk ${B(dbSize)})`, value: top.slice(0, 1024), inline: false },
+          )
+          .setFooter({ text: "Dataset sizes are the stored bytes of each cache - the biggest are what the bot keeps in memory" }));
+        return interaction.editReply({ embeds: [embed] });
         },
 
   /* ─────────────────────────────────────────────────────

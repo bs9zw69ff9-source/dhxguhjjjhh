@@ -212,11 +212,14 @@ acquireSingleInstanceLock();
 // Owns bot.db, the JSON->SQLite migration, the cache + write serialization, the
 // periodic JSON export, the FILES/DEFAULTS registry and the fs-ownership helpers.
 const {
-  FILES,
+  db, FILES,
   safeRead, safeWrite, update,
   exportDbToJson, DB_EXPORT_INTERVAL_MS,
   ensureFile, matchTreeOwner, intendedOwner,
 } = require("./database")({ logger, baseDir: __dirname });
+
+/* ---- stats/system: process + host resource usage, backs /stats ---- */
+const sysStats = require("./stats/system")({ db, baseDir: __dirname });
 
 /* ---- Typed loaders / savers ---- */
 /* Ban records drive every enforcement decision (join checks, the 30s sweep, reconcile,
@@ -2854,7 +2857,7 @@ const { onInteraction } = require("./commands")({
   rankBadge, rankLabel, rateLimitEmbed, readDonatorFile, readFactionFile,
   readPlayerBalance, refreshPlayerCache, removeBans, removeDonator, removeFactionRank,
   removeMenuGrant, removePlayerFromAllRankFiles, removePlayerFromRankFile, removeUserBlacklist, sanitizeBanName, sanitizeId,
-  sanitizeMessage, saveFactionBackup, saveRoles, sendRcon,
+  sanitizeMessage, saveFactionBackup, saveRoles, sendRcon, sysStats,
   sendRconBoth, serverLabel, setFactionCap, setFactionRank,
   setMenuRole, spawn,
   successEmbed, suspendDonator, textify, unbanEverywhere, update,
