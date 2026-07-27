@@ -269,3 +269,45 @@ test("a single-source flag never bans, even when it is the only detector availab
   await vpn.checkVpnAndAlert("Victim", "1.1.1.1");
   assert.deepEqual(bans, []);
 });
+
+test("a pre-upgrade cache entry is re-screened once, then stays cached", async () => {
+  /* The reported bug: `checkVpn` treated "has geo" as complete, so entries written
+     before the multi-tier upgrade were returned forever - the new detectors never ran
+     and the feed showed a bare "Clean" with no breakdown. Because the cache is keyed
+     by IP, brand-new players on a previously-seen IP hit it too. */
+  const { vpn, store } = makeAlertable();
+  store["130.44.169.127"] = { ip: "130.44.169.127", flagged: false, confirmed: null, isp: "RCN",
+    geo: { city: "Arlington", country: "United States", isp: "RCN" }, checkedAt: Date.now() - 86400000 };
+  let calls = 0;
+  global.fetch = async (url) => {
+    calls++;
+    const u = String(url);
+    if (u.includes("ipinfo")) return { json: async () => ({ ip: "130.44.169.127", city: "Arlington", country: "US", loc: "42,-71", org: "AS6079 RCN" }) };
+    if (u.includes("iphub")) return { json: async () => ({ block: 0, isp: "RCN" }) };
+    if (u.includes("vpnapi")) return { json: async () => ({ ip: "130.44.169.127", security: { vpn: false, proxy: false, tor: false, relay: false } }) };
+    if (u.includes("ipapi.is")) return { json: async () => ({ ip: "130.44.169.127", is_vpn: false, is_proxy: false, is_tor: false, is_datacenter: false, is_abuser: false }) };
+    if (u.includes("proxycheck")) return { json: async () => ({ status: "ok", "130.44.169.127": { proxy: "no", provider: "RCN" } }) };
+    throw new Error("unrouted " + u);
+  };
+  const first = await vpn.checkVpn("130.44.169.127");
+  assert.ok(calls > 0, "the legacy entry must trigger a real re-screen");
+  assert.equal(first.detectors.length, 4, "detector data is now populated");
+  assert.equal(first.screenAnswered, 4);
+
+  calls = 0;
+  const second = await vpn.checkVpn("130.44.169.127");
+  assert.equal(calls, 0, "healed entry must stay cached - no re-check loop");
+  assert.equal(second.detectors.length, 4);
+});
+
+test("re-screening a legacy entry keeps its action stamp (no double ban)", async () => {
+  const { vpn, store, bans } = makeAlertable();
+  const actionedAt = Date.now() - 60_000;
+  store["45.1.1.1"] = { ip: "45.1.1.1", flagged: true, confirmed: true, isp: "M247",
+    geo: { city: "AMS", isp: "M247" }, checkedAt: actionedAt, actionedAt, actionedOn: "EarlierGuy" };
+  global.fetch = routeVpn({ iphub: true, vpnapi: true, ipapi: true, proxycheck: true, ipqs: true });
+  const r = await vpn.checkVpn("45.1.1.1");
+  assert.equal(r.actionedAt, actionedAt, "the action stamp survives the re-screen");
+  await vpn.checkVpnAndAlert("SomeoneElse", "45.1.1.1");
+  assert.deepEqual(bans, [], "still inside the TTL - must not re-ban after healing");
+});

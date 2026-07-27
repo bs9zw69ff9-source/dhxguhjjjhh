@@ -174,19 +174,39 @@ const loadVpnChecks  = () => safeRead(FILES.VPN_CHECKS, {});
 function saveVpnCheck(ip, data) {
   return update(FILES.VPN_CHECKS, {}, (all) => { all[ip] = { ...data, checkedAt: Date.now() }; return all; });
 }
-// Exactly one VPN check per IP: cached forever once done, and concurrent checks of the
-// same not-yet-cached IP share a single in-flight lookup (no double API calls when two
-// players connect from the same new IP at once, or /inspect races the connection feed).
+/* One VPN check per IP, cached; concurrent checks of the same not-yet-cached IP share
+   a single in-flight lookup (no double API calls when two players connect from the
+   same new IP at once, or /inspect races the connection feed).
+
+   A cache entry only counts as COMPLETE if it carries the current schema - geolocation
+   AND the per-detector breakdown. Entries written before the multi-tier upgrade have
+   geo but no `detectors`, and the old check ("does it have geo?") returned them
+   forever: those IPs were never re-screened by the new detectors and the feed had
+   nothing to display, so a previously-seen IP showed a bare "Clean" with no breakdown.
+   The cache is keyed by IP, not by player, so this hit brand-new players too. An
+   incomplete entry is now re-checked once and overwritten, which self-heals the file. */
+const isCompleteCheck = (c) => !!c?.geo && (c.local === true || Array.isArray(c.detectors));
 const _vpnInFlight = new Map();   // ip -> Promise
 async function checkVpn(ip) {
   if (!ip) return null;                            // geolocation runs even without the VPN keys
   const cached = loadVpnChecks()[ip];
-  if (cached?.geo) return cached;                  // fully cached (already has geolocation)
+  if (isCompleteCheck(cached)) return cached;
   const inflight = _vpnInFlight.get(ip);
   if (inflight) return inflight;                   // a check for this exact IP is already running - reuse it
-  // Entry cached before geolocation existed → backfill geo only (keep the VPN verdict);
-  // otherwise run the full check. This heals old "unknown"-location cache entries.
-  const p = (cached ? _backfillGeo(ip, cached) : _doVpnCheck(ip)).finally(() => _vpnInFlight.delete(ip));
+  if (cached) logger.info("VPN", `${ip} has a pre-upgrade cache entry (no detector data) - re-screening it once to refresh`);
+  /* Always a FULL re-check: a geo-only backfill would leave the entry incomplete, so
+     it would re-check on every single connection instead of healing. Any action stamp
+     is carried over so re-screening can't re-arm an auto-ban we already issued. */
+  const p = _doVpnCheck(ip)
+    .then(async (r) => {
+      if (r && cached?.actionedAt) {
+        const merged = { ...r, actionedAt: cached.actionedAt, actionedOn: cached.actionedOn };
+        await saveVpnCheck(ip, merged);
+        return { ...merged, checkedAt: Date.now() };
+      }
+      return r;
+    })
+    .finally(() => _vpnInFlight.delete(ip));
   _vpnInFlight.set(ip, p);
   return p;
 }
