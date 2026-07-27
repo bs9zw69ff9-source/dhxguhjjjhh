@@ -12,11 +12,12 @@ module.exports = function(ctx) {
 /* ---------------- VPN / proxy detection (two-tier, consensus based) ----------------
    Detection runs in two stacked tiers so accuracy is high without burning quota:
 
-     TIER 1 - REGULAR CHECK (high daily quotas, run on EVERY not-yet-checked IP)
-       • IPHub         1,000/day   block==1 = hosting/proxy/non-residential
-       • vpnapi.io     1,000/day   security.{vpn,proxy,tor,relay}
-       • ipapi.is      1,000/day   is_vpn / is_proxy / is_tor  (works keyless)
-       • proxycheck.io   100/day   proxy=yes + risk + the VPN BRAND name (keyless)
+     TIER 1 - REGULAR CHECK (high quotas, run on EVERY not-yet-checked IP)
+       • IPHub         1,000/day    block==1 = hosting/proxy/non-residential
+       • vpnapi.io     1,000/day    security.{vpn,proxy,tor,relay}
+       • ipapi.is      1,000/day    is_vpn / is_proxy / is_tor  (works keyless)
+       • proxycheck.io   100/day    proxy=yes + risk + the VPN BRAND name (keyless)
+       • sntlhq.com    1,000/HOUR   signals.{vpn,proxied,tor,anon} + a 0-100 risk score
 
      TIER 2 - FINAL CONFIRMATION (small quota, highest accuracy, ONLY on a screen hit)
        • IPQualityScore  ~35/day   vpn/proxy/tor + fraud score
@@ -38,6 +39,7 @@ const IPINFO_TOKEN   = process.env.IPINFO_TOKEN  || "";   // optional - higher i
 const PROXYCHECK_API_KEY = process.env.PROXYCHECK_API_KEY || "";
 const VPNAPI_KEY     = process.env.VPNAPI_KEY   || "";
 const IPAPIIS_KEY    = process.env.IPAPIIS_KEY  || "";    // ipapi.is works keyless too
+const SENTINEL_API_KEY = process.env.SENTINEL_API_KEY || "";   // sntlhq.com - 1,000/HOUR free
 
 // How many detectors must agree. Defaults are deliberately conservative.
 const VPN_SCREEN_MIN     = Math.max(1, Number(process.env.VPN_SCREEN_MIN)     || 1);   // hits needed to escalate to tier 2
@@ -197,6 +199,42 @@ const DETECTORS = [
                country: rec.country || null, countryCode: rec.isocode || null,
                region: rec.region || null, city: rec.city || null };
     } },
+  /* Tier 1: Sentinel (sntlhq.com). Quota is 1,000 per HOUR rather than per day, so
+     it is the one screener that cannot realistically be exhausted by a busy server.
+     We use the IP-ONLY lookup endpoint - /v1/evaluate needs a token minted by a
+     browser SDK, which a game server has no way to produce. That also means the
+     consumer brand field (`service`, e.g. PROTON_VPN) is not part of this response,
+     so proxycheck stays the source for the VPN brand name; Sentinel contributes its
+     anonymising signals, ASN/org and a 0-100 risk score. */
+  { name: "sentinel", tier: 1, enabled: () => !!SENTINEL_API_KEY, async run(ip) {
+      const d = await fetchJson(`https://sntlhq.com/v1/lookup/${encodeURIComponent(ip)}`,
+        { headers: { Authorization: `Bearer ${SENTINEL_API_KEY}`, Accept: "application/json" } }, { label: "sentinel" });
+      const s = d?.signals;
+      if (!s) return null;
+      // Anonymising signals only. `dch` (datacenter) is reported but is NOT a hit on
+      // its own - the same rule ipapi.is follows, since plenty of honest players sit
+      // behind carrier-grade and cloud ranges.
+      const hits = [["vpn", s.vpn], ["proxy", s.proxied], ["tor", s.tor], ["anon", s.anon]]
+        .filter(([, v]) => v).map(([k]) => k);
+      const n = d.network || {};
+      const cc = typeof n.country === "string" && n.country.length === 2 ? n.country.toUpperCase() : null;
+      return { flagged: hits.length > 0,
+               detail: (hits.length ? hits.join("+") : "clean") + (s.dch ? " (datacenter)" : "") +
+                       (d.verdict ? ` verdict:${d.verdict}` : "") + (Number.isFinite(d.risk_score) ? ` risk:${d.risk_score}` : ""),
+               vpn: !!s.vpn, proxy: !!s.proxied, tor: !!s.tor,
+               hosting: !!s.dch,
+               // A datacenter IP is definitely not residential; anything else is unknown
+               // here, and null must stay null so it never outvotes a real classifier.
+               residential: s.dch ? false : null,
+               threatScore: Number.isFinite(d.risk_score) ? d.risk_score : null,
+               // Present only if the API ever returns a brand on this endpoint; the
+               // documented lookup schema has no `service` field, so usually null.
+               provider: d.service || n.service || null,
+               asn: n.asn ? `AS${String(n.asn).replace(/^AS/i, "")}` : null,
+               organization: n.org || null, isp: n.org || null,
+               country: n.country || null, countryCode: cc,
+               city: n.city || null };
+    } },
 ];
 const tierDetectors = (tier) => DETECTORS.filter(d => d.tier === tier && d.enabled());
 // True when ANY detector is usable - what gates the whole subsystem.
@@ -212,7 +250,7 @@ async function runTier(tier, ip) {
       const out = await d.run(ip);
       return out ? { name: d.name, tier, ...out } : { name: d.name, tier, error: "no verdict" };
     } catch (err) {
-      return { name: d.name, tier, error: _scrub(err.message ?? err, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY, IPHUB_API_KEY) };
+      return { name: d.name, tier, error: _scrub(err.message ?? err, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY, IPHUB_API_KEY, SENTINEL_API_KEY) };
     }
   }));
   for (const r of settled) if (r.error) logger.warn("VPN", `${r.name} lookup failed for ${ip}: ${r.error}`);
@@ -242,7 +280,7 @@ async function probeDetectors(ip) {
       return { ...base, status: "up", ms, flagged: !!r.flagged, detail: r.detail ?? null, provider: r.provider ?? null };
     } catch (err) {
       return { ...base, status: "down", ms: Date.now() - t0,
-               error: _scrub(err.message ?? err, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY, IPHUB_API_KEY).slice(0, 120) };
+               error: _scrub(err.message ?? err, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY, IPHUB_API_KEY, SENTINEL_API_KEY).slice(0, 120) };
     }
   }));
   return {
@@ -489,8 +527,11 @@ async function _doVpnCheck(ip) {
      IPHub's block==1 only means "non-residential", which is coarse and noisy, so it is
      the last resort. ORing would let IPHub's rough flag override IPQS saying the IP is
      plainly residential. */
-  const hosting        = preferring(["ipqs", "ipapi.is", "proxycheck", "iphub"], "hosting");
-  const residentialRaw = preferring(["ipqs", "proxycheck", "ipapi.is", "iphub"], "residential");
+  const hosting        = preferring(["ipqs", "ipapi.is", "sentinel", "proxycheck", "iphub"], "hosting");
+  /* Sentinel is last here on purpose: it only ever asserts residential=false (when it
+     saw a datacenter) and never residential=true, so ahead of a real classifier its
+     one-sided answer would win a question it cannot actually answer. */
+  const residentialRaw = preferring(["ipqs", "proxycheck", "ipapi.is", "iphub", "sentinel"], "residential");
   const result = {
     ip, flagged, confirmed, actionable, decision: reason,
     /* ---- normalised intelligence record (stable public shape) ---- */
@@ -502,9 +543,9 @@ async function _doVpnCheck(ip) {
     // A hosting IP is by definition not residential, even if no provider said so.
     residential:  hosting === true ? false : (residentialRaw ?? null),
     mobile:       anyTrue("mobile"),
-    threatScore:  preferNum(["ipqs", "proxycheck"], "threatScore"),
+    threatScore:  preferNum(["ipqs", "sentinel", "proxycheck"], "threatScore"),
     asn:          pick("asn") ?? gwho?.asn ?? null,
-    organization: preferring(["ipqs", "vpnapi", "proxycheck", "ipapi.is"], "organization") ?? gwho?.org ?? null,
+    organization: preferring(["ipqs", "vpnapi", "proxycheck", "ipapi.is", "sentinel"], "organization") ?? gwho?.org ?? null,
     country:      gwho?.country      ?? pick("country")     ?? null,
     countryCode:  gwho?.countryCode  ?? pick("countryCode") ?? null,
     region:       gwho?.region       ?? pick("region")      ?? null,

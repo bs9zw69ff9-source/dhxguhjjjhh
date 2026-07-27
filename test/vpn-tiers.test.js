@@ -375,3 +375,73 @@ test("cache entries expire and are refreshed", () => {
   assert.equal(vpn.isCompleteCheck({ geo, schema: 2, checkedAt: now }), false, "no detector data");
   assert.equal(vpn.isCompleteCheck({ geo, local: true, checkedAt: now - 999 * day }), true, "private never expires");
 });
+
+/* ---- sntlhq.com (Sentinel) — tier 1 ---- */
+
+const SENTINEL_CLEAN = { "sntlhq.com": { ip: "1.2.3.4", known: true, verdict: "allow", risk_score: 3,
+  signals: { vpn: false, proxied: false, tor: false, dch: false, anon: false },
+  network: { asn: 7029, org: "Windstream", country: "US", city: "Atlanta" } } };
+const SENTINEL_HIT = { "sntlhq.com": { ip: "1.2.3.4", known: true, verdict: "block", risk_score: 94,
+  signals: { vpn: true, proxied: false, tor: false, dch: true, anon: true },
+  network: { asn: 9009, org: "M247 Europe SRL", country: "GB", city: "London" } } };
+
+test("sentinel is a regular check: it runs on every IP and counts toward screening", async () => {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test" });
+  const called = mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN, ...SENTINEL_CLEAN, ...TIER2_HIT });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.ok(called.includes("sntlhq.com"), "sentinel must be queried on a not-yet-checked IP");
+  assert.equal(r.screenAnswered, 5, "sentinel joins the four existing regular checks");
+  assert.equal(r.screenHits, 0);
+  assert.ok(!called.includes("ipqualityscore"), "a clean screen still spends no tier-2 quota");
+  assert.equal(vpn.DETECTORS.find(d => d.name === "sentinel").tier, 1);
+});
+
+test("sentinel contributes its flag, ASN, org and risk score to the merged record", async () => {
+  // Isolate sentinel: the keyless screeners are made to fail so nothing else answers.
+  // (ipapi.is outranks sentinel for the hosting CLASSIFICATION by design, so letting
+  // it answer here would be testing the priority order, not sentinel's mapping.)
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"), ...SENTINEL_HIT });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.vpn, true);
+  assert.equal(r.hosting, true);
+  assert.equal(r.residential, false, "a datacenter IP is never residential");
+  assert.equal(r.asn, "AS9009");
+  assert.equal(r.organization, "M247 Europe SRL");
+  assert.equal(r.threatScore, 94, "the 0-100 risk score is carried through");
+  assert.ok(r.detectors.some(d => d.name === "sentinel" && d.flagged), "audit trail records who flagged it");
+  assert.match(r.lookupSource, /sentinel/);
+});
+
+test("sentinel: a datacenter IP alone is reported but is NOT a hit", async () => {
+  // Plenty of honest players sit behind carrier-grade / cloud ranges, so `dch` on its
+  // own must not push the screen toward a ban - the same rule ipapi.is follows.
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"),
+    "sntlhq.com": { ip: "1.2.3.4", known: true, verdict: "allow", risk_score: 20,
+      signals: { vpn: false, proxied: false, tor: false, dch: true, anon: false },
+      network: { asn: 16509, org: "Amazon", country: "US" } } });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.flagged, false, "datacenter alone must not flag");
+  assert.equal(r.hosting, true, "but it is still reported as hosting");
+  const det = r.detectors.find(d => d.name === "sentinel");
+  assert.equal(det.flagged, false);
+  assert.match(det.detail, /datacenter/);
+});
+
+test("sentinel: an unparseable response is 'no verdict', never a silent all-clear", async () => {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN,
+    "sntlhq.com": { error: "Unauthorized" } });     // 401 shape - no `signals` block
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 2, "ipapi.is + proxycheck answered; sentinel could not, so it is not counted as clean");
+  assert.ok(!r.detectors.some(d => d.name === "sentinel"), "and contributes nothing to the record");
+});
+
+test("sentinel is disabled without a key, so it costs nothing when unconfigured", async () => {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: null });
+  assert.equal(vpn.DETECTORS.find(d => d.name === "sentinel").enabled(), false);
+  const called = mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN, ...TIER2_HIT });
+  await vpn._doVpnCheck("1.2.3.4");
+  assert.ok(!called.includes("sntlhq.com"));
+});
