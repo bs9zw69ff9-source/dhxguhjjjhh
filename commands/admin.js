@@ -7,7 +7,7 @@ module.exports = (ctx) => {
   EmbedBuilder, MENUS, MessageFlags, ModalBuilder, NV, clinical, firewallStatus,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, addDonator, addMenuGrant, addUserBlacklist,
   adminOnlyEmbed, banWithIp, bar, brand, client, commands,
-  _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole,
+  _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole, hookStatus,
   hasModRole, hero, ipBans, isOwner,
   loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
   ownerOnlyEmbed, paginate, parseRcon, path, probeDetectors, readDonatorFile, redactPrivateInfo, sendRcon,
@@ -38,6 +38,13 @@ module.exports = (ctx) => {
           ACTIVE_SERVERS.map((s, i) => `${up[i] ? "🟢" : "🔴"} ${serverLabel(s)}`).join("  "),
           `Warnings since start: **${_diag.counts.warn}**. Errors: **${_diag.counts.error}**.`,
         ];
+        /* Webhook logs. These post fire-and-forget, so a missing env var looks exactly
+           like a quiet server - say which are actually wired up. */
+        const hooks = Object.entries(hookStatus || {});
+        if (hooks.length) {
+          lines.push("Webhook logs: " + hooks
+            .map(([label, state]) => `${state === "on" ? "🟢" : "🔴"} ${label} (${state})`).join("  "));
+        }
         if (_diag.recent.length) {
           const recent = _diag.recent.slice(-5).map(r =>
             `${r.level === "error" ? "❌" : "⚠️"} [${r.tag}] ${redactPrivateInfo(r.message)} <t:${Math.floor(r.at / 1000)}:R>`);

@@ -53,11 +53,26 @@ if (process.env.CONNECT_WEBHOOK_URL) {
 /* Plain-text join/leave and kill logs, each on its own webhook. Separate from the
    connection feed above: those carry no IP or account data, so they are safe in a
    public channel. A webhook URL is a CREDENTIAL - it goes in .env, never in the repo. */
+const hookStatus = {};   // label -> "on" | "off" | "bad url", surfaced by /health
 function makeHook(envVar, label) {
-  const url = process.env[envVar];
-  if (!url) return null;
-  try { const h = new WebhookClient({ url }); console.log(`[${label}] enabled`); return h; }
-  catch (e) { console.warn(`[${label}] invalid ${envVar}: ${e.message}`); return null; }
+  // Tolerate a pasted value with stray spaces or wrapping quotes - the usual .env
+  // slip, and one that would otherwise look identical to "not configured".
+  const url = String(process.env[envVar] ?? "").trim().replace(/^["']|["']$/g, "");
+  if (!url) {
+    hookStatus[label] = "off";
+    console.log(`[${label}] disabled - ${envVar} is not set in .env`);
+    return null;
+  }
+  try {
+    const h = new WebhookClient({ url });
+    hookStatus[label] = "on";
+    console.log(`[${label}] enabled`);
+    return h;
+  } catch (e) {
+    hookStatus[label] = "bad url";
+    console.warn(`[${label}] DISABLED - ${envVar} is not a valid Discord webhook URL: ${e.message}`);
+    return null;
+  }
 }
 const joinHook = makeHook("JOIN_WEBHOOK_URL", "JoinLog");
 const killHook = makeHook("KILL_WEBHOOK_URL", "KillLog");
@@ -1576,10 +1591,16 @@ function postFeed(embed) {
 /* Plain-text logs. One line each, no embeds and no emoji, mentions suppressed so a
    player called "@everyone" can't ping the server. Every send is fire-and-forget and
    swallows its own failure - a dead webhook must never interrupt a join or a kill. */
+const _plainSent = new Set();   // tags that have posted at least once (first-post confirmation)
 const _plain = (hook, tag, content) => {
   if (!hook || !content) return;
   hook.send({ content: content.slice(0, 1900), allowedMentions: { parse: [] } })
-    .catch(err => logger.warn(tag, `webhook post failed: ${err.message}`));
+    .then(() => {
+      // Confirm the first delivery per log. Without it a misconfigured webhook and a
+      // working one look exactly the same from outside - silence either way.
+      if (!_plainSent.has(tag)) { _plainSent.add(tag); logger.info(tag, "first line posted - webhook is live"); }
+    })
+    .catch(err => { hookStatus[tag] = `failing: ${err.message}`; logger.warn(tag, `webhook post failed: ${err.message}`); });
 };
 function postJoinLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} joined ${server || "the server"}`); }
 function postLeaveLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} left ${server || "the server"}`); }
@@ -2847,7 +2868,7 @@ process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, {
 // ---- interactions (handler extracted to ./commands) ----
 const { onInteraction } = require("./commands")({
   ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_DURATIONS, BLACKLIST_IDS,
-  BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, redactPrivateInfo,
+  BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, hookStatus, redactPrivateInfo,
   DASHBOARD_INTERVAL_MS, DAY_MS, DIVIDER, DONATOR_FILE, EmbedBuilder, FACTION_BAK_DIR,
   FILES, GLYPH, IPHUB_API_KEY, vpnDetectionEnabled,
   MENUS, MessageFlags,
