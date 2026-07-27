@@ -4,10 +4,37 @@
 module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, FILES, _sameId, blacklistAdd, blacklistRemove, easternStamp,
-  getOnlinePlayers, ipBans, isAutobanExempt, isMasterName,
+  getOnlinePlayers, ipBans, isAutobanExempt, isMasterName, loadVpnChecks,
   loadBans, logger, preserveBalanceAcrossKick, removeAutobanExempt, safeRead, safeWrite,
   sanitizeBanName, sanitizeId, sendRcon, update,
   } = ctx;
+
+const { findEvasion, banNetworkSnapshot } = require("./evasion");
+const uniqIps = (a) => [...new Set(a.filter(Boolean).map(s => String(s).trim()))];
+
+/* Correlate a joining player against every active ban's stored network snapshot plus
+   the standing ipBans flags. Pure matching lives in ./evasion - this only gathers the
+   state. Returns the evasion verdict, or null when nothing is known. */
+function checkEvasion({ name, eosId, ip } = {}) {
+  try {
+    const now = Date.now();
+    const bans = loadBans().filter(b => b.permanent || (b.expires && b.expires > now));
+    let rec = null, vpnRec = null;
+    try { rec = ipBans.getRecord(name) ?? null; } catch {}
+    try { vpnRec = ip ? (loadVpnChecks?.() ?? {})[ip] ?? null : null; } catch {}
+    const bl = (() => { try { return ipBans.getBlacklist(); } catch { return { ips: [], names: [], ids: [] }; } })();
+    return findEvasion({
+      name, eosId: eosId || rec?.id || null, ip,
+      asn: vpnRec?.asn ?? null, provider: vpnRec?.provider ?? null,
+      hosting: vpnRec?.hosting ?? null, vpn: vpnRec?.vpn ?? null,
+      altNames: rec?.alts ?? [],
+    }, bans, {
+      flaggedIds:   new Set((bl.ids   ?? []).map(x => String(x).toLowerCase())),
+      flaggedIps:   new Set(bl.ips    ?? []),
+      flaggedNames: new Set((bl.names ?? []).map(x => String(x).toLowerCase())),
+    });
+  } catch (e) { logger.warn("Evasion", `check failed for ${name}: ${e.message}`); return null; }
+}
 
 async function banWithIp(playerId, server = "both", opts = {}) {
   const name = sanitizeBanName(playerId);
@@ -54,7 +81,26 @@ async function banWithIp(playerId, server = "both", opts = {}) {
   if (!enf.ips?.length && !(opts.permanent === true && enf.ids?.length)) {
     logger.warn("BanAudit", `"${name}" has NO confirmed IP and no EOS flag yet - they were likely never seen disconnecting. Their IP will be flagged automatically the moment their disconnect confirms it (pending flag, persisted across restarts).`);
   }
-  return { ...enf, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall: null };
+  /* Snapshot the network intelligence ALONGSIDE the ban so a future join can be
+     correlated against it later - after the VPN cache entry has expired, and even if
+     the player never reconnects from the same address. Returned to the caller, which
+     writes it onto the ban record. */
+  let network = null;
+  try {
+    const ips = uniqIps([opts.ip, ...(known?.cips ?? []), ...(enf.ips ?? [])]);
+    const vpnRecord = (() => {
+      try { const all = loadVpnChecks?.() ?? {}; return ips.map(i => all[i]).find(Boolean) ?? null; } catch { return null; }
+    })();
+    network = banNetworkSnapshot({
+      eosIds: [known?.id, ...(known?.ids ?? []), ...(enf.ids ?? [])],
+      ips, names: [name, ...(known?.alts ?? [])], vpnRecord,
+    });
+    logger.info("BanAudit", `network snapshot | player="${name}" | asn=${network.asn ?? "unknown"}` +
+      ` | provider=${network.provider ?? "none"} | hosting=${network.hosting ?? "unknown"}` +
+      ` | ips=${network.ips.length} | names=${network.names.length} | eosIds=${network.eosIds.length}`);
+  } catch (e) { logger.warn("Bans", `could not snapshot network intel for "${name}": ${e.message}`); }
+
+  return { ...enf, network, blacklist: { name, servers: enforced.servers }, ok: enforced.servers > 0, firewall: null };
 }
 
 
@@ -321,5 +367,5 @@ function parseRcon(raw) {
 }
 
 
-  return { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere };
+  return { BAN_RECONCILE_MIN_INTERVAL_MS, checkEvasion, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere };
 };

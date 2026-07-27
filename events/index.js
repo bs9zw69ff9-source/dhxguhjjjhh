@@ -5,7 +5,7 @@ module.exports = function(ctx) {
   const {
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY, vpnDetectionEnabled,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
-  autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
+  autoBanDecision, banWithIp, checkEvasion, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
   easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
@@ -110,6 +110,34 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       }
       const lastActivity = Math.max(rec.lastSeen || 0, conns[0]?.ts || 0) || null;
 
+      /* Ban-evasion correlation: match this join against every active ban's stored
+         network snapshot (IPs, ASN, VPN provider, usernames, EOS ids) plus the standing
+         registry flags. Reported to moderators - it never bans on its own, because the
+         weaker signals are circumstantial. */
+      let evasion = null;
+      try { evasion = checkEvasion({ name, eosId: rec.id, ip }); }
+      catch (e) { logger.warn("Evasion", `join check failed for ${name}: ${e.message}`); }
+      if (evasion?.evasion) {
+        const lines = evasion.matches.slice(0, 3).map(m =>
+          `**${m.playerId}** (${m.permanent ? "permanent" : "temp"} - ${m.reason}, by ${m.moderator})  -  confidence **${m.score}**\n` +
+          m.reasons.map(r => `• ${r.detail}`).join("\n"));
+        for (const f of evasion.flags) lines.push(`• ${f.detail}`);
+        const alert = clinical(new EmbedBuilder().setColor(evasion.certain ? CLIN.red : CLIN.grey)
+          .setTitle(evasion.certain ? "Ban Evasion Detected" : "Possible Ban Evasion")
+          .setDescription(`**${name}** joined ${srvName} and matches ${evasion.matches.length || evasion.flags.length} banned record(s).`)
+          .addFields(
+            { name: "Player",  value: `\`${name}\``, inline: true },
+            { name: "EOS ID",  value: rec.id ? `\`${rec.id}\`` : "unknown", inline: true },
+            { name: "IP",      value: ip ? `\`${ip}\`` : "unknown", inline: true },
+            { name: "Matches", value: (lines.join("\n\n") || "*registry flag only*").slice(0, 1024), inline: false },
+          ), evasion.certain ? "Ban evasion - review immediately" : "Circumstantial match - review before acting");
+        logger.warn("Evasion", `${name} [${rec.id ?? "?"}] @ ${ip ?? "?"} matched ${evasion.matches.length} ban(s), ` +
+          `score ${evasion.score}${evasion.certain ? " (CERTAIN)" : ""}: ` +
+          evasion.matches.map(m => `${m.playerId}(${m.reasons.map(r => r.kind).join("+")})`).join(", "));
+        await logBan(alert).catch(() => {});
+        postFeed(alert);
+      }
+
       /* VPN/proxy verdict. Spells out the consensus explicitly: when every regular
          check agrees the IP is clean it says so (and no IPQS lookup was spent); when
          any of them flags it, the IP is escalated to IPQS for final confirmation and
@@ -184,6 +212,20 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
           { name: "Server",          value: srvName,                             inline: true },
           { name: "Log Scan Results", value: rec.flagged ? "Flagged - matches the blacklist (auto-banned)"
             : "No matches", inline: false },
+          { name: "Network",         value: [
+              `ASN: ${vpnResult?.asn ? `\`${vpnResult.asn}\`` : "unknown"}`,
+              `Organization: ${vpnResult?.organization || vpnResult?.isp || "unknown"}`,
+              `Country: ${vpnResult?.country || rec.country || "unknown"}`,
+            ].join("\n"), inline: false },
+          { name: "Detection",       value: [
+              // Explicit yes/no per category, with the risky ones called out.
+              `VPN: ${vpnResult?.vpn === true ? "**YES**" : vpnResult?.vpn === false ? "No" : "unknown"}`,
+              `Proxy: ${vpnResult?.proxy === true ? "**YES**" : vpnResult?.proxy === false ? "No" : "unknown"}`,
+              `Tor: ${vpnResult?.tor === true ? "**YES**" : vpnResult?.tor === false ? "No" : "unknown"}`,
+              `Hosting/Datacenter: ${vpnResult?.hosting === true ? "**YES**" : vpnResult?.hosting === false ? "No" : "unknown"}`,
+              `Residential: ${vpnResult?.residential === true ? "Yes" : vpnResult?.residential === false ? "**No**" : "unknown"}`,
+              vpnResult?.threatScore != null ? `Threat score: **${vpnResult.threatScore}**/100` : null,
+            ].filter(Boolean).join("\n"), inline: false },
           { name: "VPN / Proxy",     value: vpnField.slice(0, 1024),             inline: false },
           { name: "Location",        value: (formatFullLocation(vpnResult?.geo) || (ip ? "unknown" : "no IP")).slice(0, 1024), inline: false },
           { name: "Last Activity",   value: fmt(lastActivity),                   inline: false },
@@ -227,7 +269,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // Enforce with a native RCON Ban + Kick by username (banWithIp) + flag the exact
       // IP/EOS. Per-command server responses are logged so we can see what lands.
       const res = await banWithIp(name, "both", { permanent: true, ip });
-      try { await upsertPermBan({ playerId: name, reason: banReason, moderator: banMod }); } catch {}   // show in /banlist with the real punishment
+      try { await upsertPermBan({ playerId: name, reason: banReason, moderator: banMod, network: res?.network ?? null }); } catch {}   // show in /banlist with the real punishment
       writeModLog({ action: "auto-ipban", playerId: name, reason: `${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""})`, by: banMod });
       logger.warn("IPGuard", `Auto-banned ${name} - ${banReason} (evasion via ${reason || "match"}${ip ? ` ${ip}` : ""}), id [${uniqueId || "?"}]`);
       const banEmbed = clinical(new EmbedBuilder().setColor(CLIN.red)

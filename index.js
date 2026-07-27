@@ -265,8 +265,8 @@ function upsertTempBan(entry) {
 }
 /** Record a PERMANENT ban in the same ban JSON (no expiry). Upserts by playerId,
     so it supersedes any existing temp ban for that player. */
-function upsertPermBan({ playerId, reason, moderator, moderatorRank, moderatorId, server }) {
-  return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", moderatorRank, moderatorId, server: server || "both", at: Date.now(), permanent: true });
+function upsertPermBan({ playerId, reason, moderator, moderatorRank, moderatorId, server, network }) {
+  return upsertTempBan({ playerId, reason: reason || "Permanent ban", moderator: moderator || "system", moderatorRank, moderatorId, server: server || "both", network: network ?? null, at: Date.now(), permanent: true });
 }
 /** One-time/startup import: pull any names already in blacklist.txt into the ban JSON
     (as permanent entries) so /banlist - which reads the JSON - shows pre-existing bans. */
@@ -1547,11 +1547,12 @@ const { UFW_BLOCK, _IPV4_RE, firewallBlockIps, firewallUnblockIps, firewallStatu
   require("./moderation/firewall")({ logger, ipBans, masterIps: MASTER_IPS });
 
 // ---- moderation/bans: native RCON ban/kick enforcement, reconcile, unban (extracted to ./moderation/bans) ----
-const { BAN_RECONCILE_MIN_INTERVAL_MS, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere } = require("./moderation/bans")({
+const { BAN_RECONCILE_MIN_INTERVAL_MS, checkEvasion, _reconcileBusy, _sweepBusy, autoBanDecision, banWithIp, enforceBansSweep, fixAutoBanReasons, hardEnforce, isRealBan, parseRcon, reconcileBans, scheduleBanRecheck, sourceBanFor, unbanEverywhere } = require("./moderation/bans")({
   ACTIVE_SERVERS, FILES, UFW_BLOCK, _sameId, blacklistAdd, blacklistRemove, easternStamp,
   firewallBlockIps, firewallUnblockIps, ipBans, isMasterName, loadBans, logger,
   preserveBalanceAcrossKick, safeRead, safeWrite, sanitizeBanName, sanitizeId, sendRcon,
   update, getOnlinePlayers: (...a) => getOnlinePlayers(...a), isAutobanExempt: (...a) => isAutobanExempt(...a), removeAutobanExempt: (...a) => removeAutobanExempt(...a),
+  loadVpnChecks: (...a) => loadVpnChecks(...a),   // defined later by ./moderation/vpn - late-bound
 });
 
 // ---- discord client & log channel ----
@@ -2790,7 +2791,7 @@ const { ALL_RANK_NAMES, commands, factionCommands, mainCommands } = require("./c
 const {  } = require("./events")({
   ACTIVE_SERVERS, ActivityType, BOT_VERSION, CLIN, EmbedBuilder, IPHUB_API_KEY, vpnDetectionEnabled,
   PAVLOV_BASES, REST, Routes, UFW_BLOCK, _sameId, addAutobanExempt,
-  autoBanDecision, banWithIp, checkVpn, checkVpnAndAlert, client,
+  autoBanDecision, banWithIp, checkEvasion, checkVpn, checkVpnAndAlert, client,
   clinical, commands, enforceBansSweep, ensureFactionFiles, pruneObsoleteFactionFiles, ensureMenuPanel, ensureVerifyPanel, ensureUnverifiedSetup, feedHook,
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,

@@ -46,13 +46,65 @@ const VPN_SCREEN_BAN_MIN = Math.max(1, Number(process.env.VPN_SCREEN_BAN_MIN) ||
 
 const _scrub = (s, ...keys) => keys.filter(Boolean).reduce((acc, k) => acc.split(k).join("***"), String(s ?? ""));
 
+/* A syntactically valid, publicly routable address. Detection is skipped for anything
+   else so a malformed log line can never be sent to a provider as a lookup. */
+function isValidPublicIp(ip) {
+  const s = String(ip ?? "").trim();
+  if (!s || s.length > 45) return false;
+  const v4 = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) return v4.slice(1).every(o => Number(o) <= 255) && !isUnroutableIp(s);
+  if (/^[0-9a-f:]+$/i.test(s) && s.includes(":")) return !isUnroutableIp(s);   // coarse IPv6
+  return false;
+}
+
+/* fetch with a hard timeout, retry/backoff and rate-limit awareness. Providers time
+   out, 429 and 5xx; without this a slow endpoint would hold a detector open forever
+   and a burst of joins could trip a rate limit with no recovery. Never throws for a
+   rate limit - it returns null so the detector counts as "no verdict" rather than
+   "clean", which keeps an exhausted quota from being read as innocence. */
+const RATE_LIMITED_UNTIL = new Map();          // host -> ts to resume
+async function fetchJson(url, opts = {}, { tries = 3, timeoutMs = 6000, label = "" } = {}) {
+  const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+  const until = RATE_LIMITED_UNTIL.get(host) ?? 0;
+  if (Date.now() < until) {
+    logger.debug?.("VPN", `${label || host} skipped - rate limited for another ${Math.ceil((until - Date.now()) / 1000)}s`);
+    return null;
+  }
+  let lastErr;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...opts, signal: ac.signal });
+      if (res.status === 429 || res.status === 503) {
+        // Honour Retry-After when given, else back off for a minute.
+        const ra = Number(res.headers?.get?.("retry-after"));
+        const waitMs = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 60_000;
+        RATE_LIMITED_UNTIL.set(host, Date.now() + waitMs);
+        logger.warn("VPN", `${label || host} rate limited (${res.status}) - pausing lookups to it for ${Math.round(waitMs / 1000)}s`);
+        return null;
+      }
+      if (!res.ok && res.status >= 500) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+      const isAbort = err?.name === "AbortError";
+      if (attempt < tries - 1) {
+        await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt)));   // 300ms, 600ms
+        continue;
+      }
+      throw isAbort ? new Error(`timeout after ${timeoutMs}ms`) : lastErr;
+    } finally { clearTimeout(timer); }
+  }
+  return null;
+}
+
 /* Each detector: { name, tier, enabled, run(ip) -> { flagged, provider?, detail? } }.
    `run` must never throw - it returns null when the lookup itself failed, which is
    tracked separately from "answered clean" so an outage can't be read as innocence. */
 const DETECTORS = [
   { name: "iphub", tier: 1, enabled: () => !!IPHUB_API_KEY, async run(ip) {
-      const res = await fetch(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } });
-      const d = await res.json();
+      const d = await fetchJson(`https://v2.api.iphub.info/ip/${encodeURIComponent(ip)}`, { headers: { "X-Key": IPHUB_API_KEY } }, { label: "iphub" });
       if (!d || d.block === undefined) return null;
       // block: 0 residential/unclassified, 1 non-residential (hosting/proxy), 2 unknown.
       return { flagged: d.block === 1, detail: `block:${d.block}`, block: d.block,
@@ -61,8 +113,7 @@ const DETECTORS = [
                hosting: d.block === 1 || null, residential: d.block === 0 || null };
     } },
   { name: "vpnapi", tier: 1, enabled: () => !!VPNAPI_KEY, async run(ip) {
-      const res = await fetch(`https://vpnapi.io/api/${encodeURIComponent(ip)}?key=${VPNAPI_KEY}`, { headers: { Accept: "application/json" } });
-      const d = await res.json();
+      const d = await fetchJson(`https://vpnapi.io/api/${encodeURIComponent(ip)}?key=${VPNAPI_KEY}`, { headers: { Accept: "application/json" } }, { label: "vpnapi" });
       const s = d?.security;
       if (!s) return null;
       const hits = ["vpn", "proxy", "tor", "relay"].filter(k => s[k]);
@@ -77,8 +128,7 @@ const DETECTORS = [
     } },
   { name: "ipapi.is", tier: 1, enabled: () => true, async run(ip) {      // keyless-capable
       const key = IPAPIIS_KEY ? `&key=${IPAPIIS_KEY}` : "";
-      const res = await fetch(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}${key}`, { headers: { Accept: "application/json" } });
-      const d = await res.json();
+      const d = await fetchJson(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}${key}`, { headers: { Accept: "application/json" } }, { label: "ipapi.is" });
       if (!d || d.is_vpn === undefined) return null;
       // Anonymising signals only. is_datacenter alone is NOT a hit - plenty of
       // legitimate players sit behind carrier/cloud ranges - but it is reported.
@@ -98,8 +148,7 @@ const DETECTORS = [
                region: l.state || l.region || null, city: l.city || null };
     } },
   { name: "ipqs", tier: 2, enabled: () => !!IPQS_API_KEY, async run(ip) {
-      const res = await fetch(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`);
-      const d = await res.json();
+      const d = await fetchJson(`https://www.ipqualityscore.com/api/json/ip/${IPQS_API_KEY}/${encodeURIComponent(ip)}?strictness=1`, {}, { label: "ipqs" });
       if (!d?.success) return null;
       const flagged = !!(d.vpn || d.proxy || d.tor);
       /* connection_type is the most direct residential/mobile/datacenter signal any
@@ -129,8 +178,7 @@ const DETECTORS = [
   { name: "proxycheck", tier: 1, enabled: () => true, async run(ip) {    // keyless-capable
       const key = PROXYCHECK_API_KEY ? `&key=${PROXYCHECK_API_KEY}` : "";
       // asn=1 adds the ASN, organisation and city/region/country block; risk=1 adds the score.
-      const res = await fetch(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1&asn=1${key}`, { headers: { Accept: "application/json" } });
-      const d = await res.json();
+      const d = await fetchJson(`https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&risk=1&asn=1${key}`, { headers: { Accept: "application/json" } }, { label: "proxycheck" });
       if (!d || (d.status !== "ok" && d.status !== "warning")) return null;
       const rec = d[ip];
       if (!rec) return null;
@@ -290,8 +338,7 @@ async function _backfillGeo(ip, prev) {
 async function geoLookup(ip) {
   try {
     const url = `https://ipinfo.io/${encodeURIComponent(ip)}/json${IPINFO_TOKEN ? `?token=${IPINFO_TOKEN}` : ""}`;
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    const d = await res.json();
+    const d = await fetchJson(url, { headers: { Accept: "application/json" } }, { label: "ipinfo" });
     if (!d || !d.ip || d.error || d.bogon) return null;   // error / private / reserved IP
     const [lat, lon] = String(d.loc || "").split(",");
     // ipinfo's `org` is "AS#### <ISP name>" - split into ASN + ISP.
@@ -560,7 +607,7 @@ async function checkVpnAndAlert(name, ip) {
   // Stamp the action so the TTL gate counts from the BAN, not from the lookup.
   try { await saveVpnCheck(ip, { ...result, actionedAt: Date.now(), actionedOn: name }); }
   catch (e) { logger.warn("VPN", `could not record the action stamp for ${ip}: ${e.message}`); }
-  try { await upsertPermBan({ playerId: name, reason: "VPN/proxy detected", moderator: "VPN detection (auto)" }); } catch {}
+  try { await upsertPermBan({ playerId: name, reason: "VPN/proxy detected", moderator: "VPN detection (auto)", network: res?.network ?? null }); } catch {}
   writeModLog({ action: "auto-vpnban", playerId: name, reason: `VPN/proxy detected (${label})`, by: "VPN detection (auto)" });
   logger.warn("VPN", `Auto-banned ${name} - ${label}, ip ${ip}`);
   const embed = clinical(new EmbedBuilder().setColor(CLIN.red)

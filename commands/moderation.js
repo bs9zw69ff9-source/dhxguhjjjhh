@@ -231,10 +231,10 @@ module.exports = (ctx) => {
         const ipEnf = await banWithIp(playerId, server, permanent ? { permanent: true } : {});
         enforceBansSweep().catch(() => {});   // player sweep after the punishment
         if (permanent) {
-          await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, moderatorRank: actorTier, moderatorId: interaction.user.id, server });
+          await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, moderatorRank: actorTier, moderatorId: interaction.user.id, server, network: ipEnf?.network ?? null });
           writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         } else {
-          await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, moderatorRank: actorTier, moderatorId: interaction.user.id, server });
+          await upsertTempBan({ playerId, reason, expires, durationLabel: label, moderator: interaction.user.tag, moderatorRank: actorTier, moderatorId: interaction.user.id, server, network: ipEnf?.network ?? null });
           writeModLog({ action: "tempban", playerId, reason, duration: label, by: interaction.user.tag, server });
         }
 
@@ -359,7 +359,7 @@ module.exports = (ctx) => {
         await interaction.deferReply();
         const ipEnf = await banWithIp(playerId, server, { permanent: true });
         enforceBansSweep().catch(() => {});   // player sweep after the punishment
-        await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server });   // record in the ban JSON (supersedes any temp)
+        await upsertPermBan({ playerId, reason, moderator: interaction.user.tag, server, network: ipEnf?.network ?? null });   // record in the ban JSON (supersedes any temp)
         writeModLog({ action: "permban", playerId, reason, by: interaction.user.tag, server });
         const embed = clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Permanent Ban Issued")
           .setDescription(`**${interaction.user.username}** permanently banned **${playerId}** (reason: \`${reason}\`).`));
