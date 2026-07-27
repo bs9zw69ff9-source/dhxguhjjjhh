@@ -149,6 +149,9 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("stripmenuall")
     .setDescription("Owner - Clear ALL menu access from every player (both servers)"),
+  new SlashCommandBuilder().setName("unlinkname")
+    .setDescription("Admin - Break a member's permanent in-game name link (for a real name change)")
+    .addUserOption(o => o.setName("user").setDescription("Discord member to unlink").setRequired(true)),
   new SlashCommandBuilder().setName("configure")
     .setDescription("Owner menu"),
   new SlashCommandBuilder().setName("clearallbans")

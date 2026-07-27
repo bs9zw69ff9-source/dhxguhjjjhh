@@ -369,10 +369,16 @@ test("cache entries expire and are refreshed", () => {
   const { vpn } = makeAlertable();
   const geo = { city: "X" }, dets = [{ name: "iphub", tier: 1, flagged: false }], day = 86400000;
   const now = Date.now();
-  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: 2, checkedAt: now - day }), true, "fresh");
-  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: 2, checkedAt: now - 400 * day }), false, "stale");
+  const S = vpn.CHECK_SCHEMA;   // track the constant, so adding a detector can't silently pass
+  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: S, checkedAt: now - day }), true, "fresh");
+  assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: S, checkedAt: now - 400 * day }), false, "stale");
   assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: 1, checkedAt: now }), false, "old schema");
-  assert.equal(vpn.isCompleteCheck({ geo, schema: 2, checkedAt: now }), false, "no detector data");
+  assert.equal(vpn.isCompleteCheck({ geo, schema: S, checkedAt: now }), false, "no detector data");
+  // Every superseded schema must be refreshed, not trusted - this is what makes a
+  // newly added detector actually run against IPs the bot has already seen.
+  for (let v = 1; v < S; v++) {
+    assert.equal(vpn.isCompleteCheck({ geo, detectors: dets, schema: v, checkedAt: now }), false, `schema v${v} must refresh`);
+  }
   assert.equal(vpn.isCompleteCheck({ geo, local: true, checkedAt: now - 999 * day }), true, "private never expires");
 });
 

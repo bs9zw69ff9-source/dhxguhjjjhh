@@ -9,7 +9,7 @@ module.exports = (ctx) => {
   adminOnlyEmbed, banWithIp, bar, brand, client, commands,
   _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole, hookStatus,
   hasModRole, hero, ipBans, isOwner,
-  loadFactionBackup, loadMenuGrants, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
+  clearMenuLink, loadFactionBackup, loadMenuGrants, loadMenuLinks, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
   ownerOnlyEmbed, paginate, parseRcon, path, probeDetectors, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel, sysStats, meter,
@@ -365,6 +365,23 @@ module.exports = (ctx) => {
   /* ─────────────────────────────────────────────────────
          STRIPMENUALL - owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
+  /* A member's in-game name link is permanent by design - that is what stops someone
+     dropping their menu and re-claiming it on an alt. This is the only way to break
+     one, for a genuine Pavlov name change. Logged, because it re-opens that door. */
+  "unlinkname": async (interaction, name) => {
+        const user = interaction.options.getUser("user");
+        const link = loadMenuLinks()[user.id];
+        if (!link?.name) {
+          return interaction.reply({ embeds: [warningEmbed("Not Linked", `<@${user.id}> isn't linked to an in-game name.`)], flags: MessageFlags.Ephemeral });
+        }
+        await interaction.deferReply();
+        await clearMenuLink(user.id);
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Name Link Broken")
+          .setDescription(`**${interaction.user.username}** unlinked <@${user.id}> from \`${link.name}\`.\nThey can now register a different in-game name.`));
+        await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
+        },
+
   "stripmenuall": async (interaction, name) => {
         if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
         await interaction.deferReply();

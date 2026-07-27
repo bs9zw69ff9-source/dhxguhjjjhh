@@ -41,6 +41,7 @@ module.exports = (ctx) => {
           ["`/permban <player> <reason>` / `/cleartempbans`", "Permanent ban, or clear every temporary ban (admin)."],
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],
+          ["`/unlinkname <user>`", "Break a member's permanent in-game name link, for a real name change (admin)."],
           ["`/donator add|remove|list <player>` / `/adjustcaps <player> <amount>`", "Manage the donator list; adjust a player's ledger (admin)."],
           ["`/setroles` / `/manual <command>`", "Set tier roles, or send a raw RCON command (admin)."],
           ["`/configure` / `/firewall block|unblock|status` / `/health`", "Owner control panel, manual OS-firewall (ufw) control, and bot health (owner)."],

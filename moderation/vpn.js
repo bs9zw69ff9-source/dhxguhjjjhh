@@ -320,8 +320,15 @@ function saveVpnCheck(ip, data) {
    incomplete entry is now re-checked once and overwritten, which self-heals the file. */
 /* Bumped whenever the cached record shape changes in a way that needs a re-lookup.
    An entry from an older schema is refreshed on next contact instead of being
-   trusted forever - that is what left pre-upgrade rows stuck with no detector data. */
-const CHECK_SCHEMA = 2;
+   trusted forever - that is what left pre-upgrade rows stuck with no detector data.
+
+   BUMP THIS WHENEVER A DETECTOR IS ADDED OR REMOVED. A cached entry is served whole
+   and never topped up, so a record written before a new detector existed would keep
+   being returned with only the old detectors in it - the new one would never run for
+   any IP already seen, and the feed would keep showing the old line-up.
+     v2 - the two-tier record (geo + per-detector audit)
+     v3 - added sentinel (sntlhq.com) as a fifth regular check */
+const CHECK_SCHEMA = 3;
 /* Entries go stale: an IP that was a clean residential address a year ago may be a
    VPN exit node today (and vice versa - people get un-blacklisted). Anything older
    than this is re-checked on next contact. 0 disables refreshing (cache forever). */

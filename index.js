@@ -2432,11 +2432,26 @@ async function ensureMenuPanel() {
 /* Log linking a Discord user to the RCON name they claimed a menu for. One active
    menu per Discord user - they can't claim a second/other name while their grant is
    on record; re-entering their own name removes it (toggle), same as whitelists. */
+// Pure rule for "who may claim which in-game name" - tested in test/menulink.test.js.
+const { menuClaimDecision } = require("./moderation/menulink");
 const loadMenuLinks = () => safeRead(FILES.MENU_LINKS, {});
 function setMenuLink(discordId, data) { return update(FILES.MENU_LINKS, {}, (m) => { m[discordId] = data; return m; }); }
 function clearMenuLink(discordId)     { return update(FILES.MENU_LINKS, {}, (m) => { delete m[discordId]; return m; }); }
-// Active only while their name still holds a recorded grant (an admin /stripmenu frees them).
+// True while their name still holds a recorded grant - i.e. they currently HAVE a menu.
+// This is about access, not identity: the name binding below outlives it.
 function menuLinkActive(link) { return !!(link && link.name && (loadMenuGrants()[String(link.name).toLowerCase()] || []).length); }
+/* A Discord account is bound to ONE in-game name, permanently. Releasing the menu does
+   NOT release the name - otherwise anyone could hand themselves a menu, drop it, and
+   re-claim under an alt, which is exactly the loophole this closes. Only an admin can
+   break a binding (/unlinkname), for a genuine Pavlov name change. */
+function menuLinkOwner(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  if (!key) return null;
+  for (const [discordId, l] of Object.entries(loadMenuLinks())) {
+    if (String(l?.name ?? "").trim().toLowerCase() === key) return { discordId, link: l };
+  }
+  return null;
+}
 
 async function handleMenuPanelSubmit(interaction) {
   // RCON blacklist role - self-serve is entirely off for these members.
@@ -2450,25 +2465,42 @@ async function handleMenuPanelSubmit(interaction) {
     return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Menu Denied")
       .setDescription("Enter your exact Pavlov in-game name."))], flags: MessageFlags.Ephemeral });
   }
-  // One RCON name per Discord user.
-  const link = loadMenuLinks()[interaction.user.id];
-  if (menuLinkActive(link)) {
-    if (name.toLowerCase() === link.name.toLowerCase()) {
-      // Re-entered their own name -> strip their menu so they can redo it.
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const t = sanitizeId(link.name);
-      const hadHS = (loadMenuGrants()[link.name.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
-      await sendRconBoth(`RemoveMenu ${t}`, "both");
-      if (hadHS) { await sendRconBoth(`RemoveMod ${t}`, "both"); await sendRconBoth(`RemoveAccessManager ${t}`, "both"); }
-      for (const m of MENUS) for (const srv of [...ACTIVE_SERVERS, "both"]) await removeMenuGrant(link.name, srv, m.value);
-      await clearMenuLink(interaction.user.id);
-      logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Removed (self)")
-        .setDescription(`**${interaction.user.username}** removed their own menu (was \`${link.name}\`).`)));
-      return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Menu Removed")
-        .setDescription(`Removed the menu from \`${link.name}\`. Press **Get Menu** again to re-claim.`))] });
-    }
-    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Already Claimed")
-      .setDescription(`You already hold a menu as \`${link.name}\`. One RCON name per Discord account.\n\nTo change it, press **Get Menu** and enter **${link.name}** to remove it first.`))], flags: MessageFlags.Ephemeral });
+  /* One in-game name per Discord account, for good. A member who is already bound can
+     only ever act on that exact name - submitting a different one is refused outright,
+     whether or not they currently hold a menu. */
+  const link  = loadMenuLinks()[interaction.user.id];
+  const owner = menuLinkOwner(name);
+  const decision = menuClaimDecision({
+    boundName: link?.name ?? null, requestedName: name,
+    ownerId: owner?.discordId ?? null, selfId: interaction.user.id,
+    holdsMenu: menuLinkActive(link),
+  });
+  if (decision.action === "locked") {
+    logger.info("MenuPanel", `${interaction.user.tag} tried to claim "${name}" but is bound to "${decision.boundName}"`);
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Name Locked")
+      .setDescription(`Your Discord account is linked to \`${decision.boundName}\`, and that link is permanent.\n\nYou can't register a second in-game name. If you genuinely changed your Pavlov name, ask an admin to unlink you.`))], flags: MessageFlags.Ephemeral });
+  }
+  if (decision.action === "taken") {
+    logger.info("MenuPanel", `${interaction.user.tag} tried to claim "${name}", already bound to ${decision.ownerId}`);
+    return interaction.reply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.red).setTitle("Name Taken")
+      .setDescription(`\`${name}\` is already linked to another Discord account. If that's your name, ask an admin to sort it out.`))], flags: MessageFlags.Ephemeral });
+  }
+  if (decision.action === "release") {
+    // Re-entered their own name while holding a menu -> strip it so they can redo it.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const t = sanitizeId(link.name);
+    const hadHS = (loadMenuGrants()[link.name.toLowerCase()] || []).some(g => g.menuValue === "highstaff");
+    await sendRconBoth(`RemoveMenu ${t}`, "both");
+    if (hadHS) { await sendRconBoth(`RemoveMod ${t}`, "both"); await sendRconBoth(`RemoveAccessManager ${t}`, "both"); }
+    for (const m of MENUS) for (const srv of [...ACTIVE_SERVERS, "both"]) await removeMenuGrant(link.name, srv, m.value);
+    /* Keep the binding. Dropping it here is what would let someone cycle their menu
+       onto an alt: strip, then re-claim under a different name. They keep the name
+       and can re-claim the menu on it. */
+    await setMenuLink(interaction.user.id, { ...link, releasedAt: Date.now() });
+    logAction(clinical(new EmbedBuilder().setColor(CLIN.grey).setTitle("Menu Removed (self)")
+      .setDescription(`**${interaction.user.username}** removed their own menu (was \`${link.name}\`).`)));
+    return interaction.editReply({ embeds: [clinical(new EmbedBuilder().setColor(CLIN.green).setTitle("Menu Removed")
+      .setDescription(`Removed the menu from \`${link.name}\`. Press **Get Menu** again to re-claim it - your account stays linked to \`${link.name}\`.`))] });
   }
   // Highest role wins (handles GuildMember .cache and raw role-array shapes).
   const tier = menuRoleTiers().find(t => t.role && memberHasRoleId(interaction.member, t.role));
@@ -2904,7 +2936,7 @@ const { onInteraction } = require("./commands")({
   getPlayerFilePath, getPlayerHistory, getPlayerRanks, handleMenuPanelSubmit, handleVerifySubmit, handleVerifyDecision, hasAdminRole,
   hasFactionLeaderRole, hasModRole, hero, ipBans, isAutobanExempt,
   isBlacklisted, isDonator, isMasterName, isMasterIp, isOwner, isSuperOwner, commandTier, commandTierName, canOverride, isProtectedPlayer,
-  loadBans, loadFactionAudit, loadFactionBackup, loadMenuGrants,
+  clearMenuLink, loadBans, loadFactionAudit, loadFactionBackup, loadMenuGrants, loadMenuLinks,
   loadMenuRoles, loadModLog, loadPlaytime, loadRoles, loadServerStats, loadVpnChecks,
   extractPlayerNames,
   log, logAction, logBan, logger, memberHasRoleId, meter,
