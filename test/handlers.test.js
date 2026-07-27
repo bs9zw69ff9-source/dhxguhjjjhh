@@ -17,8 +17,8 @@ function makeCtx(over = {}) {
     NV: { NCR_TAN: 1, RUST_RED: 2, IRRAD_GREEN: 3, AMBER: 4, BLUE_VATS: 5, GOLD: 6, LEGION_RED: 7, DEAD_GREY: 8 },
     CLIN: { red: 1, green: 2, grey: 3 }, GLYPH: { deny: "🚫", dot: "•" },
     ACTIVE_SERVERS: ["server1"],
-    // /tempban now takes a free-text reason + a picked DURATION (no presets, no date).
-    BAN_DURATIONS: { "1d": { ms: 86400000, label: "1 Day" }, "1w": { ms: 604800000, label: "1 Week" } },
+    // /tempban takes a free-text reason + a picked LENGTH, written short: 1d, not "1 Day".
+    BAN_DURATIONS: { "1d": { ms: 86400000, label: "1d" }, "1w": { ms: 604800000, label: "1w" } },
     sanitizeMessage: (x) => String(x ?? "").slice(0, 200),
     brand: (e) => e, clinical: (e) => e, hero: (t) => t,
     emptyIdEmbed: () => new EmbedBuilder().setTitle("need id"),
@@ -107,6 +107,19 @@ test("/tempban records the actor's tier on the ban", async () => {
   assert.ok(up, "tempban record written");
   assert.equal(up[1].moderatorRank, TIER.ADMIN);
   assert.ok(calls.some(c => c[0] === "banWithIp" && c[1] === "Griefer"));
+});
+
+test("/tempban stores and shows the length as a short token, never a date", async () => {
+  const { ctx, calls } = makeCtx();
+  const h = require("../commands/moderation.js")(ctx);
+  const { interaction, out } = makeInteraction({ strings: { playerid: "Griefer", reason: "Vehicle deathmatch", duration: "1d" } });
+  await h.tempban(interaction, "tempban");
+  const up = calls.find(c => c[0] === "upsertTempBan");
+  assert.equal(up[1].durationLabel, "1d");
+  assert.match(text(out), /for \*\*1d\*\*/);
+  // No calendar date anywhere in what the moderator is shown.
+  assert.ok(!/\d{4}-\d{2}-\d{2}/.test(text(out)), "no YYYY-MM-DD in the ban confirmation");
+  assert.ok(!/<t:\d+:[FfDd]>/.test(text(out)), "no absolute Discord timestamp - relative only");
 });
 
 test("/tempban: a mod cannot replace a super owner's existing ban", async () => {

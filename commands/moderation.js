@@ -244,10 +244,11 @@ module.exports = (ctx) => {
         const tbTarget = interaction.options.getUser("discord_user") || await dmUserForPavlov(playerId, interaction.guild);
         const tbDm = await dmPunishmentNotice(tbTarget, {
           action: permanent ? "Permanent Ban" : "Temporary Ban", color: permanent ? NV.LEGION_RED : NV.RUST_RED, playerId, reason,
+          // Length and time left, not a calendar date - <t:R> reads "in 23 hours".
           fields: permanent
-            ? [ { name: "Length", value: "**Permanent**",    inline: true } ]
-            : [ { name: "Duration", value: `**${label}**`,     inline: true },
-                { name: "Expires",  value: `<t:${ts}:F>  -  <t:${ts}:R>`, inline: false } ],
+            ? [ { name: "Length", value: "**Permanent**",   inline: true } ]
+            : [ { name: "Length", value: `**${label}**`,    inline: true },
+                { name: "Lifts",  value: `<t:${ts}:R>`,     inline: true } ],
         });
         const tbDmField = dmStatusField(tbDm, tbTarget);
         if (tbDmField) embed.addFields(tbDmField);

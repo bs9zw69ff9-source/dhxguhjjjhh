@@ -620,18 +620,21 @@ function menuRoleTiers() {
 
 const DAY_MS = 86_400_000;
 
+/* Ban lengths are written the short way - 1d, not "1 Day" and never a calendar
+   date. The key IS the label, so what a moderator picks, what the ban record
+   stores, and what the player is shown are all the same token. */
 const BAN_DURATIONS = {
-  "1h":  { ms: 3_600_000,          label: "1 Hour"   },
-  "6h":  { ms: 21_600_000,         label: "6 Hours"  },
-  "1d":  { ms: 86_400_000,         label: "1 Day"    },
-  "3d":  { ms: 259_200_000,        label: "3 Days"   },
-  "5d":  { ms: 432_000_000,        label: "5 Days"   },
-  "1w":  { ms: 604_800_000,        label: "1 Week"   },
-  "2w":  { ms: 1_209_600_000,      label: "2 Weeks"  },
-  "1mo": { ms: 2_592_000_000,      label: "1 Month"  },
-  "3mo": { ms: 7_776_000_000,      label: "3 Months" },
-  "6mo": { ms: 15_552_000_000,     label: "6 Months" },
-  "1y":  { ms: 31_536_000_000,     label: "1 Year"   },
+  "1h":  { ms: 3_600_000,          label: "1h"  },
+  "6h":  { ms: 21_600_000,         label: "6h"  },
+  "1d":  { ms: 86_400_000,         label: "1d"  },
+  "3d":  { ms: 259_200_000,        label: "3d"  },
+  "5d":  { ms: 432_000_000,        label: "5d"  },
+  "1w":  { ms: 604_800_000,        label: "1w"  },
+  "2w":  { ms: 1_209_600_000,      label: "2w"  },
+  "1mo": { ms: 2_592_000_000,      label: "1mo" },
+  "3mo": { ms: 7_776_000_000,      label: "3mo" },
+  "6mo": { ms: 15_552_000_000,     label: "6mo" },
+  "1y":  { ms: 31_536_000_000,     label: "1y"  },
 };
 /* The /tempban duration picker: every BAN_DURATIONS entry plus an explicit
    Permanent option, so a moderator chooses a LENGTH rather than typing a date. */
@@ -2183,17 +2186,19 @@ const { creditCaps, debitCaps, mutateBalance } = require("./casino/ledger")({
 /* ---------------- modsave ban-message file (custom ban screen) ----------------
    Config/blacklist.txt stays NAMES-ONLY (what Pavlov matches on). Separately we
    write a rich banlist into the ModSave tree that the custom game mode reads to
-   show the player WHY they're banned: reason, unban date, and an appeal link.
-   Built from the ban JSON; mirrored to every install. */
+   show the player WHY they're banned: reason, how long is left, and an appeal
+   link. Built from the ban JSON; mirrored to every install. */
 const APPEAL_LINK = process.env.APPEAL_LINK || "discord.gg/newvegasrp";
 function modsaveBanlistPath() {
   return process.env.MODSAVE_BLACKLIST_PATH || path.join(PAVLOV_BASE_1, "Pavlov/Saved/Config/ModSave/banlist.txt");
 }
 function buildModsaveBanlist() {
-  const fmtDate = (ms) => easternDate(ms);   // Eastern calendar day (the unban date players read)
   const blocks = [];
   for (const b of loadBans()) {
-    const unban = (b.permanent || !b.expires) ? "Permanent" : fmtDate(b.expires);
+    /* Time LEFT, written the short way ("3d 4h") - not a calendar date. Rebuilt on
+       every ban change AND once a minute while any timed ban runs, so the figure a
+       player reads is never more than a minute stale. */
+    const unban = (b.permanent || !b.expires) ? "Permanent" : formatTimeLeft(b.expires);
     blocks.push([
       b.playerId,
       `Reason: ${b.reason || "No reason provided"}`,
@@ -2226,9 +2231,29 @@ function easternNoonUTC(dateStr) {
     return guess + (guess - nyAsUTC);          // shift so NY wall-clock reads 12:00
   } catch { return Date.UTC(y, mo - 1, d, 17, 0, 0); }   // fallback: noon EST
 }
+/* A ban LENGTH written the short way - "1d", "3d 4h", "1w", "45m" - into ms.
+   This is the format the bot itself writes; the in-game admin menu still writes a
+   calendar date, which easternNoonUTC handles instead. Returns null if it is
+   neither, so the caller can tell "unparseable" from "permanent". */
+const SPAN_UNIT_MS = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000, mo: 2_592_000_000, y: 31_536_000_000 };
+function parseBanSpan(raw) {
+  const text = String(raw ?? "").trim().toLowerCase();
+  if (!text) return null;
+  // "mo" must be tried before the single letters or "1mo" reads as 1 minute.
+  const parts = text.match(/\d+\s*(?:mo|[smhdwy])/g);
+  if (!parts) return null;
+  // Reject anything with leftover words ("until friday") - only a pure span counts.
+  if (text.replace(/\d+\s*(?:mo|[smhdwy])/g, "").trim()) return null;
+  let ms = 0;
+  for (const part of parts) {
+    const m = part.match(/^(\d+)\s*(mo|[smhdwy])$/);
+    ms += (+m[1]) * SPAN_UNIT_MS[m[2]];
+  }
+  return ms || null;
+}
 // Read the modsave banlist (parsing Name / Reason / Unban blocks) and add any entry
 // the database doesn't already have - so bans made from the in-game admin menu show
-// up in /banlist with their reason/unban date. Idempotent (skips known names).
+// up in /banlist with their reason and remaining time. Idempotent (skips known names).
 function importModsaveBanlist() {
   let text;
   try { text = fs.readFileSync(modsaveBanlistPath(), "utf8"); } catch { return; }
@@ -2251,16 +2276,24 @@ function importModsaveBanlist() {
     let added = 0;
     for (const p of parsed) {
       if (have.has(p.name.toLowerCase())) continue;
+      /* A block still reading "expired" is one the sweep is about to clear - the
+         sentence is served. Importing it would resurrect it as a PERMANENT ban,
+         since "expired" is neither a span nor a date. Skip it. */
+      if (/^expired$/i.test(String(p.unban).trim())) continue;
       const wantsPerm = /^perm/i.test(p.unban) || !p.unban;
-      const expires   = wantsPerm ? null : easternNoonUTC(p.unban);   // lift at noon Eastern that day
+      /* Two formats land here: a short span ("3d 4h") we wrote ourselves, and a
+         calendar date the in-game admin menu writes. Span wins - it is what the bot
+         emits now - and dated bans still lift at noon Eastern on the day named. */
+      const span    = wantsPerm ? null : parseBanSpan(p.unban);
+      const expires = wantsPerm ? null : (span ? Date.now() + span : easternNoonUTC(p.unban));
       if (!wantsPerm && !expires) {
-        // Date we can't parse - keep the ban (safe direction) but say so loudly
-        // instead of silently escalating a dated ban to permanent.
-        logger.warn("Bans", `Imported ban for "${p.name}" has an unparseable unban date "${p.unban}" - recorded as permanent; /unban and re-ban with a YYYY-MM-DD date to fix`);
-        p.reason = `${p.reason} [unparseable unban date: ${p.unban}]`;
+        // Neither a span nor a date - keep the ban (safe direction) but say so loudly
+        // instead of silently escalating a timed ban to permanent.
+        logger.warn("Bans", `Imported ban for "${p.name}" has an unreadable unban value "${p.unban}" - recorded as permanent; /unban and re-ban with a length like 1d to fix`);
+        p.reason = `${p.reason} [unreadable unban value: ${p.unban}]`;
       }
       bans.push(expires
-        ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: "until " + p.unban }
+        ? { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), expires, durationLabel: formatTimeLeft(expires) }
         : { playerId: p.name, reason: p.reason, moderator: "in-game", at: Date.now(), permanent: true });
       try { removeAutobanExempt(p.name).catch(() => {}); } catch {}   // an in-game ban is deliberate - clears any exemption
       added++;
@@ -2281,7 +2314,9 @@ const { loadFactionBackup, memberHasRoleId, saveFactionBackup, wipeFaction } = r
 async function processExpiredBans() {
   const now = Date.now();
   const lifted = [];
+  let timed = 0;                     // active timed bans - their "time left" line needs refreshing
   for (const ban of loadBans()) {
+    if (!ban.permanent && ban.expires && ban.expires > now) timed++;
     if (ban.permanent || !ban.expires || ban.expires > now) continue;   // never auto-lift permanent bans
     try {
       unbanEverywhere(ban.playerId);   // remove from blacklist.txt (both installs) + clear IP flags
@@ -2307,6 +2342,11 @@ async function processExpiredBans() {
     await update(FILES.TEMPBAN, [], (bans) =>
       bans.filter(b => !(liftedSet.has(String(b.playerId).toLowerCase()) && !b.permanent && b.expires && b.expires <= now))
     ).then(() => { syncModsaveBanlist(); });
+  } else if (timed) {
+    /* The in-game ban screen shows time REMAINING, so rebuild it while any timed ban
+       is running or the figure a player reads goes stale. Nothing to do when every
+       ban is permanent - that text never changes. */
+    syncModsaveBanlist();
   }
 }
 
