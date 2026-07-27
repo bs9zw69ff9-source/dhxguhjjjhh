@@ -226,33 +226,88 @@ async function geoLookup(ip) {
     return null;
   }
 }
+/* Private / loopback / link-local / unroutable addresses. No detector can say anything
+   useful about these, and geolocation returns "bogon" - which used to mean the result
+   was never cached, so EVERY reconnect from a LAN address re-spent one lookup per
+   detector (5 calls a join; proxycheck's keyless tier is only 100/day). Short-circuit
+   them instead, and cache the answer so it is asked exactly once. */
+function isUnroutableIp(ip) {
+  const s = String(ip ?? "").trim();
+  if (!s) return true;
+  if (s === "::1" || /^f[cde]/i.test(s) || s.toLowerCase().startsWith("fe80:")) return true;   // IPv6 loopback/ULA/link-local
+  const m = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;                                  // not IPv4 - let the detectors decide
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 0 || a === 10 || a === 127 || a >= 224     // this-network, private, loopback, multicast/reserved
+    || (a === 169 && b === 254)                           // link-local
+    || (a === 172 && b >= 16 && b <= 31)                  // private
+    || (a === 192 && b === 168);                          // private
+}
+
 async function _doVpnCheck(ip) {
+  // Unroutable addresses can't be checked by anyone - cache a clean verdict and skip
+  // every API call rather than burning quota on every reconnect.
+  if (isUnroutableIp(ip)) {
+    const local = {
+      ip, flagged: false, confirmed: null, actionable: false,
+      decision: "private/unroutable address - detection skipped",
+      iphubBlock: null, isp: null, provider: null, ipqs: null,
+      geo: { city: null, region: null, country: "Local network", countryCode: null, zip: null,
+             isp: "private address", org: null, asn: null, timezone: null, lat: null, lon: null },
+      detectors: [], screenHits: 0, screenAnswered: 0, confirmHits: 0, confirmAnswered: 0, local: true,
+    };
+    logger.debug("VPN", `${ip} is a private/unroutable address - skipped all detectors`);
+    await saveVpnCheck(ip, local);
+    return { ...local, checkedAt: Date.now() };
+  }
   // Geolocation first - free/keyless, for every IP regardless of the detector keys.
   const gwho = await geoLookup(ip);
   const enabled = vpnDetectionEnabled();
 
-  let flagged = false, confirmed = null, screen = null, conf = null;
+  /* `confirmed` is the CONFIRMATION VERDICT for display (true agreed / false disputed
+     / null inconclusive). `actionable` is the separate, explicit "may we auto-ban"
+     decision. They must stay separate: overloading the tri-state meant a null
+     (inconclusive, or below the screening threshold) read as permission to ban, which
+     banned players on a single screening hit and made VPN_SCREEN_BAN_MIN dead code. */
+  let flagged = false, confirmed = null, actionable = false, reason = "detection disabled";
+  let screen = null, conf = null;
   if (enabled) {
-    /* TIER 1 - screening. All high-quota detectors in parallel. */
+    /* TIER 1 - regular check. All high-quota detectors in parallel, every IP. */
     screen = await runTier(1, ip);
     if (screen.answered === 0) {
-      logger.warn("VPN", `every screening detector failed for ${ip} - not caching, will retry on the next connection`);
+      logger.warn("VPN", `every regular check failed for ${ip} - not caching, will retry on the next connection`);
       return null;                                   // an outage must never be cached as "clean"
     }
     flagged = screen.hits >= VPN_SCREEN_MIN;
+    reason  = flagged ? "flagged by regular checks" : "all regular checks clean";
 
-    /* TIER 2 - confirmation. Only spent on an IP the screen already flagged. */
+    /* TIER 2 - final confirmation. Only spent on an IP the regular checks flagged. */
     if (flagged) {
       conf = await runTier(2, ip);
       if (conf.answered > 0) {
-        confirmed = conf.hits >= VPN_CONFIRM_MIN;     // true = agreed, false = disputed
-      } else if (tierDetectors(2).length) {
-        confirmed = null;                             // configured but all failed - inconclusive
-        logger.warn("VPN", `every confirmation detector failed for ${ip} - falling back to screen consensus (${screen.hits} hit(s))`);
-      }
-      // No tier-2 detectors configured at all: fall back to screen consensus.
-      if (confirmed === null && !tierDetectors(2).length) {
-        confirmed = screen.hits >= Math.min(VPN_SCREEN_BAN_MIN, screen.answered) ? true : null;
+        confirmed  = conf.hits >= VPN_CONFIRM_MIN;    // authoritative: agreed or disputed
+        actionable = confirmed;
+        reason     = confirmed ? `confirmation agreed (${conf.hits}/${conf.answered})`
+                               : `confirmation disputed it (0/${conf.answered})`;
+      } else {
+        /* Nothing could confirm - either unconfigured, or every confirmer failed. Fall
+           back to REQUIRING REAL CONSENSUS among the regular checks: VPN_SCREEN_BAN_MIN
+           agreeing detectors, with no downward adjustment for how few are configured.
+           Individual providers DO produce false positives on legitimate infrastructure
+           (ipapi.is reports Cloudflare's 1.1.1.1 as "vpn+abuser"), so a single
+           unconfirmed source must never be enough to ban somebody. If too few
+           detectors are available to ever reach the threshold, auto-ban is off and we
+           say so loudly rather than quietly banning on one opinion. */
+        const configured = tierDetectors(2).length;
+        confirmed  = null;
+        actionable = screen.hits >= VPN_SCREEN_BAN_MIN;
+        reason = `no confirmation available (${configured ? "all confirmers failed" : "none configured"}); ` +
+                 `regular-check consensus ${screen.hits}/${screen.answered} vs required ${VPN_SCREEN_BAN_MIN} -> ${actionable ? "actionable" : "NOT actionable"}`;
+        logger[actionable ? "warn" : "info"]("VPN", `${ip}: ${reason}`);
+        if (!actionable && screen.answered < VPN_SCREEN_BAN_MIN) {
+          logger.warn("VPN", `Only ${screen.answered} regular check(s) answered but ${VPN_SCREEN_BAN_MIN} must agree to ban without a confirmation detector. ` +
+            `Auto-ban cannot trigger in this configuration - add another detector (VPNAPI_KEY / IPHUB_API_KEY) or an IPQS key, or set VPN_SCREEN_BAN_MIN=1 to accept single-source bans.`);
+        }
       }
     }
   }
@@ -276,7 +331,7 @@ async function _doVpnCheck(ip) {
   if (!geo) return null;                             // no location at all - retry next time
 
   const result = {
-    ip, flagged, confirmed,
+    ip, flagged, confirmed, actionable, decision: reason,
     iphubBlock: iphubRes?.block ?? null,             // kept for backwards compatibility
     isp: geo.isp || detIsp || null,
     provider,
@@ -290,6 +345,7 @@ async function _doVpnCheck(ip) {
   logger.info("VPN", `${ip} -> screen ${result.screenHits}/${result.screenAnswered}` +
     (conf ? ` | confirm ${result.confirmHits}/${result.confirmAnswered}` : "") +
     ` | verdict=${!flagged ? "CLEAN" : confirmed === true ? "CONFIRMED" : confirmed === false ? "DISPUTED" : "FLAGGED (inconclusive)"}` +
+    ` | action=${actionable ? "BAN" : "none"} (${reason})` +
     (provider ? ` | provider=${provider}` : "") +
     ` | ${result.detectors.map(d => `${d.name}:${d.flagged ? "HIT" : "clean"}`).join(" ")}`);
   await saveVpnCheck(ip, result);
@@ -302,19 +358,28 @@ function formatFullLocation(geo) {
   const bits  = [place.trim() || geo.country || null, geo.isp || null, geo.timezone ? `TZ ${geo.timezone}` : null].filter(Boolean);
   return bits.length ? bits.join("  -  ") : null;
 }
-// Called from ipBans' onConfirm for every freshly-confirmed IP. The cached verdict
-// is reused (no repeat API calls), but the ACTION gate re-arms after a TTL - if the
-// first check happened while an exempt player was on the IP (so nothing was actioned),
-// the next player from that IP can still be actioned once the entry ages out.
+/* Called from ipBans' onConfirm for every freshly-confirmed IP. The cached verdict is
+   reused (no repeat API calls), and an IP that was already ACTED on is not re-banned
+   within the TTL - recurrence is handled by the ipBans IP flag, not by re-running this.
+
+   The gate deliberately keys on `actionedAt` (when a ban was actually issued), NOT on
+   `checkedAt` (when the lookup happened). Keying on checkedAt meant that if the first
+   player seen on a VPN IP was a master/exempt account, the lookup was cached, nothing
+   was banned, and the IP was never flagged - so every OTHER player on that IP got a
+   free pass for the whole TTL. */
 const VPN_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 async function checkVpnAndAlert(name, ip) {
   if (!ip || !vpnDetectionEnabled()) return null;
   const prev = loadVpnChecks()[ip];
-  const alreadyChecked = !!prev && (Date.now() - (prev.checkedAt || 0) < VPN_ACTION_TTL_MS);
+  const alreadyActioned = !!prev?.actionedAt && (Date.now() - prev.actionedAt < VPN_ACTION_TTL_MS);
   const result = await checkVpn(ip).catch(() => null);
   if (!result) return null;
-  // Clean, or an IP we've already acted on - return the verdict for the feed, but don't ban.
-  if (!result.flagged || alreadyChecked) return result;
+  // Clean, or an IP we've already banned someone over - report for the feed, don't re-ban.
+  if (!result.flagged) return result;
+  if (alreadyActioned) {
+    logger.info("VPN", `${ip} already actioned <${Math.round((Date.now() - prev.actionedAt) / 3600e3)}h ago - not re-banning (${name})`);
+    return result;
+  }
 
   // Masters and explicitly-unbanned players are never auto-actioned (matches onAutoBan).
   // Only master names bypass ALL enforcement; staff/donators are NOT exempt from this.
@@ -331,28 +396,37 @@ async function checkVpnAndAlert(name, ip) {
   };
   const tally = `Screening **${result.screenHits ?? 0}/${result.screenAnswered ?? 0}** - Confirmation **${result.confirmHits ?? 0}/${result.confirmAnswered ?? 0}**`;
 
-  const disputed = result.confirmed === false;   // screening flagged it, confirmation tier said clean
-  if (disputed) {
+  /* Only an EXPLICITLY actionable verdict bans. A disputed flag, or a flag that never
+     reached the required consensus, is logged and left alone - `actionable` is computed
+     at detection time. `?? confirmed === true` keeps pre-upgrade cache entries safe:
+     they have no `actionable` field, so only an outright confirmation acts on them. */
+  const actionable = result.actionable ?? (result.confirmed === true);
+  if (!actionable) {
+    const disputed = result.confirmed === false;
     const embed = brand(new EmbedBuilder().setColor(NV.DEAD_GREY)
-      .setTitle("VPN Flag Disputed - No Action")
-      .setDescription(`**${name}** connected from an IP the screening tier flagged, but every high-accuracy confirmation detector checked it and disagreed.\n${tally}`)
+      .setTitle(disputed ? "VPN Flag Disputed - No Action" : "VPN Flag Below Consensus - No Action")
+      .setDescription(disputed
+        ? `**${name}** connected from an IP the regular checks flagged, but every high-accuracy confirmation detector checked it and disagreed.\n${tally}`
+        : `**${name}** connected from a flagged IP, but the flag never reached the confirmation threshold, so no ban was issued.\n${tally}\n\`${result.decision ?? "inconclusive"}\``)
       .addFields(
         { name: "VPN Provider", value: result.provider || "unknown", inline: true },
         { name: "ISP",         value: result.isp || "unknown",        inline: true },
-        { name: "Screening (tier 1)",    value: breakdown(1), inline: false },
-        { name: "Confirmation (tier 2)", value: breakdown(2), inline: false },
-      ).setFooter({ text: "Likely false positive - not banned" }));
+        { name: "Regular checks",     value: breakdown(1), inline: false },
+        { name: "Final confirmation", value: breakdown(2), inline: false },
+      ).setFooter({ text: disputed ? "Likely false positive - not banned" : "Below the consensus threshold - not banned" }));
     await logAction(embed);
     return result;
   }
 
-  const label = result.confirmed === true
-    ? (result.confirmAnswered ? `Confirmed VPN/proxy - ${result.confirmHits}/${result.confirmAnswered} confirmation detector(s) agree`
-                              : `Confirmed by screening consensus - ${result.screenHits}/${result.screenAnswered} detectors agree`)
-    : `Flagged by ${result.screenHits}/${result.screenAnswered} screening detector(s) (confirmation inconclusive)`;
+  const label = result.confirmAnswered
+    ? `Confirmed VPN/proxy - ${result.confirmHits}/${result.confirmAnswered} final confirmation(s) agree`
+    : `Confirmed by regular-check consensus - ${result.screenHits}/${result.screenAnswered} detectors agree (no confirmation available)`;
   let res;
   try { res = await banWithIp(name, "both", { permanent: true, ip }); }
-  catch (err) { logger.warn("VPN", `auto-ban failed for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
+  catch (err) { logger.error("VPN", `auto-ban FAILED for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
+  // Stamp the action so the TTL gate counts from the BAN, not from the lookup.
+  try { await saveVpnCheck(ip, { ...result, actionedAt: Date.now(), actionedOn: name }); }
+  catch (e) { logger.warn("VPN", `could not record the action stamp for ${ip}: ${e.message}`); }
   try { await upsertPermBan({ playerId: name, reason: "VPN/proxy detected", moderator: "VPN detection (auto)" }); } catch {}
   writeModLog({ action: "auto-vpnban", playerId: name, reason: `VPN/proxy detected (${label})`, by: "VPN detection (auto)" });
   logger.warn("VPN", `Auto-banned ${name} - ${label}, ip ${ip}`);

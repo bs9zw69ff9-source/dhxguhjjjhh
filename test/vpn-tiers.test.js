@@ -130,3 +130,142 @@ test("detection is a no-op when no detector is configured", async () => {
   assert.ok(vpn.tierDetectors(1).every(d => d.tier === 1));
   assert.ok(vpn.tierDetectors(2).every(d => d.tier === 2));
 });
+
+/* ---- regression tests for the end-to-end debug ---- */
+
+// A full ctx for checkVpnAndAlert, so the BAN DECISION itself is asserted (not just
+// the verdict object - the original bug was in the consumer, which the earlier tests
+// never exercised).
+function makeAlertable(env = {}, opts = {}) {
+  for (const [k, v] of Object.entries({ IPHUB_API_KEY: "k", VPNAPI_KEY: "k", IPQS_API_KEY: "k", ...env })) {
+    if (v === null) delete process.env[k]; else process.env[k] = v;
+  }
+  delete require.cache[require.resolve("../moderation/vpn.js")];
+  const bans = [], store = {}, logged = [];
+  const vpn = require("../moderation/vpn.js")({
+    FILES: { VPN_CHECKS: "v" },
+    logger: { warn() {}, info() {}, error() {}, debug() {} },
+    safeRead: () => JSON.parse(JSON.stringify(store)),
+    update: async (f, fb, fn) => { fn(store); },
+    ACTIVE_SERVERS: ["s1"], CLIN: { red: 1 }, NV: { DEAD_GREY: 1 },
+    EmbedBuilder: class { setColor() { return this; } setTitle(t) { this.t = t; return this; }
+      setDescription() { return this; } addFields() { return this; } setFooter() { return this; } },
+    brand: e => e, clinical: e => e, hero: s => s,
+    banWithIp: async (n) => { bans.push(n); return { blacklist: { servers: 1 } }; },
+    upsertPermBan: async () => {}, writeModLog: () => {},
+    logAction: async (e) => { logged.push(e.t); }, logBan: async () => {}, postFeed: () => {},
+    isMasterName: (n) => (opts.masters ?? []).includes(n),
+    isAutobanExempt: () => false,
+  });
+  return { vpn, bans, store, logged };
+}
+const routeVpn = (hits) => async (url) => {
+  const u = String(url);
+  if (u.includes("ipinfo")) return { json: async () => ({ ip: "45.1.1.1", city: "AMS", country: "NL", loc: "52,4", org: "AS9009 M247" }) };
+  if (u.includes("iphub"))      return { json: async () => ({ block: hits.iphub ? 1 : 0, isp: "M247" }) };
+  if (u.includes("vpnapi"))     return { json: async () => ({ ip: "45.1.1.1", security: { vpn: !!hits.vpnapi, proxy: false, tor: false, relay: false } }) };
+  if (u.includes("ipapi.is"))   return { json: async () => ({ ip: "45.1.1.1", is_vpn: !!hits.ipapi, is_proxy: false, is_tor: false, is_datacenter: true, is_abuser: false, company: { name: "M247" } }) };
+  if (u.includes("proxycheck")) return { json: async () => ({ status: "ok", "45.1.1.1": { proxy: hits.proxycheck ? "yes" : "no", type: "VPN", risk: 95, operator: { name: "NordVPN" } } }) };
+  if (u.includes("ipqualityscore")) {
+    if (hits.ipqsDown) throw new Error("quota exceeded");
+    return { json: async () => ({ success: true, vpn: !!hits.ipqs, proxy: false, tor: false, fraud_score: 90, ISP: "M247" }) };
+  }
+  throw new Error("unrouted " + u);
+};
+
+test("a lone regular-check hit with nothing to confirm it does NOT ban", async () => {
+  // The original bug: confirmed===null fell through the `disputed` veto and banned,
+  // which made VPN_SCREEN_BAN_MIN (default 2) dead code.
+  const { vpn, bans, logged } = makeAlertable({ IPQS_API_KEY: null });
+  global.fetch = routeVpn({ iphub: true });                       // 1 of 4 hits
+  const r = await vpn._doVpnCheck("45.1.1.1");
+  assert.equal(r.flagged, true);
+  assert.equal(r.actionable, false, "below the consensus threshold");
+  await vpn.checkVpnAndAlert("Innocent", "45.1.1.1");
+  assert.deepEqual(bans, [], "must not ban an innocent on one screening hit");
+  assert.ok(logged.some(t => /Below Consensus/.test(t)), "logged instead of banned");
+});
+
+test("regular-check consensus with nothing to confirm DOES ban", async () => {
+  const { vpn, bans } = makeAlertable({ IPQS_API_KEY: null });
+  global.fetch = routeVpn({ iphub: true, vpnapi: true, ipapi: true, proxycheck: true });
+  const r = await vpn._doVpnCheck("45.1.1.1");
+  assert.equal(r.actionable, true);
+  await vpn.checkVpnAndAlert("RealVpn", "45.1.1.1");
+  assert.deepEqual(bans, ["RealVpn"]);
+});
+
+test("a confirmed flag bans; a disputed flag never does", async () => {
+  {
+    const { vpn, bans } = makeAlertable();
+    global.fetch = routeVpn({ iphub: true, vpnapi: true, ipqs: true });
+    await vpn.checkVpnAndAlert("Vpn", "45.1.1.1");
+    assert.deepEqual(bans, ["Vpn"], "confirmation agreed -> ban");
+  }
+  {
+    const { vpn, bans, logged } = makeAlertable();
+    global.fetch = routeVpn({ iphub: true, vpnapi: true, ipqs: false });   // confirmer clears it
+    await vpn.checkVpnAndAlert("FalsePositive", "45.1.1.1");
+    assert.deepEqual(bans, [], "confirmation disputed -> no ban");
+    assert.ok(logged.some(t => /Disputed/.test(t)));
+  }
+});
+
+test("an exempt player seen first does not give the IP a free pass", async () => {
+  // Was: the gate keyed on checkedAt, so a master joining first cached the lookup and
+  // every other player on that VPN IP was skipped for the whole TTL.
+  const { vpn, bans, store } = makeAlertable({}, { masters: ["AdminGuy"] });
+  global.fetch = routeVpn({ iphub: true, vpnapi: true, ipapi: true, proxycheck: true, ipqs: true });
+  await vpn.checkVpnAndAlert("AdminGuy", "45.1.1.1");
+  assert.deepEqual(bans, [], "the master is not banned");
+  assert.ok(!store["45.1.1.1"]?.actionedAt, "no action stamp, so the gate stays open");
+  await vpn.checkVpnAndAlert("Evader", "45.1.1.1");
+  assert.deepEqual(bans, ["Evader"], "the next player on that IP is still caught");
+  assert.ok(store["45.1.1.1"]?.actionedAt, "action stamped after the real ban");
+  await vpn.checkVpnAndAlert("Evader2", "45.1.1.1");
+  assert.deepEqual(bans, ["Evader"], "not re-banned inside the TTL - the ipBans IP flag covers recurrence");
+});
+
+test("private/unroutable addresses skip every detector and are cached", async () => {
+  const { vpn } = makeAlertable();
+  let calls = 0;
+  global.fetch = async () => { calls++; return { json: async () => ({ bogon: true }) }; };
+  for (const ip of ["192.168.1.50", "10.0.0.7", "127.0.0.1", "172.20.1.1", "169.254.5.5", "::1", "fe80::1", "0.0.0.0"]) {
+    const r = await vpn._doVpnCheck(ip);
+    assert.equal(r.local, true, `${ip} should short-circuit`);
+    assert.equal(r.flagged, false);
+    assert.equal(r.actionable, false);
+  }
+  assert.equal(calls, 0, "no API calls for unroutable addresses");
+});
+
+test("a pre-upgrade cache entry is only actioned on an outright confirmation", async () => {
+  const { vpn, bans, store } = makeAlertable();
+  // Legacy shape: no `detectors`, no `actionable`.
+  store["45.1.1.1"] = { ip: "45.1.1.1", flagged: true, confirmed: null, checkedAt: Date.now() - 1000,
+                        geo: { city: "AMS", isp: "M247" }, isp: "M247" };
+  global.fetch = routeVpn({ iphub: true });
+  await vpn.checkVpnAndAlert("LegacyUnconfirmed", "45.1.1.1");
+  assert.deepEqual(bans, [], "a legacy unconfirmed entry must not ban");
+});
+
+test("a single-source flag never bans, even when it is the only detector available", async () => {
+  /* ipapi.is genuinely reports Cloudflare's 1.1.1.1 as "vpn+abuser" - a real false
+     positive. If only one regular check is reachable, auto-ban must stay OFF rather
+     than trusting that one opinion (previously min(BAN_MIN, answered) degraded the
+     threshold to 1 and would have banned). */
+  const { vpn, bans } = makeAlertable({ IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("ipinfo")) return { json: async () => ({ ip: "1.1.1.1", city: "X", country: "US", loc: "1,1", org: "AS13335 Cloudflare" }) };
+    if (u.includes("ipapi.is")) return { json: async () => ({ ip: "1.1.1.1", is_vpn: true, is_abuser: true, is_proxy: false, is_tor: false, is_datacenter: true, company: { name: "Cloudflare" } }) };
+    if (u.includes("proxycheck")) throw new Error("quota");        // only one screener answers
+    throw new Error("unrouted " + u);
+  };
+  const r = await vpn._doVpnCheck("1.1.1.1");
+  assert.equal(r.screenAnswered, 1);
+  assert.equal(r.flagged, true);
+  assert.equal(r.actionable, false, "one unconfirmed source must never ban");
+  await vpn.checkVpnAndAlert("Victim", "1.1.1.1");
+  assert.deepEqual(bans, []);
+});

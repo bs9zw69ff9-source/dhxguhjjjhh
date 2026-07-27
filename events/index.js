@@ -117,6 +117,7 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       const vpnLines = (() => {
         if (!vpnDetectionEnabled()) return ["Not configured (set a detector API key)"];
         if (!vpnResult) return ["Not checked"];
+        if (vpnResult.local) return ["Skipped - private/LAN address (nothing to check)"];
         const dets   = vpnResult.detectors ?? [];
         const t1     = dets.filter(d => d.tier === 1);
         const t2     = dets.filter(d => d.tier === 2);
@@ -124,6 +125,21 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
         const of     = vpnResult.screenAnswered ?? t1.length;
         const pip    = (d) => `${d.flagged ? "🔴" : "🟢"} ${d.name}`;
         const out    = [];
+
+        /* Entries cached before the multi-detector upgrade have no per-detector data.
+           Render them from the legacy fields instead of printing a bogus "0/0". */
+        if (!dets.length) {
+          const legacy = !vpnResult.flagged ? "**Clean**"
+            : vpnResult.confirmed === true  ? "🚫 **VPN/Proxy confirmed**"
+            : vpnResult.confirmed === false ? "⚠️ **Disputed** - flagged, but the cross-check cleared it (not banned)"
+            :                                 "⚠️ **Flagged** - unconfirmed";
+          const meta = [
+            vpnResult.provider ? `provider: **${vpnResult.provider}**` : null,
+            vpnResult.isp || null,
+            vpnResult.ipqs ? `vpn:${vpnResult.ipqs.vpn} proxy:${vpnResult.ipqs.proxy} tor:${vpnResult.ipqs.tor} fraud:${vpnResult.ipqs.fraudScore}` : null,
+          ].filter(Boolean);
+          return [legacy, "*Cached before the multi-detector upgrade - no per-detector breakdown.*", ...(meta.length ? [meta.join("  -  ")] : [])];
+        }
 
         if (!vpnResult.flagged) {
           // Every regular check answered clean - state it, and that nothing escalated.
