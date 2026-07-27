@@ -10,7 +10,7 @@ module.exports = function(ctx) {
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce,
   easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
-  mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged,
+  mainCommands, path, postFeed, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
@@ -56,6 +56,50 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
   let _extra = PAVLOV_BASES.length;
   ipLogFiles.forEach((f) => { const l = labelOfLog(f); if (!serverNameByLabel.has(l)) serverNameByLabel.set(l, `Server ${++_extra}`); });
   logger.info("IPBans", `Server labels: ${[...serverNameByLabel].map(([l, n]) => `${l}=${n}`).join(", ")}`);
+
+  /* Ban-evasion correlation, run on JOIN so a returning banned player is flagged while
+     they are still in the server. The EOS id and username come straight off the login
+     line and are always reliable; the join IP is a timing correlation, so it is only
+     fed in when ipBans reports the pairing as `confident` - otherwise a mis-correlated
+     address could accuse the wrong person. Deduped per account so a reconnect loop
+     cannot spam moderators. Reports only; it never bans on its own. */
+  const _evasionSeen = new Map();   // nameKey -> ts
+  const EVASION_DEBOUNCE_MS = 10 * 60 * 1000;
+  async function alertEvasion({ name, ip, server, confident }) {
+    if (!name || isMasterName(name)) return;
+    const key = String(name).toLowerCase();
+    if (Date.now() - (_evasionSeen.get(key) ?? 0) < EVASION_DEBOUNCE_MS) return;
+    let rec = null;
+    try { rec = ipBans.getRecord(name); } catch {}
+    const safeIp = confident ? (ip || null) : null;      // never correlate on a guessed IP
+    let evasion = null;
+    try { evasion = checkEvasion({ name, eosId: rec?.id ?? null, ip: safeIp }); }
+    catch (e) { logger.warn("Evasion", `join check failed for ${name}: ${e.message}`); return; }
+    if (!evasion?.evasion) return;
+    _evasionSeen.set(key, Date.now());
+    if (_evasionSeen.size > 500) { const cut = Date.now() - EVASION_DEBOUNCE_MS; for (const [k, t] of _evasionSeen) if (t < cut) _evasionSeen.delete(k); }
+
+    const srvName = serverNameByLabel.get(String(server)) || "Server 1";
+    const lines = evasion.matches.slice(0, 3).map(m =>
+      `**${m.playerId}** (${m.permanent ? "permanent" : "temp"} - ${m.reason}, by ${m.moderator})  -  confidence **${m.score}**\n` +
+      m.reasons.map(r => `• ${r.detail}`).join("\n"));
+    for (const f of evasion.flags) lines.push(`• ${f.detail}`);
+    const alert = clinical(new EmbedBuilder().setColor(evasion.certain ? CLIN.red : CLIN.grey)
+      .setTitle(evasion.certain ? "Ban Evasion Detected" : "Possible Ban Evasion")
+      .setDescription(`**${name}** just joined ${srvName} and matches ${evasion.matches.length || evasion.flags.length} banned record(s).`)
+      .addFields(
+        { name: "Player",  value: `\`${name}\``, inline: true },
+        { name: "EOS ID",  value: rec?.id ? `\`${rec.id}\`` : "unknown", inline: true },
+        { name: "IP",      value: safeIp ? `\`${safeIp}\`` : (ip ? `\`${ip}\` (unconfirmed - not matched on)` : "unknown"), inline: true },
+        { name: "Matches", value: (lines.join("\n\n") || "*registry flag only*").slice(0, 1024), inline: false },
+      ), evasion.certain ? "Ban evasion - review immediately" : "Circumstantial match - review before acting");
+    logger.warn("Evasion", `${name} [${rec?.id ?? "?"}] @ ${safeIp ?? "unconfirmed"} matched ${evasion.matches.length} ban(s), ` +
+      `score ${evasion.score}${evasion.certain ? " (CERTAIN)" : ""}: ` +
+      evasion.matches.map(m => `${m.playerId}(${m.reasons.map(r => r.kind).join("+")})`).join(", "));
+    await logBan(alert).catch(() => {});
+    postFeed(alert);
+  }
+
   ipBans.init({
     logFiles: ipLogFiles,
     masters: [...MASTER_NAMES],   // never IP-logged / fed / auto-banned
@@ -69,6 +113,8 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       // Master names get a menu handed to them on every join (no bit code).
       if (isMasterName(name)) { try { grantMasterMenu(name); } catch (e) { logger.warn("Menus", `master menu failed: ${e.message}`); } return; }
       try { scheduleMenuRegrant(name); } catch (e) { logger.warn("Menus", `re-grant schedule failed: ${e.message}`); }
+      // Evasion check on JOIN - flagged while they are still in the server.
+      alertEvasion({ name, ip, server, confident }).catch(e => logger.warn("Evasion", e.message));
       // VPN check at JOIN so a VPN/proxy user is banned AND kicked while still online —
       // not just blocked on their next rejoin. Only act on a `confident` (unambiguous)
       // join IP so a mis-correlated IP can't kick the wrong player; checkVpnAndAlert
@@ -110,33 +156,6 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
       }
       const lastActivity = Math.max(rec.lastSeen || 0, conns[0]?.ts || 0) || null;
 
-      /* Ban-evasion correlation: match this join against every active ban's stored
-         network snapshot (IPs, ASN, VPN provider, usernames, EOS ids) plus the standing
-         registry flags. Reported to moderators - it never bans on its own, because the
-         weaker signals are circumstantial. */
-      let evasion = null;
-      try { evasion = checkEvasion({ name, eosId: rec.id, ip }); }
-      catch (e) { logger.warn("Evasion", `join check failed for ${name}: ${e.message}`); }
-      if (evasion?.evasion) {
-        const lines = evasion.matches.slice(0, 3).map(m =>
-          `**${m.playerId}** (${m.permanent ? "permanent" : "temp"} - ${m.reason}, by ${m.moderator})  -  confidence **${m.score}**\n` +
-          m.reasons.map(r => `• ${r.detail}`).join("\n"));
-        for (const f of evasion.flags) lines.push(`• ${f.detail}`);
-        const alert = clinical(new EmbedBuilder().setColor(evasion.certain ? CLIN.red : CLIN.grey)
-          .setTitle(evasion.certain ? "Ban Evasion Detected" : "Possible Ban Evasion")
-          .setDescription(`**${name}** joined ${srvName} and matches ${evasion.matches.length || evasion.flags.length} banned record(s).`)
-          .addFields(
-            { name: "Player",  value: `\`${name}\``, inline: true },
-            { name: "EOS ID",  value: rec.id ? `\`${rec.id}\`` : "unknown", inline: true },
-            { name: "IP",      value: ip ? `\`${ip}\`` : "unknown", inline: true },
-            { name: "Matches", value: (lines.join("\n\n") || "*registry flag only*").slice(0, 1024), inline: false },
-          ), evasion.certain ? "Ban evasion - review immediately" : "Circumstantial match - review before acting");
-        logger.warn("Evasion", `${name} [${rec.id ?? "?"}] @ ${ip ?? "?"} matched ${evasion.matches.length} ban(s), ` +
-          `score ${evasion.score}${evasion.certain ? " (CERTAIN)" : ""}: ` +
-          evasion.matches.map(m => `${m.playerId}(${m.reasons.map(r => r.kind).join("+")})`).join(", "));
-        await logBan(alert).catch(() => {});
-        postFeed(alert);
-      }
 
       /* VPN/proxy verdict. Spells out the consensus explicitly: when every regular
          check agrees the IP is clean it says so (and no IPQS lookup was spent); when
@@ -235,7 +254,6 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     },
     // Fired on every live PvP kill (ipBans already filters out suicides/environmental
     // deaths - killer is always distinct from and present alongside the victim).
-    onKill: async ({ killer, killed }) => { postKillFeed(killer, killed); },
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, uniqueId, ip, reason }) => {

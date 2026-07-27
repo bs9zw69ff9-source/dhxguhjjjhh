@@ -146,7 +146,7 @@ function validateConfig() {
     "RCON_HOST_3", "RCON_PORT_3", "RCON_PASSWORD_3",
     "MODSAVE_PATH", "MOD_LOG_CHANNEL", "BAN_LOG_CHANNEL", "LEADERBOARD_CHANNEL", "LOG_LEVEL",
     "PLAYERLIST_CHANNEL", "DONATOR_PATH", "BLACKLIST_IDS", "BUILD_ID",
-    "IPHUB_API_KEY", "IPQS_API_KEY", "KILLFEED_CHANNEL",
+    "IPHUB_API_KEY", "IPQS_API_KEY",
   ];
   const missing  = required.filter(k => !process.env[k]);
   const absent   = optional.filter(k => !process.env[k]);
@@ -667,9 +667,6 @@ const RCON_HEALTH_INTERVAL_MS = 5 * 60 * 1000;
 /* Channel a short changelog posts to whenever the bot restarts on a new commit
    (override with UPDATE_LOG_CHANNEL). */
 const UPDATE_LOG_CHANNEL      = process.env.UPDATE_LOG_CHANNEL || "1526601109362446377";
-/* Channel every live PvP kill posts to, one clean line per kill
-   (override with KILLFEED_CHANNEL). */
-const KILLFEED_CHANNEL        = process.env.KILLFEED_CHANNEL || "1525801322262167623";
 
 /* ---- verification ----
    VERIFY_CHANNEL: public channel with the Verify button (visible to unverified).
@@ -1593,16 +1590,6 @@ function postFeed(embed) {
 function customEmoji(name) {
   try { const e = client.emojis.cache.find(em => em.name === name); return e ? e.toString() : null; }
   catch { return null; }
-}
-// Kill feed: one clean line per live PvP kill (fired from ipBans' onKill - already
-// filtered to a real kill with a distinct killer, no suicides/environmental deaths).
-function postKillFeed(killer, killed) {
-  if (!KILLFEED_CHANNEL) return;
-  // Plain text, no embed and no emoji - one clean line per kill.
-  const content = `**${killer}** eliminated **${killed}**`;
-  client.channels.fetch(KILLFEED_CHANNEL)
-    .then(ch => ch?.isTextBased() && ch.send({ content, allowedMentions: { parse: [] } }))
-    .catch(err => logger.warn("KillFeed", `post failed: ${err.message}`));
 }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
@@ -2796,7 +2783,7 @@ const {  } = require("./events")({
   fixAutoBanReasons, formatFullLocation, grantMasterMenu, hardEnforce, hasServer2,
   hasServer3, easternStamp, healTreeOwnership, hero, importBlacklistToBans, importModsaveBanlist, ipBans,
   isAutobanExempt, isMasterName, loadBans, log, logBan, logger,
-  mainCommands, path, postFeed, postKillFeed, postUpdateLogIfChanged,
+  mainCommands, path, postFeed, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
   unbanEverywhere, upsertPermBan, writeModLog,
