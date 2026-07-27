@@ -595,7 +595,11 @@ function writeFactionAudit(entry) {
 }
 
 // ---- constants ----
-const STAFF_MENU_ID = "0011110000000000101000000000010 11101101000001";
+/* The RCON+ menu bit code granted by GiveMenu. Two segments, 31 + 14 bits. Edit this
+   one constant to change what the staff menu can do - grants resolve it live (see
+   scheduleMenuRegrant), so existing holders pick the new code up on their next join
+   rather than keeping whatever code was stored when they were first granted. */
+const STAFF_MENU_ID = "0010010000000000101000000000000 10001000000000";
 const MENUS = [
   { name: "Staff",      value: "staff",     menuId: STAFF_MENU_ID },
   // High Staff uses the SAME bit code as Staff, but the grant also runs AddMod + AddAccessManager.
@@ -2757,7 +2761,13 @@ function scheduleMenuRegrant(name) {
           await sendRconBoth(`AddMod ${target}`, g.server);
           await sendRconBoth(`AddAccessManager ${target}`, g.server);
         }
-        await sendRconBoth(`GiveMenu ${target} ${g.menuId}`, g.server);
+        /* Resolve the bit code from MENUS, not from what was stored at grant time -
+           otherwise editing STAFF_MENU_ID would never reach anyone who already holds
+           the menu, which is every existing staff member. Falls back to the stored id
+           for a grant whose menu is no longer in MENUS. */
+        const liveId = MENUS.find(m => m.value === menuValue)?.menuId ?? g.menuId;
+        if (liveId !== g.menuId) logger.info("Menus", `${name}: ${menuValue} bit code updated since it was granted - applying the current one`);
+        await sendRconBoth(`GiveMenu ${target} ${liveId}`, g.server);
       }
       logger.info("Menus", `Re-granted ${[...byMenu.keys()].join(" + ")} to ${name} on rejoin (${target})`);
     } catch (e) { logger.warn("Menus", `menu re-grant failed for ${name}: ${e.message}`); }
