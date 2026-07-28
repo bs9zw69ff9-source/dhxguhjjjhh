@@ -82,6 +82,11 @@ function extractLogin(line) {
   return { name: nm ? nm[1].trim() : null, id: idm[1] };
 }
 const BAN_RE    = /Rcon:\s*BanPlayer\s+(\S+)/i;
+/* RCON+ (the menu mod) announces every command it runs. Real lines look like:
+     LogTemp: Warning: Rcon Plus Command Executed: GiveMenu SomePlayer
+     LogTemp: Error:   Rcon Plus Command Executed: <whatever was typed>
+   The Warning/Error level is just how the mod prints, not a failure, so both count. */
+const RCONPLUS_RE = /Rcon Plus Command Executed:\s*(.+?)\s*$/i;
 const UNBAN_RE  = /Rcon:\s*UnbanPlayer\s+(\S+)/i;
 // Kill/death stats (requires bVerboseLogging=true in Game.ini). Pavlov logs a
 // KillData record - either as a single JSON line or split across lines. Match each
@@ -153,6 +158,9 @@ let onAutoBan = async () => {};
 let onConnect = async () => {};   // best-effort join (tentative IP)
 let onConfirm = async () => {};   // confirmed IPid pairing (same-line disconnect) - accurate IP
 let onKill    = async () => {};   // a live PvP kill (killer distinct from victim) - not suicides/environmental deaths
+let onRconCommand = async () => {};   // an RCON+ command seen in the log (any tool, not just this bot)
+const recentRconCmd = new Map();      // "server|command" -> ts, collapses the mod's duplicate lines
+const RCON_CMD_DEBOUNCE_MS = 3000;
 let live      = false;            // false during the startup backfill (suppress feed + auto-ban)
 let watchList = [];               // resolved log files (active + rotated backups)
 
@@ -692,6 +700,22 @@ function parseLine(line, server, key) {
 
   // 4) ban/unban from ANY admin tool - flag/clear that player's IPs (live only)
   if (!live) return;
+  /* RCON+ command - surfaced so privilege changes made OUTSIDE the bot (another RCON
+     client, the in-game console) are still auditable. Live only: replaying the backfill
+     would re-report every menu grant in the log's history on each restart. */
+  const rp = line.match(RCONPLUS_RE);
+  if (rp) {
+    const cmd = rp[1];
+    // Collapse the duplicate lines one command emits (the mod logs it more than once).
+    const k = `${server}|${cmd.toLowerCase()}`;
+    if (Date.now() - (recentRconCmd.get(k) ?? 0) >= RCON_CMD_DEBOUNCE_MS) {
+      recentRconCmd.set(k, Date.now());
+      if (recentRconCmd.size > 500) { const cut = Date.now() - 600_000; for (const [kk, t] of recentRconCmd) if (t < cut) recentRconCmd.delete(kk); }
+      Promise.resolve(onRconCommand({ command: cmd, server, source: "rcon+" }))
+        .catch(e => console.error("[ipBans] onRconCommand failed:", e.message));
+    }
+    return;
+  }
   const b = line.match(BAN_RE);
   if (b) { const r = blacklistPlayer(b[1]); if (r.ips.length) console.log(`[ipBans] ban detected "${b[1]}" - flagged ${r.ips.length} IP(s)${r.alts.length ? `, alts: ${r.alts.join(", ")}` : ""}`); return; }
   const u = line.match(UNBAN_RE);
@@ -806,6 +830,7 @@ function init(opts = {}) {
   if (typeof opts.onConnect === "function") onConnect = opts.onConnect;
   if (typeof opts.onConfirm === "function") onConfirm = opts.onConfirm;
   if (typeof opts.onKill    === "function") onKill    = opts.onKill;
+  if (typeof opts.onRconCommand === "function") onRconCommand = opts.onRconCommand;
 
   // Master/owner in-game names are never tracked (no IP logging, feed, or auto-ban)
   // but DO still get a live join callback so the bot can hand them a menu. Seeded

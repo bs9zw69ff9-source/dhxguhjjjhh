@@ -1504,7 +1504,7 @@ const hasServer3 = !!process.env.RCON_HOST_3;
 const ACTIVE_SERVERS = ["server1", ...(hasServer2 ? ["server2"] : []), ...(hasServer3 ? ["server3"] : [])];
 // RCON transport lives in ./rcon (raw TCP + md5 auth). It only needs the logger
 // and the live ACTIVE_SERVERS list; everything else here calls these unchanged.
-const { getServerConfig, sendRconRaw, sendRcon, sendRconBoth } =
+const { getServerConfig, sendRconRaw, sendRcon, sendRconBoth, wasIssuedByBot } =
   require("./rcon")({ logger, activeServers: ACTIVE_SERVERS });
 
 /* Pavlov's economy mod can wipe a player's saved caps when they're force-kicked
@@ -2886,7 +2886,7 @@ const {  } = require("./events")({
   mainCommands, path, postFeed, postJoinLog, postLeaveLog, postKillLog, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
-  unbanEverywhere, upsertPermBan, writeModLog,
+  unbanEverywhere, upsertPermBan, writeModLog, wasIssuedByBot, logAction,
   MASTER_NAMES,
 });
 

@@ -13,9 +13,16 @@ module.exports = function(ctx) {
   mainCommands, path, postFeed, postJoinLog, postLeaveLog, postKillLog, postUpdateLogIfChanged,
   rconHealthCheck, reconcileBans, reconcileBlacklists, refreshLeaderboardChannels, refreshPlayerCache, removeBans,
   scheduleMenuRegrant, seedKnownPlayers, sourceBanFor, syncAllModSave, syncModsaveBanlist, syncPlayerLedger,
-  unbanEverywhere, upsertPermBan, writeModLog,
+  unbanEverywhere, upsertPermBan, writeModLog, wasIssuedByBot, logAction,
   MASTER_NAMES,
   } = ctx;
+
+/* RCON+ verbs that hand out or remove power. Everything else the mod logs (RefreshList,
+   ServerInfo, chat relays) is high-volume noise with no security meaning. */
+const PRIVILEGE_RCON_CMDS = new Set([
+  "givemenu", "removemenu", "clearmenuaccess",
+  "addmod", "removemod", "addaccessmanager", "removeaccessmanager",
+]);
 
 // ---- ready ----
 client.once("clientReady", async () => {   // "ready" is deprecated in discord.js 14.22+
@@ -260,6 +267,23 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
     // deaths - killer is always distinct from and present alongside the victim).
     // Fired on every live PvP kill (ipBans already filters suicides/environmental deaths).
     onKill: async ({ killer, killed }) => { try { postKillLog(killer, killed); } catch {} },
+    /* Every RCON+ command in the log, including the bot's own. The bot only records the
+       menu grants IT issued, so a menu handed out with another RCON client was
+       previously invisible - no record, no audit line, nothing. Report the ones that
+       change privileges and did not come from us. */
+    onRconCommand: async ({ command, server, source }) => {
+      const verb = String(command).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+      if (!PRIVILEGE_RCON_CMDS.has(verb)) return;          // RefreshList and friends are pure noise
+      if (wasIssuedByBot(command)) return;                 // the bot's own traffic
+      const srvName = serverNameByLabel.get(String(server)) || String(server);
+      logger.warn("RconAudit", `${source} command not issued by the bot on ${srvName}: ${command}`);
+      try {
+        await logAction(clinical(new EmbedBuilder().setColor(CLIN.red)
+          .setTitle("Privilege Command Run Outside the Bot")
+          .setDescription(`A privilege command was run on **${srvName}** that this bot did not issue.\n\n\`\`\`\n${String(command).slice(0, 300)}\n\`\`\`\nIt came from another RCON client or the in-game console, so there is no Discord account attached to it.`),
+          "Seen in Pavlov.log - verify this was authorised"));
+      } catch (e) { logger.warn("RconAudit", `alert failed: ${e.message}`); }
+    },
     // Fired when someone CONNECTS (live log) matching a blacklisted username/IP:
     // ban that username on both servers (Shack bans by name, not hex id).
     onAutoBan: async ({ name, uniqueId, ip, reason }) => {
