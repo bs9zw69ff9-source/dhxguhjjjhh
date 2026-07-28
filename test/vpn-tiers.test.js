@@ -543,3 +543,68 @@ test("a 401 is reported as a rejection, not a bland 'no verdict'", async () => {
   assert.match(hit, /Invalid API key/, "the provider's own reason is surfaced");
   assert.match(hit, /Check the API key/, "and a pointer to the fix");
 });
+
+/* ---- sentinel: loose boolean encodings and no-reputation IPs ----
+   The live body had `signals` present and was STILL rejected, because the parser only
+   accepted real booleans. Providers encode these as 0/1 and as strings just as often. */
+
+function sentinelOnly(extra) {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"), "sntlhq.com": extra });
+  return vpn;
+}
+
+test("sentinel reads 0/1 numeric signals", async () => {
+  const r = await sentinelOnly({ ip: "1.2.3.4", known: true, verdict: "block", risk_score: 88,
+    signals: { vpn: 1, proxied: 0, tor: 0, dch: 1, anon: 0 },
+    network: { asn: 9009, org: "M247", country: "GB" } })._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1, "numeric signals must count as a real answer");
+  assert.equal(r.vpn, true);
+  assert.equal(r.proxy, false);
+  assert.equal(r.hosting, true);
+  assert.equal(r.flagged, true);
+});
+
+test("sentinel reads string signals", async () => {
+  const r = await sentinelOnly({ ip: "1.2.3.4", known: true, verdict: "allow", risk_score: 4,
+    signals: { vpn: "false", proxied: "no", tor: "false", dch: "true", anon: "false" },
+    network: { asn: 7029, org: "Windstream", country: "US" } })._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1);
+  assert.equal(r.vpn, false);
+  assert.equal(r.hosting, true);
+  assert.equal(r.flagged, false, "datacenter alone is still not a hit");
+});
+
+test("sentinel: an IP it has no reputation on falls back to the verdict", async () => {
+  // known:false with null signals - the shape a niche server's players will mostly hit.
+  const r = await sentinelOnly({ ip: "1.2.3.4", known: false, verdict: "allow", risk_score: 0,
+    signals: { vpn: null, proxied: null, tor: null, dch: null, anon: null },
+    network: { asn: 7029, org: "Windstream", country: "US" } })._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1, "an explicit verdict is an answer");
+  assert.equal(r.flagged, false);
+  // Crucially it must NOT claim to know the individual categories.
+  const det = r.detectors.find(d => d.name === "sentinel");
+  assert.match(det.detail, /no reputation data/);
+  assert.equal(r.asn, "AS7029", "ASN/org are still usable");
+});
+
+test("sentinel: a 'block' verdict with null signals flags the IP", async () => {
+  const r = await sentinelOnly({ ip: "1.2.3.4", known: true, verdict: "block", risk_score: 97,
+    signals: { vpn: null, proxied: null, tor: null, dch: null, anon: null }, network: {} })._doVpnCheck("1.2.3.4");
+  assert.equal(r.flagged, true);
+  assert.equal(r.threatScore, 97);
+});
+
+test("sentinel: null signals never coerce to a confident 'No'", async () => {
+  /* An IP the provider holds nothing on must not come back asserting "Proxy: No" - the
+     feed has to show `unknown`, which is a different fact. (A FLAGGED verdict is another
+     matter: the merge layer assumes VPN when something flagged an IP but no detector
+     named a category, so this uses the clean verdict to isolate the parser.) */
+  const r = await sentinelOnly({ ip: "1.2.3.4", known: false, verdict: "allow", risk_score: 0,
+    signals: { vpn: null, proxied: null, tor: null, dch: null, anon: null }, network: {} })._doVpnCheck("1.2.3.4");
+  assert.equal(r.flagged, false);
+  assert.equal(r.vpn, null, "unknown, not false");
+  assert.equal(r.proxy, null);
+  assert.equal(r.tor, null);
+  assert.equal(r.hosting, null);
+});

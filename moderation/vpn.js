@@ -132,22 +132,58 @@ function parseSentinel(d) {
   const net = d.network || {};
   // `network` carries the verdict booleans in the evaluate-style body; in the
   // lookup-style body those same keys are absent and it carries ASN/org instead.
+  /* Providers encode booleans loosely - true, 1, "true", "yes". Only an outright
+     boolean was accepted at first, so a body using 0/1 or strings looked like it had no
+     verdict in it at all. null/absent stays UNKNOWN and must never coerce to false. */
+  const bool = (v) => {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (["true", "yes", "y", "1"].includes(s)) return true;
+      if (["false", "no", "n", "0"].includes(s)) return false;
+    }
+    return undefined;
+  };
   const netIsVerdict = ["vpn", "proxy", "datacenter", "tor", "anonymous", "residential"]
-    .some(k => typeof net[k] === "boolean");
+    .some(k => bool(net[k]) !== undefined);
   const nv = netIsVerdict ? net : {};
-  const first = (...vals) => vals.find(v => typeof v === "boolean");
+  const first = (...vals) => { for (const v of vals) { const b = bool(v); if (b !== undefined) return b; } return undefined; };
   const vpn   = first(sig.vpn, nv.vpn, d.vpn);
   const proxy = first(sig.proxied, sig.proxy, nv.proxy, d.proxy);
   const tor   = first(sig.tor, nv.tor, d.tor);
   const dch   = first(sig.dch, sig.datacenter, nv.datacenter, d.datacenter, d.hosting);
   const anon  = first(sig.anon, sig.anonymous, nv.anonymous, d.anonymous);
-  // Nothing we understand. Say so loudly ONCE with the keys we did get, so a schema
-  // change is diagnosable from the log instead of silently disabling the detector.
-  if (vpn === undefined && proxy === undefined && tor === undefined && dch === undefined && anon === undefined) {
+  const noSignals = vpn === undefined && proxy === undefined && tor === undefined
+                 && dch === undefined && anon === undefined;
+  const verdictStr = String(d.verdict ?? d.decision ?? "").trim().toLowerCase();
+  const risk0 = Number.isFinite(d.risk_score) ? d.risk_score : (Number.isFinite(d.riskScore) ? d.riskScore : null);
+  /* No per-signal data, but an explicit verdict. This is what an IP the provider holds
+     no reputation on looks like (`known: false`) - the signals come back null. Take the
+     verdict as the answer, but leave every per-category field UNKNOWN: we know their
+     overall call, not that the address is specifically "not a proxy". */
+  if (noSignals && ["allow", "review", "block"].includes(verdictStr)) {
+    return {
+      flagged: verdictStr === "block" || verdictStr === "review",
+      detail: `verdict:${verdictStr}${risk0 !== null ? ` risk:${risk0}` : ""}${d.known === false ? " (no reputation data)" : ""}`,
+      vpn: null, proxy: null, tor: null, hosting: null, residential: null,
+      threatScore: risk0,
+      provider: null,
+      asn: net.asn ? `AS${String(net.asn).replace(/^AS/i, "")}` : null,
+      organization: net.org || null, isp: net.org || null,
+      country: net.country || null,
+      countryCode: typeof net.country === "string" && net.country.length === 2 ? net.country.toUpperCase() : null,
+      city: net.city || null,
+    };
+  }
+  // Nothing we understand at all. Say so loudly ONCE, with the VALUES we did get - the
+  // keys alone were not enough to spot that the booleans were encoded as something else.
+  if (noSignals) {
     if (!_sentinelShapeWarned) {
       _sentinelShapeWarned = true;
+      const sample = (o) => { try { return JSON.stringify(o).slice(0, 200); } catch { return "?"; } };
       logger.warn("VPN", `sentinel returned an unrecognised body - no verdict. Top-level keys: [${Object.keys(d).join(", ") || "none"}]` +
-        `${net && Object.keys(net).length ? `; network keys: [${Object.keys(net).join(", ")}]` : ""}` +
+        `; signals=${sample(d.signals)}; network=${sample(d.network)}` +
         `${d.error ? `; error: ${String(d.error).slice(0, 120)}` : ""}`);
     }
     return null;
@@ -156,7 +192,7 @@ function parseSentinel(d) {
   // same rule ipapi.is follows, since honest players sit behind carrier and cloud ranges.
   const hits = [["vpn", vpn], ["proxy", proxy], ["tor", tor], ["anon", anon]]
     .filter(([, v]) => v === true).map(([k]) => k);
-  const risk = Number.isFinite(d.risk_score) ? d.risk_score : (Number.isFinite(d.riskScore) ? d.riskScore : null);
+  const risk = risk0;
   const verdict = d.verdict || d.decision || null;
   // ASN/org only exist in the lookup-style body (where `network` is not the verdict).
   const geoNet = netIsVerdict ? {} : net;
