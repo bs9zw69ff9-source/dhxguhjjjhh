@@ -37,7 +37,13 @@ function mockFetch(routes) {
       if (u.includes(frag)) {
         if (!u.includes("ipinfo")) called.push(frag);
         if (body instanceof Error) throw body;
-        return { json: async () => body };
+        // Mirror a real Response: status/ok are what the rate-limit and rejection
+        // branches key on, and a mock without them hides bugs in those branches.
+        if (body && typeof body.__status === "number") {
+          return { status: body.__status, ok: false, headers: { get: () => null },
+                   clone: () => ({ json: async () => body }), json: async () => body };
+        }
+        return { status: 200, ok: true, headers: { get: () => null }, clone: () => ({ json: async () => body }), json: async () => body };
       }
     }
     throw new Error("unrouted " + u);
@@ -450,4 +456,90 @@ test("sentinel is disabled without a key, so it costs nothing when unconfigured"
   const called = mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN, ...TIER2_HIT });
   await vpn._doVpnCheck("1.2.3.4");
   assert.ok(!called.includes("sntlhq.com"));
+});
+
+/* ---- sentinel: both documented response shapes ----
+   The lookup and evaluate bodies BOTH use a `network` key, for different things. The
+   first mapping only understood one of them, so a live account returning the other got
+   "no verdict" on every single IP while the dashboard happily logged the lookups. */
+
+const SENTINEL_EVAL_HIT = { "sntlhq.com": { status: "success", decision: "block", risk_score: 91, ip: "1.2.3.4",
+  network: { vpn: true, proxy: false, datacenter: true, tor: false, anonymous: true, residential: false, service: "PROTON_VPN" } } };
+
+test("sentinel reads the evaluate-style body, where `network` holds the verdict", async () => {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"), ...SENTINEL_EVAL_HIT });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1, "it must actually answer, not fall through to 'no verdict'");
+  assert.equal(r.vpn, true);
+  assert.equal(r.hosting, true);
+  assert.equal(r.residential, false);
+  assert.equal(r.threatScore, 91);
+  assert.equal(r.provider, "PROTON_VPN", "the evaluate body carries the consumer brand");
+});
+
+test("sentinel reads the evaluate-style body when it is clean", async () => {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"),
+    "sntlhq.com": { status: "success", decision: "allow", risk_score: 1,
+      network: { vpn: false, proxy: false, datacenter: false, tor: false, anonymous: false, residential: true } } });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1);
+  assert.equal(r.flagged, false);
+  assert.equal(r.vpn, false);
+  assert.equal(r.residential, true, "an explicit residential answer is trusted, not inferred");
+});
+
+test("sentinel still reads the lookup-style body, where `network` holds ASN/org", async () => {
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"), ...SENTINEL_HIT });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1);
+  assert.equal(r.vpn, true);
+  assert.equal(r.asn, "AS9009", "ASN is only in the lookup-style body and must not be lost");
+  assert.equal(r.organization, "M247 Europe SRL");
+});
+
+test("sentinel: a body with no recognisable verdict is still 'no verdict'", async () => {
+  // The guard has to stay - an unknown shape must never be guessed at as clean.
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, ...CLEAN_SCREEN, "sntlhq.com": { error: "Unauthorized" } });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 2, "sentinel is excluded, not counted as clean");
+  assert.ok(!r.detectors.some(d => d.name === "sentinel"));
+});
+
+test("sentinel: a partial body is read for what it does contain", async () => {
+  // Only `vpn` present, no risk score, no network block - that is still a real answer.
+  const { vpn } = makeVpn({ SENTINEL_API_KEY: "sk_live_test", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"),
+    "sntlhq.com": { vpn: true } });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r.screenAnswered, 1);
+  assert.equal(r.vpn, true);
+  assert.equal(r.threatScore, null, "absent fields stay null rather than being invented");
+});
+
+test("a 401 is reported as a rejection, not a bland 'no verdict'", async () => {
+  /* A non-2xx that isn't a rate limit used to fall straight through to res.json(),
+     so a bad key looked identical to an inconclusive answer - the exact reason a
+     misconfigured detector could sit there silently doing nothing. */
+  const warnings = [];
+  for (const [k, v] of Object.entries({ SENTINEL_API_KEY: "sk_live_bad", IPHUB_API_KEY: null, VPNAPI_KEY: null, IPQS_API_KEY: null })) {
+    if (v === null) delete process.env[k]; else process.env[k] = v;
+  }
+  delete require.cache[require.resolve("../moderation/vpn.js")];
+  const vpn = require("../moderation/vpn.js")({
+    FILES: { VPN_CHECKS: "vpn" },
+    logger: { debug() {}, info() {}, error() {}, warn: (t, m) => warnings.push(m) },
+    safeRead: () => ({}), update: async (f, fb, fn) => { fn({}); },
+  });
+  mockFetch({ "ipinfo.io": GEO, "ipapi.is": new Error("down"), "proxycheck.io": new Error("down"),
+    "sntlhq.com": { __status: 401, error: "Invalid API key" } });
+  const r = await vpn._doVpnCheck("1.2.3.4");
+  assert.equal(r, null, "no detector could answer, so nothing is cached as clean");
+  const hit = warnings.find(w => /rejected the request \(HTTP 401\)/.test(w));
+  assert.ok(hit, `expected a rejection warning, got: ${JSON.stringify(warnings)}`);
+  assert.match(hit, /Invalid API key/, "the provider's own reason is surfaced");
+  assert.match(hit, /Check the API key/, "and a pointer to the fix");
 });

@@ -65,6 +65,7 @@ function isValidPublicIp(ip) {
    rate limit - it returns null so the detector counts as "no verdict" rather than
    "clean", which keeps an exhausted quota from being read as innocence. */
 const RATE_LIMITED_UNTIL = new Map();          // host -> ts to resume
+const _AUTH_WARNED = new Set();                // hosts already reported as rejecting us
 async function fetchJson(url, opts = {}, { tries = 3, timeoutMs = 6000, label = "" } = {}) {
   const host = (() => { try { return new URL(url).host; } catch { return url; } })();
   const until = RATE_LIMITED_UNTIL.get(host) ?? 0;
@@ -87,6 +88,20 @@ async function fetchJson(url, opts = {}, { tries = 3, timeoutMs = 6000, label = 
         return null;
       }
       if (!res.ok && res.status >= 500) throw new Error(`HTTP ${res.status}`);
+      /* A 4xx that isn't a rate limit is a CONFIGURATION problem - a bad key, a
+         suspended account, an IP that isn't allowlisted. Its body has no verdict in it,
+         so it would otherwise fall through and read as a bland "no verdict" forever.
+         Name it once per host so it is fixable instead of merely mysterious. */
+      if (typeof res.status === "number" && res.status >= 400) {
+        if (!_AUTH_WARNED.has(host)) {
+          _AUTH_WARNED.add(host);
+          let hint = "";
+          try { const b = await res.clone().json(); if (b?.error) hint = ` - ${String(b.error).slice(0, 120)}`; } catch {}
+          logger.warn("VPN", `${label || host} rejected the request (HTTP ${res.status})${hint}. ` +
+            `${res.status === 401 || res.status === 403 ? "Check the API key is correct and active." : "No verdict will be recorded from it."}`);
+        }
+        return null;
+      }
       return await res.json();
     } catch (err) {
       lastErr = err;
@@ -99,6 +114,72 @@ async function fetchJson(url, opts = {}, { tries = 3, timeoutMs = 6000, label = 
     } finally { clearTimeout(timer); }
   }
   return null;
+}
+
+/* Sentinel (sntlhq.com) answers in one of two shapes, and BOTH use a `network` key for
+   different things - which is exactly what made the first mapping return "no verdict"
+   for every IP:
+
+     lookup style    signals:{vpn,proxied,tor,dch,anon}  network:{asn,org,country,city}
+     evaluate style  network:{vpn,proxy,datacenter,tor,anonymous,residential,service}
+
+   So `network` holds the booleans in one and the ASN/org in the other. Detect which by
+   looking for boolean members, and read whichever is present. A flat top-level body is
+   accepted too. Returns null ONLY when nothing recognisable is there - never a guess. */
+let _sentinelShapeWarned = false;
+function parseSentinel(d) {
+  const sig = d.signals || {};
+  const net = d.network || {};
+  // `network` carries the verdict booleans in the evaluate-style body; in the
+  // lookup-style body those same keys are absent and it carries ASN/org instead.
+  const netIsVerdict = ["vpn", "proxy", "datacenter", "tor", "anonymous", "residential"]
+    .some(k => typeof net[k] === "boolean");
+  const nv = netIsVerdict ? net : {};
+  const first = (...vals) => vals.find(v => typeof v === "boolean");
+  const vpn   = first(sig.vpn, nv.vpn, d.vpn);
+  const proxy = first(sig.proxied, sig.proxy, nv.proxy, d.proxy);
+  const tor   = first(sig.tor, nv.tor, d.tor);
+  const dch   = first(sig.dch, sig.datacenter, nv.datacenter, d.datacenter, d.hosting);
+  const anon  = first(sig.anon, sig.anonymous, nv.anonymous, d.anonymous);
+  // Nothing we understand. Say so loudly ONCE with the keys we did get, so a schema
+  // change is diagnosable from the log instead of silently disabling the detector.
+  if (vpn === undefined && proxy === undefined && tor === undefined && dch === undefined && anon === undefined) {
+    if (!_sentinelShapeWarned) {
+      _sentinelShapeWarned = true;
+      logger.warn("VPN", `sentinel returned an unrecognised body - no verdict. Top-level keys: [${Object.keys(d).join(", ") || "none"}]` +
+        `${net && Object.keys(net).length ? `; network keys: [${Object.keys(net).join(", ")}]` : ""}` +
+        `${d.error ? `; error: ${String(d.error).slice(0, 120)}` : ""}`);
+    }
+    return null;
+  }
+  // Anonymising signals only. Datacenter is reported but is NOT a hit on its own - the
+  // same rule ipapi.is follows, since honest players sit behind carrier and cloud ranges.
+  const hits = [["vpn", vpn], ["proxy", proxy], ["tor", tor], ["anon", anon]]
+    .filter(([, v]) => v === true).map(([k]) => k);
+  const risk = Number.isFinite(d.risk_score) ? d.risk_score : (Number.isFinite(d.riskScore) ? d.riskScore : null);
+  const verdict = d.verdict || d.decision || null;
+  // ASN/org only exist in the lookup-style body (where `network` is not the verdict).
+  const geoNet = netIsVerdict ? {} : net;
+  const cc = typeof geoNet.country === "string" && geoNet.country.length === 2 ? geoNet.country.toUpperCase() : null;
+  const tri = (v) => (typeof v === "boolean" ? v : null);
+  return {
+    flagged: hits.length > 0,
+    detail: (hits.length ? hits.join("+") : "clean") + (dch === true ? " (datacenter)" : "") +
+            (verdict ? ` verdict:${verdict}` : "") + (risk !== null ? ` risk:${risk}` : ""),
+    vpn: tri(vpn), proxy: tri(proxy), tor: tri(tor),
+    hosting: tri(dch),
+    /* The evaluate-style body states residential outright - trust it. Otherwise the only
+       thing we can infer is that a datacenter IP is not residential; anything else stays
+       null so this never outvotes a provider that actually classified the address. */
+    residential: typeof nv.residential === "boolean" ? nv.residential : (dch === true ? false : null),
+    threatScore: risk,
+    // The consumer brand ("PROTON_VPN") - present in the evaluate-style body only.
+    provider: nv.service || d.service || null,
+    asn: geoNet.asn ? `AS${String(geoNet.asn).replace(/^AS/i, "")}` : null,
+    organization: geoNet.org || null, isp: geoNet.org || null,
+    country: geoNet.country || d.country || null, countryCode: cc,
+    city: geoNet.city || null,
+  };
 }
 
 /* Each detector: { name, tier, enabled, run(ip) -> { flagged, provider?, detail? } }.
@@ -209,31 +290,8 @@ const DETECTORS = [
   { name: "sentinel", tier: 1, enabled: () => !!SENTINEL_API_KEY, async run(ip) {
       const d = await fetchJson(`https://sntlhq.com/v1/lookup/${encodeURIComponent(ip)}`,
         { headers: { Authorization: `Bearer ${SENTINEL_API_KEY}`, Accept: "application/json" } }, { label: "sentinel" });
-      const s = d?.signals;
-      if (!s) return null;
-      // Anonymising signals only. `dch` (datacenter) is reported but is NOT a hit on
-      // its own - the same rule ipapi.is follows, since plenty of honest players sit
-      // behind carrier-grade and cloud ranges.
-      const hits = [["vpn", s.vpn], ["proxy", s.proxied], ["tor", s.tor], ["anon", s.anon]]
-        .filter(([, v]) => v).map(([k]) => k);
-      const n = d.network || {};
-      const cc = typeof n.country === "string" && n.country.length === 2 ? n.country.toUpperCase() : null;
-      return { flagged: hits.length > 0,
-               detail: (hits.length ? hits.join("+") : "clean") + (s.dch ? " (datacenter)" : "") +
-                       (d.verdict ? ` verdict:${d.verdict}` : "") + (Number.isFinite(d.risk_score) ? ` risk:${d.risk_score}` : ""),
-               vpn: !!s.vpn, proxy: !!s.proxied, tor: !!s.tor,
-               hosting: !!s.dch,
-               // A datacenter IP is definitely not residential; anything else is unknown
-               // here, and null must stay null so it never outvotes a real classifier.
-               residential: s.dch ? false : null,
-               threatScore: Number.isFinite(d.risk_score) ? d.risk_score : null,
-               // Present only if the API ever returns a brand on this endpoint; the
-               // documented lookup schema has no `service` field, so usually null.
-               provider: d.service || n.service || null,
-               asn: n.asn ? `AS${String(n.asn).replace(/^AS/i, "")}` : null,
-               organization: n.org || null, isp: n.org || null,
-               country: n.country || null, countryCode: cc,
-               city: n.city || null };
+      if (!d || typeof d !== "object") return null;
+      return parseSentinel(d);
     } },
 ];
 const tierDetectors = (tier) => DETECTORS.filter(d => d.tier === tier && d.enabled());
