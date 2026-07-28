@@ -17,12 +17,23 @@ module.exports = function(ctx) {
   MASTER_NAMES,
   } = ctx;
 
-/* RCON+ verbs that hand out or remove power. Everything else the mod logs (RefreshList,
-   ServerInfo, chat relays) is high-volume noise with no security meaning. */
-const PRIVILEGE_RCON_CMDS = new Set([
-  "givemenu", "removemenu", "clearmenuaccess",
-  "addmod", "removemod", "addaccessmanager", "removeaccessmanager",
+/* RCON+ verbs worth reacting to, by what an abuse of them would actually cost.
+   Everything the mod logs that is NOT listed here - Kill, Slap, SwitchTeam, Gag,
+   SetPlayerSkin, MovementSpeed, DropItems, RefreshList - is routine in-game moderation
+   and RP. Alerting on those would bury the ones that matter. */
+const RCON_CMD_CLASS = new Map([
+  // Who can do what. A menu or mod grant is persistent and escalates access.
+  ["givemenu", "privilege"], ["removemenu", "privilege"], ["clearmenuaccess", "privilege"],
+  ["addmod", "privilege"], ["removemod", "privilege"],
+  ["addaccessmanager", "privilege"], ["removeaccessmanager", "privilege"],
+  // Money and items. These write straight to the game's economy, bypassing the bot's
+  // ledger - so /adjustcaps history would show nothing at all.
+  ["givecash", "economy"], ["setcash", "economy"], ["giveitem", "economy"],
+  // Punishments that persist and feed ban-evasion tracking.
+  ["ban", "punishment"], ["unban", "punishment"],
 ]);
+// Classes that raise a staff alert. Anything else classified is acted on quietly.
+const RCON_ALERT_CLASSES = new Set(["privilege", "economy", "punishment"]);
 
 // ---- ready ----
 client.once("clientReady", async () => {   // "ready" is deprecated in discord.js 14.22+
@@ -272,15 +283,41 @@ client.once("clientReady", async () => {   // "ready" is deprecated in discord.j
        previously invisible - no record, no audit line, nothing. Report the ones that
        change privileges and did not come from us. */
     onRconCommand: async ({ command, server, source }) => {
-      const verb = String(command).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-      if (!PRIVILEGE_RCON_CMDS.has(verb)) return;          // RefreshList and friends are pure noise
-      if (wasIssuedByBot(command)) return;                 // the bot's own traffic
+      const parts  = String(command).trim().split(/\s+/);
+      const verb   = (parts[0] || "").toLowerCase();
+      const target = parts[1] || null;
+      const cls    = RCON_CMD_CLASS.get(verb);
+      if (!cls) return;                                    // routine moderation / RP chatter
+      if (wasIssuedByBot(command)) return;                 // the bot's own traffic, already recorded
       const srvName = serverNameByLabel.get(String(server)) || String(server);
-      logger.warn("RconAudit", `${source} command not issued by the bot on ${srvName}: ${command}`);
+
+      /* RCON+ spells a ban "Ban <player>", which is NOT the vanilla "Rcon: BanPlayer"
+         string the ban-sync regex matches. Without this, a ban issued from the in-game
+         menu never flagged the player's IPs and ban-evasion enforcement simply did not
+         apply to it. Mirror what the vanilla path does. */
+      if (cls === "punishment" && target) {
+        try {
+          if (verb === "ban") {
+            const r = ipBans.blacklistPlayer(target);
+            logger.info("RconAudit", `in-game ban of ${target} - flagged ${r.ips.length} IP(s)${r.alts.length ? `, alts: ${r.alts.join(", ")}` : ""}`);
+          } else {
+            ipBans.unblacklistPlayer(target);
+            logger.info("RconAudit", `in-game unban of ${target} - IP flags cleared`);
+          }
+        } catch (e) { logger.warn("RconAudit", `${verb} sync failed for ${target}: ${e.message}`); }
+      }
+
+      if (!RCON_ALERT_CLASSES.has(cls)) return;
+      logger.warn("RconAudit", `${source} ${cls} command not issued by the bot on ${srvName}: ${command}`);
+      const blurb = {
+        privilege:  "This grants or removes access. There is no Discord account attached to it.",
+        economy:    "This writes to the game economy directly, so the bot's ledger and /adjustcaps history will not show it.",
+        punishment: "The player's IPs were flagged anyway, so ban evasion still applies - but no ban record exists in /banlist.",
+      }[cls];
       try {
         await logAction(clinical(new EmbedBuilder().setColor(CLIN.red)
-          .setTitle("Privilege Command Run Outside the Bot")
-          .setDescription(`A privilege command was run on **${srvName}** that this bot did not issue.\n\n\`\`\`\n${String(command).slice(0, 300)}\n\`\`\`\nIt came from another RCON client or the in-game console, so there is no Discord account attached to it.`),
+          .setTitle(`${cls[0].toUpperCase()}${cls.slice(1)} Command Run Outside the Bot`)
+          .setDescription(`Run on **${srvName}** from another RCON client or the in-game console.\n\n\`\`\`\n${String(command).slice(0, 300)}\n\`\`\`\n${blurb}`),
           "Seen in Pavlov.log - verify this was authorised"));
       } catch (e) { logger.warn("RconAudit", `alert failed: ${e.message}`); }
     },
