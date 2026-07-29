@@ -107,7 +107,12 @@ async function fetchJson(url, opts = {}, { tries = 3, timeoutMs = 6000, label = 
       lastErr = err;
       const isAbort = err?.name === "AbortError";
       if (attempt < tries - 1) {
-        await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt)));   // 300ms, 600ms
+        /* Exponential backoff with full jitter. Five detectors retry the same upstream
+           on the same schedule otherwise, so a blip makes them all come back in
+           lockstep - the burst most likely to trip the rate limit we are trying to
+           avoid. Randomising within the window spreads them out. */
+        const ceiling = 300 * Math.pow(2, attempt);            // 300ms, 600ms
+        await new Promise(r => setTimeout(r, Math.round(ceiling * (0.5 + Math.random() * 0.5))));
         continue;
       }
       throw isAbort ? new Error(`timeout after ${timeoutMs}ms`) : lastErr;
