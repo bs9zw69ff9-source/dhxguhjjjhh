@@ -48,16 +48,6 @@ const VPN_SCREEN_BAN_MIN = Math.max(1, Number(process.env.VPN_SCREEN_BAN_MIN) ||
 
 const _scrub = (s, ...keys) => keys.filter(Boolean).reduce((acc, k) => acc.split(k).join("***"), String(s ?? ""));
 
-/* A syntactically valid, publicly routable address. Detection is skipped for anything
-   else so a malformed log line can never be sent to a provider as a lookup. */
-function isValidPublicIp(ip) {
-  const s = String(ip ?? "").trim();
-  if (!s || s.length > 45) return false;
-  const v4 = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) return v4.slice(1).every(o => Number(o) <= 255) && !isUnroutableIp(s);
-  if (/^[0-9a-f:]+$/i.test(s) && s.includes(":")) return !isUnroutableIp(s);   // coarse IPv6
-  return false;
-}
 
 /* fetch with a hard timeout, retry/backoff and rate-limit awareness. Providers time
    out, 429 and 5xx; without this a slow endpoint would hold a detector open forever

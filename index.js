@@ -1033,15 +1033,6 @@ function readBlacklist(base) {
   try { return fs.readFileSync(blacklistPathFor(base), "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean); }
   catch (err) { if (err.code === "ENOENT") { ensureFile(blacklistPathFor(base), ""); return []; } logger.error("Blacklist", `read ${base}: ${err.message}`); return null; }
 }
-// Per-install read status for diagnostics (banlist surfaces this so a permission/path
-// failure is visible instead of looking like an empty ban list).
-function blacklistStatus() {
-  return PAVLOV_BASES.map(base => {
-    const fp = blacklistPathFor(base);
-    try { const n = fs.readFileSync(fp, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean).length; return { base, fp, count: n, error: null }; }
-    catch (err) { return { base, fp, count: 0, error: err.code === "ENOENT" ? "missing" : (err.code || err.message) }; }
-  });
-}
 // Every blacklisted name across all installs (deduped, case-insensitive, original casing kept).
 function blacklistAll() {
   const map = new Map();
@@ -1357,22 +1348,6 @@ function formatUptime(ms) {
 function serverLabel(server) {
   return server === "server2" ? "Server 2" : server === "server3" ? "Server 3" : server === "both" ? "All Servers" : "Server 1";
 }
-function serverEmoji() { return ""; }   // emoji-free; servers shown via serverLabel()
-
-function chunkFields(lines, firstLabel, contLabel = firstLabel + " (cont.)", maxLen = 1020) {
-  const fields = [];
-  let block = "", chunk = 1;
-  for (const line of lines) {
-    const next = block ? `${block}\n${line}` : line;
-    if (next.length > maxLen) {
-      fields.push({ name: chunk === 1 ? firstLabel : contLabel, value: block });
-      block = line; chunk++;
-    } else { block = next; }
-  }
-  if (block) fields.push({ name: chunk === 1 ? firstLabel : contLabel, value: block });
-  return fields;
-}
-
 /** Split an array of single-line strings into pages of at most `perPage`. */
 function splitPages(lines, perPage) {
   const pages = [];
@@ -1609,13 +1584,6 @@ const _plain = (hook, tag, content) => {
 function postJoinLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} joined ${server || "the server"}`); }
 function postLeaveLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} left ${server || "the server"}`); }
 function postKillLog(killer, killed) { _plain(killHook, "KillLog", `[${easternStamp()}] ${killer} killed ${killed}`); }
-// Looks up a custom guild emoji by name (from any guild the bot's in) and returns
-// its Discord markup (<:name:id>), or null if the bot has no emoji with that name -
-// callers should always have a plain-unicode fallback ready.
-function customEmoji(name) {
-  try { const e = client.emojis.cache.find(em => em.name === name); return e ? e.toString() : null; }
-  catch { return null; }
-}
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
 function logBan(embed) {
@@ -1759,11 +1727,6 @@ const playerCache = {
 /** Every online name across all active servers (deduped, case preserved). */
 function allCachedPlayers() {
   return [...new Set(ACTIVE_SERVERS.flatMap(s => playerCache[s]))].filter(Boolean);
-}
-/** Which active servers a name is currently on, e.g. ["Server 1", "Server 3"]. */
-function onlineServersOf(name) {
-  const key = String(name ?? "").toLowerCase();
-  return ACTIVE_SERVERS.filter(s => playerCache[s].some(n => n.toLowerCase() === key)).map(serverLabel);
 }
 const CACHE_TTL_MS = 90_000;
 

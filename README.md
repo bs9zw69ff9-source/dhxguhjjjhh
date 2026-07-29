@@ -1,7 +1,7 @@
 # Pavlov RP Moderation Bot
 
 A theme-neutral Discord moderation bot for **Pavlov VR** RP servers. It drives
-the game servers over RCON and adds native bans/kicks with punishment presets,
+the game servers over RCON and adds native bans/kicks with a reason + duration picker,
 ban-evasion + VPN/proxy detection with optional OS-firewall blocking, whitelists
 and ranks, a dollar economy, a wealth leaderboard, donator management,
 self-service RCON menus, and a layered owner/admin/mod/whitelist permission
@@ -137,7 +137,7 @@ stack (or lists everyone with warrants when blank); `/warrant remove <player>
 [number]` clears one warrant by its number, or all of them when no number is
 given. Admins and owners can manage warrants too.
 
-`/tempban` uses punishment presets that set the duration automatically.
+`/tempban` takes a free-text reason and a ban length picked from a list (1h, 1d, 1w, ... or Permanent).
 
 ### Police RP (arrests & records)
 

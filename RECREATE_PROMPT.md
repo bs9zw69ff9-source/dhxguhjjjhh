@@ -153,7 +153,7 @@ Predicates: `hasModRole`, `hasAdminRole`, `hasFactionLeaderRole`, `hasPoliceRole
 
 **Police:** `/warrant give|remove|check`, `/arrest`, `/backgroundcheck`, `/suspendrank`, `/bail increase|decrease|reset|show`.
 
-### `/tempban` — punishment presets
+### `/tempban` — reason + duration
 A choice list sets the duration automatically:
 `MassRDM in Protected Zone` 3d · `Spawn Killing – Whitelist Spawn` 5d · `Spawn Killing – Civ Spawn` 7d · `Hard R` **permanent** · `Soft A` 3d · `Slur` 1d · `Exploiting` 2d · `Harassment` 1d · `ERP` 1d · `Sexually Explicit` 7d · `Donator Abuse` 7d (+14d donator-perk suspension) · `Other` (custom date, autocompleted, 12pm Eastern).
 On ban: DM the player a punishment notice (report DM success/failure in the embed), write the mod log, enforce over RCON, and flag IP/EOS.
@@ -273,7 +273,8 @@ All police output goes to a dedicated police log channel.
 - **Verification** — a public channel with a Verify button → modal for the Pavlov name → request posted to a private staff channel with Accept/Deny (mod-gated). On accept: grant the Verified role, remove Unverified, store the link, and log Discord↔IP to the webhook. **One person per name; no alts** (conflict detection via confirmed IPs). An auto-created **Unverified** role is denied view on previously-public channels only (bot-lock signature: `@everyone` deny + Verified allow) — channels are never made private.
 - **Leaderboards** — self-refreshing single messages edited in place every 30s: richest players, **arrests/jail-time "Most Wanted"**, live player list (with staff tags and today's/all-time peak), and a live server dashboard (monospace HUD, per-server health, player bars, gateway ping). One shared `autopost(key, channelId, getEmbed)` helper. On startup, purge stray messages but **keep the tracked board messages** so a restart edits in place instead of reposting.
 - **RCON menu panel** — a channel where staff enter their in-game name and receive the menu matching their highest Discord role (`/setrconroles` maps role→menu). Grants are recorded and **re-applied on every join** (the server drops menus on disconnect). High Staff additionally runs `AddMod` + `AddAccessManager`.
-- **Kill feed** — plain-text (no embed, no emoji) `killer → killed` posts to `KILLFEED_CHANNEL`.
+- **Kill log** — plain text, one line per PvP kill, to its own webhook (`KILL_WEBHOOK_URL`).
+- **Join/leave log** — plain text, one line each, to `JOIN_WEBHOOK_URL`. Carries no IP or account data.
 - **Mod log** — every action appended to `MODLOG`; `/staffactivity` and `/staffleaderboard` read it (bans/kicks/mutes only, automated actions excluded).
 - **Playtime & peaks** — sampled every 60s while online; all-time and daily-reset peak tracking (Eastern time).
 - **Update log** — posts a changelog when `BUILD_ID` changes, with private info redacted (IPs, tokens, snowflakes, home paths).
@@ -302,7 +303,7 @@ All police output goes to a dedicated police log channel.
 
 **Required:** `DISCORD_TOKEN`, `CLIENT_ID`, `RCON_HOST_1`, `RCON_PORT_1`, `RCON_PASSWORD_1`.
 
-**Optional:** `RCON_{HOST,PORT,PASSWORD}_{2,3}` · `BOT_NAME` · `MODSAVE_PATH`, `MODSAVE_SYNC`, `MODSAVE_SYNC_SKIP_EXTRA`, `MODSAVE_BLACKLIST_PATH`, `DONATOR_PATH` · `PAVLOV_BASE_1`, `PAVLOV_BASES`, `PAVLOV_LOGS` · channels: `MOD_LOG_CHANNEL` (staff log), `BAN_LOG_CHANNEL` (staff punishment log), `POLICE_LOG_CHANNEL`, `ARREST_CHANNEL`, `LEADERBOARD_CHANNEL`, `ARREST_LEADERBOARD_CHANNEL`, `PLAYERLIST_CHANNEL`, `DASHBOARD_CHANNEL`, `KILLFEED_CHANNEL`, `MENU_PANEL_CHANNEL`, `UPDATE_LOG_CHANNEL`, `VERIFY_CHANNEL`, `VERIFY_STAFF_CHANNEL`, `CONNECT_WEBHOOK_URL` · roles: `VERIFIED_ROLE`, `MENU_ROLE_{STAFF,HIGHSTAFF,BLACKLIST}` · detection: `IPHUB_API_KEY`, `IPQS_API_KEY`, `PROXYCHECK_API_KEY`, `IPINFO_TOKEN` · `UFW_BLOCK` · access: `OWNER_IDS`, `SUPER_OWNER_IDS`, `BLACKLIST_IDS`, `APPEAL_LINK` · `BUILD_ID`, `LOG_LEVEL`, `DB_EXPORT_INTERVAL_MS`.
+**Optional:** `RCON_{HOST,PORT,PASSWORD}_{2,3}` · `BOT_NAME` · `MODSAVE_PATH`, `MODSAVE_SYNC`, `MODSAVE_SYNC_SKIP_EXTRA`, `MODSAVE_BLACKLIST_PATH`, `DONATOR_PATH` · `PAVLOV_BASE_1`, `PAVLOV_BASES`, `PAVLOV_LOGS` · channels: `MOD_LOG_CHANNEL` (staff log), `BAN_LOG_CHANNEL` (staff punishment log), `POLICE_LOG_CHANNEL`, `ARREST_CHANNEL`, `LEADERBOARD_CHANNEL`, `ARREST_LEADERBOARD_CHANNEL`, `PLAYERLIST_CHANNEL`, `DASHBOARD_CHANNEL`, `MENU_PANEL_CHANNEL`, `UPDATE_LOG_CHANNEL`, `VERIFY_CHANNEL`, `VERIFY_STAFF_CHANNEL`, `CONNECT_WEBHOOK_URL`, `JOIN_WEBHOOK_URL`, `KILL_WEBHOOK_URL` · roles: `VERIFIED_ROLE`, `MENU_ROLE_{STAFF,HIGHSTAFF,BLACKLIST}` · detection: `IPHUB_API_KEY`, `VPNAPI_KEY`, `IPAPIIS_KEY`, `SENTINEL_API_KEY`, `IPQS_API_KEY`, `PROXYCHECK_API_KEY`, `IPINFO_TOKEN` · `UFW_BLOCK` · access: `OWNER_IDS`, `SUPER_OWNER_IDS`, `BLACKLIST_IDS`, `APPEAL_LINK` · `BUILD_ID`, `LOG_LEVEL`, `DB_EXPORT_INTERVAL_MS`, `RCON_READ_CACHE_MS`.
 
 Ship a fully commented `.env.example`.
 
