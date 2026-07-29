@@ -369,67 +369,80 @@ module.exports = (ctx) => {
          STRIPMENUALL - owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
   /* ─────────────────────────────────────────────────────
-         LOCK / UNLOCK - close the servers behind a join PIN (RCON SetPin/RemovePin)
+         SETPIN / REMOVEPIN - close a server behind a join PIN
          ───────────────────────────────────────────────────── */
-  "lock": async (interaction, name) => {
+  "setpin": async (interaction, name) => {
+        const server = interaction.options.getString("server") || "both";
         const raw    = (interaction.options.getString("pin") ?? "").trim();
         const reason = sanitizeMessage(interaction.options.getString("reason") ?? "") || null;
-        /* Digits only - SetPin takes an integer, and anything else is silently accepted
-           by RCON while leaving the server in a state nobody can predict. Four is the
-           floor because a 1-2 digit PIN is guessable by hand in seconds. */
+        /* Digits only - SetPin takes an integer, and RCON accepts anything else silently
+           while leaving the server in a state nobody can predict. Four is the floor
+           because a 1-2 digit PIN is guessable by hand in seconds. */
         if (raw && !/^\d{4,8}$/.test(raw)) {
           return interaction.reply({ embeds: [errorEmbed("Invalid PIN",
             "The PIN must be **4 to 8 digits**, numbers only. Leave it blank and I'll generate one.")], flags: MessageFlags.Ephemeral });
         }
-        // A generated PIN uses crypto randomness, not Math.random - this is the only
-        // thing standing between the public and a locked server.
+        // crypto randomness, not Math.random - this is the only thing between the
+        // public and a closed server.
         const pin = raw || String(100000 + (crypto.randomBytes(4).readUInt32BE(0) % 900000));
 
-        /* Ephemeral: the PIN is a shared secret. A public reply would post it into the
+        /* Ephemeral: the PIN is a shared secret. A public reply would post it into
            channel history for anyone with read access, which defeats the lock. */
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const res = await sendRconBoth(`SetPin ${pin}`, "both");
-        const ok  = [res.ok1, res.ok2, res.ok3].filter(Boolean).length;
-        if (!ok) {
-          return interaction.editReply({ embeds: [errorEmbed("Lock Failed",
-            "No server accepted `SetPin`. Check RCON connectivity with `/health`.")] });
+        const res = await sendRconBoth(`SetPin ${pin}`, server);
+        const applied = ACTIVE_SERVERS.filter(s => res[`ok${String(s).replace("server", "")}`]);
+        if (!applied.length) {
+          return interaction.editReply({ embeds: [errorEmbed("SetPin Failed",
+            `No server accepted \`SetPin\` on ${serverLabel(server)}. Check RCON connectivity with \`/health\`.`)] });
         }
-        await update(FILES.SERVER_LOCK, {}, () => ({
-          locked: true, pin, reason,
-          by: interaction.user.tag, byId: interaction.user.id, at: Date.now(),
-        }));
-        logger.info("Lock", `${interaction.user.tag} locked ${ok} server(s)${reason ? ` - ${reason}` : ""}`);
+        /* Per-server state: with a server choice the servers can now genuinely diverge -
+           one locked, one open - so a single global flag would misreport both. */
+        await update(FILES.SERVER_LOCK, {}, (st) => {
+          for (const s of applied) {
+            st[s] = { locked: true, pin, reason, by: interaction.user.tag, byId: interaction.user.id, at: Date.now() };
+          }
+          return st;
+        });
+        logger.info("Lock", `${interaction.user.tag} set a PIN on ${applied.join(", ")}${reason ? ` - ${reason}` : ""}`);
 
-        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Servers Locked")
-          .setDescription(`The servers are now **locked**. Only players who enter the PIN can join.`)
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Server Locked")
+          .setDescription(`A join PIN is now set. Only players who enter it can connect.`)
           .addFields(
             { name: "PIN", value: `\`${pin}\``, inline: true },
-            { name: "Applied to", value: `${ok}/${ACTIVE_SERVERS.length} server(s)`, inline: true },
+            { name: "Applied to", value: applied.map(serverLabel).join(", "), inline: true },
             ...(reason ? [{ name: "Reason", value: reason, inline: false }] : []),
           )
-          .setFooter({ text: "Share the PIN only with people who should get in. /unlock reopens the servers." }));
-        /* The staff log records WHO locked it and why - never the PIN itself. The log
-           channel is broader than the people who should be able to join. */
-        await logAction(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Servers Locked")
-          .setDescription(`**${interaction.user.username}** locked ${ok}/${ACTIVE_SERVERS.length} server(s)${reason ? ` - ${reason}` : "."}\nThe PIN was sent privately; use \`/lock\` to see it.`)));
+          .setFooter({ text: "Share the PIN only with people who should get in. /removepin reopens the server." }));
+        /* The staff log gets WHO and WHERE, never the PIN - that channel is visible to
+           more people than should be able to join. */
+        await logAction(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Server Locked")
+          .setDescription(`**${interaction.user.username}** set a join PIN on **${applied.map(serverLabel).join(", ")}**${reason ? ` - ${reason}` : "."}\nThe PIN was sent privately; run \`/setpin\` to see it.`)));
         return interaction.editReply({ embeds: [embed] });
         },
 
-  "unlock": async (interaction, name) => {
+  "removepin": async (interaction, name) => {
+        const server = interaction.options.getString("server") || "both";
         await interaction.deferReply();
-        const res = await sendRconBoth("RemovePin", "both");
-        const ok  = [res.ok1, res.ok2, res.ok3].filter(Boolean).length;
-        if (!ok) {
-          return interaction.editReply({ embeds: [errorEmbed("Unlock Failed",
-            "No server accepted `RemovePin`. Check RCON connectivity with `/health`.")] });
+        const res = await sendRconBoth("RemovePin", server);
+        const cleared = ACTIVE_SERVERS.filter(s => res[`ok${String(s).replace("server", "")}`]);
+        if (!cleared.length) {
+          return interaction.editReply({ embeds: [errorEmbed("RemovePin Failed",
+            `No server accepted \`RemovePin\` on ${serverLabel(server)}. Check RCON connectivity with \`/health\`.`)] });
         }
         const prev = safeRead(FILES.SERVER_LOCK, {});
-        // Clear the stored PIN outright - keeping a stale secret around serves nothing.
-        await update(FILES.SERVER_LOCK, {}, () => ({ locked: false, unlockedBy: interaction.user.tag, at: Date.now() }));
-        logger.info("Lock", `${interaction.user.tag} unlocked ${ok} server(s)`);
-        const held = prev?.at ? `\nIt was locked by ${prev.by ?? "someone"} <t:${Math.floor(prev.at / 1000)}:R>.` : "";
-        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Servers Unlocked")
-          .setDescription(`**${interaction.user.username}** removed the join PIN on ${ok}/${ACTIVE_SERVERS.length} server(s). Anyone can join again.${held}`));
+        // Drop the stored PIN for the servers actually reopened - keeping a stale
+        // secret around serves nothing, and leaving it set would misreport the state.
+        await update(FILES.SERVER_LOCK, {}, (st) => {
+          for (const s of cleared) st[s] = { locked: false, unlockedBy: interaction.user.tag, at: Date.now() };
+          return st;
+        });
+        logger.info("Lock", `${interaction.user.tag} removed the PIN on ${cleared.join(", ")}`);
+        const held = cleared.map(s => (prev?.[s]?.at
+          ? `${serverLabel(s)} was locked by ${prev[s].by ?? "someone"} <t:${Math.floor(prev[s].at / 1000)}:R>`
+          : null)).filter(Boolean);
+        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Server Unlocked")
+          .setDescription(`**${interaction.user.username}** removed the join PIN on **${cleared.map(serverLabel).join(", ")}**. Anyone can join again.`
+            + (held.length ? `\n${held.join("\n")}` : "")));
         await logAction(embed);
         return interaction.editReply({ embeds: [embed] });
         },

@@ -42,7 +42,7 @@ module.exports = (ctx) => {
           ["`/staffactivity <staff>` / `/staffleaderboard [period]`", "Audit one staffer's actions, or rank staff by moderation actions (admin)."],
           ["`/givemenu <player>` / `/stripmenu <player>` / `/setrconroles`", "Grant or strip RCON menu access; map roles to menus (admin)."],
           ["`/unlinkname <user>`", "Break a member's permanent in-game name link, for a real name change (admin)."],
-          ["`/lock [pin] [reason]` / `/unlock`", "Close the servers behind a join PIN, or reopen them (admin)."],
+          ["`/setpin <server> [pin]` / `/removepin <server>`", "Lock a server behind a join PIN, or reopen it (admin)."],
           ["`/donator add|remove|list <player>` / `/adjustcaps <player> <amount>`", "Manage the donator list; adjust a player's ledger (admin)."],
           ["`/setroles` / `/manual <command>`", "Set tier roles, or send a raw RCON command (admin)."],
           ["`/configure` / `/firewall block|unblock|status` / `/health`", "Owner control panel, manual OS-firewall (ufw) control, and bot health (owner)."],
