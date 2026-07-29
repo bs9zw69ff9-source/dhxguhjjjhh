@@ -208,10 +208,17 @@ async function enforceBansSweep() {
           // flagged/shared IP mass-create ban entries wrongly attributed to a person.
           continue;
         }
-        // NOTE: mutes are applied once on /mute and re-applied once on join
-        // (applyMuteOnJoin) - NOT repeated here. Gag <name> is a bare toggle with
-        // no explicit True/False, so calling it again on every 60s sweep would flip
-        // an already-muted player's state back off instead of safely re-affirming it.
+        /* NOTE: mutes are applied once on /mute and re-applied once on join
+           (applyMuteOnJoin) - NOT repeated here.
+
+           The Pavlov RCON docs give the signature as `Gag [UniqueID] [True/False]`,
+           which WOULD be safe to re-affirm on a sweep. The bot's own RCON+ log shows
+           the mod issuing `Gag <name> True`, matching the docs. This comment used to
+           claim it was a bare toggle; that was never verified against the wiki. It is
+           still not re-affirmed here, because the sweep targets the display NAME while
+           Gag expects a UniqueId - re-issuing it from here would need the same
+           name->UniqueId resolution hardEnforce does, and getting that wrong silently
+           un-mutes somebody. Left alone deliberately, not by accident. */
       }
     }
   } finally { _sweepBusy = false; }

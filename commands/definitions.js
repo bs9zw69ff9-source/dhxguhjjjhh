@@ -152,7 +152,7 @@ const commands = [
   new SlashCommandBuilder().setName("setpin")
     .setDescription("Admin - Lock a server with a join PIN (RCON SetPin)")
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("pin").setDescription("1-4 digits. Leave blank and a 4-digit one is generated").setRequired(false).setMinLength(1).setMaxLength(4))
+    .addStringOption(o => o.setName("pin").setDescription("1-9999, no leading zeros. Leave blank and one is generated").setRequired(false).setMinLength(1).setMaxLength(4))
     .addStringOption(o => o.setName("reason").setDescription("Why the server is being locked (shown in the staff log)").setRequired(false)),
   new SlashCommandBuilder().setName("removepin")
     .setDescription("Admin - Clear the join PIN and reopen a server (RCON SetPin, no argument)")

@@ -375,13 +375,18 @@ module.exports = (ctx) => {
         const server = interaction.options.getString("server") || "both";
         const raw    = (interaction.options.getString("pin") ?? "").trim();
         const reason = sanitizeMessage(interaction.options.getString("reason") ?? "") || null;
-        /* Pavlov's SetPin takes 1-4 digits. Digits only, and NEVER empty here: a bare
-           `SetPin` with no argument is what CLEARS the pin, so an empty string would
-           silently unlock the server instead of locking it. That is the one input
-           that must not reach RCON. */
-        if (raw && !/^\d{1,4}$/.test(raw)) {
+        /* Per the Pavlov RCON docs, SetPin takes 1-9999 with NO LEADING ZEROS, and a
+           pin of 0 or "0000" sets the value to zero rather than removing it - a state
+           worth refusing outright rather than handing someone a lock they think is off.
+           Empty is equally dangerous in the other direction: a bare `SetPin` is what
+           CLEARS the pin, so an empty argument would silently UNLOCK the server while
+           reporting that it had been locked. */
+        if (raw && !/^[1-9]\d{0,3}$/.test(raw)) {
+          const why = /^0+$/.test(raw)            ? "A PIN of `0` sets the value to zero rather than locking - pick 1-9999."
+                    : /^0\d+$/.test(raw)          ? "Leading zeros are not allowed - Pavlov reads the PIN as a number."
+                    : "The PIN must be a number from **1 to 9999**, no leading zeros.";
           return interaction.reply({ embeds: [errorEmbed("Invalid PIN",
-            "The PIN must be **1 to 4 digits**, numbers only. Leave it blank and I'll generate one.")], flags: MessageFlags.Ephemeral });
+            `${why}\nLeave it blank and I'll generate one.`)], flags: MessageFlags.Ephemeral });
         }
         /* crypto randomness, not Math.random - this is the only thing between the
            public and a closed server. A generated PIN always uses the full 4 digits
