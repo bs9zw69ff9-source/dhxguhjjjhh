@@ -152,10 +152,10 @@ const commands = [
   new SlashCommandBuilder().setName("setpin")
     .setDescription("Admin - Lock a server with a join PIN (RCON SetPin)")
     .addStringOption(serverOption)
-    .addStringOption(o => o.setName("pin").setDescription("Exactly 4 digits. Leave blank and one is generated for you").setRequired(false).setMinLength(4).setMaxLength(4))
+    .addStringOption(o => o.setName("pin").setDescription("1-4 digits. Leave blank and a 4-digit one is generated").setRequired(false).setMinLength(1).setMaxLength(4))
     .addStringOption(o => o.setName("reason").setDescription("Why the server is being locked (shown in the staff log)").setRequired(false)),
   new SlashCommandBuilder().setName("removepin")
-    .setDescription("Admin - Remove the join PIN and reopen a server (RCON RemovePin)")
+    .setDescription("Admin - Clear the join PIN and reopen a server (RCON SetPin, no argument)")
     .addStringOption(serverOption),
   new SlashCommandBuilder().setName("unlinkname")
     .setDescription("Admin - Break a member's permanent in-game name link (for a real name change)")

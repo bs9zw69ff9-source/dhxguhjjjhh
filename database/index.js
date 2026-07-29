@@ -49,7 +49,7 @@ module.exports = function createDatabase({ logger, baseDir }) {
     CASINO_QUOTA: "./casino_quota.json",
     CASINO_POT: "./casino_pot.json",
     AUTOPOST_STATE: "./autopost_state.json",
-    // Server lock (RCON SetPin/RemovePin): the PIN plus who set it and when.
+    // Server lock (RCON SetPin): the PIN plus who set it and when, per server.
     SERVER_LOCK:    "./server_lock.json",
     VPN_CHECKS: "./vpn_checks.json",
     DONATOR_SUSPEND: "./donator_suspend.json",

@@ -375,16 +375,17 @@ module.exports = (ctx) => {
         const server = interaction.options.getString("server") || "both";
         const raw    = (interaction.options.getString("pin") ?? "").trim();
         const reason = sanitizeMessage(interaction.options.getString("reason") ?? "") || null;
-        /* Pavlov's SetPin takes a 4-digit PIN - that is the ceiling, and 4 is also the
-           only sensible floor, since a 1-3 digit PIN is exhaustible by hand. Digits
-           only: RCON accepts anything else silently while leaving the server in a
-           state nobody can predict. */
-        if (raw && !/^\d{4}$/.test(raw)) {
+        /* Pavlov's SetPin takes 1-4 digits. Digits only, and NEVER empty here: a bare
+           `SetPin` with no argument is what CLEARS the pin, so an empty string would
+           silently unlock the server instead of locking it. That is the one input
+           that must not reach RCON. */
+        if (raw && !/^\d{1,4}$/.test(raw)) {
           return interaction.reply({ embeds: [errorEmbed("Invalid PIN",
-            "The PIN must be exactly **4 digits**, numbers only. Leave it blank and I'll generate one.")], flags: MessageFlags.Ephemeral });
+            "The PIN must be **1 to 4 digits**, numbers only. Leave it blank and I'll generate one.")], flags: MessageFlags.Ephemeral });
         }
-        // crypto randomness, not Math.random - this is the only thing between the
-        // public and a closed server. 1000-9999, so it is never fewer than 4 digits.
+        /* crypto randomness, not Math.random - this is the only thing between the
+           public and a closed server. A generated PIN always uses the full 4 digits
+           (1000-9999): shorter is permitted if you ask for it, but never chosen. */
         const pin = raw || String(1000 + (crypto.randomBytes(4).readUInt32BE(0) % 9000));
 
         /* Ephemeral: the PIN is a shared secret. A public reply would post it into
@@ -424,11 +425,13 @@ module.exports = (ctx) => {
   "removepin": async (interaction, name) => {
         const server = interaction.options.getString("server") || "both";
         await interaction.deferReply();
-        const res = await sendRconBoth("RemovePin", server);
+        /* A bare `SetPin` - no argument - is what clears the pin. There is no
+           RemovePin verb. */
+        const res = await sendRconBoth("SetPin", server);
         const cleared = ACTIVE_SERVERS.filter(s => res[`ok${String(s).replace("server", "")}`]);
         if (!cleared.length) {
-          return interaction.editReply({ embeds: [errorEmbed("RemovePin Failed",
-            `No server accepted \`RemovePin\` on ${serverLabel(server)}. Check RCON connectivity with \`/health\`.`)] });
+          return interaction.editReply({ embeds: [errorEmbed("Clear PIN Failed",
+            `No server accepted \`SetPin\` (clear) on ${serverLabel(server)}. Check RCON connectivity with \`/health\`.`)] });
         }
         const prev = safeRead(FILES.SERVER_LOCK, {});
         // Drop the stored PIN for the servers actually reopened - keeping a stale
