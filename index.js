@@ -3039,7 +3039,7 @@ const { onInteraction } = require("./commands")({
   upsertPermBan, upsertTempBan, warningEmbed, wipeAllMoney, wipeAllPlayerData, wipeFaction, writeFactionAudit,
   writeFactionFile, writeModLog, writePlayerBalance,
   blacklistAll,
-  safeRead,
+  safeRead, _doVpnCheck,
 });
 
 client.on("interactionCreate", onInteraction);

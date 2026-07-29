@@ -12,7 +12,7 @@ module.exports = (ctx) => {
   _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole, hookStatus,
   hasModRole, hero, ipBans, isOwner,
   clearMenuLink, loadFactionBackup, loadMenuGrants, loadMenuLinks, loadMenuRoles, loadRoles, logAction, logger, modOnlyEmbed,
-  FILES, safeRead,
+  FILES, safeRead, checkVpn, _doVpnCheck, _IPV4_RE,
   ownerOnlyEmbed, paginate, parseRcon, path, probeDetectors, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel, sysStats, meter,
@@ -368,6 +368,90 @@ module.exports = (ctx) => {
   /* ─────────────────────────────────────────────────────
          STRIPMENUALL - owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────────
+         IPLOOKUP - location, ISP and VPN status for one address
+         ───────────────────────────────────────────────────── */
+  "iplookup": async (interaction, name) => {
+        /* Owner-only and ephemeral, matching /vpncheck. An IP is personal data, and a
+           lookup posted publicly would leak a player's approximate location. */
+        if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [ownerOnlyEmbed()], flags: MessageFlags.Ephemeral });
+        const ip = sanitizeId(interaction.options.getString("ip") ?? "").trim();
+        if (!_IPV4_RE.test(ip)) {
+          return interaction.reply({ embeds: [errorEmbed("Invalid IP",
+            "Give a full IPv4 address, e.g. `203.0.113.10`. Every octet must be 0-255.")], flags: MessageFlags.Ephemeral });
+        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        /* Default reuses the stored verdict, so a repeat lookup costs no API quota.
+           refresh:true goes straight to the detectors and overwrites the cache - an
+           address that was residential last month can be a VPN exit node today. */
+        const refresh = interaction.options.getBoolean("refresh") === true;
+        let v = null;
+        try { v = refresh ? await _doVpnCheck(ip) : await checkVpn(ip); }
+        catch (e) { logger.warn("IPLookup", `lookup failed for ${ip}: ${e.message}`); }
+
+        if (!v) {
+          return interaction.editReply({ embeds: [errorEmbed("No Result",
+            "No detector could answer for that address, so nothing was recorded. Try again shortly - a failed lookup is never cached as clean.")] });
+        }
+
+        const geo = v.geo ?? {};
+        // Tri-state throughout: `unknown` means nobody could answer, which is a
+        // different fact from "no" and must not be shown as one.
+        const tri = (x, yes = "**Yes**", no = "No") => x === true ? yes : x === false ? no : "unknown";
+
+        const location = v.local
+          ? "Private / LAN address - no geolocation exists for it."
+          : [
+              `Country: **${v.country || geo.country || "unknown"}**${geo.countryCode ? ` (${geo.countryCode})` : ""}`,
+              `Region: ${geo.region || "unknown"}`,
+              `City: ${geo.city || "unknown"}${geo.zip ? `  ${geo.zip}` : ""}`,
+              `Timezone: ${geo.timezone || "unknown"}`,
+            ].join("\n");
+
+        const isp = [
+          `ISP: **${v.isp || geo.isp || "unknown"}**`,
+          `Organization: ${v.organization || "unknown"}`,
+          `ASN: ${v.asn ? `\`${v.asn}\`` : "unknown"}`,
+          `Connection: ${v.hosting === true ? "Hosting / datacenter"
+            : v.mobile === true ? "Mobile"
+            : v.residential === true ? "Residential" : "unknown"}`,
+        ].join("\n");
+
+        /* One plain verdict line first, then the categories behind it. The verdict is
+           what a moderator acts on; the categories are why. */
+        const verdict = v.local ? "Not applicable - private address"
+          : !v.flagged           ? "**Clean** - no detector flagged this address"
+          : v.confirmed === true  ? "🚫 **VPN / proxy CONFIRMED**"
+          : v.confirmed === false ? "⚠️ **Disputed** - screening flagged it, the accurate check cleared it"
+          :                         `⚠️ **Flagged** by ${v.screenHits ?? 0}/${v.screenAnswered ?? 0} checks, unconfirmed`;
+
+        const vpn = [
+          verdict,
+          "",
+          `VPN: ${tri(v.vpn)}`,
+          `Proxy: ${tri(v.proxy)}`,
+          `Tor: ${tri(v.tor)}`,
+          `Hosting / datacenter: ${tri(v.hosting)}`,
+          v.provider ? `Provider: **${v.provider}**` : null,
+          v.threatScore != null ? `Threat score: **${v.threatScore}**/100` : null,
+        ].filter(x => x !== null).join("\n");
+
+        const embed = brand(new EmbedBuilder()
+          .setColor(v.local ? CLIN.grey : v.flagged ? CLIN.red : CLIN.green)
+          .setTitle("IP Lookup")
+          .setDescription(`\`${ip}\``)
+          .addFields(
+            { name: "Location", value: location, inline: false },
+            { name: "ISP / Network", value: isp, inline: false },
+            { name: "VPN / Proxy", value: vpn.slice(0, 1024), inline: false },
+          )
+          .setFooter({ text: v.local ? "Private address - no lookup performed"
+            : `Sources: ${v.lookupSource || "none"} · checked ${v.lastChecked ? String(v.lastChecked).slice(0, 16).replace("T", " ") + " UTC" : "unknown"}`
+              + (refresh ? " (just refreshed)" : " · refresh:true to re-query") }));
+        return interaction.editReply({ embeds: [embed] });
+        },
+
   /* ─────────────────────────────────────────────────────
          SETPIN / REMOVEPIN - close a server behind a join PIN
          ───────────────────────────────────────────────────── */

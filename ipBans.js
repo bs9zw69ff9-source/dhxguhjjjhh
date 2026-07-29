@@ -278,6 +278,30 @@ function altIdsForIps(ips, excludeIds = []) {
     if (!ex.has(norm(id)) && (e.cips || []).some(ip => ips.includes(ip))) set.add(id);
   return [...set];
 }
+/* Reverse of getRecord: every account the log has seen on ONE address, newest activity
+   first. Confirmed (same-line RemoteAddr+UniqueId) is reported separately from tentative
+   (correlated accept+login) because only the confirmed pairing is evidence - a tentative
+   IP on a busy server may have been attributed to the wrong join. */
+function accountsOnIp(ip) {
+  const target = String(ip ?? "").trim();
+  if (!target) return [];
+  const out = [];
+  for (const [id, e] of Object.entries(registry)) {
+    const confirmed = (e.cips || []).includes(target);
+    const tentative = (e.ips  || []).includes(target);
+    if (!confirmed && !tentative) continue;
+    out.push({
+      id, name: e.name ?? null, confirmed,
+      firstSeen: e.firstSeen ?? null, lastSeen: e.lastSeen ?? null,
+      logins: e.logins || 0,
+      // How many times this exact address shows up in their recent connection history.
+      seenOnThisIp: (e.recent || []).filter(c => c && c.ip === target).length,
+    });
+  }
+  // Confirmed first, then by most recent activity - the order a moderator reads in.
+  return out.sort((a, b) => (b.confirmed - a.confirmed) || ((b.lastSeen || 0) - (a.lastSeen || 0)));
+}
+
 // Everything Pavlov.log has taught us about a player: name, all/confirmed IPs,
 // first/last seen, and shared-IP alt usernames. Returns null if unknown.
 function getRecord(input) {
@@ -892,6 +916,7 @@ module.exports = {
   getAltsOf:                (input) => altIdsForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   getAltNamesOf:            (input) => altNamesForIps(confirmedIpsForIds(resolveIds(input)), resolveIds(input)),
   getRecord,
+  accountsOnIp,
   getKD,
   topKD,
   getKills,

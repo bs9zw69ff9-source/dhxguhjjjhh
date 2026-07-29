@@ -149,6 +149,10 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("stripmenuall")
     .setDescription("Owner - Clear ALL menu access from every player (both servers)"),
+  new SlashCommandBuilder().setName("iplookup")
+    .setDescription("Owner - Look up an IP: location, ISP and VPN/proxy status")
+    .addStringOption(o => o.setName("ip").setDescription("The IP address to look up").setRequired(true))
+    .addBooleanOption(o => o.setName("refresh").setDescription("Re-query the detectors instead of using the cached verdict").setRequired(false)),
   new SlashCommandBuilder().setName("setpin")
     .setDescription("Admin - Lock a server with a join PIN (RCON SetPin)")
     .addStringOption(serverOption)
