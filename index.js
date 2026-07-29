@@ -1243,6 +1243,61 @@ setInterval(() => {
   for (const [k, v] of rateLimits) if (v < cutoff) rateLimits.delete(k);
 }, 600_000);
 
+/* ---- architecture core: metrics, health, errors, services, monitoring ----------
+   Built here, immediately after the logger, so every subsystem below can report through
+   them. All are dependency-free and side-effect-free until started. */
+const { createMetrics }           = require("./core/metrics");
+const { createHealth }            = require("./core/health");
+const { createErrorManager }      = require("./core/errors");
+const { createServiceManager }    = require("./core/services");
+const { createMonitoringServer }  = require("./core/monitoring-server");
+const { registerBackgroundServices } = require("./core/background-services");
+
+const metrics  = createMetrics({ logger, prefix: "pavlovbot" });
+const errors   = createErrorManager({ logger, metrics });
+const health   = createHealth({ logger });
+const services = createServiceManager({ logger, metrics, errors });
+const monitoring = createMonitoringServer({
+  metrics, health, logger, errors,
+  port:  process.env.METRICS_PORT ?? null,
+  host:  process.env.METRICS_HOST || "127.0.0.1",
+  token: process.env.METRICS_TOKEN || null,
+  readiness: () => services.running() > 0,
+});
+
+/* Last-resort handlers. These previously did not exist, so an unhandled rejection in a
+   detached promise could take the whole bot down mid-moderation. Record and carry on -
+   an uncaught error in one subsystem is not a reason to drop every other one. */
+/* ---- plugins ----------------------------------------------------------------
+   Auto-discovered from plugins/. Disable any of them with a comma-separated
+   PLUGINS_DISABLED, or restrict to an allow-list with PLUGINS_ENABLED. A plugin that
+   throws while loading is skipped and recorded - never fatal. */
+const { createPluginManager } = require("./core/plugins");
+const _pluginsDisabled = new Set(String(process.env.PLUGINS_DISABLED || "").split(",").map(x => x.trim()).filter(Boolean));
+const _pluginsEnabled  = new Set(String(process.env.PLUGINS_ENABLED  || "").split(",").map(x => x.trim()).filter(Boolean));
+const plugins = createPluginManager({
+  logger, metrics, errors,
+  dir: path.join(__dirname, "plugins"),
+  isEnabled: (name, manifest) => {
+    if (_pluginsDisabled.has(name)) return false;
+    if (_pluginsEnabled.size) return _pluginsEnabled.has(name);
+    return manifest.enabledByDefault !== false;
+  },
+});
+
+/* Started at BOOT, not on Discord ready. If the gateway is down or the token is wrong,
+   that is precisely when /health needs to be answerable - tying observability to a
+   successful login makes it unavailable exactly when it matters most. */
+monitoring.start().catch(err => errors.record(err, { category: "startup", subsystem: "monitoring" }));
+
+process.on("unhandledRejection", (reason) => {
+  errors.record(reason instanceof Error ? reason : new Error(String(reason)),
+    { category: "unhandled_rejection", subsystem: "process" });
+});
+process.on("uncaughtException", (err) => {
+  errors.record(err, { category: "uncaught_exception", subsystem: "process" });
+});
+
 // ---- input sanitization + pure helpers (extracted to ./utils) ----
 const {
   sanitizeId, sanitizeMessage, md5, formatTimeLeft,
@@ -2782,47 +2837,45 @@ async function rconHealthCheck() {
   }
 }
 
-// ---- intervals  - started from startintervals(), which runs only when the ----
+/* ---- background services ----------------------------------------------------
+   These were 16 bare setInterval calls. They now run under the ServiceManager, which
+   catches and counts a throwing tick, refuses to re-enter a slow one, and can stop them
+   all deterministically on shutdown. Intervals and behaviour are unchanged - see
+   core/background-services.js for the registrations. */
 function startIntervals() {
-setInterval(processExpiredBans,      60_000);
-setInterval(processDonatorRestores,  60_000);   // auto-restore timed donator-perk suspensions
-if (DB_EXPORT_INTERVAL_MS > 0) {
-  setInterval(exportDbToJson, DB_EXPORT_INTERVAL_MS);   // periodic SQLite -> JSON backup
-  setTimeout(exportDbToJson, 60_000);                   // one fresh snapshot shortly after startup
+  registerBackgroundServices(services, {
+    processExpiredBans, enforceBansSweep, reconcileBans,
+    sentenceSweep, rankSuspensionSweep, processDonatorRestores,
+    postLeaderboard, postArrestBoard, postPlayerList, postDashboard,
+    rconHealthCheck, refreshPlayerCache, tickPlaytime,
+    exportDbToJson, autoBackupFactions, importModsaveBanlist, syncModsaveBanlist, syncAllModSave,
+    ACTIVE_SERVERS, DB_EXPORT_INTERVAL_MS, LEADERBOARD_INTERVAL_MS, PLAYERLIST_INTERVAL_MS,
+    DASHBOARD_INTERVAL_MS, RCON_HEALTH_INTERVAL_MS, MODSAVE_SYNC_INTERVAL_MS,
+    ARREST_LEADERBOARD_CHANNEL, DASHBOARD_CHANNEL, logger,
+  });
+  services.startAll().catch(err => errors.record(err, { category: "startup", subsystem: "services" }));
+
+  /* Plugins load after the core is up, so they can be handed a fully-built context.
+     Failures are contained by the manager - one bad plugin never blocks the others. */
+  (async () => {
+    plugins.load();
+    const { commands: pluginCommands } = await plugins.initializeAll({
+      logger, metrics, errors, health, services, ipBans, client, BOT_START_MS,
+    });
+    const extra = Object.keys(pluginCommands);
+    if (extra.length) logger.info("Plugins", `contributed command(s): ${extra.join(", ")}`);
+    await plugins.startAll();
+    metrics.gauge("plugins_loaded", plugins.count(), {}, "Plugins loaded");
+  })().catch(err => errors.record(err, { category: "startup", subsystem: "plugins" }));
+
+  /* Kept as one-shots: these run ONCE shortly after boot, they are not recurring work,
+     so modelling them as services would misreport them as idle forever. */
+  if (DB_EXPORT_INTERVAL_MS > 0) setTimeout(exportDbToJson, 60_000);
+  setTimeout(() => {
+    const b = safeRead(FILES.FACTION_BACKUP, {});
+    if (!b || !b.files || !Object.keys(b.files).length) autoBackupFactions();
+  }, 30_000);
 }
-setInterval(enforceBansSweep,        30_000);   // remove banned players who are still online
-setInterval(reconcileBans,          300_000);   // rebuild the server ban list from the DB every 5 min
-setInterval(() => { sentenceSweep().catch(() => {}); }, 30_000);          // announce ended jail sentences
-setInterval(() => { rankSuspensionSweep().catch(() => {}); }, 30_000);    // restore expired rank suspensions
-// (ufw is manual-only via /firewall - no periodic auto-block/reconcile of ban IPs)
-setInterval(postLeaderboard,         LEADERBOARD_INTERVAL_MS);
-if (ARREST_LEADERBOARD_CHANNEL) setInterval(postArrestBoard, LEADERBOARD_INTERVAL_MS);
-setInterval(postPlayerList,          PLAYERLIST_INTERVAL_MS);
-if (DASHBOARD_CHANNEL) setInterval(postDashboard, DASHBOARD_INTERVAL_MS);
-setInterval(rconHealthCheck,         RCON_HEALTH_INTERVAL_MS);
-setInterval(async () => {
-  for (const s of ACTIVE_SERVERS) await refreshPlayerCache(s);
-  tickPlaytime();
-}, 60_000);
-
-setInterval(autoBackupFactions, 24 * 60 * 60 * 1000);
-setInterval(async () => {        // capture any in-game-menu bans, then rebuild the file from the DB
-  try { await importModsaveBanlist(); } catch {}
-  syncModsaveBanlist();
-}, 5 * 60 * 1000);
-// Keep the whole ModSave tree identical across all installs (newest-wins).
-setInterval(() => { try { syncAllModSave(); } catch (e) { logger.warn("Sync", `ModSave sync failed: ${e.message}`); } }, MODSAVE_SYNC_INTERVAL_MS);
-// Seed a snapshot shortly after startup only if none exists yet (don't clobber an
-// existing/manual backup on every restart).
-setTimeout(() => {
-  const b = safeRead(FILES.FACTION_BACKUP, {});
-  if (!b || !b.files || !Object.keys(b.files).length) autoBackupFactions();
-}, 30_000);
-
-setTimeout(postLeaderboard, 20_000);
-if (ARREST_LEADERBOARD_CHANNEL) setTimeout(postArrestBoard, 20_000);
-}
-
 
 // Daily faction-whitelist auto-backup, so there's always a recent snapshot to /configure -> Load.
 function autoBackupFactions() {
@@ -2855,7 +2908,12 @@ const {  } = require("./events")({
 
 // ---- graceful shutdown ----
 async function shutdown(signal) {
-  logger.info("Bot", `${signal} received - draining write queues...`);
+  logger.info("Bot", `${signal} received - stopping services and draining write queues...`);
+  /* Stop recurring work FIRST, in reverse dependency order. Draining the write queues
+     while sweeps are still ticking just means new writes land behind the drain. */
+  try { await plugins.stopAll(); } catch {}
+  try { await services.stopAll(); } catch {}
+  try { await monitoring.stop(); } catch {}
   // _queues holds the tail promise of every per-file write chain; waiting on them
   // means pm2 restarts can't kill an in-flight atomic write mid-rename.
   try { await Promise.allSettled([..._queues.values()]); } catch {}
@@ -2865,6 +2923,68 @@ async function shutdown(signal) {
   logger.info("Bot", "Queues drained - exiting.");
   process.exit(0);
 }
+/* ---- health checks for the real subsystems ----------------------------------
+   Registered late so everything they probe already exists. Each is cheap and
+   non-blocking; the framework caps them with its own timeout. */
+health.register("discord", () => {
+  if (!client?.isReady?.()) return { status: "unhealthy", detail: "gateway not ready" };
+  const ping = client.ws?.ping ?? -1;
+  metrics.gauge("discord_ping_ms", ping, {}, "Discord gateway latency");
+  // A negative ping means "not measured yet", not a slow link.
+  if (ping > 1000) return { status: "degraded", detail: `gateway latency ${ping}ms` };
+  return { status: "healthy", detail: `latency ${ping}ms` };
+});
+health.register("database", () => {
+  try { db.prepare("SELECT 1").get(); return { status: "healthy" }; }
+  catch (err) { return { status: "unhealthy", detail: err.message }; }
+});
+health.register("rcon", async () => {
+  const results = await Promise.allSettled(ACTIVE_SERVERS.map(srv =>
+    metrics.time("rcon_latency_ms", { server: srv }, () => sendRcon("RefreshList", srv, 2500, 0))));
+  const up = results.filter(r => r.status === "fulfilled").length;
+  metrics.gauge("rcon_servers_up", up, {}, "Reachable RCON servers");
+  if (up === 0) return { status: "unhealthy", detail: "no RCON server reachable" };
+  // Partial reachability is degraded, not down - the bot still moderates the rest.
+  if (up < ACTIVE_SERVERS.length) return { status: "degraded", detail: `${up}/${ACTIVE_SERVERS.length} servers reachable` };
+  return { status: "healthy", detail: `${up}/${ACTIVE_SERVERS.length} reachable` };
+});
+health.register("services", async () => services.health());
+health.register("plugins", () => {
+  const failed = Object.keys(plugins.failures());
+  if (failed.length) return { status: "degraded", detail: `failed: ${failed.join(", ")}` };
+  return { status: "healthy", detail: `${plugins.started().length}/${plugins.count()} started` };
+}, { critical: false });
+health.register("filesystem", () => {
+  // The working directory is where bot.db and the JSON backups live.
+  try { fs.accessSync(process.cwd(), fs.constants.R_OK | fs.constants.W_OK); return { status: "healthy" }; }
+  catch (err) { return { status: "unhealthy", detail: `data directory not writable: ${err.message}` }; }
+});
+// Optional: an unset webhook is a choice, not a fault - never fails the rollup.
+health.register("webhooks", () => {
+  const on = Object.entries(hookStatus).filter(([, v]) => v === "on").length;
+  const bad = Object.entries(hookStatus).filter(([, v]) => v && v !== "on" && v !== "off");
+  if (bad.length) return { status: "degraded", detail: bad.map(([k, v]) => `${k}: ${v}`).join(", ") };
+  return { status: "healthy", detail: `${on} webhook log(s) enabled` };
+}, { critical: false });
+
+/* Process-level gauges, refreshed on a slow tick - cheap, and they make memory growth
+   visible in the same place as everything else. */
+services.register({ name: "metrics-sampler", intervalMs: 15_000, runOnStart: true, tick: async () => {
+  const m = process.memoryUsage();
+  metrics.gauge("memory_rss_bytes", m.rss, {}, "Resident set size");
+  metrics.gauge("memory_heap_used_bytes", m.heapUsed);
+  metrics.gauge("memory_external_bytes", m.external);
+  metrics.gauge("uptime_seconds", Math.round((Date.now() - BOT_START_MS) / 1000), {}, "Bot uptime");
+  metrics.gauge("services_running", services.running(), {}, "Background services running");
+  metrics.gauge("errors_recorded_total", errors.total(), {}, "Errors recorded since start");
+} });
+/* Supervisor: restart anything that has been failing repeatedly. A service that throws
+   every tick would otherwise stay "running" and broken forever. */
+services.register({ name: "service-supervisor", intervalMs: 60_000, tick: async () => {
+  const revived = await services.reviveFailed({ threshold: 5 });
+  if (revived.length) logger.warn("Services", `restarted after repeated failures: ${revived.join(", ")}`);
+} });
+
 process.on("SIGINT",  () => { shutdown("SIGINT").catch(() => process.exit(1)); });
 process.on("SIGTERM", () => { shutdown("SIGTERM").catch(() => process.exit(1)); });
 process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, { stack: err.stack }));
@@ -2873,7 +2993,7 @@ process.on("uncaughtException",  err => logger.error("Uncaught",  err.message, {
 // ---- interactions (handler extracted to ./commands) ----
 const { onInteraction } = require("./commands")({
   ACTIVE_SERVERS, ALL_FACTIONS, ALL_RANK_NAMES, ActionRowBuilder, BAN_DURATIONS, BLACKLIST_IDS,
-  BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, hookStatus, redactPrivateInfo,
+  BOT_COPYRIGHT, BOT_START_MS, ButtonBuilder, ButtonStyle, CLIN, ComponentType, _diag, hookStatus, redactPrivateInfo, metrics,
   DASHBOARD_INTERVAL_MS, DAY_MS, DIVIDER, DONATOR_FILE, EmbedBuilder, FACTION_BAK_DIR,
   FILES, GLYPH, IPHUB_API_KEY, vpnDetectionEnabled,
   MENUS, MessageFlags,

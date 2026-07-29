@@ -16,7 +16,7 @@ module.exports = function createCommands(ctx) {
   errorEmbed, factionLeaderOnlyEmbed, getFactionRankBadge, getFactionRankOrder, getPlayerChoices,
   handleMenuPanelSubmit, handleVerifySubmit, handleVerifyDecision, hasAdminRole, hasFactionLeaderRole, hasWhitelistManageRole, hasModRole, isBlacklisted, isOwner,
   logger, modOnlyEmbed,
-  patchInteractionOutput, rateLimitEmbed, textify, writeModLog,
+  patchInteractionOutput, rateLimitEmbed, textify, writeModLog, metrics,
   } = ctx;
 
   // Command handlers, split by domain (each takes the same ctx).
@@ -202,7 +202,24 @@ module.exports = function createCommands(ctx) {
 
   try {
     const handler = _handlers[name];
-    if (handler) return await handler(interaction, name);
+    if (handler) {
+      /* Command execution time + outcome. Recorded around the handler so the timing is
+         what the user actually waited for. metrics is optional - the dispatcher must
+         work unchanged without it. */
+      if (!metrics) return await handler(interaction, name);
+      const t0 = process.hrtime.bigint();
+      try {
+        const out = await handler(interaction, name);
+        metrics.increment("commands_total", { command: name, outcome: "success" }, 1, "Slash commands executed");
+        return out;
+      } catch (err) {
+        metrics.increment("commands_total", { command: name, outcome: "failure" });
+        throw err;
+      } finally {
+        metrics.observe("command_duration_ms", Number(process.hrtime.bigint() - t0) / 1e6,
+          { command: name }, "Slash command execution time");
+      }
+    }
 
       return interaction.reply({ embeds: [errorEmbed("Unknown Command", `\`/${name}\` isn't wired up in this build - the command list may still be refreshing. Try again in a minute.`)], flags: MessageFlags.Ephemeral }).catch(() => {});
 
