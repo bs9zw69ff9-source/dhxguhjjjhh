@@ -1,6 +1,8 @@
 /* ---------------- commands/admin: /setroles /donator /announce /givemenu /stripmenu /stripmenuall /setrconroles /configure ----------------
    Split from commands/index.js. Each handler receives (interaction, name) and
    closes over the shared ctx (injected from index.js via the dispatcher). */
+const crypto = require("crypto");   // PIN generation - a builtin, no injection needed
+
 module.exports = (ctx) => {
   const {
   ACTIVE_SERVERS, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, DIVIDER, DONATOR_FILE, GLYPH, CLIN,
@@ -9,7 +11,8 @@ module.exports = (ctx) => {
   adminOnlyEmbed, banWithIp, bar, brand, client, commands,
   _diag, deniedEmbed, emptyIdEmbed, errorEmbed, formatUptime, hasAdminRole, hookStatus,
   hasModRole, hero, ipBans, isOwner,
-  clearMenuLink, loadFactionBackup, loadMenuGrants, loadMenuLinks, loadMenuRoles, loadRoles, logAction, modOnlyEmbed,
+  clearMenuLink, loadFactionBackup, loadMenuGrants, loadMenuLinks, loadMenuRoles, loadRoles, logAction, logger, modOnlyEmbed,
+  FILES, safeRead,
   ownerOnlyEmbed, paginate, parseRcon, path, probeDetectors, readDonatorFile, redactPrivateInfo, sendRcon,
   removeDonator, removeMenuGrant, removeUserBlacklist, sanitizeBanName, sanitizeId,
   sanitizeMessage, saveFactionBackup, saveRoles, sendRconBoth, serverLabel, sysStats, meter,
@@ -365,6 +368,72 @@ module.exports = (ctx) => {
   /* ─────────────────────────────────────────────────────
          STRIPMENUALL - owner only: clear EVERYONE's menu access
          ───────────────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────────
+         LOCK / UNLOCK - close the servers behind a join PIN (RCON SetPin/RemovePin)
+         ───────────────────────────────────────────────────── */
+  "lock": async (interaction, name) => {
+        const raw    = (interaction.options.getString("pin") ?? "").trim();
+        const reason = sanitizeMessage(interaction.options.getString("reason") ?? "") || null;
+        /* Digits only - SetPin takes an integer, and anything else is silently accepted
+           by RCON while leaving the server in a state nobody can predict. Four is the
+           floor because a 1-2 digit PIN is guessable by hand in seconds. */
+        if (raw && !/^\d{4,8}$/.test(raw)) {
+          return interaction.reply({ embeds: [errorEmbed("Invalid PIN",
+            "The PIN must be **4 to 8 digits**, numbers only. Leave it blank and I'll generate one.")], flags: MessageFlags.Ephemeral });
+        }
+        // A generated PIN uses crypto randomness, not Math.random - this is the only
+        // thing standing between the public and a locked server.
+        const pin = raw || String(100000 + (crypto.randomBytes(4).readUInt32BE(0) % 900000));
+
+        /* Ephemeral: the PIN is a shared secret. A public reply would post it into the
+           channel history for anyone with read access, which defeats the lock. */
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const res = await sendRconBoth(`SetPin ${pin}`, "both");
+        const ok  = [res.ok1, res.ok2, res.ok3].filter(Boolean).length;
+        if (!ok) {
+          return interaction.editReply({ embeds: [errorEmbed("Lock Failed",
+            "No server accepted `SetPin`. Check RCON connectivity with `/health`.")] });
+        }
+        await update(FILES.SERVER_LOCK, {}, () => ({
+          locked: true, pin, reason,
+          by: interaction.user.tag, byId: interaction.user.id, at: Date.now(),
+        }));
+        logger.info("Lock", `${interaction.user.tag} locked ${ok} server(s)${reason ? ` - ${reason}` : ""}`);
+
+        const embed = brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Servers Locked")
+          .setDescription(`The servers are now **locked**. Only players who enter the PIN can join.`)
+          .addFields(
+            { name: "PIN", value: `\`${pin}\``, inline: true },
+            { name: "Applied to", value: `${ok}/${ACTIVE_SERVERS.length} server(s)`, inline: true },
+            ...(reason ? [{ name: "Reason", value: reason, inline: false }] : []),
+          )
+          .setFooter({ text: "Share the PIN only with people who should get in. /unlock reopens the servers." }));
+        /* The staff log records WHO locked it and why - never the PIN itself. The log
+           channel is broader than the people who should be able to join. */
+        await logAction(brand(new EmbedBuilder().setColor(NV.AMBER).setTitle("Servers Locked")
+          .setDescription(`**${interaction.user.username}** locked ${ok}/${ACTIVE_SERVERS.length} server(s)${reason ? ` - ${reason}` : "."}\nThe PIN was sent privately; use \`/lock\` to see it.`)));
+        return interaction.editReply({ embeds: [embed] });
+        },
+
+  "unlock": async (interaction, name) => {
+        await interaction.deferReply();
+        const res = await sendRconBoth("RemovePin", "both");
+        const ok  = [res.ok1, res.ok2, res.ok3].filter(Boolean).length;
+        if (!ok) {
+          return interaction.editReply({ embeds: [errorEmbed("Unlock Failed",
+            "No server accepted `RemovePin`. Check RCON connectivity with `/health`.")] });
+        }
+        const prev = safeRead(FILES.SERVER_LOCK, {});
+        // Clear the stored PIN outright - keeping a stale secret around serves nothing.
+        await update(FILES.SERVER_LOCK, {}, () => ({ locked: false, unlockedBy: interaction.user.tag, at: Date.now() }));
+        logger.info("Lock", `${interaction.user.tag} unlocked ${ok} server(s)`);
+        const held = prev?.at ? `\nIt was locked by ${prev.by ?? "someone"} <t:${Math.floor(prev.at / 1000)}:R>.` : "";
+        const embed = brand(new EmbedBuilder().setColor(NV.IRRAD_GREEN).setTitle("Servers Unlocked")
+          .setDescription(`**${interaction.user.username}** removed the join PIN on ${ok}/${ACTIVE_SERVERS.length} server(s). Anyone can join again.${held}`));
+        await logAction(embed);
+        return interaction.editReply({ embeds: [embed] });
+        },
+
   /* A member's in-game name link is permanent by design - that is what stops someone
      dropping their menu and re-claiming it on an alt. This is the only way to break
      one, for a genuine Pavlov name change. Logged, because it re-opens that door. */

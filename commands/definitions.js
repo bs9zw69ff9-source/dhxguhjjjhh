@@ -149,6 +149,12 @@ const commands = [
     .addStringOption(o => o.setName("playerid").setDescription("Player ID").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder().setName("stripmenuall")
     .setDescription("Owner - Clear ALL menu access from every player (both servers)"),
+  new SlashCommandBuilder().setName("lock")
+    .setDescription("Admin - Lock the servers with a join PIN (RCON SetPin)")
+    .addStringOption(o => o.setName("pin").setDescription("4-8 digits. Leave blank and one is generated for you").setRequired(false))
+    .addStringOption(o => o.setName("reason").setDescription("Why the server is being locked (shown in the staff log)").setRequired(false)),
+  new SlashCommandBuilder().setName("unlock")
+    .setDescription("Admin - Remove the join PIN and reopen the servers (RCON RemovePin)"),
   new SlashCommandBuilder().setName("unlinkname")
     .setDescription("Admin - Break a member's permanent in-game name link (for a real name change)")
     .addUserOption(o => o.setName("user").setDescription("Discord member to unlink").setRequired(true)),
