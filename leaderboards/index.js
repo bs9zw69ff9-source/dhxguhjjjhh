@@ -74,7 +74,19 @@ function setAutopostMsgId(key, id) { safeWrite(FILES.AUTOPOST_STATE, { ...loadAu
    channel, build the embed, edit the tracked message if it still exists (drop the
    stale id if it doesn't), else send a new one and remember its id. `getEmbed` may
    be sync or async; a falsy return skips the post. */
-async function autopost(key, channelId, getEmbed) {
+/* Calls for the same board are SERIALISED. Two overlapping calls - the startup refresh
+   and the 30s interval landing together - would both find no tracked message, both
+   send, and leave an orphan that the next purge deletes. From Discord that looks
+   exactly like the board being wiped and reposted instead of updating in place.
+   Chaining per key means the second call sees the id the first stored and edits it. */
+const _autopostChain = new Map();
+function autopost(key, channelId, getEmbed) {
+  const prev = _autopostChain.get(key) ?? Promise.resolve();
+  const next = prev.then(() => _autopostOnce(key, channelId, getEmbed)).catch(() => {});
+  _autopostChain.set(key, next);
+  return next;
+}
+async function _autopostOnce(key, channelId, getEmbed) {
   if (!channelId) return;
   let channel;
   try { channel = await client.channels.fetch(channelId); } catch { return; }

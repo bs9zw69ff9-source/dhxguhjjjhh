@@ -2871,6 +2871,10 @@ function startIntervals() {
   /* Kept as one-shots: these run ONCE shortly after boot, they are not recurring work,
      so modelling them as services would misreport them as idle forever. */
   if (DB_EXPORT_INTERVAL_MS > 0) setTimeout(exportDbToJson, 60_000);
+  /* Delayed first paint for the boards, exactly as before the service migration: late
+     enough that the gateway is up and the startup purge has already run. */
+  setTimeout(postLeaderboard, 20_000);
+  if (ARREST_LEADERBOARD_CHANNEL) setTimeout(postArrestBoard, 20_000);
   setTimeout(() => {
     const b = safeRead(FILES.FACTION_BACKUP, {});
     if (!b || !b.files || !Object.keys(b.files).length) autoBackupFactions();

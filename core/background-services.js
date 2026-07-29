@@ -57,10 +57,13 @@ function registerBackgroundServices(sm, deps) {
   add("donator-restore", MINUTE, () => processDonatorRestores());
 
   // ---- discord surfaces ----
-  // These had a setTimeout(..., 20s) kick-off alongside the interval; runOnStart keeps
-  // that first paint without a second timer to track.
-  add("leaderboard", LEADERBOARD_INTERVAL_MS, () => postLeaderboard(), { runOnStart: true });
-  if (ARREST_LEADERBOARD_CHANNEL) add("arrest-board", LEADERBOARD_INTERVAL_MS, () => postArrestBoard(), { runOnStart: true });
+  /* NO runOnStart on the boards. Services start BEFORE client.login(), so an immediate
+     tick fires with no gateway connection, and it also re-fires on every supervisor
+     restart. The real first paint comes from refreshLeaderboardChannels() on ready,
+     backed by the delayed one-shot in startIntervals - which is what the original code
+     did and what keeps the post ordered after the startup purge. */
+  add("leaderboard", LEADERBOARD_INTERVAL_MS, () => postLeaderboard());
+  if (ARREST_LEADERBOARD_CHANNEL) add("arrest-board", LEADERBOARD_INTERVAL_MS, () => postArrestBoard());
   add("player-list", PLAYERLIST_INTERVAL_MS, () => postPlayerList());
   if (DASHBOARD_CHANNEL) add("dashboard", DASHBOARD_INTERVAL_MS, () => postDashboard());
 
