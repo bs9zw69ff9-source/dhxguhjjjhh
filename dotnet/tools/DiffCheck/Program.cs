@@ -87,4 +87,65 @@ if (args.Length >= 4 && args[2] == "--roster")
     if (rf > 0) return 1;
 }
 
+
+// ---- factions: registry data + rank-change arithmetic ----
+if (args.Length >= 7 && args[5] == "--factions")
+{
+    using var fj = JsonDocument.Parse(File.ReadAllText(args[6]));
+    var registry = fj.RootElement.GetProperty("registry");
+    int ff = 0, fi = 0;
+    Console.WriteLine();
+
+    foreach (var jsFaction in registry.EnumerateObject())
+    {
+        var def = PavlovBot.Core.Factions.FactionRegistry.Get(jsFaction.Name);
+        fi++;
+        if (def is null) { Console.WriteLine($"DIFFER {jsFaction.Name,-10} missing from the C# registry"); ff++; continue; }
+
+        var jsOrder = jsFaction.Value.GetProperty("order").EnumerateArray().Select(x => x.GetString()!).ToArray();
+        var jsDefault = jsFaction.Value.GetProperty("default").GetString();
+        var orderOk = jsOrder.SequenceEqual(def.Order);
+        var defaultOk = jsDefault == def.Default;
+
+        var capsOk = true;
+        foreach (var cap in jsFaction.Value.GetProperty("rankCaps").EnumerateObject())
+            if (def.CapFor(cap.Name) != cap.Value.GetInt32()) capsOk = false;
+        foreach (var rank in def.Order)
+        {
+            var jsHasCap = jsFaction.Value.GetProperty("rankCaps").TryGetProperty(rank, out _);
+            var csCapped = def.CapFor(rank) != int.MaxValue;
+            if (jsHasCap != csCapped) capsOk = false;
+        }
+
+        var filesOk = true;
+        foreach (var f in jsFaction.Value.GetProperty("rankFiles").EnumerateObject())
+            if (!def.RankFiles.TryGetValue(f.Name, out var v) || v != f.Value.GetString()) filesOk = false;
+
+        var subsOk = jsFaction.Value.GetProperty("subclasses").EnumerateObject().Count() == def.Subclasses.Count;
+        foreach (var sc in jsFaction.Value.GetProperty("subclasses").EnumerateObject())
+            if (!def.Subclasses.TryGetValue(sc.Name, out var v) || v != sc.Value.GetString()) subsOk = false;
+
+        var ok = orderOk && defaultOk && capsOk && filesOk && subsOk;
+        if (!ok) ff++;
+        Console.WriteLine($"{(ok ? "match  " : "DIFFER ")} {jsFaction.Name,-10} order={orderOk} default={defaultOk} caps={capsOk} files={filesOk} subclasses={subsOk}");
+    }
+
+    int sf = 0, si = 0;
+    foreach (var sc in fj.RootElement.GetProperty("scenarios").EnumerateArray())
+    {
+        si++;
+        var def = PavlovBot.Core.Factions.FactionRegistry.Get(sc.GetProperty("faction").GetString());
+        var cur = sc.GetProperty("current").ValueKind == JsonValueKind.Null ? null : sc.GetProperty("current").GetString();
+        var d = PavlovBot.Core.Factions.MembershipRules.ChangeRank(def, cur, sc.GetProperty("dir").GetInt32(), _ => 0);
+        var jsOutcome = sc.GetProperty("outcome").GetString();
+        var jsRank = sc.TryGetProperty("rank", out var r) ? r.GetString() : null;
+        if (d.Outcome.ToString() != jsOutcome || d.Rank != (jsRank ?? d.Rank)) sf++;
+    }
+    Console.WriteLine($"\nrank-change arithmetic: {si - sf}/{si} scenarios agree");
+    Console.WriteLine(ff == 0 && sf == 0
+        ? $"ALL {fi} FACTIONS AND {si} SCENARIOS AGREE"
+        : $"{ff} faction(s) and {sf} scenario(s) DIVERGED");
+    if (ff > 0 || sf > 0) return 1;
+}
+
 return failures == 0 ? 0 : 1;

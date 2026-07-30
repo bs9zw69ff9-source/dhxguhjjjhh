@@ -45,6 +45,7 @@ passes:
 | `Rcon` (client, coalescing, audit) | ported - 13 tests against a fake Pavlov listener |
 | `Data.SerializedStore` | ported - 8 tests |
 | `Data.RosterWriteGuard` | ported - 10 tests, 8/8 differential cases agree |
+| `Factions` (registry + membership rules) | ported - 24 tests, 3/3 factions and 52/52 rank scenarios agree |
 | everything else | not started |
 
 ### RCON: what changed versus Node
@@ -100,3 +101,23 @@ error anywhere. The check is therefore on the *size of the change*, not the shap
 data - a write removing twenty entries is not a big operation, it is a bug that already
 happened. "Cannot read the current file" is treated as its own refusal rather than as
 "empty", because conflating those turns a transient permission error into a wipe.
+
+## Faction notes
+
+Ranks are a **list**, lowest to highest, so promotion is "move one index up" and demotion
+"move one index down" - one piece of logic walking a shape rather than a method per rank.
+Adding a rank is a line of data.
+
+The membership rules exist because **the storage cannot express them**. Rosters are plain
+text the game reads live; nothing stops a name appearing in six files at once. So one
+faction per player, one rank, at most one sub-class, and the per-rank caps are all
+enforced at the boundary before anything is written, and all of it is pure - current
+membership is passed in, so every rule tests without a filesystem.
+
+Two behaviours worth keeping in mind when reading it:
+
+- **A demotion into a full rank is refused too.** Overflow is overflow regardless of
+  direction; checking only the promote path is a real bug in this shape of code.
+- **An unrecognised current rank is treated as the lowest**, not rejected. A member can
+  end up off-ladder if a rank was renamed underneath them, and letting a promotion fix
+  that is more useful than stranding them.
