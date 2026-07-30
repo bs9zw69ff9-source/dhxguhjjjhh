@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>PavlovBot.Core</RootNamespace>
+    <!-- Core is pure domain logic: no Discord, no sockets, no filesystem.
+         It must stay trim- and AOT-safe so the host can be published small. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+</Project>

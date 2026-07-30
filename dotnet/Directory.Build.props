@@ -1,0 +1,24 @@
+<!--
+  Shared build settings for every project in the solution.
+
+  Nullable is ON and warnings are ERRORS. That is the single most valuable setting
+  in this port: a large share of the bugs found in the Node bot were tri-state bugs
+  where `null` (nobody could answer) was treated as `false` (the answer is no) - a
+  VPN verdict banning innocent players, a metrics port of 0 read as "disabled", a
+  detector's 0/1 rejected as "not a boolean". In C# those are compile failures.
+-->
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Eastern time is a hard requirement: every printed timestamp in the bot is
+         America/New_York, DST-aware. InvariantGlobalization would strip the tzdata
+         needed to resolve it, so it stays off deliberately. -->
+  </PropertyGroup>
+</Project>
