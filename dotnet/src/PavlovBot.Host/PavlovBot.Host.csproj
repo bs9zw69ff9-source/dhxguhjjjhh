@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="Discord.Net.WebSocket" Version="3.20.1" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
   </ItemGroup>
 
