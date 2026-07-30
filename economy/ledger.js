@@ -1,6 +1,6 @@
-/* ---------------- casino/ledger: atomic caps debit/credit ----------------
+/* ---------------- economy/ledger: atomic player balance mutation ----------------
    Extracted from index.js. All shared helpers/state it uses are injected via ctx
-   (a plain object built in index.js). Usage: require("./casino/ledger")(ctx). */
+   (a plain object built in index.js). Usage: require("./economy/ledger")(ctx). */
 module.exports = function(ctx) {
   const {
   logger, readPlayerBalance, writePlayerBalance,
@@ -32,9 +32,7 @@ function mutateBalance(playerId, mutator) {
   tail.finally(() => { if (_ledgerQueues.get(key) === tail) _ledgerQueues.delete(key); });
   return next;
 }
-function debitCaps(playerId, amount)  { return mutateBalance(playerId, (bal) => bal >= amount ? bal - amount : null); }
-function creditCaps(playerId, amount) { return mutateBalance(playerId, (bal) => bal + amount); }
 
 
-  return { _ledgerQueues, creditCaps, debitCaps, mutateBalance };
+  return { _ledgerQueues, mutateBalance };
 };

@@ -54,7 +54,7 @@ const DIRECT = [
   ["commands/index.js", "./commands"], ["commands/definitions.js", "./commands/definitions"],
   ["events/index.js", "./events"], ["leaderboards/index.js", "./leaderboards"],
   ["moderation/bans.js", "./moderation/bans"], ["moderation/vpn.js", "./moderation/vpn"],
-  ["moderation/firewall.js", "./moderation/firewall"], ["casino/ledger.js", "./casino/ledger"],
+  ["moderation/firewall.js", "./moderation/firewall"], ["economy/ledger.js", "./economy/ledger"],
   ["factions/files.js", "./factions/files"], ["factions/whitelist.js", "./factions/whitelist"],
 ];
 // domain modules receive the SAME ctx that index.js passes to ./commands

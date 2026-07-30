@@ -423,7 +423,6 @@ function logPolice(embed) {
 
 // Suspend a player's whitelist rank for `minutes`, auto-restoring it on expiry.
 const loadRankSuspensions = () => safeRead(FILES.RANK_SUSPENSIONS, {});
-const getRankSuspension   = (playerId) => loadRankSuspensions()[String(playerId).toLowerCase()] ?? null;
 async function suspendRank(playerId, minutes, by) {
   const faction = (getPlayerFactions(playerId) || [])[0];
   if (!faction) return { ok: false, error: "not in a whitelist" };
@@ -1601,8 +1600,6 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
    races. Leave the env vars unset and everything stays on the main bot. */
 const FACTION_BOT = !!(process.env.FACTION_BOT_TOKEN && process.env.FACTION_CLIENT_ID);
 const factionClient = FACTION_BOT ? new Client({ intents: [GatewayIntentBits.Guilds] }) : null;
-// The client that lives in the faction guilds (falls back to the main bot).
-const fclient = () => (factionClient && factionClient.isReady() ? factionClient : client);
 
 // ---- plain-text reply rendering (extracted to ./discord/textify) ----
 const { embedToText, textifyChunks, textify, patchInteractionOutput } = require("./discord/textify");
@@ -2221,8 +2218,8 @@ function wipeAllPlayerData() {
   return r;
 }
 
-// ---- casino/ledger: atomic caps debit/credit (extracted to ./casino/ledger) ----
-const { creditCaps, debitCaps, mutateBalance } = require("./casino/ledger")({
+// ---- economy/ledger: atomic player balance mutation (extracted to ./economy/ledger) ----
+const { mutateBalance } = require("./economy/ledger")({
   logger, readPlayerBalance, writePlayerBalance,
 });
 
@@ -3007,8 +3004,8 @@ const { onInteraction } = require("./commands")({
   addUserBlacklist, adminOnlyEmbed, awaitOwnedComponent, banWithIp, bar, blacklistHas,
   blacklistedEmbed, brand, buildDashboardEmbed, buildFactionMembershipIndex,
   cell, checkRateLimit, checkVpn, client,
-  clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank, creditCaps,
-  dashboardSnapshots, debitCaps, mutateBalance, deniedEmbed, dmPunishmentNotice,
+  clinical, commandPlayerCandidates, commands, confirmDialog, countFactionRank,
+  dashboardSnapshots, mutateBalance, deniedEmbed, dmPunishmentNotice,
   dmStatusField, dmUserForPavlov, easternClock, easternDate, easternStamp, easternNoonUTC, emptyIdEmbed,
   enforceBansSweep, errorEmbed, factionKillBreakdown, factionLeaderOnlyEmbed, factionLeaderStrictEmbed, policeOnlyEmbed, firewallBlockIps,
   hasPoliceRole, hasWhitelistManageRole, loadWarrants, getWarrants, addWarrant, removeWarrant,
@@ -3105,7 +3102,7 @@ module.exports = {
   // rcon menu roles
   loadMenuRoles, setMenuRole,
   // economy ledger
-  mutateBalance, debitCaps, creditCaps,
+  mutateBalance,
   awaitOwnedComponent,
   getAutopostMsgId, setAutopostMsgId,
   isPidAlive, acquireSingleInstanceLock, releaseSingleInstanceLock, LOCK_FILE,

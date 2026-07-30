@@ -43,11 +43,8 @@ module.exports = function createDatabase({ logger, baseDir }) {
     MUTES:          "./mutes.json",
     DISCORD_LINKS:  "./discord_links.json",
     AUTOBAN_EXEMPT: "./autoban_exempt.json",
-    CASINO_CONFIG:  "./casino_config.json",
     UPDATE_LOG_STATE: "./update_log_state.json",
     BAN_RECONCILE_STATE: "./ban_reconcile_state.json",
-    CASINO_QUOTA: "./casino_quota.json",
-    CASINO_POT: "./casino_pot.json",
     AUTOPOST_STATE: "./autopost_state.json",
     // Server lock (RCON SetPin): the PIN plus who set it and when, per server.
     SERVER_LOCK:    "./server_lock.json",
@@ -63,9 +60,7 @@ module.exports = function createDatabase({ logger, baseDir }) {
     POLICE_CONFIG: "./police_config.json",
   };
 
-  // Bet limits and the global casino cooldown are all admin-tunable via /casino
   // (they're the "configure later" knobs the payout tables were built against).
-  const CASINO_CONFIG_DEFAULTS = { enabled: true, minBet: 10, maxBet: 2000, cooldownMs: 4000 };
 
   const DEFAULTS = {
     [FILES.TEMPBAN]:        "[]",
@@ -98,7 +93,6 @@ module.exports = function createDatabase({ logger, baseDir }) {
     [FILES.RANK_SUSPENSIONS]: "{}",
     [FILES.POLICE_CONFIG]:  JSON.stringify({ bailRate: 1 }, null, 2),
     [FILES.ROLES]:          JSON.stringify({ modRoleId: "", adminRoleId: "", factionLeaderRoleId: "", policeRoleId: "", gambinoRoleId: "", colomboRoleId: "", nypdRoleId: "" }, null, 2),
-    [FILES.CASINO_CONFIG]:  JSON.stringify(CASINO_CONFIG_DEFAULTS, null, 2),
   };
 
   // ---- storage: SQLite (bot.db) with a one-time import from the JSON files ----
@@ -262,7 +256,7 @@ module.exports = function createDatabase({ logger, baseDir }) {
   }
 
   return {
-    db, FILES, DEFAULTS, CASINO_CONFIG_DEFAULTS,
+    db, FILES, DEFAULTS,
     safeRead, safeWrite, update,
     exportDbToJson, DB_EXPORT_INTERVAL_MS,
     ensureFile, matchTreeOwner, intendedOwner,

@@ -13,8 +13,8 @@ const prevCwd = process.cwd();
 process.chdir(tmp);
 const db = require(path.join(prevCwd, "database"))({ logger: noLog, baseDir: tmp });
 
-test("registry: 38 datasets, defaults seeded", () => {
-  assert.equal(Object.keys(db.FILES).length, 38);
+test("registry: 35 datasets, defaults seeded", () => {
+  assert.equal(Object.keys(db.FILES).length, 35);
   assert.deepEqual(db.safeRead(db.FILES.TEMPBAN, []), []);
   assert.deepEqual(db.safeRead(db.FILES.PLAYTIME, {}), {});
   assert.deepEqual(db.safeRead(db.FILES.WARRANTS, {}), {});
@@ -50,7 +50,3 @@ test("exportDbToJson writes pretty backups to disk", () => {
   assert.equal(onDisk.alice, 42);
 });
 
-test("casino config defaults merge", () => {
-  assert.equal(db.CASINO_CONFIG_DEFAULTS.enabled, true);
-  assert.ok(db.CASINO_CONFIG_DEFAULTS.minBet > 0);
-});
