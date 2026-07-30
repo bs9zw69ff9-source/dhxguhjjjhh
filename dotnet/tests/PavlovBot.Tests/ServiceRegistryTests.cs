@@ -203,10 +203,13 @@ public class ServiceRegistryTests
         await registry.StartAllAsync();
         await WaitUntil(() => registry.Status().Single().ConsecutiveFailures >= 5);
 
-        fail = false;
+        /* Revive while it is STILL failing. Clearing the flag first leaves a window in
+           which a tick succeeds, resets the counter, and the supervisor correctly finds
+           nothing to do - a race in the test, not in the code. */
         var revived = await registry.ReviveFailedAsync(threshold: 5);
         Assert.Equal(["wobbly"], revived);
 
+        fail = false;
         await WaitUntil(() => registry.Status().Single().ConsecutiveFailures == 0);
         await registry.StopAllAsync();
     }
