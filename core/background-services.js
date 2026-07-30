@@ -34,6 +34,7 @@ function registerBackgroundServices(sm, deps) {
     rconHealthCheck, refreshPlayerCache, tickPlaytime,
     // persistence / sync
     exportDbToJson, autoBackupFactions, importModsaveBanlist, syncModsaveBanlist, syncAllModSave,
+    moneyLog, MONEY_LOG_INTERVAL_MS,
     // config
     ACTIVE_SERVERS, DB_EXPORT_INTERVAL_MS, LEADERBOARD_INTERVAL_MS, PLAYERLIST_INTERVAL_MS,
     DASHBOARD_INTERVAL_MS, RCON_HEALTH_INTERVAL_MS, MODSAVE_SYNC_INTERVAL_MS,
@@ -73,6 +74,12 @@ function registerBackgroundServices(sm, deps) {
     for (const s of ACTIVE_SERVERS) await refreshPlayerCache(s);
     tickPlaytime();
   });
+
+  /* ---- economy ----
+     Polls the ledger files. 10s is responsive enough that a payout shows up while the
+     player is still reading their screen, and mtime skipping keeps the scan cheap
+     regardless of how many players have ledgers. */
+  add("money-log", MONEY_LOG_INTERVAL_MS, () => moneyLog.tick());
 
   // ---- persistence ----
   if (DB_EXPORT_INTERVAL_MS > 0) add("db-export", DB_EXPORT_INTERVAL_MS, () => exportDbToJson());

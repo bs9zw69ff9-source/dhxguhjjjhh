@@ -76,6 +76,7 @@ function makeHook(envVar, label) {
 }
 const joinHook = makeHook("JOIN_WEBHOOK_URL", "JoinLog");
 const killHook = makeHook("KILL_WEBHOOK_URL", "KillLog");
+const moneyHook = makeHook("MONEY_WEBHOOK_URL", "MoneyLog");
 
 // ---- version & startup ----
 const BOT_VERSION  = "3.2.2";
@@ -661,6 +662,7 @@ const DURATION_CHOICES = [
   { name: "Permanent", value: "permanent" },
 ];
 
+const MONEY_LOG_INTERVAL_MS   = Math.max(2000, Number(process.env.MONEY_LOG_INTERVAL_MS) || 10_000);
 const LEADERBOARD_INTERVAL_MS = 30 * 1000;   // caps + playtime leaderboards refresh every 30s
 const LEADERBOARD_TOP_N       = 30;
 /* Channel the live player list auto-updates in, every 30s (override with PLAYERLIST_CHANNEL). */
@@ -1636,6 +1638,9 @@ const _plain = (hook, tag, content) => {
 function postJoinLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} joined ${server || "the server"}`); }
 function postLeaveLog(name, server) { _plain(joinHook, "JoinLog", `[${easternStamp()}] ${name} left ${server || "the server"}`); }
 function postKillLog(killer, killed) { _plain(killHook, "KillLog", `[${easternStamp()}] ${killer} killed ${killed}`); }
+/* Balance movements. Already multi-line ("+400 to player1\n-345 to player2"), so the
+   timestamp goes on its own leading line rather than being repeated per entry. */
+function postMoneyLog(body) { _plain(moneyHook, "MoneyLog", `[${easternStamp()}]\n${body}`); }
 // Ban actions go to a dedicated ban-log channel (BAN_LOG_CHANNEL). If that isn't
 // set, they fall back to the regular mod-log channel.
 function logBan(embed) {
@@ -2217,6 +2222,13 @@ function wipeAllPlayerData() {
   try { safeWrite(FILES.SERVER_STATS, {}); } catch (e) { logger.warn("Wipe", `server stats clear failed: ${e.message}`); }
   return r;
 }
+
+/* ---- economy/moneyLog: watch the ModSave ledgers and report every movement ----
+   Instantiated here so it gets the same MODSAVE_SYNC_SKIP rules the wipe and sync paths
+   use - "which files are ledgers" must not be answered two different ways. */
+const moneyLog = require("./economy/moneyLog")({
+  fs, path, logger, getModsavePath, MODSAVE_SYNC_SKIP, postMoneyLog,
+});
 
 // ---- economy/ledger: atomic player balance mutation (extracted to ./economy/ledger) ----
 const { mutateBalance } = require("./economy/ledger")({
@@ -2846,6 +2858,7 @@ function startIntervals() {
     postLeaderboard, postArrestBoard, postPlayerList, postDashboard,
     rconHealthCheck, refreshPlayerCache, tickPlaytime,
     exportDbToJson, autoBackupFactions, importModsaveBanlist, syncModsaveBanlist, syncAllModSave,
+    moneyLog, MONEY_LOG_INTERVAL_MS,
     ACTIVE_SERVERS, DB_EXPORT_INTERVAL_MS, LEADERBOARD_INTERVAL_MS, PLAYERLIST_INTERVAL_MS,
     DASHBOARD_INTERVAL_MS, RCON_HEALTH_INTERVAL_MS, MODSAVE_SYNC_INTERVAL_MS,
     ARREST_LEADERBOARD_CHANNEL, DASHBOARD_CHANNEL, logger,
