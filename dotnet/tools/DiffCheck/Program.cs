@@ -148,4 +148,41 @@ if (args.Length >= 7 && args[5] == "--factions")
     if (ff > 0 || sf > 0) return 1;
 }
 
+
+// ---- penal code: booking maths and labels ----
+if (args.Length >= 9 && args[7] == "--penal")
+{
+    using var pj = JsonDocument.Parse(File.ReadAllText(args[8]));
+    int pf = 0, pi = 0;
+    var firstFailures = new List<string>();
+    foreach (var sc in pj.RootElement.EnumerateArray())
+    {
+        pi++;
+        var codes = sc.GetProperty("codes").EnumerateArray().Select(x => x.GetString()!).ToArray();
+        var rate = sc.GetProperty("rate").GetDouble();
+        var b = PavlovBot.Core.Penal.PenalCode.Book(codes, rate);
+
+        var ok = b.JailMinutes == sc.GetProperty("minutes").GetInt32()
+              && b.Bail == sc.GetProperty("bail").GetInt32()
+              && b.Execution == sc.GetProperty("execution").GetBoolean()
+              && b.Variable == sc.GetProperty("variable").GetBoolean()
+              && b.SentenceLabel() == sc.GetProperty("sentence").GetString()
+              && b.BailLabel() == sc.GetProperty("bailLabel").GetString();
+        if (!ok)
+        {
+            pf++;
+            if (firstFailures.Count < 5)
+                firstFailures.Add($"  [{string.Join(",", codes)}] rate={rate}  " +
+                    $"js(min={sc.GetProperty("minutes").GetInt32()},bail={sc.GetProperty("bail").GetInt32()},\"{sc.GetProperty("bailLabel").GetString()}\")  " +
+                    $"cs(min={b.JailMinutes},bail={b.Bail},\"{b.BailLabel()}\")");
+        }
+    }
+    Console.WriteLine();
+    foreach (var f in firstFailures) Console.WriteLine(f);
+    Console.WriteLine(pf == 0
+        ? $"ALL {pi} PENAL SCENARIOS AGREE (every charge at 5 rates, plus 12 combinations)"
+        : $"{pf}/{pi} PENAL SCENARIOS DIVERGED");
+    if (pf > 0) return 1;
+}
+
 return failures == 0 ? 0 : 1;

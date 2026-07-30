@@ -46,7 +46,11 @@ passes:
 | `Data.SerializedStore` | ported - 8 tests |
 | `Data.RosterWriteGuard` | ported - 10 tests, 8/8 differential cases agree |
 | `Factions` (registry + membership rules) | ported - 24 tests, 3/3 factions and 52/52 rank scenarios agree |
+| `Penal` (59 charges + booking maths) | ported - 16 tests, 331/331 differential scenarios agree |
 | everything else | not started |
+
+Total: **86 xUnit tests**, and **403 differential scenarios** agreeing with the running
+JS across evasion, roster writes, factions and the penal code.
 
 ### RCON: what changed versus Node
 
@@ -121,3 +125,22 @@ Two behaviours worth keeping in mind when reading it:
 - **An unrecognised current rank is treated as the lowest**, not rejected. A member can
   end up off-ladder if a rank was renamed underneath them, and letting a promotion fix
   that is more useful than stranding them.
+
+## Penal code notes
+
+The 59-row charge table was **generated from the running JS**, not retyped. 59 rows of
+bail figures typed by hand is 59 chances to fat-finger a number nobody notices until a
+player is charged the wrong amount. The generator emitted the C# initialisers directly
+from `penal/codes.js`.
+
+`rate` - the multiplier behind `/bail increase|decrease` - is applied and rounded **per
+charge**, never to the total. Otherwise a booking's bail would not equal the sum of the
+figures shown for its individual charges, and a receipt whose lines do not add up is
+worse than no receipt. The differential suite covers this explicitly: at rate 1.5,
+`PC 100 + PC 102` is 38 + 23 = 61, not 60.
+
+Two special cases behave differently on purpose:
+
+- **Execution replaces** the sentence and the bail entirely, even when charged alongside
+  ordinary offences. The underlying minute total is still computed and available.
+- **Variable annotates** rather than replaces - "2 min + based on the associated charge".
