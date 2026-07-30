@@ -4,12 +4,21 @@
 using System.Text.Json;
 using PavlovBot.Core.Evasion;
 
-var casesPath = args[0];
-var jsPath = args[1];
+/* Stages are selected by FLAG rather than by position. They used to be positional, which
+   meant running the last stage on its own required passing placeholder paths for every
+   earlier one - and made adding a stage a chance to shift every index after it. */
+string[]? Stage(string flag, int count)
+{
+    var at = Array.IndexOf(args, flag);
+    if (at < 0) return null;
+    if (at + count >= args.Length)
+        throw new ArgumentException($"{flag} needs {count} file path(s)");
+    return args[(at + 1)..(at + 1 + count)];
+}
 
-using var casesDoc = JsonDocument.Parse(File.ReadAllText(casesPath));
-using var jsDoc = JsonDocument.Parse(File.ReadAllText(jsPath));
-var jsResults = jsDoc.RootElement.EnumerateArray().ToArray();
+var evasionArgs = Stage("--evasion", 2)
+    // Positional form kept working: the harness is in scripts and notes elsewhere.
+    ?? (args.Length >= 2 && !args[0].StartsWith("--", StringComparison.Ordinal) ? new[] { args[0], args[1] } : null);
 
 static string? Str(JsonElement e, string k) =>
     e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
@@ -22,6 +31,11 @@ static string[] Arr(JsonElement e, string k) =>
         ? v.EnumerateArray().Select(x => x.GetString() ?? "").ToArray() : [];
 
 int failures = 0, i = 0;
+if (evasionArgs is not null)
+{
+using var casesDoc = JsonDocument.Parse(File.ReadAllText(evasionArgs[0]));
+using var jsDoc = JsonDocument.Parse(File.ReadAllText(evasionArgs[1]));
+var jsResults = jsDoc.RootElement.EnumerateArray().ToArray();
 foreach (var c in casesDoc.RootElement.EnumerateArray())
 {
     var j = c.GetProperty("join");
@@ -61,12 +75,13 @@ foreach (var c in casesDoc.RootElement.EnumerateArray())
 Console.WriteLine(failures == 0
     ? $"\nALL {i} CASES AGREE - the port is behaviourally identical on this set"
     : $"\n{failures}/{i} DIVERGED");
+}
 
 // ---- roster write guard ----
-if (args.Length >= 4 && args[2] == "--roster")
+if (Stage("--roster", 2) is { } rosterArgs)
 {
-    using var rc = JsonDocument.Parse(File.ReadAllText(args[3]));
-    using var rj = JsonDocument.Parse(File.ReadAllText(args[4]));
+    using var rc = JsonDocument.Parse(File.ReadAllText(rosterArgs[0]));
+    using var rj = JsonDocument.Parse(File.ReadAllText(rosterArgs[1]));
     var jsRoster = rj.RootElement.EnumerateArray().ToArray();
     int rf = 0, ri = 0;
     Console.WriteLine();
@@ -89,9 +104,9 @@ if (args.Length >= 4 && args[2] == "--roster")
 
 
 // ---- factions: registry data + rank-change arithmetic ----
-if (args.Length >= 7 && args[5] == "--factions")
+if (Stage("--factions", 1) is { } factionArgs)
 {
-    using var fj = JsonDocument.Parse(File.ReadAllText(args[6]));
+    using var fj = JsonDocument.Parse(File.ReadAllText(factionArgs[0]));
     var registry = fj.RootElement.GetProperty("registry");
     int ff = 0, fi = 0;
     Console.WriteLine();
@@ -150,9 +165,9 @@ if (args.Length >= 7 && args[5] == "--factions")
 
 
 // ---- penal code: booking maths and labels ----
-if (args.Length >= 9 && args[7] == "--penal")
+if (Stage("--penal", 1) is { } penalArgs)
 {
-    using var pj = JsonDocument.Parse(File.ReadAllText(args[8]));
+    using var pj = JsonDocument.Parse(File.ReadAllText(penalArgs[0]));
     int pf = 0, pi = 0;
     var firstFailures = new List<string>();
     foreach (var sc in pj.RootElement.EnumerateArray())
@@ -183,6 +198,44 @@ if (args.Length >= 9 && args[7] == "--penal")
         ? $"ALL {pi} PENAL SCENARIOS AGREE (every charge at 5 rates, plus 12 combinations)"
         : $"{pf}/{pi} PENAL SCENARIOS DIVERGED");
     if (pf > 0) return 1;
+}
+
+// ---- .env parsing: the two bots must read ONE file identically ----
+// This is the differential that matters most operationally. A divergence here does not
+// look like a parsing bug, it looks like a wrong password or a truncated webhook URL, and
+// during a migration both bots are reading the same file.
+if (Stage("--dotenv", 1) is { } dotenvArgs)
+{
+    using var ej = JsonDocument.Parse(File.ReadAllText(dotenvArgs[0]));
+    int ef = 0, ei = 0;
+    var envFailures = new List<string>();
+    foreach (var sc in ej.RootElement.EnumerateArray())
+    {
+        ei++;
+        var line = sc.GetProperty("line").GetString()!;
+        var parsed = PavlovBot.Host.Configuration.DotEnvConfigurationProvider.Parse(line);
+
+        // The JS side dumps dotenv's parse output for the same text.
+        var expected = sc.GetProperty("parsed").EnumerateObject()
+            .ToDictionary(p => p.Name, p => p.Value.GetString(), StringComparer.Ordinal);
+
+        var ok = parsed.Count == expected.Count &&
+                 expected.All(kv => parsed.TryGetValue(kv.Key, out var v) && v == kv.Value);
+        if (!ok)
+        {
+            ef++;
+            if (envFailures.Count < 8)
+                envFailures.Add($"  {JsonSerializer.Serialize(line)}\n" +
+                    $"    dotenv: {JsonSerializer.Serialize(expected)}\n" +
+                    $"    csharp: {JsonSerializer.Serialize(parsed)}");
+        }
+    }
+    Console.WriteLine();
+    foreach (var f in envFailures) Console.WriteLine(f);
+    Console.WriteLine(ef == 0
+        ? $"ALL {ei} .ENV LINES PARSE IDENTICALLY to dotenv 16"
+        : $"{ef}/{ei} .ENV LINES DIVERGED");
+    if (ef > 0) return 1;
 }
 
 return failures == 0 ? 0 : 1;

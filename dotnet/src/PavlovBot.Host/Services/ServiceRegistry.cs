@@ -1,0 +1,356 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using PavlovBot.Host.Observability;
+
+namespace PavlovBot.Host.Services;
+
+public enum ServiceState { Stopped, Starting, Running, Failed }
+
+/// <param name="Interval">How often <see cref="Tick"/> runs. Null for a start/stop-only service.</param>
+/// <param name="RunOnStart">
+/// Fire one tick immediately on start. Off by default, and that default is load-bearing:
+/// services start BEFORE the Discord gateway connects, so an immediate tick on anything
+/// that posts to Discord fires with no connection - and re-fires on every supervisor
+/// restart. The Node bot shipped a leaderboard regression exactly this way.
+/// </param>
+/// <param name="Critical">
+/// When true, a failure to START aborts host startup. Everything else comes up with one
+/// feature dark rather than not at all.
+/// </param>
+/// <param name="DependsOn">Services that must be running first.</param>
+public sealed record ServiceDefinition
+{
+    public required string Name { get; init; }
+    public required Func<CancellationToken, Task> Tick { get; init; }
+    public TimeSpan? Interval { get; init; }
+    public bool RunOnStart { get; init; }
+    public bool Critical { get; init; }
+    public IReadOnlyList<string> DependsOn { get; init; } = [];
+    public Func<CancellationToken, Task>? OnStart { get; init; }
+    public Func<Task>? OnStop { get; init; }
+    public Func<CancellationToken, Task<HealthResult>>? HealthCheck { get; init; }
+}
+
+public sealed record ServiceStatus(
+    string Name,
+    ServiceState State,
+    TimeSpan Uptime,
+    TimeSpan? Interval,
+    long Ticks,
+    long Failures,
+    int ConsecutiveFailures,
+    long Overruns,
+    string? LastError,
+    DateTimeOffset? LastTickAt,
+    double? LastDurationMs);
+
+/// <summary>
+/// Lifecycle and supervision for the bot's recurring work.
+/// </summary>
+/// <remarks>
+/// Every one of these was a bare <c>setInterval</c> in the Node bot. Registering them buys
+/// four things without changing what any of them does:
+///
+///   - a throwing tick is caught, counted and reported instead of becoming an unhandled
+///     rejection that can take the process down
+///   - a slow tick is never re-entered, so a stalled RCON sweep cannot stack up copies of
+///     itself until the runtime drowns
+///   - each one can be stopped, restarted and inspected via /health and /metrics
+///   - shutdown stops them deterministically rather than leaving them mid-flight
+///
+/// ONE DELIBERATE DIFFERENCE FROM THE NODE VERSION. Node used a timer plus a `busy` flag
+/// and counted the ticks it skipped. Here each service is a loop over a
+/// <see cref="PeriodicTimer"/>, so re-entrancy is impossible by construction rather than
+/// by a flag somebody has to remember to check. Missed ticks collapse into one instead of
+/// being counted as skips, so the skip counter is replaced by an OVERRUN counter: ticks
+/// that took longer than their own interval. That is the signal you actually alert on, and
+/// unlike the skip count it cannot be wrong.
+/// </remarks>
+public sealed class ServiceRegistry : IAsyncDisposable
+{
+    private sealed class Record
+    {
+        public required ServiceDefinition Definition { get; init; }
+        public ServiceState State = ServiceState.Stopped;
+        public DateTimeOffset? StartedAt;
+        public long Ticks;
+        public long Failures;
+        public int ConsecutiveFailures;
+        public long Overruns;
+        public string? LastError;
+        public DateTimeOffset? LastTickAt;
+        public double? LastDurationMs;
+        public CancellationTokenSource? Stopping;
+        public Task? Loop;
+    }
+
+    private readonly ConcurrentDictionary<string, Record> _services = new(StringComparer.Ordinal);
+    private readonly MetricsRegistry _metrics;
+    private readonly ILogger _logger;
+
+    public ServiceRegistry(MetricsRegistry metrics, ILogger logger)
+    {
+        _metrics = metrics;
+        _logger = logger;
+    }
+
+    public ServiceRegistry Register(ServiceDefinition definition)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentException.ThrowIfNullOrWhiteSpace(definition.Name);
+        if (!_services.TryAdd(definition.Name, new Record { Definition = definition }))
+            throw new InvalidOperationException($"service \"{definition.Name}\" is already registered");
+        return this;
+    }
+
+    public int Count => _services.Count;
+    public int Running => _services.Values.Count(r => r.State == ServiceState.Running);
+    public IReadOnlyCollection<string> Names => _services.Keys.ToList();
+
+    /// <summary>
+    /// Start order honouring <see cref="ServiceDefinition.DependsOn"/>.
+    /// </summary>
+    /// <remarks>
+    /// Throws on a cycle, NAMING the participants. "Stack overflow" at 3am is not a
+    /// diagnosis. An unknown dependency is reported rather than silently ignored, because
+    /// a typo'd dependency name that quietly does nothing is worse than a startup failure.
+    /// </remarks>
+    public static IReadOnlyList<ServiceDefinition> OrderByDependencies(IReadOnlyCollection<ServiceDefinition> definitions)
+    {
+        ArgumentNullException.ThrowIfNull(definitions);
+        var byName = definitions.ToDictionary(d => d.Name, StringComparer.Ordinal);
+        var state = new Dictionary<string, int>(StringComparer.Ordinal);   // 1 = visiting, 2 = done
+        var ordered = new List<ServiceDefinition>();
+        var path = new List<string>();
+
+        void Visit(string name, string? requiredBy)
+        {
+            if (state.TryGetValue(name, out var s))
+            {
+                if (s == 2) return;
+                throw new InvalidOperationException(
+                    $"circular service dependency: {string.Join(" -> ", path.Append(name))}");
+            }
+            if (!byName.TryGetValue(name, out var definition))
+                throw new InvalidOperationException(
+                    $"service \"{requiredBy ?? "?"}\" depends on unknown service \"{name}\"");
+
+            state[name] = 1;
+            path.Add(name);
+            foreach (var dependency in definition.DependsOn) Visit(dependency, name);
+            path.RemoveAt(path.Count - 1);
+            state[name] = 2;
+            ordered.Add(definition);
+        }
+
+        foreach (var definition in definitions) Visit(definition.Name, null);
+        return ordered;
+    }
+
+    public async Task StartAllAsync(CancellationToken ct = default)
+    {
+        var ordered = OrderByDependencies(_services.Values.Select(r => r.Definition).ToList());
+        foreach (var definition in ordered) await StartOneAsync(definition.Name, ct).ConfigureAwait(false);
+        _logger.LogInformation("{Running}/{Total} background services running", Running, ordered.Count);
+    }
+
+    public async Task StartOneAsync(string name, CancellationToken ct = default)
+    {
+        if (!_services.TryGetValue(name, out var record)) throw new InvalidOperationException($"unknown service \"{name}\"");
+        if (record.State == ServiceState.Running) return;
+
+        record.State = ServiceState.Starting;
+        try
+        {
+            if (record.Definition.OnStart is not null) await record.Definition.OnStart(ct).ConfigureAwait(false);
+
+            record.Stopping = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var token = record.Stopping.Token;
+
+            if (record.Definition.Interval is { } interval)
+                record.Loop = Task.Run(() => LoopAsync(record, interval, token), CancellationToken.None);
+
+            record.State = ServiceState.Running;
+            record.StartedAt = DateTimeOffset.UtcNow;
+            record.ConsecutiveFailures = 0;
+            _metrics.Gauge("service_up", 1, MetricLabels.Of("service", name), "1 when a service is running");
+            _logger.LogDebug("Service {Name} started{Interval}", name,
+                record.Definition.Interval is { } i ? $" (every {i.TotalMilliseconds:0}ms)" : "");
+        }
+        catch (Exception ex)
+        {
+            record.State = ServiceState.Failed;
+            record.LastError = ex.Message;
+            _metrics.Gauge("service_up", 0, MetricLabels.Of("service", name));
+
+            /* A non-critical service that fails to start must not abort the rest of
+               startup - the bot should come up with one feature dark, not not at all. */
+            if (record.Definition.Critical) throw;
+            _logger.LogWarning(ex, "Service {Name} failed to start (non-critical, continuing)", name);
+        }
+    }
+
+    private async Task LoopAsync(Record record, TimeSpan interval, CancellationToken ct)
+    {
+        if (record.Definition.RunOnStart) await RunTickAsync(record, interval, ct).ConfigureAwait(false);
+
+        using var timer = new PeriodicTimer(interval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+                await RunTickAsync(record, interval, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+    }
+
+    private async Task RunTickAsync(Record record, TimeSpan interval, CancellationToken ct)
+    {
+        var name = record.Definition.Name;
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            await record.Definition.Tick(ct).ConfigureAwait(false);
+            record.ConsecutiveFailures = 0;
+            _metrics.Increment("service_ticks_total", MetricLabels.Of("service", name, "outcome", "success"),
+                help: "Service ticks by outcome");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;   // shutting down, not a failure
+        }
+        catch (Exception ex)
+        {
+            record.Failures++;
+            record.ConsecutiveFailures++;
+            record.LastError = ex.Message;
+            _metrics.Increment("service_ticks_total", MetricLabels.Of("service", name, "outcome", "failure"));
+            _logger.LogWarning(ex, "Service {Name} tick failed", name);
+        }
+        finally
+        {
+            var elapsed = Stopwatch.GetElapsedTime(started);
+            record.Ticks++;
+            record.LastTickAt = DateTimeOffset.UtcNow;
+            record.LastDurationMs = elapsed.TotalMilliseconds;
+            _metrics.Observe("service_tick_duration_ms", elapsed.TotalMilliseconds,
+                MetricLabels.Of("service", name), "Service tick duration in milliseconds");
+
+            // A tick slower than its own interval is the thing worth alerting on: the
+            // service is no longer running at the frequency it was configured for.
+            if (elapsed > interval)
+            {
+                record.Overruns++;
+                _metrics.Increment("service_tick_overruns_total", MetricLabels.Of("service", name),
+                    help: "Ticks that took longer than the service's interval");
+            }
+        }
+    }
+
+    public async Task StopOneAsync(string name)
+    {
+        if (!_services.TryGetValue(name, out var record) || record.State == ServiceState.Stopped) return;
+
+        if (record.Stopping is not null) await record.Stopping.CancelAsync().ConfigureAwait(false);
+        if (record.Loop is not null)
+        {
+            try { await record.Loop.ConfigureAwait(false); }
+            catch (Exception) { /* already recorded by the tick handler */ }
+        }
+        record.Stopping?.Dispose();
+        record.Stopping = null;
+        record.Loop = null;
+
+        try { if (record.Definition.OnStop is not null) await record.Definition.OnStop().ConfigureAwait(false); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Service {Name} stop handler failed", name); }
+
+        record.State = ServiceState.Stopped;
+        record.StartedAt = null;
+        _metrics.Gauge("service_up", 0, MetricLabels.Of("service", name));
+        _logger.LogDebug("Service {Name} stopped", name);
+    }
+
+    /// <summary>Stop everything in REVERSE dependency order, so nothing is torn down while
+    /// something that depends on it is still ticking.</summary>
+    public async Task StopAllAsync()
+    {
+        var ordered = OrderByDependencies(_services.Values.Select(r => r.Definition).ToList()).Reverse();
+        foreach (var definition in ordered) await StopOneAsync(definition.Name).ConfigureAwait(false);
+    }
+
+    public async Task RestartAsync(string name, CancellationToken ct = default)
+    {
+        await StopOneAsync(name).ConfigureAwait(false);
+        _metrics.Increment("service_restarts_total", MetricLabels.Of("service", name), help: "Service restarts");
+        await StartOneAsync(name, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Restart anything that has failed outright, or failed repeatedly in a row.</summary>
+    public async Task<IReadOnlyList<string>> ReviveFailedAsync(int threshold = 5, CancellationToken ct = default)
+    {
+        var revived = new List<string>();
+        foreach (var record in _services.Values)
+        {
+            var stuck = record.State == ServiceState.Failed ||
+                        (record.State == ServiceState.Running && record.ConsecutiveFailures >= threshold);
+            if (!stuck) continue;
+
+            _logger.LogWarning("Restarting {Name} after {Failures} consecutive failures",
+                record.Definition.Name, record.ConsecutiveFailures);
+            await RestartAsync(record.Definition.Name, ct).ConfigureAwait(false);
+            revived.Add(record.Definition.Name);
+        }
+        return revived;
+    }
+
+    public IReadOnlyList<ServiceStatus> Status() =>
+        _services.Values.Select(r => new ServiceStatus(
+            r.Definition.Name, r.State,
+            r.StartedAt is { } at ? DateTimeOffset.UtcNow - at : TimeSpan.Zero,
+            r.Definition.Interval, r.Ticks, r.Failures, r.ConsecutiveFailures, r.Overruns,
+            r.LastError, r.LastTickAt, r.LastDurationMs)).ToList();
+
+    /// <summary>Roll every service into one verdict, honouring per-service checks.</summary>
+    public async Task<HealthResult> HealthAsync(CancellationToken ct = default)
+    {
+        var worst = HealthStatus.Healthy;
+        var notes = new List<string>();
+
+        foreach (var record in _services.Values)
+        {
+            var status = record.State switch
+            {
+                ServiceState.Running => HealthStatus.Healthy,
+                ServiceState.Stopped => HealthStatus.Degraded,
+                _ => HealthStatus.Unhealthy,
+            };
+            var detail = record.LastError;
+
+            if (record.State == ServiceState.Running && record.ConsecutiveFailures > 0)
+            {
+                status = HealthStatus.Degraded;
+                detail = $"{record.ConsecutiveFailures} consecutive tick failures";
+            }
+
+            if (record.State == ServiceState.Running && record.Definition.HealthCheck is { } check)
+            {
+                try
+                {
+                    var result = await check(ct).ConfigureAwait(false);
+                    if (result.Status != HealthStatus.Healthy) { status = result.Status; detail = result.Detail ?? detail; }
+                }
+                catch (Exception ex) { status = HealthStatus.Unhealthy; detail = ex.Message; }
+            }
+
+            if (status != HealthStatus.Healthy) notes.Add($"{record.Definition.Name}: {detail ?? status.ToString()}");
+            if (status > worst) worst = status;
+        }
+
+        return new HealthResult(worst, notes.Count > 0 ? string.Join("; ", notes) : $"{Running}/{Count} running");
+    }
+
+    public async ValueTask DisposeAsync() => await StopAllAsync().ConfigureAwait(false);
+}

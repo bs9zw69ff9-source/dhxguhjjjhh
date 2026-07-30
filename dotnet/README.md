@@ -16,7 +16,7 @@ handled as `false` ("the answer is no"). `<Nullable>enable</Nullable>` with
 ```
 src/PavlovBot.Core    pure domain logic - no Discord, no sockets, no filesystem
 src/PavlovBot.Rcon    Pavlov RCON client
-src/PavlovBot.Host    composition root (not started)
+src/PavlovBot.Host    composition root, configuration, observability, Discord
 tests/PavlovBot.Tests xUnit
 tools/DiffCheck       differential harness: replays cases through both implementations
 ```
@@ -47,10 +47,12 @@ passes:
 | `Data.RosterWriteGuard` | ported - 10 tests, 8/8 differential cases agree |
 | `Factions` (registry + membership rules) | ported - 24 tests, 3/3 factions and 52/52 rank scenarios agree |
 | `Penal` (59 charges + booking maths) | ported - 16 tests, 331/331 differential scenarios agree |
+| `Host` (config, DI, services, monitoring, gateway) | ported - 77 tests, 39/39 `.env` lines parse identically |
+| commands | 1 of ~30 (`/serverinfo`) |
 | everything else | not started |
 
-Total: **86 xUnit tests**, and **403 differential scenarios** agreeing with the running
-JS across evasion, roster writes, factions and the penal code.
+Total: **163 xUnit tests**, and **442 differential scenarios** agreeing with the running
+JS across evasion, roster writes, factions, the penal code and `.env` parsing.
 
 ### RCON: what changed versus Node
 
@@ -76,7 +78,16 @@ when dropped, and commands are paced 100ms apart as the docs advise.
 
 ```bash
 dotnet test
-dotnet run --project tools/DiffCheck -- cases.json js-reference.json
+
+# The host. --selftest builds the whole object graph, reports what it cost and exits
+# without connecting to anything: a deploy smoke test that proves the configuration
+# parses and every dependency resolves.
+dotnet run --project src/PavlovBot.Host -- --selftest
+dotnet run --project src/PavlovBot.Host
+
+# Differential stages are selected by flag and are independent of each other.
+dotnet run --project tools/DiffCheck -- --evasion cases.json js-reference.json
+dotnet run --project tools/DiffCheck -- --dotenv dotenv-cases.json
 ```
 
 ## Data layer notes
@@ -144,3 +155,112 @@ Two special cases behave differently on purpose:
 - **Execution replaces** the sentence and the bail entirely, even when charged alongside
   ordinary offences. The underlying minute total is still computed and available.
 - **Variable annotates** rather than replaces - "2 min + based on the associated charge".
+
+## Host notes
+
+The host is the composition root and the only place in the program that constructs
+anything - the same discipline `index.js` arrived at the hard way, with a container
+attached. Startup order is deliberate: configuration is **validated and the process exits**
+before anything opens a socket, then monitoring comes up so `/health` is answering while
+the rest is still starting, then background services, and the Discord gateway **last** so
+the first interaction cannot arrive before the things it depends on exist.
+
+Configuration reports **every** problem at once, not the first. Fixing a bot's environment
+one crash at a time, with a restart between each, is how a five-minute deploy becomes an
+hour.
+
+### The .env parser, and why it is differentially tested
+
+Both bots read one `.env` during a migration, so the parser matches dotenv 16's grammar
+rather than inventing a cleaner one. A divergence here does not present as a parsing bug -
+it presents as a wrong password or a truncated webhook URL.
+
+The harness earned its place immediately: this port unescaped `\"` inside double quotes,
+and dotenv does not. Only `\n` and `\r` are expanded. Nothing in the unit tests would have
+caught it, and the symptom would have been a token that silently differed by one character.
+
+The other rule worth knowing: an **unquoted** value ends at the first `#`. A value
+containing a hash must be quoted, or dotenv truncates it - and so, deliberately, does this.
+
+### Services: one deliberate difference from Node
+
+Node used a timer plus a `busy` flag and counted the ticks it skipped. Here each service is
+a loop over a `PeriodicTimer`, so re-entrancy is impossible **by construction** rather than
+by a flag somebody has to remember to check. Missed ticks collapse into one instead of
+being counted, so the skip counter is replaced by an **overrun** counter: ticks that took
+longer than their own interval. That is the signal you actually alert on, and unlike a skip
+count it cannot be wrong.
+
+`runOnStart` stays **off by default**, and that default is load-bearing. Services start
+before the gateway connects, so an immediate tick on anything that posts to Discord fires
+with no connection - and re-fires on every supervisor restart. The Node bot shipped a
+leaderboard regression exactly this way.
+
+### Monitoring
+
+`HttpListener`, not Kestrel. Four endpoints that return text do not justify pulling the
+ASP.NET Core framework reference into a process whose whole reason for existing is a
+smaller footprint. Loopback by default, optional bearer token, and disabled entirely
+unless `METRICS_PORT` is set - no port, no listener, no attack surface.
+
+`/healthz` stays open even when a token is configured: an orchestrator has to be able to
+restart a bot whose configuration is broken, and a wrong metrics token is exactly that
+case. And only **unhealthy** returns 503 - "degraded" must not take a bot out of a load
+balancer because one optional detector is down.
+
+One tri-state carried forward: `METRICS_PORT=0` is **set but unusable**, and is reported as
+such. The Node bot read a configured 0 as "no port" through a truthiness check and the
+metrics endpoint silently never came up.
+
+## AOT: what actually happened
+
+The port set out to publish with Native AOT. **It cannot, and the reason is Discord.Net.**
+
+`Discord.Net.Rest` and `Discord.Net.WebSocket` both build their gateway and command models
+by reflection and produce `IL2104` trim warnings, so neither trimming nor AOT can be
+recommended without exercising a live gateway - and a reflection failure under trimming
+does not show up at startup, it shows up the first time a particular payload arrives.
+
+The constraint is contained rather than accepted everywhere: `PavlovBot.Core` and
+`PavlovBot.Rcon` stay marked `IsAotCompatible`, and the RCON protocol layer parses with
+`JsonDocument` rather than a serialiser specifically to keep them that way. Only the host
+gives up AOT.
+
+The shipping recommendation is therefore **self-contained + ReadyToRun, untrimmed**.
+
+## Measured, honestly
+
+Both sides measured at the same point - **entire object graph constructed, Discord client
+created, nothing connected** - which is what `--selftest` exists for. Median of three runs
+on the same machine.
+
+| | Node (`index.js`, ~30 commands) | .NET host (1 command) |
+|---|---|---|
+| construction | 333 ms | **220 ms** |
+| resident | 101.6 MB | **56.8 MB** |
+| heap | 23.5 MB | **0.7 MB** |
+
+Published size:
+
+| | |
+|---|---|
+| self-contained + ReadyToRun | 90 MB |
+| framework-dependent | 14 MB |
+| trimmed (**not recommended**, see above) | 52 MB |
+| Node: `node_modules` | 57 MB (plus a ~119 MB `node` binary) |
+
+**These numbers are not a finished comparison, and should not be read as one.** The .NET
+host has one command ported against roughly thirty; the Node figure is the whole bot. What
+the comparison does establish is the *baseline* - runtime plus Discord library plus the
+ported infrastructure - and that baseline is roughly half of Node's. The managed heap being
+0.7 MB rather than 23.5 MB is the more durable signal: the remaining commands are code, and
+code lands in mapped R2R images rather than on the heap, so the resident figure should grow
+far more slowly than the feature count.
+
+## What is not ported
+
+Everything that touches Discord beyond `/serverinfo`, and every feature built on it: bans
+and the ban lifecycle, whitelists and rank commands, the police and penal workflow, the
+economy and money log, VPN and ban-evasion screening, leaderboards, dashboards, modsave
+synchronisation, and the plugin system. **The Node bot in the repository root is still the
+production one.**

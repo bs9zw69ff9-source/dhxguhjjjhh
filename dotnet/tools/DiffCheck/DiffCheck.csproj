@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/PavlovBot.Core/PavlovBot.Core.csproj" />
+    <ProjectReference Include="../../src/PavlovBot.Host/PavlovBot.Host.csproj" />
   </ItemGroup>
 </Project>

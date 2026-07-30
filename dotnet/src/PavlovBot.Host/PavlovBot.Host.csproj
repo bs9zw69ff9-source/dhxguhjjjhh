@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PavlovBot.Host</RootNamespace>
+    <AssemblyName>PavlovBot</AssemblyName>
+
+    <!-- NOT IsAotCompatible, and that is a finding rather than an oversight: Discord.Net
+         builds its gateway and command models by reflection, so the host cannot be
+         published with Native AOT. Core and Rcon stay AOT-clean, so the constraint is
+         contained to this project. See README, "AOT: what actually happened". -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredPGO>true</TieredPGO>
+    <InvariantTimezone>false</InvariantTimezone>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <!-- Workstation GC deliberately: this process is one bot on a shared game host, and
+         server GC would reserve a heap per core for a workload that is almost entirely
+         idle waiting on sockets. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Discord.Net.WebSocket" Version="3.20.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The monitoring router is internal: it is an implementation detail of the listener,
+         but it is also the part worth testing without binding a socket. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>PavlovBot.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../PavlovBot.Core/PavlovBot.Core.csproj" />
+    <ProjectReference Include="../PavlovBot.Rcon/PavlovBot.Rcon.csproj" />
+  </ItemGroup>
+</Project>
