@@ -43,6 +43,8 @@ passes:
 |---|---|
 | `Evasion` (ban-evasion scoring) | ported - 15 tests, 12/12 differential cases agree |
 | `Rcon` (client, coalescing, audit) | ported - 13 tests against a fake Pavlov listener |
+| `Data.SerializedStore` | ported - 8 tests |
+| `Data.RosterWriteGuard` | ported - 10 tests, 8/8 differential cases agree |
 | everything else | not started |
 
 ### RCON: what changed versus Node
@@ -71,3 +73,30 @@ when dropped, and commands are paced 100ms apart as the docs advise.
 dotnet test
 dotnet run --project tools/DiffCheck -- cases.json js-reference.json
 ```
+
+## Data layer notes
+
+**SerializedStore** is the read-modify-write queue. Every mutation the bot makes has that
+shape - load the ban list, add one, save it - and running two concurrently against one
+dataset means the second silently overwrites the first. That surfaces days later as a ban
+that "didn't take". Locking is per key, so unrelated datasets never wait on each other.
+
+Two properties carried across deliberately:
+
+- **A failed update must not poison the queue.** In JS the promise chain was kept alive
+  with a trailing catch. Here the semaphore is released in a `finally`, so one thrown
+  mutator cannot wedge every later write to that dataset.
+- **Reads are isolated.** JS needed an explicit `structuredClone` per read; here it falls
+  out of deserialising per read, so a caller mutating what it read cannot corrupt shared
+  state.
+
+A mutator returning `null` is a **veto**, not an error - it is how "insufficient funds"
+or "already present" is expressed, and nothing is written.
+
+**RosterWriteGuard** refuses a write that would delete more than 5 existing entries. The
+reasoning matters more than the number: an empty roster file is perfectly VALID to Pavlov,
+so a parsing bug producing an empty list would silently strip a faction mid-round with no
+error anywhere. The check is therefore on the *size of the change*, not the shape of the
+data - a write removing twenty entries is not a big operation, it is a bug that already
+happened. "Cannot read the current file" is treated as its own refusal rather than as
+"empty", because conflating those turns a transient permission error into a wipe.

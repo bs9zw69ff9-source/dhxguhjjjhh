@@ -61,4 +61,30 @@ foreach (var c in casesDoc.RootElement.EnumerateArray())
 Console.WriteLine(failures == 0
     ? $"\nALL {i} CASES AGREE - the port is behaviourally identical on this set"
     : $"\n{failures}/{i} DIVERGED");
+
+// ---- roster write guard ----
+if (args.Length >= 4 && args[2] == "--roster")
+{
+    using var rc = JsonDocument.Parse(File.ReadAllText(args[3]));
+    using var rj = JsonDocument.Parse(File.ReadAllText(args[4]));
+    var jsRoster = rj.RootElement.EnumerateArray().ToArray();
+    int rf = 0, ri = 0;
+    Console.WriteLine();
+    foreach (var c in rc.RootElement.EnumerateArray())
+    {
+        var current = c.GetProperty("current").EnumerateArray().Select(x => x.GetString()!).ToList();
+        var proposed = c.GetProperty("proposed").EnumerateArray().Select(x => x.GetString()!).ToList();
+        var verdict = PavlovBot.Core.Data.RosterWriteGuard.Evaluate(current, proposed);
+        var js = jsRoster[ri++];
+        var jsAllowed = js.GetProperty("allowed").GetBoolean();
+        var ok = verdict.IsAllowed == jsAllowed;
+        if (!ok) rf++;
+        Console.WriteLine($"{(ok ? "match  " : "DIFFER ")} {js.GetProperty("n").GetString(),-28} js(allowed={jsAllowed})  cs(allowed={verdict.IsAllowed}, dropped={verdict.Dropped})");
+    }
+    Console.WriteLine(rf == 0
+        ? $"\nALL {ri} ROSTER CASES AGREE"
+        : $"\n{rf}/{ri} ROSTER CASES DIVERGED");
+    if (rf > 0) return 1;
+}
+
 return failures == 0 ? 0 : 1;
