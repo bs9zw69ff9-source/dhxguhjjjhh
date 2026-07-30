@@ -42,7 +42,28 @@ passes:
 | Module | State |
 |---|---|
 | `Evasion` (ban-evasion scoring) | ported - 15 tests, 12/12 differential cases agree |
+| `Rcon` (client, coalescing, audit) | ported - 13 tests against a fake Pavlov listener |
 | everything else | not started |
+
+### RCON: what changed versus Node
+
+The Node client opened a fresh TCP connection and MD5 handshake **per command**, which
+the Pavlov RCON reference explicitly advises against - Pavlov services RCON on the game
+thread, so every connection is work taken from the tick.
+
+Measured over 10 cycles of the bot's real pattern (player list, dashboard, leaderboards,
+ban sweep, health check and cache refresh all asking within the same second):
+
+| | connections opened |
+|---|---|
+| Node, before read coalescing | ~6 per cycle |
+| Node, after read coalescing | ~2 per cycle |
+| .NET, persistent session | **1 in total** |
+
+Three behaviours carried across from the Node work, all covered by tests: a mutation is
+never cached and clears the cached roster; a failure is never cached as an answer; retry
+backoff uses full jitter. Two are new: the session is reused and rebuilt transparently
+when dropped, and commands are paced 100ms apart as the docs advise.
 
 ## Running
 
