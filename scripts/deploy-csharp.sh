@@ -99,7 +99,9 @@ untouched and still running.
 
 Three ways forward:
 
-  1. Let this script install it (~350 MB, into \$HOME/.dotnet, no root needed):
+  1. Let this script install it (into \$HOME/.dotnet, no root needed). Budget
+     ~1 GB: ~600 MB for the SDK, ~400 MB for the NuGet cache it fills on the
+     first build.
        bash scripts/deploy.sh --install-sdk --start
 
   2. Install it yourself, then re-run the deploy normally:
