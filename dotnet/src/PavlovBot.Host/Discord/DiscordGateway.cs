@@ -29,6 +29,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly IReadOnlyDictionary<string, ISlashCommand> _commands;
     private readonly MetricsRegistry _metrics;
     private readonly HealthRegistry _health;
+    private readonly CommandCatalog _catalog;
     private readonly ILogger<DiscordGateway> _logger;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenSource? _stopping;
@@ -38,14 +39,24 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         IEnumerable<ISlashCommand> commands,
         MetricsRegistry metrics,
         HealthRegistry health,
+        CommandCatalog catalog,
         ILogger<DiscordGateway> logger)
     {
         ArgumentNullException.ThrowIfNull(commands);
         _options = options;
         _metrics = metrics;
         _health = health;
+        _catalog = catalog;
         _logger = logger;
         _commands = commands.ToDictionary(c => c.Name, StringComparer.Ordinal);
+
+        /* Populate the catalog HERE rather than letting /help inject the command
+           collection: a command that lists every command would otherwise depend on itself,
+           and the container refuses to build the graph. */
+        _catalog.Populate(_commands.Values
+            .Select(c => c.Build())
+            .OfType<SlashCommandProperties>()
+            .Select(c => new CommandSummary(c.Name.Value, c.Description.Value)));
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
         {

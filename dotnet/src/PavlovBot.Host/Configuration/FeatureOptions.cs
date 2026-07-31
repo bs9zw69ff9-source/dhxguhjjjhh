@@ -22,6 +22,9 @@ public sealed record FeatureOptions
     /// <summary>Pavlov.log paths, comma separated. Empty means auto-detect.</summary>
     public string? LogPaths { get; init; }
 
+    /// <summary>Where the game keeps its whitelist .txt rosters. Null disables the faction commands.</summary>
+    public string? RosterDirectory { get; init; }
+
     public string? JoinWebhook { get; init; }
     public string? KillWebhook { get; init; }
     public string? MoneyWebhook { get; init; }
@@ -57,6 +60,7 @@ public sealed record FeatureOptions
         {
             LedgerDirectory = Text(configuration, "MODSAVE_PATH"),
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
+            RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
 
             JoinWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
@@ -125,6 +129,7 @@ public sealed record FeatureOptions
     public IReadOnlyList<string> Describe() =>
     [
         $"economy: {(LedgerDirectory is null ? "off (MODSAVE_PATH not set)" : LedgerDirectory)}",
+        $"whitelists: {(RosterDirectory is null ? "off (FACTION_ROLES_PATH not set)" : RosterDirectory)}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
         $"money feed: {(MoneyWebhook is null ? "off" : "on")}",

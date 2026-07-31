@@ -47,11 +47,19 @@ passes:
 | `Data.RosterWriteGuard` | ported - 10 tests, 8/8 differential cases agree |
 | `Factions` (registry + membership rules) | ported - 24 tests, 3/3 factions and 52/52 rank scenarios agree |
 | `Penal` (59 charges + booking maths) | ported - 16 tests, 331/331 differential scenarios agree |
-| `Host` (config, DI, services, monitoring, gateway) | ported - 77 tests, 39/39 `.env` lines parse identically |
-| commands | 1 of ~30 (`/serverinfo`) |
-| everything else | not started |
+| `Host` (config, DI, services, monitoring, gateway) | ported - 39/39 `.env` lines parse identically |
+| `Text` / `Time` / `StaffHierarchy` / `MenuLink` / `Verification` | ported |
+| `PeakTracker`, `Ledger` | ported |
+| storage (SQLite + dataset registry + JSON export) | ported |
+| ban rules and enforcement (sweep, reconcile, expiry) | ported |
+| VPN screening (6 detectors, two-tier consensus) | ported |
+| log pipeline (parsing, correlation, tailing, IP tracking) | ported |
+| roster service + faction commands | ported |
+| feeds, money log, auto-posting boards | ported |
+| commands | 20 |
+| leaderboard/dashboard CONTENT builders, plugins, menu grants, donators, staff activity | not started |
 
-Total: **163 xUnit tests**, and **442 differential scenarios** agreeing with the running
+Total: **435 xUnit tests**, and **442 differential scenarios** agreeing with the running
 JS across evasion, roster writes, factions, the penal code and `.env` parsing.
 
 ### RCON: what changed versus Node
@@ -234,11 +242,11 @@ Both sides measured at the same point - **entire object graph constructed, Disco
 created, nothing connected** - which is what `--selftest` exists for. Median of three runs
 on the same machine.
 
-| | Node (`index.js`, ~30 commands) | .NET host (1 command) |
+| | Node (`index.js`, ~30 commands) | .NET host (20 commands) |
 |---|---|---|
-| construction | 333 ms | **220 ms** |
-| resident | 101.6 MB | **56.8 MB** |
-| heap | 23.5 MB | **0.7 MB** |
+| construction | 333 ms | **291 ms** |
+| resident | 101.6 MB | **63.4 MB** |
+| heap | 23.5 MB | **1.0 MB** |
 
 Published size:
 
@@ -249,18 +257,21 @@ Published size:
 | trimmed (**not recommended**, see above) | 52 MB |
 | Node: `node_modules` | 57 MB (plus a ~119 MB `node` binary) |
 
-**These numbers are not a finished comparison, and should not be read as one.** The .NET
-host has one command ported against roughly thirty; the Node figure is the whole bot. What
-the comparison does establish is the *baseline* - runtime plus Discord library plus the
-ported infrastructure - and that baseline is roughly half of Node's. The managed heap being
-0.7 MB rather than 23.5 MB is the more durable signal: the remaining commands are code, and
-code lands in mapped R2R images rather than on the heap, so the resident figure should grow
-far more slowly than the feature count.
+**This is still not a finished comparison.** The .NET host has 20 commands against roughly
+thirty, and several features behind them are not ported. But the earlier prediction now has
+evidence: going from 1 command to 20, plus SQLite, the log pipeline, VPN screening and the
+feeds, moved resident from 56.8 MB to 63.4 MB and the managed heap from 0.7 MB to 1.0 MB.
+Feature count and memory are not tracking together, because the features are code, and code
+lands in mapped R2R images rather than on the heap.
 
 ## What is not ported
 
-Everything that touches Discord beyond `/serverinfo`, and every feature built on it: bans
-and the ban lifecycle, whitelists and rank commands, the police and penal workflow, the
-economy and money log, VPN and ban-evasion screening, leaderboards, dashboards, modsave
-synchronisation, and the plugin system. **The Node bot in the repository root is still the
-production one.**
+The leaderboard and dashboard CONTENT builders (the auto-posting machinery is there, but
+nothing computes the rows yet), the plugin system, menu grants and RCON+ menu roles, the
+donator list, staff-activity auditing, rank suspensions, and modsave ban-list
+synchronisation.
+
+**The Node bot in the repository root is still the production one.** Nothing here has run
+against a live server or a real Discord gateway - the whole port is verified by its tests,
+its differential harness and `--selftest`, which is a different and weaker claim than
+"it works".

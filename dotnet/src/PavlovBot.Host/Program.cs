@@ -8,6 +8,7 @@ using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Discord.Commands;
 using PavlovBot.Host.Economy;
+using PavlovBot.Host.Factions;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Vpn;
@@ -129,11 +130,34 @@ public static class Program
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
         builder.Services.AddSingleton<AutoPost>();
 
+        builder.Services.AddSingleton(sp => new RosterService(
+            features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>()));
+
+        builder.Services.AddSingleton<CommandCatalog>();
         builder.Services.AddSingleton<ISlashCommand, ServerInfoCommand>();
+        builder.Services.AddSingleton<ISlashCommand, HelpCommand>();
         builder.Services.AddSingleton<ISlashCommand, TempBanCommand>();
         builder.Services.AddSingleton<ISlashCommand, PermBanCommand>();
         builder.Services.AddSingleton<ISlashCommand, UnbanCommand>();
         builder.Services.AddSingleton<ISlashCommand, CheckBanCommand>();
+        builder.Services.AddSingleton<ISlashCommand, KickCommand>();
+        builder.Services.AddSingleton<ISlashCommand, AnnounceCommand>();
+        builder.Services.AddSingleton<ISlashCommand, WhitelistCommand>();
+        builder.Services.AddSingleton<ISlashCommand>(sp => RankChangeCommand.Promotion(
+            sp.GetRequiredService<RosterService>(), sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<ILogger<RankChangeCommand>>()));
+        builder.Services.AddSingleton<ISlashCommand>(sp => RankChangeCommand.Demotion(
+            sp.GetRequiredService<RosterService>(), sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<ILogger<RankChangeCommand>>()));
+        builder.Services.AddSingleton<ISlashCommand, WarrantCommand>();
+        builder.Services.AddSingleton<ISlashCommand, ArrestCommand>();
+        builder.Services.AddSingleton<ISlashCommand, BackgroundCheckCommand>();
+        builder.Services.AddSingleton<ISlashCommand, BailCommand>();
+        builder.Services.AddSingleton<ISlashCommand, SetPinCommand>();
+        builder.Services.AddSingleton<ISlashCommand, RemovePinCommand>();
+        builder.Services.AddSingleton<ISlashCommand, IpLookupCommand>();
+        builder.Services.AddSingleton<ISlashCommand, VpnCheckCommand>();
+        builder.Services.AddSingleton<ISlashCommand, HealthCommand>();
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>()));
 
