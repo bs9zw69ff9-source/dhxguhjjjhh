@@ -84,7 +84,26 @@ public sealed class SystemTextJsonCodec : IJsonCodec
             // Indented because these files are read and hand-edited during incidents. The
             // size difference is irrelevant next to being able to diff them.
             WriteIndented = true,
+
+            /* The Node bot writes camelCase keys. Without this every field would read as
+               its default and a ban list would deserialise into a list of empty records -
+               which is worse than failing, because it looks like data. */
             PropertyNameCaseInsensitive = true,
+
+            /* And WRITE camelCase, because reading is only half of sharing a database.
+               Node reads `b.playerId`; given "PlayerId" it gets undefined, its ban
+               validator rejects the record as corrupt, and the ban disappears from a bot
+               that used to hold it. That is the rollback path, so it has to work. */
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+
+            /* Timestamps as JavaScript milliseconds, both directions, so the two bots can
+               share one database. See EpochMillisecondsConverter - without it the ban list
+               reads as EMPTY and the first write wipes it. */
+            Converters =
+            {
+                new EpochMillisecondsConverter(),
+                new NullableEpochMillisecondsConverter(),
+            },
         };
 
     public string Serialize<T>(T value) => JsonSerializer.Serialize(value, _options);

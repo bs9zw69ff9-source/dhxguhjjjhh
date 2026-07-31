@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using PavlovBot.Core.Data;
+using PavlovBot.Host.Storage;
 using Xunit;
 
 namespace PavlovBot.Tests;
@@ -16,15 +17,12 @@ internal sealed class MemoryBackend : IKeyValueBackend
     public void Seed(string key, string json) => _data[key] = json;
 }
 
-internal sealed class SystemTextJsonCodec : IJsonCodec
-{
-    public string Serialize<T>(T value) => JsonSerializer.Serialize(value);
-    public bool TryDeserialize<T>(string json, out T? value)
-    {
-        try { value = JsonSerializer.Deserialize<T>(json); return true; }
-        catch (JsonException) { value = default; return false; }
-    }
-}
+/* NO local codec stub here. There used to be one, and because it sat in the test
+   assembly's own namespace it SHADOWED the production PavlovBot.Host.Storage codec at
+   every call site in this project - so tests that looked like they exercised the real
+   serialiser were exercising a three-line fake. That hid the Node interop bug entirely:
+   the fake had no converters and no naming policy, so it round-tripped C# to C# happily
+   while the real one could not read a single Node record. Use the real type. */
 
 /// <summary>
 /// Ported from test/database.test.js, plus the concurrency properties the JS suite could

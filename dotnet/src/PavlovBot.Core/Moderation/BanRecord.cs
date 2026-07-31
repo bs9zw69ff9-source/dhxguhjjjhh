@@ -39,6 +39,7 @@ public sealed record BanRecord
     /// wrong - guessing permanent leaves someone banned forever over a corrupt field,
     /// guessing expired quietly frees them.
     /// </remarks>
+    [System.Text.Json.Serialization.JsonIgnore]
     public bool IsValid =>
         !string.IsNullOrWhiteSpace(PlayerId) && (Permanent || Expires is not null);
 
