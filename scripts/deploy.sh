@@ -7,6 +7,7 @@
 #
 #   bash scripts/deploy.sh                 # pull + build + verify, start nothing
 #   bash scripts/deploy.sh --start         # ... and restart the bot
+#   bash scripts/deploy.sh --install-sdk   # ... fetching the .NET SDK if absent
 #   bash scripts/deploy.sh --node --start  # deploy the Node ROLLBACK target instead
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,13 +15,16 @@ cd "$(dirname "$0")/.."
 BRANCH="claude/debug-optimize-code-dva08i"
 MODE="csharp"
 START=false
+CS_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
-    --start) START=true ;;
-    --node)  MODE="node" ;;
-    --*)     echo "unknown option: $arg" >&2; exit 2 ;;
-    *)       BRANCH="$arg" ;;
+    --start)       START=true ;;
+    --node)        MODE="node" ;;
+    --install-sdk) CS_ARGS+=("$arg") ;;
+    --keep-node)   CS_ARGS+=("$arg") ;;
+    --*)           echo "unknown option: $arg" >&2; exit 2 ;;
+    *)             BRANCH="$arg" ;;
   esac
 done
 
@@ -47,10 +51,12 @@ fi
 
 # The C# bot. deploy-csharp.sh owns the build, the selftest gate and the
 # refuse-to-double-run check, so none of that is duplicated here.
+# ${CS_ARGS[@]+...} because `set -u` treats an unset empty array as an error on
+# older bash, and this runs on whatever bash the game host happens to ship.
 if [ "$START" = true ]; then
-  bash scripts/deploy-csharp.sh --start
+  bash scripts/deploy-csharp.sh --start ${CS_ARGS[@]+"${CS_ARGS[@]}"}
 else
-  bash scripts/deploy-csharp.sh
+  bash scripts/deploy-csharp.sh ${CS_ARGS[@]+"${CS_ARGS[@]}"}
 fi
 
 echo "Deployed $(git log --oneline -1)"

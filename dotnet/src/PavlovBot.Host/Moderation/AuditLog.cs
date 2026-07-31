@@ -40,18 +40,33 @@ public sealed class AuditLog(SerializedStore store)
 
     public IReadOnlyList<ModAction> All() => store.Read<List<ModAction>>(Datasets.ModLog, []);
 
+    /// <summary>
+    /// Newest first, with ties broken by insertion order rather than left to chance.
+    /// </summary>
+    /// <remarks>
+    /// Timestamps are stored as whole milliseconds (see <c>EpochMillisecondsConverter</c> -
+    /// the format the Node bot reads), so two actions taken in the same millisecond carry
+    /// the SAME <c>At</c>. <c>OrderByDescending</c> is a stable sort, so it leaves tied
+    /// entries in source order - which is append order, oldest first - and a staffer who
+    /// kicks two players in one burst sees them listed backwards.
+    ///
+    /// Reversing before the sort is what fixes it: the log is append-only and trimmed from
+    /// the front, so its order IS chronological order. Reversed, the stable sort keeps the
+    /// later-recorded action ahead of the earlier one whenever their timestamps tie.
+    /// </remarks>
+    private static IEnumerable<ModAction> NewestFirst(IEnumerable<ModAction> actions) =>
+        actions.Reverse().OrderByDescending(a => a.At);
+
     /// <summary>One staffer's actions, most recent first.</summary>
     public IReadOnlyList<ModAction> By(string moderator, DateTimeOffset? since = null) =>
-        All()
+        NewestFirst(All())
             .Where(a => string.Equals(a.Moderator, moderator, StringComparison.OrdinalIgnoreCase))
             .Where(a => since is null || a.At >= since)
-            .OrderByDescending(a => a.At)
             .ToList();
 
     /// <summary>Everything done TO one player, most recent first.</summary>
     public IReadOnlyList<ModAction> Against(string player) =>
-        All()
+        NewestFirst(All())
             .Where(a => string.Equals(a.Player, player, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(a => a.At)
             .ToList();
 }

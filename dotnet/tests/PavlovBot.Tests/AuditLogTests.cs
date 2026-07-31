@@ -47,6 +47,49 @@ public class AuditLogTests : IDisposable
     }
 
     [Fact]
+    public async Task ActionsInTheSameMillisecondStillReadNewestFirst()
+    {
+        /* The test above only covers this by accident. Timestamps are stored as whole
+           milliseconds, so a staffer acting twice in one burst produces two entries with an
+           IDENTICAL `At`, and a stable sort then leaves them in append order - oldest
+           first, the exact opposite of what the ordering promises.
+
+           Twenty back-to-back writes guarantee ties instead of hoping for them, and the
+           assertion is the full order rather than just the head, so a partial ordering
+           cannot pass. This failed reliably before `NewestFirst` reversed the source. */
+        for (var i = 0; i < 20; i++)
+            await _audit.RecordAsync("kick", "Dana", "Player" + i);
+
+        var dana = _audit.By("Dana");
+
+        /* Self-validating: each write touches the filesystem, and on a slow enough machine
+           every one could land in its own millisecond - leaving this passing while covering
+           nothing. Assert that ties are actually present, so the test fails loudly if it
+           ever stops exercising the case it exists for. */
+        Assert.True(dana.Select(a => a.At).Distinct().Count() < dana.Count,
+            "no two entries shared a millisecond, so this run did not test tie-breaking");
+
+        Assert.Equal(Enumerable.Range(0, 20).Reverse().Select(i => "Player" + i),
+            dana.Select(a => a.Player));
+    }
+
+    [Fact]
+    public async Task AgainstAPlayerIsAlsoNewestFirstWithinAMillisecond()
+    {
+        // Same defect, same fix, the other read path - `Against` had its own copy of the sort.
+        for (var i = 0; i < 20; i++)
+            await _audit.RecordAsync("kick", "Mod" + i, "Alice");
+
+        var against = _audit.Against("Alice");
+
+        Assert.True(against.Select(a => a.At).Distinct().Count() < against.Count,
+            "no two entries shared a millisecond, so this run did not test tie-breaking");
+
+        Assert.Equal(Enumerable.Range(0, 20).Reverse().Select(i => "Mod" + i),
+            against.Select(a => a.Moderator));
+    }
+
+    [Fact]
     public async Task ByModeratorCanBeWindowed()
     {
         await _audit.RecordAsync("kick", "Dana", "Alice");
