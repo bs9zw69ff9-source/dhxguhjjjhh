@@ -7,6 +7,8 @@ using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Discord;
+using PavlovBot.Host.Discord.Commands;
+using PavlovBot.Host.Factions;
 using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Services;
@@ -38,6 +40,9 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly SqliteKeyValueBackend _backend;
     private readonly Boards _boards;
     private readonly AutoPost _autoPost;
+    private readonly ModsaveBanlist _modsave;
+    private readonly RosterService _rosters;
+    private readonly PavlovBot.Core.Data.SerializedStore _store;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -54,6 +59,9 @@ public sealed class BackgroundServiceHost : IHostedService
         SqliteKeyValueBackend backend,
         Boards boards,
         AutoPost autoPost,
+        ModsaveBanlist modsave,
+        RosterService rosters,
+        PavlovBot.Core.Data.SerializedStore store,
         ILogger<BackgroundServiceHost> logger)
     {
         _registry = registry;
@@ -70,6 +78,9 @@ public sealed class BackgroundServiceHost : IHostedService
         _backend = backend;
         _boards = boards;
         _autoPost = autoPost;
+        _modsave = modsave;
+        _rosters = rosters;
+        _store = store;
         _logger = logger;
     }
 
@@ -222,6 +233,45 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
+        /* ---- rank suspensions ----
+           The suspension records where to put them BACK. Restoring to the default rank
+           would quietly strip every suspended officer of everything they had earned. */
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "rank-restore",
+            Interval = TimeSpan.FromSeconds(30),
+            Tick = RestoreExpiredRanksAsync,
+        });
+
+        if (_modsave.Enabled)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "banlist-sync",
+                Interval = TimeSpan.FromMinutes(5),
+                // Import THEN export. Exporting first rewrites the file from the store and
+                // destroys the in-game entries before they have been read.
+                Tick = ct => _modsave.SyncAsync(ct),
+            });
+        }
+
+        if (_features.DashboardChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "dashboard",
+                Interval = TimeSpan.FromMinutes(1),
+                Tick = ct => _autoPost.PostAsync("dashboard", _features.DashboardChannel, () =>
+                {
+                    var wanted = _store.Read(PavlovBot.Host.Storage.Datasets.Warrants,
+                        new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase))
+                        .Count(kv => kv.Value.Count > 0);
+                    return Task.FromResult(_boards.BuildDashboard(_bans.ActiveBans().Count, wanted));
+                }, ct),
+                DependsOn = ["player-cache"],
+            });
+        }
+
         // ---- persistence ----
         _registry.Register(new ServiceDefinition
         {
@@ -254,6 +304,51 @@ public sealed class BackgroundServiceHost : IHostedService
         _health.Register("rcon", _rcon.HealthAsync);
 
         await _registry.StartAllAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Put back the rank of anyone whose suspension has run out.</summary>
+    private async Task RestoreExpiredRanksAsync(CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var suspensions = _store.Read(Datasets.RankSuspensions,
+            new Dictionary<string, RankSuspension>(StringComparer.OrdinalIgnoreCase));
+
+        var due = suspensions.Values.Where(s => s.Until <= now).ToList();
+        if (due.Count == 0) return;
+
+        foreach (var suspension in due)
+        {
+            var faction = PavlovBot.Core.Factions.FactionRegistry.Get(suspension.Faction);
+            if (faction is null) continue;
+
+            /* Re-add at the entry rank, then promote to where they were. Writing straight
+               into the target rank file would skip the cap check, so a rank that filled up
+               while they were suspended would silently overflow. */
+            await _rosters.JoinAsync(faction, suspension.Player, ct).ConfigureAwait(false);
+
+            var target = faction.IndexOf(suspension.RestoreTo);
+            for (var step = faction.IndexOf(faction.Default); step < target; step++)
+            {
+                var decision = await _rosters.ChangeRankAsync(faction, suspension.Player, +1, ct).ConfigureAwait(false);
+                if (!decision.IsAllowed)
+                {
+                    _logger.LogWarning(
+                        "Could not fully restore {Player} to {Rank}: {Outcome}. They are at a lower rank and need a manual promotion.",
+                        suspension.Player, suspension.RestoreTo, decision.Outcome);
+                    break;
+                }
+            }
+
+            _logger.LogInformation("Rank suspension served: {Player} restored to {Rank}", suspension.Player, suspension.RestoreTo);
+        }
+
+        await _store.UpdateAsync(Datasets.RankSuspensions,
+            new Dictionary<string, RankSuspension>(StringComparer.OrdinalIgnoreCase),
+            current =>
+            {
+                foreach (var suspension in due) current.Remove(suspension.Player);
+                return current;
+            }, ct).ConfigureAwait(false);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => _registry.StopAllAsync();

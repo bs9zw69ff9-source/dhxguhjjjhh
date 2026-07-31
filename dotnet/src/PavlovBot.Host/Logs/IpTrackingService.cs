@@ -104,6 +104,14 @@ public sealed class IpTrackingService
 
     public AccountRecord? Account(string accountId) => LoadAccounts().GetValueOrDefault(accountId);
 
+    /// <summary>Every display name the bot has ever recorded, most recent per account first.</summary>
+    public IReadOnlyList<string> KnownNames() =>
+        LoadAccounts().Values
+            .OrderByDescending(a => a.LastSeen ?? DateTimeOffset.MinValue)
+            .SelectMany(a => a.Names)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     /// <summary>Look an account up by any name it has used.</summary>
     public AccountRecord? AccountByName(string name) =>
         LoadAccounts().Values.FirstOrDefault(a => a.Names.Contains(name, StringComparer.OrdinalIgnoreCase));

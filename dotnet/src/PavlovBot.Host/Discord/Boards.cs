@@ -160,6 +160,37 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon)
             .Build();
     }
 
+    /// <summary>
+    /// The live dashboard: one embed answering "is everything fine right now".
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT the health endpoint's content. That is for an operator debugging the
+    /// bot; this is for a channel staff leave open, so it says who is on and whether the
+    /// servers are up, and nothing about tick counts.
+    /// </remarks>
+    public Embed? BuildDashboard(int activeBans, int wanted)
+    {
+        var reachable = rcon.Servers.Where(s => rcon.Roster(s).TakenAt != DateTimeOffset.MinValue).ToList();
+        if (reachable.Count == 0) return null;
+
+        var online = reachable.Sum(s => rcon.Roster(s).Players.Count);
+        var stale = reachable.Where(s => rcon.Roster(s).TakenAt < DateTimeOffset.UtcNow.AddMinutes(-3)).ToList();
+
+        var embed = new EmbedBuilder()
+            .WithColor(stale.Count == reachable.Count ? Theme.Amber : Theme.Green)
+            .WithTitle($"{Theme.Up} Server dashboard")
+            .AddField("Online", $"{online} player(s) across {reachable.Count} server(s)", true)
+            .AddField("Active bans", activeBans.ToString(CultureInfo.InvariantCulture), true)
+            .AddField("Wanted", wanted.ToString(CultureInfo.InvariantCulture), true);
+
+        // Say when the data is stale rather than presenting it as current. A dashboard
+        // quietly showing three-hour-old numbers is worse than one that admits it.
+        if (stale.Count > 0)
+            embed.AddField($"{Theme.Warn} Stale", $"No recent roster from: {string.Join(", ", stale)}");
+
+        return embed.Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern").Build();
+    }
+
     private static string Medal(int index) => index switch { 0 => "🥇", 1 => "🥈", 2 => "🥉", _ => Theme.Dot };
 
     private static string Hours(long minutes) =>

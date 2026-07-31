@@ -30,6 +30,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly MetricsRegistry _metrics;
     private readonly HealthRegistry _health;
     private readonly CommandCatalog _catalog;
+    private readonly PlayerAutocomplete _autocomplete;
     private readonly ILogger<DiscordGateway> _logger;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenSource? _stopping;
@@ -40,6 +41,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         MetricsRegistry metrics,
         HealthRegistry health,
         CommandCatalog catalog,
+        PlayerAutocomplete autocomplete,
         ILogger<DiscordGateway> logger)
     {
         ArgumentNullException.ThrowIfNull(commands);
@@ -47,6 +49,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _metrics = metrics;
         _health = health;
         _catalog = catalog;
+        _autocomplete = autocomplete;
         _logger = logger;
         _commands = commands.ToDictionary(c => c.Name, StringComparer.Ordinal);
 
@@ -87,6 +90,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _client.Log += OnLog;
         _client.Ready += OnReady;
         _client.SlashCommandExecuted += OnSlashCommand;
+        _client.AutocompleteExecuted += OnAutocomplete;
 
         _health.Register("discord", _ =>
         {
@@ -192,6 +196,34 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 await interaction.ModifyOriginalResponseAsync(m =>
                     m.Content = "That didn't work. The error has been logged.").ConfigureAwait(false);
             }
+            catch (Exception) { }
+        }
+    }
+
+    /// <summary>
+    /// Answer an autocomplete request.
+    /// </summary>
+    /// <remarks>
+    /// Discord gives roughly three seconds and shows a spinner until then, so this only
+    /// reads what is already in memory. A command that DECLARES autocomplete and never
+    /// answers leaves that spinner up forever, which reads as the whole bot being hung.
+    /// </remarks>
+    private async Task OnAutocomplete(SocketAutocompleteInteraction interaction)
+    {
+        try
+        {
+            var typed = interaction.Data.Current.Value?.ToString() ?? "";
+            var choices = _autocomplete.Suggest(typed)
+                .Select(c => new AutocompleteResult(c.Name, c.Value));
+
+            await interaction.RespondAsync(choices).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Never leave the spinner up. An empty result closes it cleanly and lets the
+            // moderator type the name by hand.
+            _logger.LogDebug(ex, "Autocomplete failed");
+            try { await interaction.RespondAsync([]).ConfigureAwait(false); }
             catch (Exception) { }
         }
     }

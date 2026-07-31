@@ -25,6 +25,16 @@ public sealed record FeatureOptions
     /// <summary>Where the game keeps its whitelist .txt rosters. Null disables the faction commands.</summary>
     public string? RosterDirectory { get; init; }
 
+    /// <summary>The game's own ban-list file - the message a banned player sees.</summary>
+    public string? ModsaveBanlistPath { get; init; }
+
+    /// <summary>Where plugin assemblies live. Null uses ./plugins.</summary>
+    public string? PluginDirectory { get; init; }
+
+    /// <summary>Plugins to load. Empty means all of them - a list is how a crashing
+    /// plugin is disabled without deleting the file.</summary>
+    public IReadOnlyList<string> EnabledPlugins { get; init; } = [];
+
     public string? JoinWebhook { get; init; }
     public string? KillWebhook { get; init; }
     public string? MoneyWebhook { get; init; }
@@ -61,6 +71,8 @@ public sealed record FeatureOptions
             LedgerDirectory = Text(configuration, "MODSAVE_PATH"),
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
+            ModsaveBanlistPath = Text(configuration, "MODSAVE_PATH") is { } modsave
+                ? System.IO.Path.Combine(modsave, "ModSave", "banlist.txt") : null,
 
             JoinWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
@@ -89,6 +101,8 @@ public sealed record FeatureOptions
             Owners = Snowflakes(configuration, "OWNER_IDS"),
             SuperOwners = Snowflakes(configuration, "SUPER_OWNER_IDS"),
             MasterNames = List(configuration, "MASTER_NAMES"),
+            PluginDirectory = Text(configuration, "PLUGIN_DIR"),
+            EnabledPlugins = List(configuration, "PLUGINS_ENABLED"),
 
             MoneyLogInterval = Milliseconds(configuration, "MONEY_LOG_INTERVAL_MS", TimeSpan.FromSeconds(10)),
             LeaderboardInterval = Milliseconds(configuration, "LEADERBOARD_INTERVAL_MS", TimeSpan.FromMinutes(5)),

@@ -13,6 +13,7 @@ using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Vpn;
 using PavlovBot.Host.Observability;
+using PavlovBot.Host.Plugins;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Services;
 using PavlovBot.Host.Storage;
@@ -100,6 +101,9 @@ public static class Program
         builder.Services.AddSingleton(sp => new MasterNames(features.MasterNames, sp.GetRequiredService<SerializedStore>()));
         builder.Services.AddSingleton<IMasterNames>(sp => sp.GetRequiredService<MasterNames>());
         builder.Services.AddSingleton<BanService>();
+        builder.Services.AddSingleton(sp => new ModsaveBanlist(
+            features.ModsaveBanlistPath, sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<ILogger<ModsaveBanlist>>()));
         builder.Services.AddSingleton<IpTrackingService>();
         builder.Services.AddSingleton(sp => new LogTailer(sp.GetRequiredService<ILoggerFactory>().CreateLogger<LogTailer>()));
 
@@ -135,6 +139,7 @@ public static class Program
             features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>()));
 
         builder.Services.AddSingleton<CommandCatalog>();
+        builder.Services.AddSingleton<PlayerAutocomplete>();
         builder.Services.AddSingleton<ISlashCommand, ServerInfoCommand>();
         builder.Services.AddSingleton<ISlashCommand, HelpCommand>();
         builder.Services.AddSingleton<ISlashCommand, TempBanCommand>();
@@ -161,6 +166,9 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, HealthCommand>();
         builder.Services.AddSingleton<ISlashCommand, GiveMenuCommand>();
         builder.Services.AddSingleton<ISlashCommand, UnlinkNameCommand>();
+        builder.Services.AddSingleton<ISlashCommand, SetRolesCommand>();
+        builder.Services.AddSingleton<ISlashCommand, DonatorCommand>();
+        builder.Services.AddSingleton<ISlashCommand, SuspendRankCommand>();
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>()));
 
@@ -174,6 +182,8 @@ public static class Program
             sp.GetRequiredService<ILogger<MonitoringServer>>(),
             readiness: () => sp.GetRequiredService<DiscordGateway>().IsReady));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<MonitoringServer>());
+        builder.Services.AddSingleton<PluginHost>();
+        builder.Services.AddHostedService<PluginHostedService>();
         builder.Services.AddHostedService<BackgroundServiceHost>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordGateway>());
 

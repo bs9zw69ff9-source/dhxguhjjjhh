@@ -56,12 +56,14 @@ passes:
 | log pipeline (parsing, correlation, tailing, IP tracking) | ported |
 | roster service + faction commands | ported |
 | feeds, money log, auto-posting boards | ported |
-| boards (playtime, most wanted, player list, staff activity) | ported |
+| boards (playtime, most wanted, player list, staff, dashboard) | ported |
 | menu grants + the permanent name binding | ported |
-| commands | 22 |
-| dashboard, plugins, donators, rank suspensions, modsave ban-list sync | not started |
+| autocomplete, role config, donators, rank suspensions | ported |
+| modsave ban-list import/export | ported |
+| plugin system | ported |
+| commands | 25 |
 
-Total: **443 xUnit tests**, and **442 differential scenarios** agreeing with the running
+Total: **463 xUnit tests**, and **442 differential scenarios** agreeing with the running
 JS across evasion, roster writes, factions, the penal code and `.env` parsing.
 
 ### RCON: what changed versus Node
@@ -244,11 +246,11 @@ Both sides measured at the same point - **entire object graph constructed, Disco
 created, nothing connected** - which is what `--selftest` exists for. Median of three runs
 on the same machine.
 
-| | Node (`index.js`, ~30 commands) | .NET host (22 commands) |
+| | Node (`index.js`, ~30 commands) | .NET host (25 commands) |
 |---|---|---|
-| construction | 333 ms | **289 ms** |
-| resident | 101.6 MB | **63.4 MB** |
-| heap | 23.5 MB | **1.0 MB** |
+| construction | 333 ms | **~290 ms** |
+| resident | 101.6 MB | **65.1 MB** |
+| heap | 23.5 MB | **1.2 MB** |
 
 Published size:
 
@@ -267,13 +269,27 @@ boards and the feeds, moved resident from 56.8 MB to 63.4 MB and the managed hea
 Feature count and memory are not tracking together, because the features are code, and code
 lands in mapped R2R images rather than on the heap.
 
-## What is not ported
+## What is deliberately NOT ported
 
-The live dashboard, the plugin system, RCON+ menu ROLE mapping (`/setrconroles` - the
-grants themselves are ported), the donator list and its perk restores, rank suspensions,
-and modsave ban-list synchronisation.
+Three things from the Node bot were left out on purpose rather than missed:
 
-**The Node bot in the repository root is still the production one.** Nothing here has run
-against a live server or a real Discord gateway - the whole port is verified by its tests,
-its differential harness and `--selftest`, which is a different and weaker claim than
-"it works".
+- **`/manual <command>`** - an arbitrary RCON passthrough. Every command it could send now
+  has a typed equivalent that validates its arguments, and a passthrough is a way to send
+  the unvalidated version of one.
+- **`/firewall`** - the OS firewall is an owner-managed manual concern. Automating `ufw`
+  from a bot means a false-positive ban can cut off a whole household or a shared NAT, and
+  nothing in the bot would know to undo it.
+- **RCON+ log auditing** - dropped at your request ("just forget rcon logs"). The line
+  parser still recognises those lines; nothing consumes them.
+
+Also not ported: `/setrconroles` (menu ROLE mapping - the grants themselves are done),
+`/flush`, `/staffactivity` as a command (the board exists), and `/stats`.
+
+## The claim this port can and cannot make
+
+**Nothing here has run against a live Pavlov server or a real Discord gateway.** The whole
+port is verified by 463 tests, 442 differential scenarios agreeing with the running JS, and
+`--selftest` - which is a different and weaker claim than "it works".
+
+**The Node bot in the repository root is still the production one.** Switching over needs a
+staging server, a real gateway, and a period running both against the same `bot.db`.
