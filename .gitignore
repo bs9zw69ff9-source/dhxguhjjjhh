@@ -75,3 +75,7 @@ donator.txt
 blacklist.txt
 banlist.txt
 package.json.deployed
+
+# Pre-write roster snapshots the bot creates at runtime — recoverable state,
+# not source. These were tracked by accident.
+faction_file_bak/

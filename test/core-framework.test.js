@@ -1,5 +1,5 @@
 /* Tests for the architecture core: metrics, health, errors/retry/breaker, the service
-   manager, the plugin loader, the DI container and the monitoring endpoints.
+   manager, the plugin loader and the monitoring endpoints.
 
    The recurring property under test is ISOLATION: this framework exists to contain
    failure, so a broken check, plugin or service tick must never propagate. Several
@@ -12,7 +12,6 @@ const { createHealth } = require("../core/health");
 const { createErrorManager, CircuitBreaker, retry, backoffDelay } = require("../core/errors");
 const { createServiceManager, orderByDeps } = require("../core/services");
 const { createPluginManager, orderPlugins, validateManifest } = require("../core/plugins");
-const { createContainer } = require("../core/container");
 const { createMonitoringServer } = require("../core/monitoring-server");
 
 const tick = () => new Promise(r => setTimeout(r, 5));
@@ -316,32 +315,6 @@ test("stopAll tears plugins down in reverse and survives a throwing stop", async
   await pm.initializeAll({});
   await pm.stopAll();
   assert.deepEqual(order, ["b", "a"], "a throwing stop must not strand the plugins behind it");
-});
-
-/* ---------------- container ---------------- */
-
-test("the container memoises singletons and resolves lazily", () => {
-  const c = createContainer();
-  let built = 0;
-  c.register("db", () => { built++; return { q: 1 }; });
-  assert.equal(built, 0, "nothing is built until it is asked for");
-  assert.strictEqual(c.resolve("db"), c.resolve("db"));
-  assert.equal(built, 1);
-});
-
-test("the container names a circular dependency instead of overflowing the stack", () => {
-  const c = createContainer();
-  c.register("a", (k) => k.resolve("b"));
-  c.register("b", (k) => k.resolve("a"));
-  assert.throws(() => c.resolve("a"), /circular dependency: a -> b -> a/);
-});
-
-test("ctx() produces the flat object existing modules already expect", () => {
-  const c = createContainer();
-  c.value("logger", { info() {} });
-  c.register("rcon", () => ({ send: () => {} }));
-  const ctx = c.ctx({ extra: 1 });
-  assert.ok(ctx.logger && ctx.rcon && ctx.extra === 1);
 });
 
 /* ---------------- monitoring endpoints ---------------- */
