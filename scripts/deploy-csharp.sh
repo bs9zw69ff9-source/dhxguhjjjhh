@@ -173,7 +173,35 @@ fi
 # Two bots on one Discord application answer every command twice and issue every
 # ban twice. There is no way to undo that from inside the bot, so this is a hard
 # stop rather than a warning.
-if pm2 jlist 2>/dev/null | grep -q "\"name\":\"$NODE_APP\".*\"status\":\"online\""; then
+# Parsed, not pattern-matched. `pm2 jlist` emits every app as ONE line of JSON, so
+# `grep "name":"X".*"status":"online"` spans app boundaries: it matched a STOPPED
+# pavlov-bot purely because pavlov-bot-cs appeared later in the same line and was
+# online. Exit codes: 0 online, 1 not online, 2 could not tell.
+node_status() {
+  pm2 jlist 2>/dev/null | node -e '
+    let raw = "";
+    process.stdin.on("data", d => raw += d).on("end", () => {
+      let apps;
+      try { apps = JSON.parse(raw); } catch { process.exit(2); }
+      if (!Array.isArray(apps)) process.exit(2);
+      const app = apps.find(a => a && a.name === process.argv[1]);
+      process.exit(app && app.pm2_env && app.pm2_env.status === "online" ? 0 : 1);
+    });
+  ' "$NODE_APP"
+}
+
+node_status
+case $? in
+  1) NODE_IS_UP=false ;;
+  0) NODE_IS_UP=true ;;
+  # Cannot tell - pm2 missing, or output this script does not understand. Treat that
+  # as "it might be running", because the failure being guarded against is double
+  # bans, and there is no undo for those.
+  *) NODE_IS_UP=true
+     echo "WARNING: could not read pm2's app list; assuming '$NODE_APP' may be running." >&2 ;;
+esac
+
+if [ "$NODE_IS_UP" = true ]; then
   if [ "$KEEP_NODE" != true ]; then
     echo
     echo "REFUSING TO START: '$NODE_APP' is online." >&2
