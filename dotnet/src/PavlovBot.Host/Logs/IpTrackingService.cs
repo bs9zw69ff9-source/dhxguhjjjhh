@@ -94,12 +94,45 @@ public sealed class IpTrackingService
 
     public FlagSet LoadFlags()
     {
-        var stored = _store.Read(Datasets.UserBlacklist, StoredFlags.Empty);
+        var stored = LoadStoredFlags();
         return new FlagSet(
             new HashSet<string>(stored.Ips, StringComparer.Ordinal),
             new HashSet<string>(stored.Names, StringComparer.OrdinalIgnoreCase),
             new HashSet<string>(stored.Ids, StringComparer.OrdinalIgnoreCase),
             new HashSet<string>(stored.ManualIps, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// The flags, reading through to the old location once.
+    /// </summary>
+    /// <remarks>
+    /// These used to be stored under <c>user_blacklist</c>, which is the Node bot's array
+    /// of barred Discord ids - see <see cref="Datasets.IpFlags"/>. An installation that ran
+    /// the older build still has its flags there, and simply switching keys would present
+    /// as every flag having been forgotten: banned players walk back in and nothing logs a
+    /// reason.
+    ///
+    /// So a missing new dataset falls back to the old one. The fallback is READ-ONLY and
+    /// never writes back - the next mutation writes to the new key naturally, and the stale
+    /// object stays where it is until the Node bot overwrites it with its own array, which
+    /// is exactly the outcome we want.
+    /// </remarks>
+    internal StoredFlags LoadStoredFlags()
+    {
+        var stored = _store.Read(Datasets.IpFlags, StoredFlags.Empty);
+        if (stored != StoredFlags.Empty && (stored.Ips.Count > 0 || stored.Names.Count > 0 ||
+                                            stored.Ids.Count > 0 || stored.ManualIps.Count > 0))
+        {
+            return stored;
+        }
+
+        /* Deserialising Node's ARRAY as StoredFlags fails and yields Empty, so this cannot
+           mistake the Node format for legacy C# data. */
+        var legacy = _store.Read(Datasets.UserBlacklist, StoredFlags.Empty);
+        return legacy.Ips.Count > 0 || legacy.Names.Count > 0 ||
+               legacy.Ids.Count > 0 || legacy.ManualIps.Count > 0
+            ? legacy
+            : stored;
     }
 
     public AccountRecord? Account(string accountId) => LoadAccounts().GetValueOrDefault(accountId);
@@ -330,7 +363,7 @@ public sealed class IpTrackingService
     }
 
     private Task ApplyFlagsAsync(IReadOnlyCollection<string> ips, IReadOnlyCollection<string> ids, CancellationToken ct) =>
-        _store.UpdateAsync(Datasets.UserBlacklist, StoredFlags.Empty, flags => new StoredFlags(
+        _store.UpdateAsync(Datasets.IpFlags, LoadStoredFlags(), flags => new StoredFlags(
             flags.Ips.Union(ips, StringComparer.Ordinal).ToList(),
             flags.Names,
             flags.Ids.Union(ids, StringComparer.OrdinalIgnoreCase).ToList(),
@@ -349,7 +382,7 @@ public sealed class IpTrackingService
         var ips = account?.ConfirmedIps ?? [];
         var names = account?.Names ?? [];
 
-        await _store.UpdateAsync(Datasets.UserBlacklist, StoredFlags.Empty, flags => new StoredFlags(
+        await _store.UpdateAsync(Datasets.IpFlags, LoadStoredFlags(), flags => new StoredFlags(
             flags.Ips.Except(ips, StringComparer.Ordinal).ToList(),
             flags.Names.Except(names, StringComparer.OrdinalIgnoreCase).ToList(),
             flags.Ids.Where(i => !string.Equals(i, accountId, StringComparison.OrdinalIgnoreCase)).ToList(),
@@ -366,7 +399,7 @@ public sealed class IpTrackingService
 
     /// <summary>An address flagged by hand. Survives an unban, by design.</summary>
     public Task FlagAddressManuallyAsync(string ip, CancellationToken ct = default) =>
-        _store.UpdateAsync(Datasets.UserBlacklist, StoredFlags.Empty, flags => new StoredFlags(
+        _store.UpdateAsync(Datasets.IpFlags, LoadStoredFlags(), flags => new StoredFlags(
             flags.Ips, flags.Names, flags.Ids,
             flags.ManualIps.Union([ip], StringComparer.Ordinal).ToList()), ct);
 

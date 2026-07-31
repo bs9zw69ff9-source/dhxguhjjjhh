@@ -19,8 +19,25 @@ public static class Datasets
     public const string TempBans = "tempbans";
     public const string ModLog = "modlog";
     public const string Mutes = "mutes";
+    /// <summary>
+    /// Discord user ids barred from every command. AN ARRAY OF STRINGS - the Node bot's
+    /// format, and it reads this exact dataset (<c>index.js</c>, <c>BLACKLIST_IDS</c>).
+    /// </summary>
     public const string UserBlacklist = "user_blacklist";
     public const string UserUnbarred = "user_unbarred";
+
+    /// <summary>
+    /// IP, name and account-id flags for ban-evasion matching.
+    /// </summary>
+    /// <remarks>
+    /// SEPARATE FROM <see cref="UserBlacklist"/>, and it has to be. Both bots share one
+    /// database, and this data used to live under that name in C# while the Node bot used
+    /// the same name for its array of barred Discord ids. Each bot's write destroyed the
+    /// other's data: C# writing an object left Node calling <c>.map</c> on it, and Node
+    /// writing an array left C# reading no flags at all - which silently turns off
+    /// ban-evasion auto-banning, the failure that announces itself least.
+    /// </remarks>
+    public const string IpFlags = "ip_flags";
     public const string AutobanExempt = "autoban_exempt";
     public const string BanReconcileState = "ban_reconcile_state";
     public const string VpnChecks = "vpn_checks";
@@ -70,6 +87,7 @@ public static class Datasets
         [Mutes] = "{}",
         [UserBlacklist] = "[]",
         [UserUnbarred] = "[]",
+        [IpFlags] = "{}",
         [AutobanExempt] = "{}",
         [BanReconcileState] = "{}",
         [VpnChecks] = "{}",

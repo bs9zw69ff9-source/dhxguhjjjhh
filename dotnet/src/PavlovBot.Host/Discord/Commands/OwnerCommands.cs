@@ -392,7 +392,9 @@ public sealed class ConfigureCommand(
             {
                 var flags = tracking.LoadFlags();
                 affected = flags.Ips.Count + flags.Ids.Count + flags.Names.Count;
-                await store.WriteAsync(Datasets.UserBlacklist, IpTrackingService.StoredFlags.Empty, ct).ConfigureAwait(false);
+                // IpFlags, NOT UserBlacklist - that one is the Node bot's array of barred
+                // Discord ids, and writing an object over it breaks the other bot.
+                await store.WriteAsync(Datasets.IpFlags, IpTrackingService.StoredFlags.Empty, ct).ConfigureAwait(false);
                 what = "IP, account and name flag(s) cleared. Ban records are unchanged.";
                 break;
             }
