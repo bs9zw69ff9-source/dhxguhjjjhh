@@ -116,6 +116,23 @@ public sealed record VpnRecord
     public string? Region { get; init; }
     public string? City { get; init; }
 
+    /// <summary>
+    /// Approximate coordinates, when the geolocator supplied them.
+    /// </summary>
+    /// <remarks>
+    /// NOT part of <see cref="Schema"/> on purpose. Records are cached per address
+    /// effectively forever, so bumping the schema to gain a map would force a full
+    /// re-screen of every known address through every detector - spending the entire
+    /// day's quota on something cosmetic. An address screened before these existed simply
+    /// has no coordinates and shows no map; <c>/iplookup refresh:true</c> fills them in for
+    /// the one address somebody actually cares about.
+    ///
+    /// City-level at best, and often only the ISP's registered centroid. Precise enough to
+    /// say "not the country they claim", never precise enough to say where somebody lives.
+    /// </remarks>
+    public double? Latitude { get; init; }
+    public double? Longitude { get; init; }
+
     public int ScreenHits { get; init; }
     public int ScreenAnswered { get; init; }
     public int ConfirmHits { get; init; }
@@ -229,6 +246,8 @@ public static class VpnMerge
             CountryCode = geo?.CountryCode ?? First(all, r => r.CountryCode),
             Region = geo?.Region ?? First(all, r => r.Region),
             City = geo?.City ?? First(all, r => r.City),
+            Latitude = geo?.Latitude,
+            Longitude = geo?.Longitude,
 
             ScreenHits = screen?.Hits ?? 0,
             ScreenAnswered = screen?.Answered ?? 0,

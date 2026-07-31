@@ -193,7 +193,7 @@ public sealed class RemovePinCommand(RconRegistry rcon, Access access, ILogger<R
 }
 
 /// <summary><c>/iplookup</c> - location, ISP and VPN status for one address.</summary>
-public sealed class IpLookupCommand(VpnScreeningService vpn, Access access) : ISlashCommand
+public sealed class IpLookupCommand(VpnScreeningService vpn, Access access, StaticMap? map = null) : ISlashCommand
 {
     public string Name => "iplookup";
 
@@ -247,7 +247,32 @@ public sealed class IpLookupCommand(VpnScreeningService vpn, Access access) : IS
         if (record.ThreatScore is { } score) embed.AddField("Risk", $"{score:0}/100", true);
 
         embed.Brand($"Screened {record.CheckedAt:yyyy-MM-dd} by {record.Sources.Count} detector(s)");
-        await Reply(command, embed).ConfigureAwait(false);
+
+        /* The map is strictly a bonus. Everything above is already correct, so any failure
+           here - no key, no coordinates, a map service outage - just means no picture.
+           `record.Local` is skipped because a private address has no place on a map. */
+        var image = !record.Local && map is not null && record.Latitude is { } lat && record.Longitude is { } lon
+            ? await map.RenderAsync(lat, lon, ct).ConfigureAwait(false)
+            : null;
+
+        if (image is null)
+        {
+            await Reply(command, embed).ConfigureAwait(false);
+            return;
+        }
+
+        /* attachment:// points the embed at the file uploaded in this same message, so the
+           key that rendered it never leaves the bot. See StaticMap for why that matters. */
+        const string fileName = "location.png";
+        embed.WithImageUrl($"attachment://{fileName}");
+
+        using var stream = new MemoryStream(image);
+        await command.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = embed.Build();
+            m.AllowedMentions = AllowedMentions.None;
+            m.Attachments = new[] { new FileAttachment(stream, fileName) };
+        }).ConfigureAwait(false);
     }
 
     private static string Verdict(VpnRecord record)

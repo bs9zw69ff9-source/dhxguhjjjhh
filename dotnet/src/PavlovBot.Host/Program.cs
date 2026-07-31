@@ -136,6 +136,16 @@ public static class Program
 
             return new GeoLocatorChain(providers, sp.GetRequiredService<ILogger<GeoLocatorChain>>());
         });
+
+        /* Registered only when there is a key to render with, so /iplookup resolves a null
+           StaticMap and omits the map rather than failing to construct. */
+        if (features.GeoapifyKey is { Length: > 0 } mapKey)
+        {
+            builder.Services.AddSingleton(sp => new StaticMap(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("maps"),
+                mapKey,
+                sp.GetRequiredService<ILogger<StaticMap>>()));
+        }
         builder.Services.AddSingleton(sp => new VpnScreeningService(
             sp.GetServices<IVpnDetector>(), sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<IGeoLocator>(), sp.GetRequiredService<MetricsRegistry>(),
