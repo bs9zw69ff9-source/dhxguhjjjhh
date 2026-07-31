@@ -1,5 +1,13 @@
 # Pavlov RP Moderation Bot
 
+> **This bot runs on C# / .NET 9.** The source is in [`dotnet/`](dotnet/), and
+> [`dotnet/README.md`](dotnet/README.md) is the reference for it.
+>
+> The Node.js implementation in this directory is the **rollback target** and is
+> no longer the deployment. It still builds, still passes its tests, and still
+> reads and writes the same `bot.db` — that is the point of keeping it. It will
+> be removed once C# has a run of live service behind it.
+
 A theme-neutral Discord moderation bot for **Pavlov VR** RP servers. It drives
 the game servers over RCON and adds native bans/kicks with a reason + duration picker,
 ban-evasion + VPN/proxy detection with optional OS-firewall blocking, whitelists
@@ -12,21 +20,41 @@ It ships **brand-neutral** and skins to any RP: set `BOT_NAME` in `.env` (e.g.
 
 ## Requirements
 
-- **Node.js 18+** (uses `structuredClone`, `fetch`, `Intl.DisplayNames`)
+- **.NET 9 SDK** to build. Nothing to install on the game host — the deploy
+  publishes self-contained.
 - One to three Pavlov servers with RCON enabled
 - A Discord application + bot token
-- `better-sqlite3` compiles a native binding on install — a C toolchain is
-  needed if a prebuilt binary isn't available for your platform
+
+For the Node rollback target: Node.js 18+, and `better-sqlite3` compiles a
+native binding on install.
 
 ## Setup
 
 ```bash
-npm install
-cp .env.example .env      # then fill in the values
-npm start
+cp .env.example .env                      # then fill in the values
+bash scripts/deploy-csharp.sh             # build + verify, starts nothing
+bash scripts/deploy-csharp.sh --start     # start it under pm2
 ```
 
+`deploy-csharp.sh` gates on `--selftest`, which builds the entire object graph
+and exits without connecting: if the configuration is wrong it prints every
+problem at once and changes nothing.
+
+It also **refuses to start while the Node bot is online**. Both bots on one
+Discord application would answer every slash command twice and issue every ban
+twice, and nothing inside either can undo that.
+
 Slash commands are registered automatically on startup.
+
+### Rolling back
+
+```bash
+pm2 stop pavlov-bot-cs && pm2 start pavlov-bot
+```
+
+The C# bot writes camelCase keys and millisecond timestamps — the exact format
+the Node bot reads — so anything written while C# was up is picked up cleanly.
+That is deliberate and covered by `NodeCompatibilityTests`.
 
 ## Architecture
 

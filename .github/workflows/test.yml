@@ -1,12 +1,39 @@
-# Runs the full test suite (72 node:test cases incl. the module-wiring guard and
-# handler tests) plus a syntax check on every push and pull request, so a broken
-# commit is flagged before it ever reaches the VPS.
+# Both suites, on every push.
+#
+# The C# bot is the production one. The Node bot is kept as the rollback target
+# until C# has run live for a while, and its suite still runs — a rollback target
+# nobody tests is not a rollback target.
 name: tests
 on:
   push:
   pull_request:
+
 jobs:
-  test:
+  csharp:
+    name: C# (production)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - run: dotnet restore
+      - run: dotnet build -c Release --no-restore
+      - run: dotnet test -c Release --no-build
+
+      # Proves the whole object graph resolves and the configuration binds. It
+      # catches a broken DI registration, which a unit test cannot see because
+      # nothing else constructs the real graph.
+      - name: selftest
+        run: |
+          printf 'DISCORD_TOKEN=ci-not-a-real-token\nRCON_HOST_1=127.0.0.1\nRCON_PORT_1=9100\nRCON_PASSWORD_1=ci\nMASTER_NAMES=ci\n' > .env
+          dotnet run --project src/PavlovBot.Host -c Release --no-build -- --selftest
+
+  node:
+    name: Node (rollback target)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
