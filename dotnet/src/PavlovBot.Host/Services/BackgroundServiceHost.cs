@@ -2,7 +2,11 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Observability;
+using PavlovBot.Host.Economy;
+using PavlovBot.Host.Logs;
+using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Rcon;
+using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Services;
 
@@ -24,20 +28,41 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly MetricsRegistry _metrics;
     private readonly HealthRegistry _health;
     private readonly ILogger<BackgroundServiceHost> _logger;
+    private readonly FeatureOptions _features;
+    private readonly LogTailer _tailer;
+    private readonly IpTrackingService _tracking;
+    private readonly BanService _bans;
+    private readonly MasterNames _masters;
+    private readonly MoneyLog _moneyLog;
+    private readonly SqliteKeyValueBackend _backend;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
         RconRegistry rcon,
         BotOptions options,
+        FeatureOptions features,
         MetricsRegistry metrics,
         HealthRegistry health,
+        LogTailer tailer,
+        IpTrackingService tracking,
+        BanService bans,
+        MasterNames masters,
+        MoneyLog moneyLog,
+        SqliteKeyValueBackend backend,
         ILogger<BackgroundServiceHost> logger)
     {
         _registry = registry;
         _rcon = rcon;
         _options = options;
+        _features = features;
         _metrics = metrics;
         _health = health;
+        _tailer = tailer;
+        _tracking = tracking;
+        _bans = bans;
+        _masters = masters;
+        _moneyLog = moneyLog;
+        _backend = backend;
         _logger = logger;
     }
 
@@ -78,6 +103,82 @@ public sealed class BackgroundServiceHost : IHostedService
                     _metrics.Gauge("gc_collections_total", GC.CollectionCount(generation),
                         MetricLabels.Of("generation", generation.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                         "Garbage collections by generation");
+                return Task.CompletedTask;
+            },
+        });
+
+        /* ---- log tailing ----
+           1.5 seconds, because this is what catches a flagged join. A slower poll means a
+           ban evader plays for that long before anything notices. */
+        var logPaths = LogTailer.Discover(_features.LogPaths, _logger);
+        if (logPaths.Count > 0)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "log-tail",
+                Interval = _features.LogPollInterval,
+                Tick = async ct =>
+                {
+                    foreach (var path in logPaths)
+                        foreach (var line in _tailer.Poll(path))
+                            await _tracking.IngestAsync(line, ct).ConfigureAwait(false);
+                },
+            });
+        }
+
+        // ---- bans ----
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "ban-expiry",
+            Interval = _features.BanExpiryInterval,
+            Tick = async ct =>
+            {
+                foreach (var lifted in await _bans.ProcessExpiredAsync(ct).ConfigureAwait(false))
+                {
+                    /* A served ban's flags linger until the clean-up runs, so without this
+                       exemption the sweep re-catches them the moment they reconnect - and a
+                       served temp ban silently becomes permanent. */
+                    await _masters.ExemptAsync(lifted.PlayerId, ct: ct).ConfigureAwait(false);
+                }
+            },
+        });
+
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "ban-sweep",
+            Interval = _features.BanSweepInterval,
+            Tick = ct => _bans.EnforceSweepAsync(ct),
+            DependsOn = ["player-cache"],   // it sweeps the roster that service refreshes
+        });
+
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "ban-reconcile",
+            Interval = _features.BanReconcileInterval,
+            Tick = ct => _bans.ReconcileAsync(ct: ct),
+        });
+
+        // ---- economy ----
+        if (_moneyLog.Enabled)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "money-log",
+                Interval = _features.MoneyLogInterval,
+                Tick = ct => _moneyLog.TickAsync(ct),
+            });
+        }
+
+        // ---- persistence ----
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "json-export",
+            Interval = TimeSpan.FromMinutes(15),
+            Tick = _ =>
+            {
+                // Keeps the human-readable backup CURRENT. A file that looks like a backup
+                // and is six months stale is worse than not having one.
+                _backend.ExportToJson(_options.DataDirectory);
                 return Task.CompletedTask;
             },
         });

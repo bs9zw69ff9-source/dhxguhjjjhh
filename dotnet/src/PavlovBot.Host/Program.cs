@@ -1,11 +1,16 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
 using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Discord.Commands;
+using PavlovBot.Host.Economy;
+using PavlovBot.Host.Logs;
+using PavlovBot.Host.Moderation;
+using PavlovBot.Host.Vpn;
 using PavlovBot.Host.Observability;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Services;
@@ -66,13 +71,22 @@ public static class Program
             return 78;   // EX_CONFIG
         }
 
+        var features = FeatureOptions.Bind(builder.Configuration);
+
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(options.Monitoring);
+        builder.Services.AddSingleton(features);
 
         builder.Services.AddSingleton(new MetricsRegistry());
         builder.Services.AddSingleton(new HealthRegistry());
 
-        builder.Services.AddSingleton<IKeyValueBackend>(_ => new FileKeyValueBackend(options.DataDirectory));
+        /* SQLite is the source of truth; the JSON files are a current, human-readable
+           backup written by the export service. One file to back up, and WAL gives
+           durability across a crash that a directory of JSON files never had. */
+        builder.Services.AddSingleton<SqliteKeyValueBackend>(sp => new SqliteKeyValueBackend(
+            Path.Combine(options.DataDirectory, "bot.db"),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<SqliteKeyValueBackend>()));
+        builder.Services.AddSingleton<IKeyValueBackend>(sp => sp.GetRequiredService<SqliteKeyValueBackend>());
         builder.Services.AddSingleton<IJsonCodec, SystemTextJsonCodec>();
         builder.Services.AddSingleton<SerializedStore>();
 
@@ -81,8 +95,47 @@ public static class Program
             sp.GetRequiredService<MetricsRegistry>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<ServiceRegistry>()));
 
+        // ---- moderation ----
+        builder.Services.AddSingleton(sp => new MasterNames(features.MasterNames, sp.GetRequiredService<SerializedStore>()));
+        builder.Services.AddSingleton<IMasterNames>(sp => sp.GetRequiredService<MasterNames>());
+        builder.Services.AddSingleton<BanService>();
+        builder.Services.AddSingleton<IpTrackingService>();
+        builder.Services.AddSingleton(sp => new LogTailer(sp.GetRequiredService<ILoggerFactory>().CreateLogger<LogTailer>()));
+
+        // ---- vpn screening ----
+        builder.Services.AddHttpClient();
+        builder.Services.AddSingleton(sp => new ResilientJsonClient(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("vpn"),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<ResilientJsonClient>()));
+        builder.Services.AddSingleton(features.VpnKeys);
+        builder.Services.AddSingleton<IVpnDetector, IpHubDetector>();
+        builder.Services.AddSingleton<IVpnDetector, VpnApiDetector>();
+        builder.Services.AddSingleton<IVpnDetector, IpapiIsDetector>();
+        builder.Services.AddSingleton<IVpnDetector, ProxyCheckDetector>();
+        builder.Services.AddSingleton<IVpnDetector, SentinelDetector>();
+        builder.Services.AddSingleton<IVpnDetector, IpqsDetector>();
+        builder.Services.AddSingleton<IGeoLocator, IpApiGeoLocator>();
+        builder.Services.AddSingleton(sp => new VpnScreeningService(
+            sp.GetServices<IVpnDetector>(), sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<IGeoLocator>(), sp.GetRequiredService<MetricsRegistry>(),
+            sp.GetRequiredService<ILogger<VpnScreeningService>>(),
+            features.VpnThresholds, features.VpnCacheTtl));
+
+        // ---- discord surfaces ----
+        builder.Services.AddSingleton(sp => new Access(
+            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners));
+        builder.Services.AddSingleton<FeedWebhooks>();
+        builder.Services.AddSingleton(sp => new MoneyLog(
+            features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
+        builder.Services.AddSingleton<AutoPost>();
+
         builder.Services.AddSingleton<ISlashCommand, ServerInfoCommand>();
+        builder.Services.AddSingleton<ISlashCommand, TempBanCommand>();
+        builder.Services.AddSingleton<ISlashCommand, PermBanCommand>();
+        builder.Services.AddSingleton<ISlashCommand, UnbanCommand>();
+        builder.Services.AddSingleton<ISlashCommand, CheckBanCommand>();
         builder.Services.AddSingleton<DiscordGateway>();
+        builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>()));
 
         // Hosted services start in registration order and stop in reverse, which is exactly
         // the order this needs: monitoring up first and down last, gateway up last so no
@@ -104,6 +157,34 @@ public static class Program
         var logger = host.Services.GetRequiredService<ILogger<IHost>>();
         logger.LogInformation("Starting with {Servers} RCON server(s), data in {DataDirectory}",
             options.Servers.Count, options.DataDirectory);
+
+        /* Say which features are ON. A feature that is off for want of one environment
+           variable is otherwise indistinguishable from one that is broken, and the two get
+           debugged very differently. */
+        foreach (var line in features.Describe()) logger.LogInformation("  {Feature}", line);
+
+        var seeded = 0;
+        var backend = host.Services.GetRequiredService<SqliteKeyValueBackend>();
+        foreach (var (name, seed) in Datasets.Seeds)
+        {
+            // Migrate a legacy JSON file first, so an existing install keeps its data;
+            // seed only what is still missing after that.
+            backend.ImportJsonFile(name, Path.Combine(options.DataDirectory, $"{name}.json"));
+            if (backend.SeedIfMissing(name, seed)) seeded++;
+        }
+        if (seeded > 0) logger.LogInformation("Seeded {Count} empty dataset(s)", seeded);
+
+        var feeds = host.Services.GetRequiredService<FeedWebhooks>();
+        feeds.Register(FeedWebhooks.Join, features.JoinWebhook);
+        feeds.Register(FeedWebhooks.Kill, features.KillWebhook);
+        feeds.Register(FeedWebhooks.Money, features.MoneyWebhook);
+
+        if (host.Services.GetRequiredService<VpnScreeningService>().ConfigurationWarning() is { } warning)
+            logger.LogWarning("{Warning}", warning);
+
+        if (features.MasterNames.Count == 0)
+            logger.LogWarning("MASTER_NAMES is not set - no account is protected from an auto-ban, " +
+                              "including yours. A false positive would lock you out of your own server.");
 
         /* --selftest builds the entire object graph, reports what it cost, and exits without
            connecting to anything. It is a deploy smoke test - it proves the configuration

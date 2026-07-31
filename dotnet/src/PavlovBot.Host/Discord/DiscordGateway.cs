@@ -56,6 +56,16 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         });
     }
 
+    /// <summary>Fetch a channel by id. Null when the bot cannot see it.</summary>
+    public async Task<IChannel?> GetChannelAsync(ulong channelId)
+    {
+        // The socket cache first - a board refresh every few minutes must not be a REST
+        // call every few minutes - then REST as the fallback for an uncached channel.
+        if (_client.GetChannel(channelId) is IChannel cached) return cached;
+        try { return await _client.Rest.GetChannelAsync(channelId).ConfigureAwait(false); }
+        catch (Exception) { return null; }
+    }
+
     /// <summary>True once the gateway has connected and commands are registered.</summary>
     public bool IsReady => _ready.Task.IsCompletedSuccessfully && _client.ConnectionState == ConnectionState.Connected;
 
