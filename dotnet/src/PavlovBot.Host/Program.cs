@@ -129,6 +129,7 @@ public static class Program
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
         builder.Services.AddSingleton<AutoPost>();
+        builder.Services.AddSingleton<Boards>();
 
         builder.Services.AddSingleton(sp => new RosterService(
             features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>()));
@@ -158,6 +159,8 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, IpLookupCommand>();
         builder.Services.AddSingleton<ISlashCommand, VpnCheckCommand>();
         builder.Services.AddSingleton<ISlashCommand, HealthCommand>();
+        builder.Services.AddSingleton<ISlashCommand, GiveMenuCommand>();
+        builder.Services.AddSingleton<ISlashCommand, UnlinkNameCommand>();
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>()));
 

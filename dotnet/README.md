@@ -56,10 +56,12 @@ passes:
 | log pipeline (parsing, correlation, tailing, IP tracking) | ported |
 | roster service + faction commands | ported |
 | feeds, money log, auto-posting boards | ported |
-| commands | 20 |
-| leaderboard/dashboard CONTENT builders, plugins, menu grants, donators, staff activity | not started |
+| boards (playtime, most wanted, player list, staff activity) | ported |
+| menu grants + the permanent name binding | ported |
+| commands | 22 |
+| dashboard, plugins, donators, rank suspensions, modsave ban-list sync | not started |
 
-Total: **435 xUnit tests**, and **442 differential scenarios** agreeing with the running
+Total: **443 xUnit tests**, and **442 differential scenarios** agreeing with the running
 JS across evasion, roster writes, factions, the penal code and `.env` parsing.
 
 ### RCON: what changed versus Node
@@ -242,9 +244,9 @@ Both sides measured at the same point - **entire object graph constructed, Disco
 created, nothing connected** - which is what `--selftest` exists for. Median of three runs
 on the same machine.
 
-| | Node (`index.js`, ~30 commands) | .NET host (20 commands) |
+| | Node (`index.js`, ~30 commands) | .NET host (22 commands) |
 |---|---|---|
-| construction | 333 ms | **291 ms** |
+| construction | 333 ms | **289 ms** |
 | resident | 101.6 MB | **63.4 MB** |
 | heap | 23.5 MB | **1.0 MB** |
 
@@ -257,19 +259,19 @@ Published size:
 | trimmed (**not recommended**, see above) | 52 MB |
 | Node: `node_modules` | 57 MB (plus a ~119 MB `node` binary) |
 
-**This is still not a finished comparison.** The .NET host has 20 commands against roughly
-thirty, and several features behind them are not ported. But the earlier prediction now has
-evidence: going from 1 command to 20, plus SQLite, the log pipeline, VPN screening and the
-feeds, moved resident from 56.8 MB to 63.4 MB and the managed heap from 0.7 MB to 1.0 MB.
+**This is still not a finished comparison.** The .NET host has 22 commands against roughly
+thirty, and a few features behind them are not ported. But the earlier prediction now has
+evidence: going from 1 command to 22, plus SQLite, the log pipeline, VPN screening, the
+boards and the feeds, moved resident from 56.8 MB to 63.4 MB and the managed heap from
+0.7 MB to 1.0 MB.
 Feature count and memory are not tracking together, because the features are code, and code
 lands in mapped R2R images rather than on the heap.
 
 ## What is not ported
 
-The leaderboard and dashboard CONTENT builders (the auto-posting machinery is there, but
-nothing computes the rows yet), the plugin system, menu grants and RCON+ menu roles, the
-donator list, staff-activity auditing, rank suspensions, and modsave ban-list
-synchronisation.
+The live dashboard, the plugin system, RCON+ menu ROLE mapping (`/setrconroles` - the
+grants themselves are ported), the donator list and its perk restores, rank suspensions,
+and modsave ban-list synchronisation.
 
 **The Node bot in the repository root is still the production one.** Nothing here has run
 against a live server or a real Discord gateway - the whole port is verified by its tests,

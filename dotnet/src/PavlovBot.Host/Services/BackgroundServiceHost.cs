@@ -6,6 +6,7 @@ using PavlovBot.Host.Economy;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Rcon;
+using PavlovBot.Host.Discord;
 using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Services;
@@ -35,6 +36,8 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly MasterNames _masters;
     private readonly MoneyLog _moneyLog;
     private readonly SqliteKeyValueBackend _backend;
+    private readonly Boards _boards;
+    private readonly AutoPost _autoPost;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -49,6 +52,8 @@ public sealed class BackgroundServiceHost : IHostedService
         MasterNames masters,
         MoneyLog moneyLog,
         SqliteKeyValueBackend backend,
+        Boards boards,
+        AutoPost autoPost,
         ILogger<BackgroundServiceHost> logger)
     {
         _registry = registry;
@@ -63,6 +68,8 @@ public sealed class BackgroundServiceHost : IHostedService
         _masters = masters;
         _moneyLog = moneyLog;
         _backend = backend;
+        _boards = boards;
+        _autoPost = autoPost;
         _logger = logger;
     }
 
@@ -166,6 +173,52 @@ public sealed class BackgroundServiceHost : IHostedService
                 Name = "money-log",
                 Interval = _features.MoneyLogInterval,
                 Tick = ct => _moneyLog.TickAsync(ct),
+            });
+        }
+
+        /* ---- discord surfaces ----
+           NO RunOnStart on any board. Services start BEFORE the gateway connects, so an
+           immediate tick fires with no connection - and re-fires on every supervisor
+           restart. The Node bot shipped a leaderboard regression exactly this way. */
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "playtime",
+            Interval = TimeSpan.FromMinutes(1),
+            Tick = ct => _boards.TickPlaytimeAsync(TimeSpan.FromMinutes(1), ct),
+            DependsOn = ["player-cache"],
+        });
+
+        if (_features.LeaderboardChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "leaderboard",
+                Interval = _features.LeaderboardInterval,
+                Tick = ct => _autoPost.PostAsync("leaderboard", _features.LeaderboardChannel,
+                    () => Task.FromResult(_boards.BuildPlaytimeBoard()), ct),
+            });
+        }
+
+        if (_features.ArrestBoardChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "arrest-board",
+                Interval = _features.LeaderboardInterval,
+                Tick = ct => _autoPost.PostAsync("arrests", _features.ArrestBoardChannel,
+                    () => Task.FromResult(_boards.BuildArrestBoard()), ct),
+            });
+        }
+
+        if (_features.PlayerListChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "player-list",
+                Interval = TimeSpan.FromMinutes(1),
+                Tick = ct => _autoPost.PostAsync("playerlist", _features.PlayerListChannel,
+                    () => Task.FromResult(_boards.BuildPlayerList()), ct),
+                DependsOn = ["player-cache"],
             });
         }
 
