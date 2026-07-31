@@ -15,12 +15,13 @@ namespace PavlovBot.Host.Discord.Commands;
 public abstract class BanCommandBase : ISlashCommand
 {
     protected BanCommandBase(
-        BanService bans, IpTrackingService tracking, SerializedStore store, Access access, ILogger logger)
+        BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger logger)
     {
         Bans = bans;
         Tracking = tracking;
         Store = store;
         Access = access;
+        Audit = audit;
         Logger = logger;
     }
 
@@ -28,6 +29,7 @@ public abstract class BanCommandBase : ISlashCommand
     protected IpTrackingService Tracking { get; }
     protected SerializedStore Store { get; }
     protected Access Access { get; }
+    protected AuditLog Audit { get; }
     protected ILogger Logger { get; }
 
     public abstract string Name { get; }
@@ -97,6 +99,9 @@ public abstract class BanCommandBase : ISlashCommand
             ? await Tracking.RequestFlagAsync(account.Id, flagAccountId: permanent, ct).ConfigureAwait(false)
             : null;
 
+        await Audit.RecordAsync(permanent ? "permban" : "tempban", command.User.Username, name, record.Reason, ct)
+            .ConfigureAwait(false);
+
         Logger.LogInformation(
             "{Kind} ban | player=\"{Player}\" | target=\"{Target}\" | by={Moderator} ({Tier}) | " +
             "rcon={Accepted}/{Total} | flagged: ips={Ips} ids={Ids}{Pending} | at={At}",
@@ -137,8 +142,8 @@ public abstract class BanCommandBase : ISlashCommand
 
 /// <summary><c>/tempban</c> - a ban with a length, never a date.</summary>
 public sealed class TempBanCommand(
-    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, ILogger<TempBanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, logger)
+    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<TempBanCommand> logger)
+    : BanCommandBase(bans, tracking, store, access, audit, logger)
 {
     public override string Name => "tempban";
 
@@ -190,8 +195,8 @@ public sealed class TempBanCommand(
 
 /// <summary><c>/permban</c> - no expiry, and the account id is flagged too.</summary>
 public sealed class PermBanCommand(
-    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, ILogger<PermBanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, logger)
+    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<PermBanCommand> logger)
+    : BanCommandBase(bans, tracking, store, access, audit, logger)
 {
     public override string Name => "permban";
 
@@ -219,8 +224,8 @@ public sealed class PermBanCommand(
 
 /// <summary><c>/unban</c> - lift a ban, subject to the staff hierarchy.</summary>
 public sealed class UnbanCommand(
-    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, ILogger<UnbanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, logger)
+    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<UnbanCommand> logger)
+    : BanCommandBase(bans, tracking, store, access, audit, logger)
 {
     public override string Name => "unban";
 
@@ -270,6 +275,7 @@ public sealed class UnbanCommand(
         if (account is not null) await Tracking.ClearFlagsAsync(account.Id, ct).ConfigureAwait(false);
 
         var result = await Bans.UnbanEverywhereAsync(player, account?.Id, ct).ConfigureAwait(false);
+        await Audit.RecordAsync("unban", command.User.Username, player, existing.Reason, ct).ConfigureAwait(false);
 
         var embed = Theme.Success("Ban lifted", $"**{Sanitize.Code(player)}** may reconnect.")
             .AddField("Was", $"{Sanitize.Code(existing.Reason ?? "no reason recorded")} — by {existing.Moderator ?? "unknown"}")
@@ -287,8 +293,8 @@ public sealed class UnbanCommand(
 
 /// <summary><c>/checkban</c> - what, if anything, is on a player.</summary>
 public sealed class CheckBanCommand(
-    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, ILogger<CheckBanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, logger)
+    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<CheckBanCommand> logger)
+    : BanCommandBase(bans, tracking, store, access, audit, logger)
 {
     public override string Name => "checkban";
 

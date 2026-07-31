@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
+using PavlovBot.Core.Economy;
 using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Discord.Commands;
@@ -132,6 +133,9 @@ public static class Program
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
+        builder.Services.AddSingleton<AuditLog>();
+        builder.Services.AddSingleton<IBalanceStore>(_ => new LedgerFileStore(features.LedgerDirectory));
+        builder.Services.AddSingleton<Ledger>();
         builder.Services.AddSingleton<AutoPost>();
         builder.Services.AddSingleton<Boards>();
 
@@ -169,6 +173,24 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, SetRolesCommand>();
         builder.Services.AddSingleton<ISlashCommand, DonatorCommand>();
         builder.Services.AddSingleton<ISlashCommand, SuspendRankCommand>();
+        builder.Services.AddSingleton<ISlashCommand, SubclassCommand>();
+        builder.Services.AddSingleton<ISlashCommand, StripMenuCommand>();
+        builder.Services.AddSingleton<ISlashCommand, BanListCommand>();
+        builder.Services.AddSingleton<ISlashCommand, FlushCommand>();
+        builder.Services.AddSingleton<ISlashCommand, StaffActivityCommand>();
+        builder.Services.AddSingleton<ISlashCommand, StaffLeaderboardCommand>();
+        builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
+        builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();
+        builder.Services.AddSingleton<ISlashCommand, ConfigureCommand>();
+        builder.Services.AddSingleton<ISlashCommand, InspectCommand>();
+        builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
+        builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(
+            sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
+            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>()));
+        builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Adjust(
+            sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
+            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>()));
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>()));
 

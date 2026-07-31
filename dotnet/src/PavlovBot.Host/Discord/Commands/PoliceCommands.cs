@@ -6,6 +6,7 @@ using PavlovBot.Core.Data;
 using PavlovBot.Core.Penal;
 using PavlovBot.Core.Text;
 using PavlovBot.Core.Time;
+using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Discord.Commands;
@@ -149,7 +150,7 @@ public sealed class WarrantCommand(SerializedStore store, Access access, ILogger
 /// The arithmetic lives in <see cref="PenalCode"/>: bail is scaled and rounded PER CHARGE,
 /// never on the total, so the figures on the receipt add up to the number at the bottom.
 /// </remarks>
-public sealed class ArrestCommand(SerializedStore store, Access access, ILogger<ArrestCommand> logger) : ISlashCommand
+public sealed class ArrestCommand(SerializedStore store, AuditLog audit, Access access, ILogger<ArrestCommand> logger) : ISlashCommand
 {
     public string Name => "arrest";
 
@@ -204,6 +205,9 @@ public sealed class ArrestCommand(SerializedStore store, Access access, ILogger<
         await store.UpdateAsync(Datasets.Warrants,
             new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase),
             warrants => { warrants.Remove(player); return warrants; }, ct).ConfigureAwait(false);
+
+        await audit.RecordAsync("arrest", command.User.Username, player,
+            string.Join(",", arrest.Codes), ct).ConfigureAwait(false);
 
         logger.LogInformation("arrest | player=\"{Player}\" | codes={Codes} | {Minutes}min ${Bail} | by={By}",
             player, string.Join(",", arrest.Codes), booking.JailMinutes, booking.Bail, command.User.Username);

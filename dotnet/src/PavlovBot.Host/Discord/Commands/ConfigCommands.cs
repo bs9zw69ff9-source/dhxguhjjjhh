@@ -284,3 +284,80 @@ public sealed class SuspendRankCommand(
             m.AllowedMentions = AllowedMentions.None;
         });
 }
+
+/// <param name="HighStaff">Discord role granted the high-staff menu tier.</param>
+public sealed record MenuRoleMap(ulong? HighStaff = null, ulong? Staff = null)
+{
+    public static MenuRoleMap Empty { get; } = new();
+
+    /// <summary>
+    /// The menu tier a member qualifies for, or null for none.
+    /// </summary>
+    /// <remarks>
+    /// HIGHEST WINS. A member holding both roles gets the high-staff menu - checking in the
+    /// other order would silently downgrade every senior member who also kept the ordinary
+    /// staff role, which is most of them.
+    /// </remarks>
+    public string? TierFor(IReadOnlyCollection<ulong> roleIds)
+    {
+        ArgumentNullException.ThrowIfNull(roleIds);
+        if (HighStaff is { } high && roleIds.Contains(high)) return "highstaff";
+        if (Staff is { } staff && roleIds.Contains(staff)) return "staff";
+        return null;
+    }
+}
+
+/// <summary><c>/setrconroles</c> - which Discord roles map to which RCON+ menu tier.</summary>
+public sealed class SetRconRolesCommand(SerializedStore store, Access access, ILogger<SetRconRolesCommand> logger) : ISlashCommand
+{
+    public string Name => "setrconroles";
+
+    public ApplicationCommandProperties Build() =>
+        new SlashCommandBuilder()
+            .WithName(Name)
+            .WithDescription("Admin - Map Discord roles to RCON menu tiers")
+            .AddOption("high_staff_role", ApplicationCommandOptionType.Role, "Gets the high-staff menu", isRequired: false)
+            .AddOption("staff_role", ApplicationCommandOptionType.Role, "Gets the staff menu", isRequired: false)
+            .Build();
+
+    public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        if (!access.Allows(RequiredAccess.Admin, command))
+        {
+            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            return;
+        }
+
+        ulong? Role(string name) => (command.Data.Options.FirstOrDefault(o => o.Name == name)?.Value as IRole)?.Id;
+
+        var high = Role("high_staff_role");
+        var staff = Role("staff_role");
+        var changing = high is not null || staff is not null;
+
+        // Only what was supplied, same rule as /setroles: naming one must not clear the other.
+        var updated = await store.UpdateAsync(Datasets.MenuRoles, MenuRoleMap.Empty, current => current with
+        {
+            HighStaff = high ?? current.HighStaff,
+            Staff = staff ?? current.Staff,
+        }, ct).ConfigureAwait(false);
+
+        if (changing) logger.LogInformation("setrconroles | by={By}", command.User.Username);
+
+        var map = updated.Value;
+        await Reply(command, Theme.Notice("RCON menu roles", changing
+            ? "Updated. A member gets the menu of their **highest** role below."
+            : "Current mapping. Pass a role option to change it.")
+            .AddField("High staff", map.HighStaff is { } h ? $"<@&{h}>" : "*not set*", true)
+            .AddField("Staff", map.Staff is { } s ? $"<@&{s}>" : "*not set*", true)
+            .Brand("Priority: high staff beats staff")).ConfigureAwait(false);
+    }
+
+    private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
+        command.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = embed.Brand().Build();
+            m.AllowedMentions = AllowedMentions.None;
+        });
+}

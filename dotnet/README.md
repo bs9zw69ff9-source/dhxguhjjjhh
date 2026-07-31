@@ -61,9 +61,10 @@ passes:
 | autocomplete, role config, donators, rank suspensions | ported |
 | modsave ban-list import/export | ported |
 | plugin system | ported |
-| commands | 25 |
+| audit log + staff auditing | ported |
+| commands | **39 - the whole Node surface** |
 
-Total: **463 xUnit tests**, and **442 differential scenarios** agreeing with the running
+Total: **473 xUnit tests**, and **442 differential scenarios** agreeing with the running
 JS across evasion, roster writes, factions, the penal code and `.env` parsing.
 
 ### RCON: what changed versus Node
@@ -246,11 +247,12 @@ Both sides measured at the same point - **entire object graph constructed, Disco
 created, nothing connected** - which is what `--selftest` exists for. Median of three runs
 on the same machine.
 
-| | Node (`index.js`, ~30 commands) | .NET host (25 commands) |
+| | Node (`index.js`) | .NET host |
 |---|---|---|
-| construction | 333 ms | **~290 ms** |
-| resident | 101.6 MB | **65.1 MB** |
-| heap | 23.5 MB | **1.2 MB** |
+| commands | ~39 | 39 |
+| construction | 333 ms | **~440 ms** |
+| resident | 101.6 MB | **64.3 MB** |
+| heap | 23.5 MB | **1.3 MB** |
 
 Published size:
 
@@ -269,21 +271,29 @@ boards and the feeds, moved resident from 56.8 MB to 63.4 MB and the managed hea
 Feature count and memory are not tracking together, because the features are code, and code
 lands in mapped R2R images rather than on the heap.
 
-## What is deliberately NOT ported
+## Where the command surface differs
 
-Three things from the Node bot were left out on purpose rather than missed:
+Every Node command is ported. Two differences worth knowing:
 
-- **`/manual <command>`** - an arbitrary RCON passthrough. Every command it could send now
-  has a typed equivalent that validates its arguments, and a passthrough is a way to send
-  the unvalidated version of one.
-- **`/firewall`** - the OS firewall is an owner-managed manual concern. Automating `ufw`
-  from a bot means a false-positive ban can cut off a whole household or a shared NAT, and
-  nothing in the bot would know to undo it.
-- **RCON+ log auditing** - dropped at your request ("just forget rcon logs"). The line
-  parser still recognises those lines; nothing consumes them.
+**The destructive operations are consolidated.** `/cleartempbans`, `/clearallbans` and
+`/stripmenuall` are operations under `/configure`, each requiring the operation name typed
+back exactly. They each wipe something that cannot be reconstructed, and a top-level command
+that fires on invocation alone is one misclick from a wiped ban list on a server that has
+been running for a year.
 
-Also not ported: `/setrconroles` (menu ROLE mapping - the grants themselves are done),
-`/flush`, `/staffactivity` as a command (the board exists), and `/stats`.
+**`/manual` and `/firewall` are hardened rather than omitted.** Both are genuine owner
+escape hatches and both are now present:
+
+- `/manual` is owner-gated from the environment, strips newlines so a second command cannot
+  be smuggled past the audit line recording the first, audits before sending, and shows the
+  reply verbatim.
+- `/firewall` PARSES the address rather than pattern-matching it, passes an argv array with
+  no shell to inject into, and can only ever emit three compiled-in verbs. It is never
+  invoked automatically - a ufw rule blocks an ADDRESS, so on CGNAT or a shared household
+  it cuts off people who have done nothing, and nothing in the bot would know to undo it.
+
+**RCON+ log auditing is still out**, at your request. The line parser recognises those
+lines; nothing consumes them.
 
 ## The claim this port can and cannot make
 

@@ -1,0 +1,57 @@
+using PavlovBot.Core.Data;
+using PavlovBot.Core.Text;
+using PavlovBot.Host.Discord;
+using PavlovBot.Host.Storage;
+
+namespace PavlovBot.Host.Moderation;
+
+/// <summary>
+/// Every moderation action, recorded.
+/// </summary>
+/// <remarks>
+/// Two separate audiences, and the split matters:
+///
+///   THE APPLICATION LOG is for whoever is debugging the bot. It rotates, it is on the
+///   host, and nobody reads it during an argument about a ban.
+///
+///   THIS is the record staff and players are shown - what <c>/staffactivity</c> reads and
+///   what answers "who banned them and when". It has to survive a restart, which the
+///   application log does not.
+///
+/// BOUNDED. A busy server produces thousands of actions a month and the whole dataset is
+/// deserialised on every read, so it is trimmed to a ceiling. Losing the oldest entries is
+/// the right trade against a file that eventually takes a second to parse - and the ones
+/// anybody asks about are recent.
+/// </remarks>
+public sealed class AuditLog(SerializedStore store)
+{
+    /// <summary>Roughly a year of a busy server, and small enough to parse instantly.</summary>
+    public const int MaxEntries = 5000;
+
+    public Task RecordAsync(string action, string moderator, string player, string? reason = null, CancellationToken ct = default) =>
+        store.UpdateAsync<List<ModAction>>(Datasets.ModLog, [], log =>
+        {
+            log.Add(new ModAction(action, moderator, player, Sanitize.Message(reason ?? ""), DateTimeOffset.UtcNow));
+
+            // Trim from the FRONT - the oldest go first.
+            if (log.Count > MaxEntries) log.RemoveRange(0, log.Count - MaxEntries);
+            return log;
+        }, ct);
+
+    public IReadOnlyList<ModAction> All() => store.Read<List<ModAction>>(Datasets.ModLog, []);
+
+    /// <summary>One staffer's actions, most recent first.</summary>
+    public IReadOnlyList<ModAction> By(string moderator, DateTimeOffset? since = null) =>
+        All()
+            .Where(a => string.Equals(a.Moderator, moderator, StringComparison.OrdinalIgnoreCase))
+            .Where(a => since is null || a.At >= since)
+            .OrderByDescending(a => a.At)
+            .ToList();
+
+    /// <summary>Everything done TO one player, most recent first.</summary>
+    public IReadOnlyList<ModAction> Against(string player) =>
+        All()
+            .Where(a => string.Equals(a.Player, player, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(a => a.At)
+            .ToList();
+}

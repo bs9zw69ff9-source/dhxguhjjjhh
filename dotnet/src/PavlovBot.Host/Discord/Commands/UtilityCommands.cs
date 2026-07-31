@@ -10,7 +10,7 @@ using PavlovBot.Host.Services;
 namespace PavlovBot.Host.Discord.Commands;
 
 /// <summary><c>/kick</c> - remove a player without a ban record.</summary>
-public sealed class KickCommand(RconRegistry rcon, BanService bans, Access access, ILogger<KickCommand> logger) : ISlashCommand
+public sealed class KickCommand(RconRegistry rcon, BanService bans, AuditLog audit, Access access, ILogger<KickCommand> logger) : ISlashCommand
 {
     public string Name => "kick";
 
@@ -46,6 +46,8 @@ public sealed class KickCommand(RconRegistry rcon, BanService bans, Access acces
         // nothing in the bot knows to lift.
         var result = await bans.HardEnforceAsync(player, online.UniqueId is { Length: > 0 } id ? id : null,
             ban: false, kick: true, ct).ConfigureAwait(false);
+
+        await audit.RecordAsync("kick", command.User.Username, player, reason, ct).ConfigureAwait(false);
 
         logger.LogInformation("kick | player=\"{Player}\" | by={By} | accepted={Accepted} | {Reason}",
             player, command.User.Username, result.Servers, reason);
