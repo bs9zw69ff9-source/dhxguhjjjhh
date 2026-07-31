@@ -79,3 +79,7 @@ package.json.deployed
 # Pre-write roster snapshots the bot creates at runtime — recoverable state,
 # not source. These were tracked by accident.
 faction_file_bak/
+
+# C# publish output and pm2 logs
+dotnet-out/
+logs/
