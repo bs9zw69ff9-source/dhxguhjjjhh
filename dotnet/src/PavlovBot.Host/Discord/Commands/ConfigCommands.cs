@@ -94,7 +94,7 @@ public sealed record Donator(string Player, string AddedBy, DateTimeOffset At);
 /// same write guard applies, and adding one is a one-line change that cannot wipe the list.
 /// </remarks>
 public sealed class DonatorCommand(
-    SerializedStore store, RosterService rosters, Access access, ILogger<DonatorCommand> logger) : ISlashCommand
+    SerializedStore store, RosterService rosters, Access access, Paged paged, ILogger<DonatorCommand> logger) : ISlashCommand
 {
     /// <summary>The roster file the game reads for donator perks.</summary>
     private const string RosterFile = "donators.txt";
@@ -135,10 +135,17 @@ public sealed class DonatorCommand(
         if (sub.Name == "list")
         {
             var all = Load().Values.OrderBy(d => d.Player, StringComparer.OrdinalIgnoreCase).ToList();
-            await Reply(command, all.Count == 0
-                ? Theme.Notice("No donators")
-                : Theme.Notice($"{Theme.Money} Donators — {all.Count}",
-                    Theme.Paginate(all.Select(d => $"`{Sanitize.Code(d.Player)}` — added by {d.AddedBy}, {Theme.Relative(d.At)}"))[0])).ConfigureAwait(false);
+            if (all.Count == 0)
+            {
+                await Reply(command, Theme.Notice("No donators")).ConfigureAwait(false);
+                return;
+            }
+
+            // Every page, not just the first. This used to take [0] and silently drop the
+            // rest, so a long donator list looked complete when it was not.
+            var pages = Theme.Paginate(all.Select(d =>
+                $"`{Sanitize.Code(d.Player)}` — added by {d.AddedBy}, {Theme.Relative(d.At)}"));
+            await paged.SendAsync(command, $"{Theme.Money} Donators — {all.Count}", pages, ct).ConfigureAwait(false);
             return;
         }
 

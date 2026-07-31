@@ -31,6 +31,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly HealthRegistry _health;
     private readonly CommandCatalog _catalog;
     private readonly PlayerAutocomplete _autocomplete;
+    private readonly IReadOnlyList<IComponentHandler> _components;
     private readonly ILogger<DiscordGateway> _logger;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenSource? _stopping;
@@ -38,6 +39,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     public DiscordGateway(
         BotOptions options,
         IEnumerable<ISlashCommand> commands,
+        IEnumerable<IComponentHandler> components,
         MetricsRegistry metrics,
         HealthRegistry health,
         CommandCatalog catalog,
@@ -45,7 +47,14 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         ILogger<DiscordGateway> logger)
     {
         ArgumentNullException.ThrowIfNull(commands);
+        ArgumentNullException.ThrowIfNull(components);
         _options = options;
+
+        /* Longest prefix first, so dispatch is deterministic if two prefixes ever overlap
+           rather than depending on the order the container happened to resolve them. */
+        _components = components
+            .OrderByDescending(h => h.Prefix.Length)
+            .ToList();
         _metrics = metrics;
         _health = health;
         _catalog = catalog;
@@ -91,6 +100,9 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _client.Ready += OnReady;
         _client.SlashCommandExecuted += OnSlashCommand;
         _client.AutocompleteExecuted += OnAutocomplete;
+        _client.ButtonExecuted += OnComponent;
+        _client.SelectMenuExecuted += OnComponent;
+        _client.ModalSubmitted += OnComponent;
 
         _health.Register("discord", _ =>
         {
@@ -195,6 +207,73 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                    what happened without leaking an exception into a public channel. */
                 await interaction.ModifyOriginalResponseAsync(m =>
                     m.Content = "That didn't work. The error has been logged.").ConfigureAwait(false);
+            }
+            catch (Exception) { }
+        }
+    }
+
+    /// <summary>
+    /// Route a button, select menu or modal to the handler that owns its custom id prefix.
+    /// </summary>
+    /// <remarks>
+    /// NOT deferred here, unlike a slash command. The right acknowledgement depends on what
+    /// the handler does - a modal cannot be opened on an interaction that has already been
+    /// acknowledged - so each handler acknowledges in the way that suits it, and the three
+    /// second budget is theirs to spend.
+    ///
+    /// An unrecognised id is answered rather than ignored. These arrive from buttons on
+    /// messages that outlived the build that created them, and a silent drop leaves the
+    /// clicker looking at a button that does nothing at all.
+    /// </remarks>
+    private async Task OnComponent(SocketInteraction interaction)
+    {
+        var customId = interaction switch
+        {
+            SocketMessageComponent component => component.Data.CustomId,
+            SocketModal modal => modal.Data.CustomId,
+            _ => null,
+        };
+
+        if (string.IsNullOrEmpty(customId)) return;
+
+        var id = ComponentId.Parse(customId);
+        var handler = _components.FirstOrDefault(h => string.Equals(h.Prefix, id.Prefix, StringComparison.Ordinal));
+
+        if (handler is null)
+        {
+            _logger.LogWarning("No handler for component {CustomId}", customId);
+            try
+            {
+                await interaction.RespondAsync(
+                    "That control belongs to an older version of this message. Run the command again.",
+                    ephemeral: true).ConfigureAwait(false);
+            }
+            catch (Exception) { }
+            return;
+        }
+
+        var ct = _stopping?.Token ?? CancellationToken.None;
+        try
+        {
+            await _metrics.TimeAsync("component_duration_ms", MetricLabels.Of("component", id.Prefix), async () =>
+            {
+                await handler.HandleAsync(interaction, id, ct).ConfigureAwait(false);
+                return true;
+            }, "Component interaction duration in milliseconds").ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Component {CustomId} failed", customId);
+            _metrics.Increment("component_errors_total", MetricLabels.Of("component", id.Prefix),
+                help: "Component interactions that threw");
+            try
+            {
+                // Whether it was acknowledged decides which call is legal, and guessing
+                // wrong throws again - leaving the click with no response at all.
+                if (interaction.HasResponded)
+                    await interaction.FollowupAsync("That didn't work. The error has been logged.", ephemeral: true).ConfigureAwait(false);
+                else
+                    await interaction.RespondAsync("That didn't work. The error has been logged.", ephemeral: true).ConfigureAwait(false);
             }
             catch (Exception) { }
         }

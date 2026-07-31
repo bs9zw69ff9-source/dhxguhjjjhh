@@ -155,6 +155,12 @@ public static class Program
         // ---- discord surfaces ----
         builder.Services.AddSingleton(sp => new Access(
             sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners));
+        /* Singleton, and registered as BOTH: commands inject it to send paged output, and
+           the gateway resolves it as a component handler to turn the pages. Two instances
+           would mean the handler looking up a session the sender never stored. */
+        builder.Services.AddSingleton<Paged>();
+        builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<Paged>());
+
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));

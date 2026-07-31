@@ -23,7 +23,7 @@ public sealed record Arrest(
 public sealed record PoliceConfig(double BailRate = 1.0);
 
 /// <summary><c>/warrant</c> - issue, clear and check warrants.</summary>
-public sealed class WarrantCommand(SerializedStore store, Access access, ILogger<WarrantCommand> logger) : ISlashCommand
+public sealed class WarrantCommand(SerializedStore store, Access access, Paged paged, ILogger<WarrantCommand> logger) : ISlashCommand
 {
     public string Name => "warrant";
 
@@ -127,9 +127,16 @@ public sealed class WarrantCommand(SerializedStore store, Access access, ILogger
                     .Select(kv => $"`{Sanitize.Code(kv.Key)}` — {kv.Value.Count}")
                     .ToList();
 
-                await Reply(command, wanted.Count == 0
-                    ? Theme.Success("Nobody is wanted")
-                    : Theme.Warning($"{wanted.Count} wanted player(s)", Theme.Paginate(wanted)[0])).ConfigureAwait(false);
+                if (wanted.Count == 0)
+                {
+                    await Reply(command, Theme.Success("Nobody is wanted")).ConfigureAwait(false);
+                    break;
+                }
+
+                // Every page. This used to show only the first and give no sign there were
+                // more wanted players.
+                await paged.SendAsync(command, $"{wanted.Count} wanted player(s)",
+                    Theme.Paginate(wanted), ct).ConfigureAwait(false);
                 break;
             }
         }
