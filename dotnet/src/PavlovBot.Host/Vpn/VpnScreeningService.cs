@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Vpn;
@@ -277,5 +278,116 @@ public sealed class IpApiGeoLocator(ResilientJsonClient client) : IGeoLocator
             Timezone: JsonHelp.Text(root, "timezone"),
             Latitude: JsonHelp.Number(root, "lat"),
             Longitude: JsonHelp.Number(root, "lon"));
+    }
+}
+
+/// <summary>
+/// Geoapify's IP Geolocation endpoint. Keyed, HTTPS, and a real quota.
+/// </summary>
+/// <remarks>
+/// A SECOND OPINION ON LOCATION ONLY. Geoapify does not report ISP or ASN, and both of
+/// those are load-bearing here - <c>EvasionScorer</c> matches a joining player's ASN
+/// against the networks banned players used, so a geolocator that cannot supply one would
+/// quietly weaken ban-evasion detection if it displaced ip-api. That is why this is a
+/// FALLBACK in <see cref="GeoLocatorChain"/> rather than a replacement: ip-api answers
+/// first and Geoapify only runs when it could not.
+///
+/// The response nests its fields (<c>city.name</c>, <c>country.iso_code</c>), and the
+/// parsing below accepts either the nested object or a bare string at each position. That
+/// is not defensive padding - this bot has no way to notice a provider reshaping its JSON
+/// except by every lookup silently returning null, and an unknown location degrades the
+/// admin feed rather than announcing itself.
+/// </remarks>
+public sealed class GeoapifyGeoLocator(ResilientJsonClient client, string apiKey) : IGeoLocator
+{
+    /// <summary>Nested <c>{"name": "..."}</c>, or the value already being a string.</summary>
+    private static string? Named(JsonElement root, string property, string field = "name")
+    {
+        var member = JsonHelp.Member(root, property);
+        return member?.ValueKind switch
+        {
+            JsonValueKind.Object => JsonHelp.Text(member.Value, field),
+            JsonValueKind.String => member.Value.GetString(),
+            _ => null,
+        };
+    }
+
+    public async Task<GeoLocation?> LocateAsync(string ip, CancellationToken ct)
+    {
+        using var document = await client.GetAsync(
+            $"https://api.geoapify.com/v1/ipinfo?ip={Uri.EscapeDataString(ip)}&apiKey={Uri.EscapeDataString(apiKey)}",
+            "geoapify",
+            // The key travels in the query string, so it would otherwise be logged verbatim
+            // on every timeout and rate limit.
+            secrets: [apiKey],
+            ct: ct).ConfigureAwait(false);
+
+        if (document is null) return null;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) return null;
+
+        var location = JsonHelp.Member(root, "location");
+
+        // `state` and `subdivisions[0]` are the same thing by different names depending on
+        // the country; either is a better answer than none.
+        var region = Named(root, "state") ?? Named(root, "region");
+        if (region is null && JsonHelp.Member(root, "subdivisions") is { ValueKind: JsonValueKind.Array } subdivisions)
+        {
+            foreach (var entry in subdivisions.EnumerateArray())
+            {
+                region = JsonHelp.Text(entry, "name");
+                if (region is not null) break;
+            }
+        }
+
+        var result = new GeoLocation(
+            City: Named(root, "city"),
+            Region: region,
+            Country: Named(root, "country"),
+            CountryCode: Named(root, "country", "iso_code"),
+            Zip: JsonHelp.Text(root, "postcode"),
+            Timezone: Named(root, "timezone", "name"),
+            Latitude: location is { } point ? JsonHelp.Number(point, "latitude") : null,
+            Longitude: location is { } same ? JsonHelp.Number(same, "longitude") : null);
+
+        /* An object that parsed but carried no usable field is NOT an answer. Returning it
+           would satisfy the chain's "first non-null wins" rule and stop ip-api from ever
+           being tried - turning a provider outage into a permanent blank location. */
+        return result.Country is null && result.City is null && result.CountryCode is null ? null : result;
+    }
+}
+
+/// <summary>
+/// Several geolocation providers, tried in order until one answers.
+/// </summary>
+/// <remarks>
+/// FIRST NON-NULL WINS, and the order is the policy: ip-api goes first because it is
+/// keyless and returns ISP and ASN, which the evasion scorer needs and the other providers
+/// do not supply. A second provider is therefore not a load-balancer - it is what answers
+/// when the first is rate-limited, blocked, or down.
+///
+/// A provider that throws does not end the chain. These are third-party endpoints on the
+/// join path; one of them failing badly must not cost the lookup entirely.
+/// </remarks>
+public sealed class GeoLocatorChain(IEnumerable<IGeoLocator> providers, ILogger<GeoLocatorChain> logger) : IGeoLocator
+{
+    private readonly IReadOnlyList<IGeoLocator> _providers = providers.ToList();
+
+    public async Task<GeoLocation?> LocateAsync(string ip, CancellationToken ct)
+    {
+        foreach (var provider in _providers)
+        {
+            try
+            {
+                if (await provider.LocateAsync(ip, ct).ConfigureAwait(false) is { } located) return located;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Geolocation provider {Provider} failed - trying the next one",
+                    provider.GetType().Name);
+            }
+        }
+
+        return null;
     }
 }

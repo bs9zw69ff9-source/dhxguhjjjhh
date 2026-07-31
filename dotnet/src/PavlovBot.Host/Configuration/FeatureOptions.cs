@@ -48,6 +48,13 @@ public sealed record FeatureOptions
     public VpnThresholds VpnThresholds { get; init; } = VpnThresholds.Default;
     public TimeSpan VpnCacheTtl { get; init; } = TimeSpan.FromDays(30);
 
+    /// <summary>
+    /// Geoapify key. Deliberately NOT part of <see cref="VpnKeys"/>: those are reputation
+    /// providers that vote on whether an address is a VPN, and this one only says where an
+    /// address is. Putting it there would let it be counted as a detector.
+    /// </summary>
+    public string? GeoapifyKey { get; init; }
+
     /// <summary>Discord ids that hold owner powers. NOT a role - see <c>Access</c>.</summary>
     public IReadOnlyList<ulong> Owners { get; init; } = [];
     public IReadOnlyList<ulong> SuperOwners { get; init; } = [];
@@ -90,6 +97,8 @@ public sealed record FeatureOptions
                 VpnApi: Text(configuration, "VPNAPI_KEY"),
                 IpapiIs: Text(configuration, "IPAPIIS_KEY"),
                 Sentinel: Text(configuration, "SENTINEL_API_KEY")),
+
+            GeoapifyKey = Text(configuration, "GEOAPIFY_API_KEY"),
 
             VpnThresholds = new VpnThresholds(
                 Int(configuration, "VPN_SCREEN_MIN", 1),

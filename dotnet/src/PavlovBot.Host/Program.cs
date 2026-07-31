@@ -120,7 +120,22 @@ public static class Program
         builder.Services.AddSingleton<IVpnDetector, ProxyCheckDetector>();
         builder.Services.AddSingleton<IVpnDetector, SentinelDetector>();
         builder.Services.AddSingleton<IVpnDetector, IpqsDetector>();
-        builder.Services.AddSingleton<IGeoLocator, IpApiGeoLocator>();
+        /* Geolocation is a CHAIN, in this order on purpose. ip-api is keyless and returns
+           ISP and ASN, which the evasion scorer needs; Geoapify returns neither, so it is a
+           standby for when ip-api is rate-limited or unreachable, not a replacement. With
+           no GEOAPIFY_API_KEY the chain is just ip-api and behaves exactly as before. */
+        builder.Services.AddSingleton<IGeoLocator>(sp =>
+        {
+            var providers = new List<IGeoLocator>
+            {
+                new IpApiGeoLocator(sp.GetRequiredService<ResilientJsonClient>()),
+            };
+
+            if (features.GeoapifyKey is { Length: > 0 } geoapifyKey)
+                providers.Add(new GeoapifyGeoLocator(sp.GetRequiredService<ResilientJsonClient>(), geoapifyKey));
+
+            return new GeoLocatorChain(providers, sp.GetRequiredService<ILogger<GeoLocatorChain>>());
+        });
         builder.Services.AddSingleton(sp => new VpnScreeningService(
             sp.GetServices<IVpnDetector>(), sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<IGeoLocator>(), sp.GetRequiredService<MetricsRegistry>(),
