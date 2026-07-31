@@ -245,6 +245,17 @@ public static class Program
             logger.LogWarning("MASTER_NAMES is not set - no account is protected from an auto-ban, " +
                               "including yours. A false positive would lock you out of your own server.");
 
+        /* The Node bot falls back to two owner IDs baked into index.js; this one has no
+           such fallback, deliberately - who owns a server should not be a source-code
+           constant. The cost of that is a cutover where OWNER_IDS was never copied into
+           .env leaving NOBODY at owner tier, and every owner-gated command refusing
+           everyone. Role-derived tiers still work (they live in bot.db), so it is not a
+           full lockout, which is exactly why it would otherwise go unnoticed for days. */
+        if (features.Owners.Count == 0 && features.SuperOwners.Count == 0)
+            logger.LogWarning("OWNER_IDS and SUPER_OWNER_IDS are both unset - no Discord account holds " +
+                              "owner tier, so every owner-gated command will refuse everyone. Unlike the " +
+                              "Node bot, this one has no built-in owner list.");
+
         /* --selftest builds the entire object graph, reports what it cost, and exits without
            connecting to anything. It is a deploy smoke test - it proves the configuration
            parses and every dependency resolves, which are the two things that fail at 2am -
