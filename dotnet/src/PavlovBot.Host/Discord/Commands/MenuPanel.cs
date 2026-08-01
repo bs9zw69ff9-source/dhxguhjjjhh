@@ -111,7 +111,7 @@ public sealed class MenuPanel(
             return;
         }
 
-        var requested = Sanitize.Id(modal.Data.Components.FirstOrDefault(c => c.CustomId == "name")?.Value ?? "");
+        var requested = Sanitize.Id(NameField(modal));
         if (requested.Length == 0)
         {
             await Followup(modal, Theme.Failure("Enter your exact in-game name")).ConfigureAwait(false);
@@ -252,4 +252,16 @@ public sealed class MenuPanel(
 
     private static Task Followup(SocketInteraction interaction, EmbedBuilder embed) =>
         interaction.FollowupAsync(embed: embed.Brand().Build(), ephemeral: true);
+
+    /// <summary>
+    /// The typed name, accepting the Node bot's field id as well as ours.
+    /// </summary>
+    /// <remarks>
+    /// A modal opened by the Node bot's panel just before the cutover submits with
+    /// <c>menu_name</c>. Reading only our own id would return empty and answer "no name
+    /// given" to somebody who typed one.
+    /// </remarks>
+    private static string NameField(SocketModal modal) =>
+        modal.Data.Components.FirstOrDefault(c => c.CustomId is "name" or "menu_name")?.Value ?? "";
+
 }

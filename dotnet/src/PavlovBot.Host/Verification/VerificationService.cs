@@ -118,7 +118,7 @@ public sealed class VerificationService(
     {
         await modal.DeferAsync(ephemeral: true).ConfigureAwait(false);
 
-        var name = Sanitize.Message(modal.Data.Components.FirstOrDefault(c => c.CustomId == "name")?.Value ?? "").Trim();
+        var name = Sanitize.Message(NameField(modal)).Trim();
         if (name.Length == 0)
         {
             await Followup(modal, Theme.Failure("No name given", "Enter your exact in-game name.")).ConfigureAwait(false);
@@ -342,4 +342,16 @@ public sealed class VerificationService(
 
     /// <summary>Short, random, and not derived from anything - it only has to be unguessable.</summary>
     private static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+
+    /// <summary>
+    /// The typed name, accepting the Node bot's field id as well as ours.
+    /// </summary>
+    /// <remarks>
+    /// A modal opened by the Node bot's panel just before the cutover submits with
+    /// <c>verify_name</c>. Reading only our own id would return empty and answer "no name
+    /// given" to somebody who typed one.
+    /// </remarks>
+    private static string NameField(SocketModal modal) =>
+        modal.Data.Components.FirstOrDefault(c => c.CustomId is "name" or "verify_name")?.Value ?? "";
+
 }

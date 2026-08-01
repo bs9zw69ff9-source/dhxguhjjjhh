@@ -74,4 +74,52 @@ public class ComponentIdTests
         Assert.Equal("a", id.Argument(0));
         Assert.Equal("b", id.Argument(1));
     }
+    [Fact]
+    public void TheNodeBotsPersistentPanelButtonsStillRoute()
+    {
+        /* The verify and menu panels sit in a channel indefinitely and outlive the bot that
+           posted them. After the cutover their buttons still carry Node's underscore ids,
+           which parse as one long prefix and match no handler - so every press answered
+           "that control belongs to an older version of this message" while the panel looked
+           perfectly fine. */
+        var verify = ComponentId.Parse("verify_start");
+        Assert.Equal("verify", verify.Prefix);
+        Assert.Equal("start", verify.Argument(0));
+
+        var menu = ComponentId.Parse("menu_start");
+        Assert.Equal("menu", menu.Prefix);
+        Assert.Equal("start", menu.Argument(0));
+    }
+
+    [Fact]
+    public void TransientNodeControlsAreNotTranslated()
+    {
+        /* arr_*, cfg_* and pg_* belonged to an in-message collector that died with the
+           command that made it. Those really are stale, and "run the command again" is the
+           honest answer - translating them would route a click into a booking that no
+           longer exists. */
+        Assert.Equal("arr_confirm", ComponentId.Parse("arr_confirm").Prefix);
+        Assert.Equal("cfg_menu", ComponentId.Parse("cfg_menu").Prefix);
+        Assert.Equal("pg_next", ComponentId.Parse("pg_next").Prefix);
+    }
+
+    [Fact]
+    public void TheStaffDecisionButtonsAreDeliberatelyNotTranslated()
+    {
+        /* Their token refers to a pending request in the NODE bot's store, which this bot
+           cannot resolve. Translating them would make Accept look like it worked and grant
+           nothing at all. */
+        Assert.Equal("verifyreq_ok", ComponentId.Parse("verifyreq_ok:abc123").Prefix);
+    }
+
+    [Fact]
+    public void OurOwnIdsAreUnaffectedByTheTranslation()
+    {
+        var id = ComponentId.Parse(ComponentId.Encode("verify", "ok", "a1b2c3"));
+
+        Assert.Equal("verify", id.Prefix);
+        Assert.Equal("ok", id.Argument(0));
+        Assert.Equal("a1b2c3", id.Argument(1));
+    }
+
 }

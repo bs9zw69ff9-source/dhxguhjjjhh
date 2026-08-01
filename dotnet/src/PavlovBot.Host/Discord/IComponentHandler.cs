@@ -82,7 +82,33 @@ public sealed record ComponentId(string Prefix, IReadOnlyList<string> Arguments)
     {
         ArgumentNullException.ThrowIfNull(customId);
 
-        var parts = customId.Split(Separator);
+        var parts = Translate(customId).Split(Separator);
         return new ComponentId(parts[0], parts.Skip(1).ToArray());
     }
+
+    /// <summary>
+    /// Node-era custom ids, so panels that bot posted keep working.
+    /// </summary>
+    /// <remarks>
+    /// THE VERIFY AND MENU PANELS OUTLIVE THE BOT THAT POSTED THEM. They sit in a channel
+    /// indefinitely, and after the cutover their buttons still carry the Node bot's
+    /// underscore ids - which parse as one long prefix here and match no handler, so every
+    /// press answered "that control belongs to an older version of this message".
+    ///
+    /// Only the PERSISTENT controls are translated. Everything else the Node bot used
+    /// (arr_*, cfg_*, pg_*, cd_*) belonged to an in-message collector that died with the
+    /// command, so those really are stale and "run the command again" is the honest answer.
+    ///
+    /// The staff accept/deny buttons are deliberately NOT translated: their token refers to
+    /// a pending request in the Node bot's store, which this bot cannot resolve, so
+    /// accepting one would look like it worked and grant nothing.
+    /// </remarks>
+    private static string Translate(string customId) => customId switch
+    {
+        "verify_start" => "verify" + Separator + "start",
+        "verify_modal" => "verify" + Separator + "submit",
+        "menu_start" => "menu" + Separator + "start",
+        "menu_modal" => "menu" + Separator + "submit",
+        _ => customId,
+    };
 }
