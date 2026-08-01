@@ -231,23 +231,45 @@ mkdir -p logs
 # publish a new binary, pass the selftest against that new binary, print "Started",
 # and leave the OLD process serving - for hours, with every fix apparently having no
 # effect and nothing anywhere saying why.
+#
+# Both branches name the ECOSYSTEM FILE rather than the app. `pm2 restart <name>`
+# restarts the process but does NOT re-read the config, so a change to kill_timeout,
+# max_memory_restart or the env block would be deployed and never applied - the same
+# bug again, one level down.
 if pm2 describe "$APP" >/dev/null 2>&1; then
   echo "==> Restarting $APP (it was already running)"
-  pm2 restart "$APP" --update-env
+  pm2 restart ecosystem.csharp.config.js --update-env
 else
   echo "==> Starting $APP"
   pm2 start ecosystem.csharp.config.js --update-env
 fi
 pm2 save
 
-# Prove the process that is now running is the build we just made, rather than
-# trusting that the restart did what it said.
-sleep 2
-RUNNING_BUILD="$(pm2 logs "$APP" --nostream --lines 200 2>/dev/null | grep -o 'build [0-9a-f]\{7,\}' | tail -1 || true)"
-if [ -n "$RUNNING_BUILD" ]; then
-  echo "==> Running $RUNNING_BUILD (deployed $(git rev-parse --short HEAD))"
+# ---- 5. prove the restart took ------------------------------------------------
+# Not a formality. The whole reason this section exists is that a deploy which
+# quietly leaves the old process running is indistinguishable from a fix that does
+# not work, and that cost real time.
+DEPLOYED="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+RUNNING=""
+for _ in $(seq 1 15); do
+  sleep 1
+  RUNNING="$(pm2 logs "$APP" --nostream --lines 400 2>/dev/null \
+    | grep -oE 'build [0-9a-f]{7,}' | tail -1 | awk '{print $2}')"
+  [ -n "$RUNNING" ] && [ "$RUNNING" = "$DEPLOYED" ] && break
+done
+
+echo
+if [ "$RUNNING" = "$DEPLOYED" ]; then
+  echo "==> Running build $RUNNING - matches what was just deployed."
+elif [ -n "$RUNNING" ]; then
+  echo "MISMATCH: the running process reports build $RUNNING, but $DEPLOYED was deployed." >&2
+  echo "The restart did not take. Force it with:" >&2
+  echo "  pm2 delete $APP && pm2 start ecosystem.csharp.config.js && pm2 save" >&2
+  exit 1
 else
-  echo "==> Could not read a build stamp from the log; check 'pm2 logs $APP' by hand." >&2
+  echo "Could not read a build stamp from the log within 15s." >&2
+  echo "Check it came up at all:  pm2 logs $APP --lines 50" >&2
+  exit 1
 fi
 
 echo
