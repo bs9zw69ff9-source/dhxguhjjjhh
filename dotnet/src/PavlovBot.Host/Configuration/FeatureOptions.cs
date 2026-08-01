@@ -55,6 +55,14 @@ public sealed record FeatureOptions
     /// <summary>Role granted on approval. Without it approval records the link and grants nothing.</summary>
     public ulong? VerifiedRole { get; init; }
 
+    /// <summary>Channel holding the self-serve "Get Menu" panel.</summary>
+    public ulong? MenuPanelChannel { get; init; }
+
+    /// <summary>Roles that decide WHICH menu a claimer gets, and who is barred outright.</summary>
+    public ulong? MenuRoleStaff { get; init; }
+    public ulong? MenuRoleHighStaff { get; init; }
+    public ulong? MenuRoleBlacklist { get; init; }
+
     public VpnKeys VpnKeys { get; init; } = new();
     public VpnThresholds VpnThresholds { get; init; } = VpnThresholds.Default;
     public TimeSpan VpnCacheTtl { get; init; } = TimeSpan.FromDays(30);
@@ -126,6 +134,10 @@ public sealed record FeatureOptions
             VerifyChannel = Snowflake(configuration, "VERIFY_CHANNEL"),
             VerifyStaffChannel = Snowflake(configuration, "VERIFY_STAFF_CHANNEL"),
             VerifiedRole = Snowflake(configuration, "VERIFIED_ROLE"),
+            MenuPanelChannel = Snowflake(configuration, "MENU_PANEL_CHANNEL"),
+            MenuRoleStaff = Snowflake(configuration, "MENU_ROLE_STAFF"),
+            MenuRoleHighStaff = Snowflake(configuration, "MENU_ROLE_HIGHSTAFF"),
+            MenuRoleBlacklist = Snowflake(configuration, "MENU_ROLE_BLACKLIST"),
 
             VpnKeys = new VpnKeys(
                 IpHub: Text(configuration, "IPHUB_API_KEY"),
@@ -197,6 +209,11 @@ public sealed record FeatureOptions
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
         $"player list: {(PlayerListChannel is null ? "off (PLAYERLIST_CHANNEL not set)" : $"channel {PlayerListChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
+        $"menu panel: {(MenuPanelChannel is null
+            ? "off (MENU_PANEL_CHANNEL not set)"
+            : MenuRoleStaff is null && MenuRoleHighStaff is null
+                ? $"channel {MenuPanelChannel} - NO MENU_ROLE_STAFF/HIGHSTAFF, nobody qualifies"
+                : $"channel {MenuPanelChannel}")}",
         $"verification: {(VerifyChannel is null || VerifyStaffChannel is null
             ? "off (needs VERIFY_CHANNEL and VERIFY_STAFF_CHANNEL)"
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +

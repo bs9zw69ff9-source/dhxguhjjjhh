@@ -162,6 +162,12 @@ public static class Program
         builder.Services.AddSingleton<Paged>();
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<Paged>());
 
+        builder.Services.AddSingleton<MenuPanel>();
+        builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<MenuPanel>());
+
+        builder.Services.AddSingleton<ArrestBooking>();
+        builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ArrestBooking>());
+
         builder.Services.AddSingleton<PavlovBot.Host.Verification.VerificationService>();
         builder.Services.AddSingleton<IComponentHandler>(sp =>
             sp.GetRequiredService<PavlovBot.Host.Verification.VerificationService>());

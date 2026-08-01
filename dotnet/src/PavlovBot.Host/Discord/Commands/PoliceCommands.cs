@@ -157,8 +157,29 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
 /// The arithmetic lives in <see cref="PenalCode"/>: bail is scaled and rounded PER CHARGE,
 /// never on the total, so the figures on the receipt add up to the number at the bottom.
 /// </remarks>
-public sealed class ArrestCommand(SerializedStore store, AuditLog audit, Access access, ILogger<ArrestCommand> logger) : ISlashCommand
+public sealed class ArrestCommand : ISlashCommand
 {
+    private readonly SerializedStore _store;
+    private readonly AuditLog _audit;
+    private readonly Access _access;
+    private readonly ArrestBooking _booking;
+    private readonly ILogger<ArrestCommand> _logger;
+
+    public ArrestCommand(SerializedStore store, AuditLog audit, Access access,
+        ArrestBooking booking, ILogger<ArrestCommand> logger)
+    {
+        _store = store;
+        _audit = audit;
+        _access = access;
+        _booking = booking;
+        _logger = logger;
+
+        /* The picker raises this when an officer confirms. Recording an arrest stays HERE,
+           so the component flow owns the UI and this owns what an arrest means - the two
+           entry points then cannot drift into recording different things. */
+        _booking.Confirmed += OnConfirmedAsync;
+    }
+
     public string Name => "arrest";
 
     public ApplicationCommandProperties Build() =>
@@ -166,24 +187,41 @@ public sealed class ArrestCommand(SerializedStore store, AuditLog audit, Access 
             .WithName(Name)
             .WithDescription("Police - Book a player on penal-code charges")
             .AddOption("playerid", ApplicationCommandOptionType.String, "Player to arrest", isRequired: true, isAutocomplete: true)
-            .AddOption("codes", ApplicationCommandOptionType.String, "Charge codes, comma separated (e.g. PC 100, PC 210)", isRequired: true)
+            .AddOption("codes", ApplicationCommandOptionType.String, "Charge codes, comma separated. Leave empty to pick from a menu.", isRequired: false)
             .Build();
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (!access.Allows(RequiredAccess.Police, command))
+        if (!_access.Allows(RequiredAccess.Police, command))
         {
             await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Police))).ConfigureAwait(false);
             return;
         }
 
         var player = Sanitize.Id(command.Data.Options.First(o => o.Name == "playerid").Value as string ?? "");
-        var raw = command.Data.Options.First(o => o.Name == "codes").Value as string ?? "";
+        var raw = command.Data.Options.FirstOrDefault(o => o.Name == "codes")?.Value as string ?? "";
         var codes = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var rate = store.Read(Datasets.PoliceConfig, new PoliceConfig()).BailRate;
+        var rate = _store.Read(Datasets.PoliceConfig, new PoliceConfig()).BailRate;
+
+        /* No codes typed: open the picker. Typing them is faster once you know them by
+           heart; picking is the only usable option when you do not. The Node bot only ever
+           had the picker, so requiring codes here was a regression for everybody who has
+           not memorised fifty-nine of them. */
+        if (codes.Length == 0)
+        {
+            if (player.Length == 0)
+            {
+                await Reply(command, Theme.Failure("That name has nothing usable in it")).ConfigureAwait(false);
+                return;
+            }
+
+            await _booking.BeginAsync(command, player, rate).ConfigureAwait(false);
+            return;
+        }
+
         var booking = PenalCode.Book(codes, rate);
 
         if (booking.Charges.Count == 0)
@@ -196,10 +234,18 @@ public sealed class ArrestCommand(SerializedStore store, AuditLog audit, Access 
             return;
         }
 
-        var arrest = new Arrest(player, booking.Charges.Select(c => c.Code).ToList(),
-            booking.JailMinutes, booking.Bail, command.User.Username, DateTimeOffset.UtcNow);
+        var embed = await RecordAsync(player, booking, command.User.Username, rate, ct).ConfigureAwait(false);
+        await Reply(command, embed).ConfigureAwait(false);
+    }
 
-        await store.UpdateAsync(Datasets.Arrests,
+    /// <summary>Book the arrest and describe it. Shared by the typed and picked paths.</summary>
+    private async Task<EmbedBuilder> RecordAsync(
+        string player, Booking booking, string officer, double rate, CancellationToken ct)
+    {
+        var arrest = new Arrest(player, booking.Charges.Select(c => c.Code).ToList(),
+            booking.JailMinutes, booking.Bail, officer, DateTimeOffset.UtcNow);
+
+        await _store.UpdateAsync(Datasets.Arrests,
             new Dictionary<string, List<Arrest>>(StringComparer.OrdinalIgnoreCase),
             arrests =>
             {
@@ -209,26 +255,41 @@ public sealed class ArrestCommand(SerializedStore store, AuditLog audit, Access 
             }, ct).ConfigureAwait(false);
 
         // An arrest satisfies the warrant that prompted it.
-        await store.UpdateAsync(Datasets.Warrants,
+        await _store.UpdateAsync(Datasets.Warrants,
             new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase),
             warrants => { warrants.Remove(player); return warrants; }, ct).ConfigureAwait(false);
 
-        await audit.RecordAsync("arrest", command.User.Username, player,
+        await _audit.RecordAsync("arrest", officer, player,
             string.Join(",", arrest.Codes), ct).ConfigureAwait(false);
 
-        logger.LogInformation("arrest | player=\"{Player}\" | codes={Codes} | {Minutes}min ${Bail} | by={By}",
-            player, string.Join(",", arrest.Codes), booking.JailMinutes, booking.Bail, command.User.Username);
+        _logger.LogInformation("arrest | player=\"{Player}\" | codes={Codes} | {Minutes}min ${Bail} | by={By}",
+            player, string.Join(",", arrest.Codes), booking.JailMinutes, booking.Bail, officer);
 
         var lines = booking.Charges.Select(c =>
             $"`{c.Code}` {c.Name} — {(c.Special is not null ? c.Special.ToString() : $"{c.JailMinutes} min")}" +
             (c.BailAt(rate) is { } bail ? $", ${bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}" : ""));
 
-        var embed = Theme.Punishment($"{Theme.Deny} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
+        return Theme.Punishment($"{Theme.Deny} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
             .AddField("Sentence", booking.SentenceLabel(), true)
             .AddField("Bail", booking.BailLabel(), true)
-            .AddField("Arresting officer", command.User.Username, true);
+            .AddField("Arresting officer", officer, true);
+    }
 
-        await Reply(command, embed).ConfigureAwait(false);
+    /// <summary>An officer confirmed a picked booking.</summary>
+    private async Task OnConfirmedAsync(ArrestConfirmed confirmed)
+    {
+        var rate = _store.Read(Datasets.PoliceConfig, new PoliceConfig()).BailRate;
+        var embed = await RecordAsync(confirmed.Player, confirmed.Result, confirmed.Officer, rate,
+            CancellationToken.None).ConfigureAwait(false);
+
+        // Replaces the booking message, so the picker does not sit there re-clickable next
+        // to the arrest it produced.
+        await confirmed.Interaction.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = embed.Brand().Build();
+            m.Components = new ComponentBuilder().Build();
+            m.AllowedMentions = AllowedMentions.None;
+        }).ConfigureAwait(false);
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

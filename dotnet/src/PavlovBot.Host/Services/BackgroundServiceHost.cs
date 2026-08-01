@@ -45,6 +45,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Core.Data.SerializedStore _store;
     private readonly PavlovBot.Host.Logs.FeedBridge _bridge;
     private readonly PavlovBot.Host.Verification.VerificationService _verification;
+    private readonly PavlovBot.Host.Discord.Commands.MenuPanel _menuPanel;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -66,6 +67,7 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Core.Data.SerializedStore store,
         PavlovBot.Host.Logs.FeedBridge bridge,
         PavlovBot.Host.Verification.VerificationService verification,
+        PavlovBot.Host.Discord.Commands.MenuPanel menuPanel,
         ILogger<BackgroundServiceHost> logger)
     {
         _registry = registry;
@@ -87,6 +89,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _store = store;
         _bridge = bridge;
         _verification = verification;
+        _menuPanel = menuPanel;
         _logger = logger;
     }
 
@@ -285,6 +288,21 @@ public sealed class BackgroundServiceHost : IHostedService
                 Tick = ct => _autoPost.PostAsync("verifypanel", _features.VerifyChannel,
                     () => Task.FromResult<global::Discord.Embed?>(_verification.BuildPanel()),
                     ct, PavlovBot.Host.Verification.VerificationService.PanelButton()),
+            });
+        }
+
+        /* ---- menu panel ----
+           Same shape as the verification panel: an autopost board so a restart edits it
+           rather than leaving an orphan with a dead button. */
+        if (_menuPanel.Enabled)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "menu-panel",
+                Interval = TimeSpan.FromMinutes(10),
+                Tick = ct => _autoPost.PostAsync("menupanel", _features.MenuPanelChannel,
+                    () => Task.FromResult<global::Discord.Embed?>(_menuPanel.BuildPanel()),
+                    ct, PavlovBot.Host.Discord.Commands.MenuPanel.PanelButton()),
             });
         }
 
