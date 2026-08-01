@@ -14,10 +14,11 @@ namespace PavlovBot.Host.Discord;
 public interface IAutoPostTarget
 {
     /// <summary>Edit an existing message. False when it is gone.</summary>
-    Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, CancellationToken ct);
+    /// <param name="components">Buttons to keep on the message. Null leaves it plain.</param>
+    Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct);
 
     /// <summary>Post a new message and return its id, or null when the channel is unusable.</summary>
-    Task<ulong?> SendAsync(ulong channelId, Embed embed, CancellationToken ct);
+    Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct);
 }
 
 /// <summary>
@@ -57,7 +58,13 @@ public sealed class AutoPost
     /// Builds the embed. Returning null skips this cycle entirely - used when there is
     /// nothing to show yet, which must NOT clear the board that is already there.
     /// </param>
-    public async Task PostAsync(string key, ulong? channelId, Func<Task<Embed?>> build, CancellationToken ct = default)
+    /// <param name="components">
+    /// Buttons to carry on the board. Re-applied on every EDIT, not just the first post:
+    /// omitting them on an edit strips them, so a restart would leave the verification panel
+    /// looking correct with no button on it.
+    /// </param>
+    public async Task PostAsync(string key, ulong? channelId, Func<Task<Embed?>> build,
+        CancellationToken ct = default, MessageComponent? components = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentNullException.ThrowIfNull(build);
@@ -84,13 +91,13 @@ public sealed class AutoPost
 
             var existing = State().GetValueOrDefault(key);
             if (existing != 0 &&
-                await _target.TryEditAsync(channel, existing, embed, ct).ConfigureAwait(false))
+                await _target.TryEditAsync(channel, existing, embed, components, ct).ConfigureAwait(false))
             {
                 return;
             }
 
             // Either there was no message, or it has been deleted. Post a fresh one.
-            var posted = await _target.SendAsync(channel, embed, ct).ConfigureAwait(false);
+            var posted = await _target.SendAsync(channel, embed, components, ct).ConfigureAwait(false);
             if (posted is null)
             {
                 _logger.LogWarning("{Key} board could not be posted to channel {Channel}", key, channel);

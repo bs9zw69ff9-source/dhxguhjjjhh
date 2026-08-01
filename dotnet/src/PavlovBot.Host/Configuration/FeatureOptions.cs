@@ -46,6 +46,15 @@ public sealed record FeatureOptions
     public ulong? ArrestBoardChannel { get; init; }
     public ulong? PlayerListChannel { get; init; }
 
+    /// <summary>Public channel holding the Verify button.</summary>
+    public ulong? VerifyChannel { get; init; }
+
+    /// <summary>Private staff channel that receives accept/deny requests.</summary>
+    public ulong? VerifyStaffChannel { get; init; }
+
+    /// <summary>Role granted on approval. Without it approval records the link and grants nothing.</summary>
+    public ulong? VerifiedRole { get; init; }
+
     public VpnKeys VpnKeys { get; init; } = new();
     public VpnThresholds VpnThresholds { get; init; } = VpnThresholds.Default;
     public TimeSpan VpnCacheTtl { get; init; } = TimeSpan.FromDays(30);
@@ -114,6 +123,9 @@ public sealed record FeatureOptions
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
             PlayerListChannel = Snowflake(configuration, "PLAYERLIST_CHANNEL"),
+            VerifyChannel = Snowflake(configuration, "VERIFY_CHANNEL"),
+            VerifyStaffChannel = Snowflake(configuration, "VERIFY_STAFF_CHANNEL"),
+            VerifiedRole = Snowflake(configuration, "VERIFIED_ROLE"),
 
             VpnKeys = new VpnKeys(
                 IpHub: Text(configuration, "IPHUB_API_KEY"),
@@ -185,6 +197,10 @@ public sealed record FeatureOptions
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
         $"player list: {(PlayerListChannel is null ? "off (PLAYERLIST_CHANNEL not set)" : $"channel {PlayerListChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
+        $"verification: {(VerifyChannel is null || VerifyStaffChannel is null
+            ? "off (needs VERIFY_CHANNEL and VERIFY_STAFF_CHANNEL)"
+            : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
+              (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
         $"owners: {Owners.Count + SuperOwners.Count} configured",
         $"master names: {(MasterNames.Count == 0 ? "none - NOTHING is protected from an auto-ban" : string.Join(", ", MasterNames))}",
     ];

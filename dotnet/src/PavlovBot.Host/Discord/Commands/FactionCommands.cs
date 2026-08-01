@@ -17,7 +17,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// per-rank caps. The roster files are plain text the game reads live and nothing stops a
 /// name appearing in six of them at once, so the boundary is the only enforcement point.
 /// </remarks>
-public sealed class WhitelistCommand(RosterService rosters, Access access, ILogger<WhitelistCommand> logger) : ISlashCommand
+public sealed class WhitelistCommand(RosterService rosters, Access access, Boards boards, ILogger<WhitelistCommand> logger) : ISlashCommand
 {
     public string Name => "whitelist";
 
@@ -49,6 +49,10 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, ILogg
                 .WithName("list").WithDescription("Show a faction's roster with ranks")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(Faction()))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("playtime").WithDescription("Whitelisted members' playtime, highest to lowest")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption(Faction()))
             .Build();
     }
 
@@ -70,6 +74,12 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, ILogg
         if (sub.Name == "list")
         {
             await Reply(command, await BuildRosterAsync(faction, ct).ConfigureAwait(false)).ConfigureAwait(false);
+            return;
+        }
+
+        if (sub.Name == "playtime")
+        {
+            await Reply(command, await BuildPlaytimeAsync(faction, ct).ConfigureAwait(false)).ConfigureAwait(false);
             return;
         }
 
@@ -98,6 +108,38 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, ILogg
             sub.Name, player, faction.Name, command.User.Username, result.Outcome);
 
         await Reply(command, Describe(result, player, faction)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// This faction's members ranked by time on the server.
+    /// </summary>
+    /// <remarks>
+    /// Read from the roster, not from the playtime table: the question is "who on THIS
+    /// whitelist is active", so a member with no recorded time still belongs on the list -
+    /// as zero. Dropping them would silently answer a different question, and the inactive
+    /// members are exactly who this is used to find.
+    /// </remarks>
+    private async Task<EmbedBuilder> BuildPlaytimeAsync(FactionDefinition faction, CancellationToken ct)
+    {
+        var roster = await rosters.RosterAsync(faction, ct).ConfigureAwait(false);
+        if (roster.Count == 0)
+            return Theme.Notice($"{faction.Name} playtime", "Nobody is on this roster.");
+
+        var playtime = boards.Playtime();
+
+        var rows = roster
+            .Select(m => (m.Player, Minutes: playtime.GetValueOrDefault(m.Player)?.Minutes ?? 0))
+            .OrderByDescending(r => r.Minutes)
+            .ThenBy(r => r.Player, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var lines = rows.Select((r, i) =>
+            $"`{i + 1,2}.` **{Sanitize.Code(r.Player)}** — " +
+            (r.Minutes >= 60 ? $"{r.Minutes / 60}h {r.Minutes % 60}m" : $"{r.Minutes}m"));
+
+        var pages = Theme.Paginate(lines);
+        return Theme.Notice($"{faction.Name} playtime — {roster.Count} member(s)", pages[0])
+            .Brand(pages.Count > 1 ? $"Showing the first of {pages.Count} pages" : null);
     }
 
     private async Task<EmbedBuilder> BuildRosterAsync(FactionDefinition faction, CancellationToken ct)

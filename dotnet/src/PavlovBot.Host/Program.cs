@@ -162,6 +162,10 @@ public static class Program
         builder.Services.AddSingleton<Paged>();
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<Paged>());
 
+        builder.Services.AddSingleton<PavlovBot.Host.Verification.VerificationService>();
+        builder.Services.AddSingleton<IComponentHandler>(sp =>
+            sp.GetRequiredService<PavlovBot.Host.Verification.VerificationService>());
+
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton<FeedBridge>();
         builder.Services.AddSingleton<EvasionResponder>();

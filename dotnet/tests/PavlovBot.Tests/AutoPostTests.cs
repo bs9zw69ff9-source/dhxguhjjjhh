@@ -31,16 +31,22 @@ public class AutoPostTests : IDisposable
         public TaskCompletionSource? BlockSends { get; set; }
         private ulong _next = 100;
 
-        public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, CancellationToken ct)
+        /// <summary>Components seen on the most recent edit, so a stripped button is visible.</summary>
+        public MessageComponent? LastEditComponents { get; private set; }
+        public MessageComponent? LastSendComponents { get; private set; }
+
+        public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct)
         {
             await Task.Yield();
             if (Deleted.Contains(messageId)) return false;
             Edits++;
+            LastEditComponents = components;
             return true;
         }
 
-        public async Task<ulong?> SendAsync(ulong channelId, Embed embed, CancellationToken ct)
+        public async Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct)
         {
+            LastSendComponents = components;
             if (BlockSends is not null) await BlockSends.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             Sends++;
             return _next++;
@@ -49,6 +55,38 @@ public class AutoPostTests : IDisposable
 
     private static Task<Embed?> Board() =>
         Task.FromResult<Embed?>(new EmbedBuilder().WithTitle("Leaderboard").WithDescription("rows").Build());
+
+    [Fact]
+    public async Task ButtonsAreReappliedOnEveryEdit_NotJustTheFirstPost()
+    {
+        /* Discord STRIPS components from a message edited without them. The verification
+           panel is an autopost board, so without this the first refresh after a restart
+           leaves a panel that looks right and has no Verify button on it - and the only way
+           anyone finds out is a member saying the button is gone. */
+        var buttons = new ComponentBuilder()
+            .WithButton("Verify", "verify:start", ButtonStyle.Success)
+            .Build();
+
+        await _autopost.PostAsync("verifypanel", 1, Board, components: buttons);
+        await _autopost.PostAsync("verifypanel", 1, Board, components: buttons);
+
+        Assert.Equal(1, _target.Sends);
+        Assert.Equal(1, _target.Edits);
+        Assert.NotNull(_target.LastSendComponents);
+        Assert.NotNull(_target.LastEditComponents);
+    }
+
+    [Fact]
+    public async Task ABoardWithNoButtonsPassesNone()
+    {
+        // The leaderboards have no components, and passing an empty builder rather than
+        // null would replace their (absent) buttons on every edit for no reason.
+        await _autopost.PostAsync("leaderboard", 1, Board);
+        await _autopost.PostAsync("leaderboard", 1, Board);
+
+        Assert.Null(_target.LastSendComponents);
+        Assert.Null(_target.LastEditComponents);
+    }
 
     [Fact]
     public async Task TheFirstPostSendsAndLaterOnesEdit()

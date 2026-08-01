@@ -16,7 +16,7 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<GatewayAutoPostTarget> logger) : IAutoPostTarget
 {
-    public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, CancellationToken ct)
+    public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct)
     {
         try
         {
@@ -27,6 +27,9 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
             {
                 m.Embed = embed;
                 m.AllowedMentions = AllowedMentions.None;
+                // Re-applied every edit. Leaving this unset strips the buttons, so the
+                // verification panel would lose its Verify button on the first refresh.
+                if (components is not null) m.Components = components;
             }).ConfigureAwait(false);
             return true;
         }
@@ -38,7 +41,7 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
         }
     }
 
-    public async Task<ulong?> SendAsync(ulong channelId, Embed embed, CancellationToken ct)
+    public async Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct)
     {
         /* EVERY failure here says why. This used to return null silently, so the caller
            could only log "could not be posted" - which is the same message for a wrong
@@ -54,7 +57,8 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
                 return null;
             }
 
-            var message = await channel.SendMessageAsync(embed: embed, allowedMentions: AllowedMentions.None).ConfigureAwait(false);
+            var message = await channel.SendMessageAsync(embed: embed, components: components,
+                allowedMentions: AllowedMentions.None).ConfigureAwait(false);
             return message.Id;
         }
         catch (HttpException ex) when (ex.HttpCode == System.Net.HttpStatusCode.Forbidden)

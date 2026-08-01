@@ -44,6 +44,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly RosterService _rosters;
     private readonly PavlovBot.Core.Data.SerializedStore _store;
     private readonly PavlovBot.Host.Logs.FeedBridge _bridge;
+    private readonly PavlovBot.Host.Verification.VerificationService _verification;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -64,6 +65,7 @@ public sealed class BackgroundServiceHost : IHostedService
         RosterService rosters,
         PavlovBot.Core.Data.SerializedStore store,
         PavlovBot.Host.Logs.FeedBridge bridge,
+        PavlovBot.Host.Verification.VerificationService verification,
         ILogger<BackgroundServiceHost> logger)
     {
         _registry = registry;
@@ -84,6 +86,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _rosters = rosters;
         _store = store;
         _bridge = bridge;
+        _verification = verification;
         _logger = logger;
     }
 
@@ -266,6 +269,22 @@ public sealed class BackgroundServiceHost : IHostedService
                 // Import THEN export. Exporting first rewrites the file from the store and
                 // destroys the in-game entries before they have been read.
                 Tick = ct => _modsave.SyncAsync(ct),
+            });
+        }
+
+        /* ---- verification panel ----
+           An autopost board, so a restart EDITS the existing message instead of leaving an
+           orphan with a dead button behind it. Slow, because the panel's content never
+           changes - this only exists to put it back if somebody deletes it. */
+        if (_features.VerifyChannel is not null && _verification.Enabled)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "verify-panel",
+                Interval = TimeSpan.FromMinutes(10),
+                Tick = ct => _autoPost.PostAsync("verifypanel", _features.VerifyChannel,
+                    () => Task.FromResult<global::Discord.Embed?>(_verification.BuildPanel()),
+                    ct, PavlovBot.Host.Verification.VerificationService.PanelButton()),
             });
         }
 
