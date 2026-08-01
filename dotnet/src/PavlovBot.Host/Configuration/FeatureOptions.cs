@@ -67,7 +67,19 @@ public sealed record FeatureOptions
 
     public TimeSpan LogPollInterval { get; init; } = TimeSpan.FromMilliseconds(1500);
     public TimeSpan MoneyLogInterval { get; init; } = TimeSpan.FromSeconds(10);
-    public TimeSpan LeaderboardInterval { get; init; } = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// How often the boards redraw. Also how long after a restart the first one appears.
+    /// </summary>
+    /// <remarks>
+    /// A minute, not the five it was. Boards do not run on start - that would post to
+    /// Discord before the gateway has finished connecting - so this interval IS the delay
+    /// before anything shows up after a deploy. At five minutes a restart looked exactly
+    /// like a broken board for long enough to go looking for the bug.
+    ///
+    /// The Node bot redraws every 30 seconds. A minute is close to that and costs one
+    /// message edit, plus a directory read for the cash board.
+    /// </remarks>
+    public TimeSpan LeaderboardInterval { get; init; } = TimeSpan.FromMinutes(1);
     public TimeSpan BanSweepInterval { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan BanExpiryInterval { get; init; } = TimeSpan.FromMinutes(1);
     public TimeSpan BanReconcileInterval { get; init; } = TimeSpan.FromMinutes(5);
@@ -121,7 +133,7 @@ public sealed record FeatureOptions
             EnabledPlugins = List(configuration, "PLUGINS_ENABLED"),
 
             MoneyLogInterval = Milliseconds(configuration, "MONEY_LOG_INTERVAL_MS", TimeSpan.FromSeconds(10)),
-            LeaderboardInterval = Milliseconds(configuration, "LEADERBOARD_INTERVAL_MS", TimeSpan.FromMinutes(5)),
+            LeaderboardInterval = Milliseconds(configuration, "LEADERBOARD_INTERVAL_MS", TimeSpan.FromMinutes(1)),
         };
     }
 
@@ -163,7 +175,10 @@ public sealed record FeatureOptions
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
         $"money feed: {(MoneyWebhook is null ? "off" : "on")}",
-        $"leaderboard: {(LeaderboardChannel is null ? "off" : $"channel {LeaderboardChannel}")}",
+        $"cash leaderboard: {(LeaderboardChannel is null ? "off (LEADERBOARD_CHANNEL not set)" : $"channel {LeaderboardChannel}, every {LeaderboardInterval.TotalSeconds:0}s")}",
+        $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
+        $"player list: {(PlayerListChannel is null ? "off (PLAYERLIST_CHANNEL not set)" : $"channel {PlayerListChannel}")}",
+        $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
         $"owners: {Owners.Count + SuperOwners.Count} configured",
         $"master names: {(MasterNames.Count == 0 ? "none - NOTHING is protected from an auto-ban" : string.Join(", ", MasterNames))}",
     ];

@@ -1,5 +1,7 @@
 using Discord;
+using Discord.Net;
 using Discord.WebSocket;
+using Microsoft.Extensions.Logging;
 
 namespace PavlovBot.Host.Discord;
 
@@ -12,7 +14,7 @@ namespace PavlovBot.Host.Discord;
 /// this interface, so it tests without a gateway connection. What is left here is only the
 /// Discord API calls, which cannot be tested without one anyway.
 /// </remarks>
-public sealed class GatewayAutoPostTarget(DiscordGateway gateway) : IAutoPostTarget
+public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<GatewayAutoPostTarget> logger) : IAutoPostTarget
 {
     public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, CancellationToken ct)
     {
@@ -38,15 +40,33 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway) : IAutoPostTar
 
     public async Task<ulong?> SendAsync(ulong channelId, Embed embed, CancellationToken ct)
     {
+        /* EVERY failure here says why. This used to return null silently, so the caller
+           could only log "could not be posted" - which is the same message for a wrong
+           channel id, a missing Send Messages permission, and a gateway that has not
+           finished connecting. Three different fixes, one indistinguishable symptom. */
         try
         {
-            if (await gateway.GetChannelAsync(channelId).ConfigureAwait(false) is not IMessageChannel channel) return null;
+            if (await gateway.GetChannelAsync(channelId).ConfigureAwait(false) is not IMessageChannel channel)
+            {
+                logger.LogWarning(
+                    "Channel {Channel} is not visible to the bot. Either the id is wrong, the bot is not in " +
+                    "that server, or it cannot view the channel", channelId);
+                return null;
+            }
 
             var message = await channel.SendMessageAsync(embed: embed, allowedMentions: AllowedMentions.None).ConfigureAwait(false);
             return message.Id;
         }
+        catch (HttpException ex) when (ex.HttpCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            logger.LogWarning(
+                "Missing permission to post in channel {Channel}. The bot needs View Channel, " +
+                "Send Messages and Embed Links there", channelId);
+            return null;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            logger.LogWarning(ex, "Could not post to channel {Channel}", channelId);
             return null;
         }
     }

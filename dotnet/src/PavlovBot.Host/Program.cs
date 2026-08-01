@@ -236,7 +236,8 @@ public static class Program
             sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
             sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>()));
         builder.Services.AddSingleton<DiscordGateway>();
-        builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>()));
+        builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
+            sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
 
         // Hosted services start in registration order and stop in reverse, which is exactly
         // the order this needs: monitoring up first and down last, gateway up last so no
