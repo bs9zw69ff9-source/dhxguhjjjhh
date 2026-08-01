@@ -37,11 +37,18 @@ public class BoardsTests : IDisposable
     }
 
     [Fact]
-    public async Task AnEmptyBoardReturnsNull_SoTheCycleIsSkippedRatherThanClearingIt()
+    public async Task ABoardWithNoDataYetStillPostsSomething()
     {
-        /* Null means "skip this cycle". An empty board would overwrite yesterday's real one
-           with "no data" during a restart or a transient read failure. */
-        Assert.Null(_boards.BuildArrestBoard());
+        /* The cash and most-wanted boards REPLACED a board the Node bot posts to the same
+           channel under the same autopost key. Returning null there means "skip this cycle
+           and leave what is already posted" - which on a cutover leaves the Node board
+           frozen in the channel while ours never appears at all.
+
+           BuildStaffBoard keeps returning null because nothing else has ever occupied its
+           channel: skipping is right when the only thing at stake is a transient read
+           failure overwriting real numbers with "no data". */
+        Assert.NotNull(_boards.BuildArrestBoard());
+        Assert.NotNull(_boards.BuildCashBoard());
         Assert.Null(_boards.BuildStaffBoard());
         await Task.CompletedTask;
     }

@@ -103,6 +103,12 @@ public sealed class SystemTextJsonCodec : IJsonCodec
             {
                 new EpochMillisecondsConverter(),
                 new NullableEpochMillisecondsConverter(),
+
+                /* Same reason, one level up: the two bots disagreed about every field name
+                   in an arrest record, and Node's `charges` is an array of OBJECTS where
+                   ours expected strings - so reading threw and the most-wanted board saw an
+                   empty registry. See ArrestConverter. */
+                new ArrestConverter(),
             },
         };
 

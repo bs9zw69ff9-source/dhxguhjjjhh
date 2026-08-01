@@ -171,14 +171,29 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
 
         var rows = arrests
             .Where(kv => kv.Value.Count > 0)
-            .Select(kv => (Player: kv.Value[0].Player, Minutes: kv.Value.Sum(a => a.JailMinutes), Count: kv.Value.Count))
+            /* The DISPLAY-CASE name off the entries, falling back to the map key - which is
+               lowercased. Node does the same, and an entry whose name did not read leaves a
+               blank row rather than an obviously-wrong one. */
+            .Select(kv => (
+                Player: kv.Value[^1].Player is { Length: > 0 } named ? named : kv.Key,
+                Minutes: kv.Value.Sum(a => a.JailMinutes),
+                Count: kv.Value.Count))
             // Jail time first, arrest count as the tiebreak: one long sentence outranks
             // several short ones, which is what "most wanted" is supposed to mean.
             .OrderByDescending(r => r.Minutes).ThenByDescending(r => r.Count)
             .Take(TopRows)
             .ToList();
 
-        if (rows.Count == 0) return null;
+        /* An explicit empty board, NOT null. Null means "skip this cycle and leave what is
+           already posted" - and on a fresh cutover what is already posted is the Node bot's
+           most-wanted board, which then sits frozen in the channel forever while this one
+           never appears. */
+        if (rows.Count == 0)
+        {
+            return Theme.Notice($"{Theme.Deny} Most wanted", "No arrests on record yet.")
+                .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+                .Build();
+        }
 
         var top = rows[0].Minutes;
         var lines = rows.Select((r, i) =>
