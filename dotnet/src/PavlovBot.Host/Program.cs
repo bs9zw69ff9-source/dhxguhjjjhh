@@ -213,7 +213,15 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
         builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();
-        builder.Services.AddSingleton<ISlashCommand, ConfigureCommand>();
+        /* The owner control panel is both: a slash command that posts the menu, and the
+           component handler for the menu and its modals. One instance, registered twice. */
+        builder.Services.AddSingleton<ConfigPanel>();
+        builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<ConfigPanel>());
+        builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());
+        builder.Services.AddSingleton(sp => new OwnerActions(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<IpTrackingService>(),
+            features.LedgerDirectory));
         builder.Services.AddSingleton<ISlashCommand, InspectCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
         builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(
@@ -271,6 +279,12 @@ public static class Program
 
         if (host.Services.GetRequiredService<VpnScreeningService>().ConfigurationWarning() is { } warning)
             logger.LogWarning("{Warning}", warning);
+
+        /* The ignore list is persisted but the tracker's copy is in memory, so it has to be
+           loaded before the first log line is read. Without this the list survives a restart
+           in storage while silently doing nothing - the bot resumes recording addresses for
+           exactly the accounts somebody asked it not to. */
+        host.Services.GetRequiredService<OwnerActions>().RestoreIgnoreList();
 
         if (features.MasterNames.Count == 0)
             logger.LogWarning("MASTER_NAMES is not set - no account is protected from an auto-ban, " +

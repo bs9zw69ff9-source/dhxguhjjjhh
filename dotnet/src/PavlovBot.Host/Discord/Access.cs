@@ -121,10 +121,24 @@ public static class AccessChecks
 {
     public static bool Allows(this Access access, RequiredAccess required, SocketSlashCommand command)
     {
-        ArgumentNullException.ThrowIfNull(access);
         ArgumentNullException.ThrowIfNull(command);
+        return access.Allows(required, (SocketInteraction)command);
+    }
 
-        var member = command.User as IGuildUser;
+    /// <summary>
+    /// The same check for a button, select menu or modal.
+    /// </summary>
+    /// <remarks>
+    /// Components need this because a panel MESSAGE OUTLIVES the permission that opened it.
+    /// Checking only when the panel is created would leave a former owner holding a working
+    /// control panel in their history - which is exactly who would try it.
+    /// </remarks>
+    public static bool Allows(this Access access, RequiredAccess required, SocketInteraction interaction)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        ArgumentNullException.ThrowIfNull(interaction);
+
+        var member = interaction.User as IGuildUser;
         return required switch
         {
             RequiredAccess.Public => true,
@@ -132,7 +146,7 @@ public static class AccessChecks
             RequiredAccess.FactionLeader => access.IsFactionLeader(member) || access.ManageableFactions(member).Count > 0,
             RequiredAccess.Mod => access.IsMod(member),
             RequiredAccess.Admin => access.IsAdmin(member),
-            RequiredAccess.Owner => access.IsOwner(command.User),
+            RequiredAccess.Owner => access.IsOwner(interaction.User),
             _ => false,
         };
     }

@@ -149,6 +149,37 @@ public sealed class IpTrackingService
     public AccountRecord? AccountByName(string name) =>
         LoadAccounts().Values.FirstOrDefault(a => a.Names.Contains(name, StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>Every account seen on this address, CONFIRMED sightings only.</summary>
+    public IReadOnlyList<AccountRecord> AccountsWithAddress(string ip) =>
+        LoadAccounts().Values.Where(a => a.ConfirmedIps.Contains(ip, StringComparer.Ordinal)).ToList();
+
+    /// <summary>
+    /// Other accounts that share a confirmed address with this one.
+    /// </summary>
+    /// <remarks>
+    /// CONFIRMED ADDRESSES ONLY - never the guessed ones. A guess is a correlation between
+    /// a join line and a nearby address line, and on a busy server two players connecting
+    /// in the same second can be correlated to each other's address. Building "these are
+    /// the same person" on that would produce confident, wrong accusations, and the person
+    /// being accused has no way to disprove it.
+    ///
+    /// Shared addresses are still EVIDENCE, not proof: households, phone tethering and
+    /// student halls all put unrelated people on one address.
+    /// </remarks>
+    public IReadOnlyList<AccountRecord> AltsOf(string accountId)
+    {
+        var accounts = LoadAccounts();
+        if (!accounts.TryGetValue(accountId, out var subject)) return [];
+
+        var addresses = subject.ConfirmedIps.ToHashSet(StringComparer.Ordinal);
+        if (addresses.Count == 0) return [];
+
+        return accounts.Values
+            .Where(a => !string.Equals(a.Id, accountId, StringComparison.OrdinalIgnoreCase))
+            .Where(a => a.ConfirmedIps.Any(addresses.Contains))
+            .ToList();
+    }
+
     // ---- ingest ----
 
     /// <summary>Feed one line in. Safe to call for every line of the log.</summary>

@@ -38,6 +38,16 @@ public static class Datasets
     /// ban-evasion auto-banning, the failure that announces itself least.
     /// </remarks>
     public const string IpFlags = "ip_flags";
+
+    /// <summary>
+    /// In-game names whose addresses are never recorded. An array of strings.
+    /// </summary>
+    /// <remarks>
+    /// Persisted rather than in-memory: an ignore list that empties on restart is worse
+    /// than none, because it silently starts collecting the addresses of the accounts
+    /// somebody deliberately asked it not to.
+    /// </remarks>
+    public const string IgnoredNames = "ignored_names";
     public const string AutobanExempt = "autoban_exempt";
     public const string BanReconcileState = "ban_reconcile_state";
     public const string VpnChecks = "vpn_checks";
@@ -88,6 +98,7 @@ public static class Datasets
         [UserBlacklist] = "[]",
         [UserUnbarred] = "[]",
         [IpFlags] = "{}",
+        [IgnoredNames] = "[]",
         [AutobanExempt] = "{}",
         [BanReconcileState] = "{}",
         [VpnChecks] = "{}",
