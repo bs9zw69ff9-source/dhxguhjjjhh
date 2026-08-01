@@ -23,6 +23,21 @@ public sealed record BotOptions
     /// </summary>
     public ulong? GuildId { get; init; }
 
+    /// <summary>
+    /// A SECOND Discord application that owns the whitelist commands. Both null disables it.
+    /// </summary>
+    /// <remarks>
+    /// Its own bot, invited to each faction's guild, running in THIS process and sharing all
+    /// state - so there are no file races between the two. It registers only the whitelist
+    /// commands and the main bot then does not, which is what keeps them from appearing
+    /// twice in the picker.
+    /// </remarks>
+    public string? FactionToken { get; init; }
+    public ulong? FactionClientId { get; init; }
+
+    /// <summary>True when both halves are set. One without the other is a mistake, not a mode.</summary>
+    public bool FactionBotEnabled => !string.IsNullOrWhiteSpace(FactionToken) && FactionClientId is not null;
+
     public required IReadOnlyList<RconOptions> Servers { get; init; }
 
     public required MonitoringOptions Monitoring { get; init; }
@@ -65,6 +80,8 @@ public sealed record BotOptions
         {
             DiscordToken = configuration["DISCORD_TOKEN"]?.Trim() ?? "",
             GuildId = ulong.TryParse(configuration["GUILD_ID"], CultureInfo.InvariantCulture, out var guild) ? guild : null,
+            FactionToken = configuration["FACTION_BOT_TOKEN"]?.Trim() is { Length: > 0 } ft ? ft : null,
+            FactionClientId = ulong.TryParse(configuration["FACTION_CLIENT_ID"], CultureInfo.InvariantCulture, out var fc) ? fc : null,
             Servers = servers,
             Monitoring = MonitoringOptions.Bind(configuration),
             DataDirectory = configuration["DATA_DIR"]?.Trim() is { Length: > 0 } dir

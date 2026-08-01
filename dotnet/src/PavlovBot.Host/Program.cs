@@ -274,6 +274,9 @@ public static class Program
            variable is otherwise indistinguishable from one that is broken, and the two get
            debugged very differently. */
         foreach (var line in features.Describe()) logger.LogInformation("  {Feature}", line);
+        logger.LogInformation("  whitelist bot: {State}", options.FactionBotEnabled
+            ? $"on (application {options.FactionClientId}, owns /whitelist /promotion /demotion /subclass)"
+            : "off (FACTION_BOT_TOKEN / FACTION_CLIENT_ID not set - those commands stay on the main bot)");
 
         var seeded = 0;
         var backend = host.Services.GetRequiredService<SqliteKeyValueBackend>();

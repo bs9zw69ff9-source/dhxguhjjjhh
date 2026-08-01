@@ -24,7 +24,22 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public sealed class DiscordGateway : IHostedService, IAsyncDisposable
 {
+    /// <summary>
+    /// The commands the whitelist bot owns when it is configured.
+    /// </summary>
+    /// <remarks>
+    /// The same four the Node bot partitions off. When the second bot is on these register
+    /// on IT and not on the main application - registering both would put two identical
+    /// entries in the picker, and whichever the user clicked would answer twice.
+    /// </remarks>
+    private static readonly HashSet<string> FactionCommands =
+        new(StringComparer.Ordinal) { "whitelist", "promotion", "demotion", "subclass" };
+
     private readonly DiscordSocketClient _client;
+
+    /// <summary>The whitelist bot. Null unless FACTION_BOT_TOKEN and FACTION_CLIENT_ID are set.</summary>
+    private readonly DiscordSocketClient? _factionClient;
+
     private readonly BotOptions _options;
     private readonly IReadOnlyDictionary<string, ISlashCommand> _commands;
     private readonly MetricsRegistry _metrics;
@@ -77,6 +92,20 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             AlwaysDownloadUsers = false,
             MessageCacheSize = 0,   // the bot never reads message history; caching it is pure memory
         });
+
+        /* Second gateway connection, same process, same handlers, same state - exactly what
+           the Node bot does. Sharing the process is the point: two processes would mean two
+           writers to bot.db and the file races that design avoids. */
+        if (_options.FactionBotEnabled)
+        {
+            _factionClient = new DiscordSocketClient(new DiscordSocketConfig
+            {
+                GatewayIntents = GatewayIntents.Guilds,
+                LogGatewayIntentWarnings = false,
+                AlwaysDownloadUsers = false,
+                MessageCacheSize = 0,
+            });
+        }
     }
 
     /// <summary>Fetch a channel by id. Null when the bot cannot see it.</summary>
@@ -119,6 +148,66 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         await _client.LoginAsync(TokenType.Bot, _options.DiscordToken).ConfigureAwait(false);
         await _client.StartAsync().ConfigureAwait(false);
         _logger.LogInformation("Discord gateway starting with {Count} command(s)", _commands.Count);
+
+        if (_factionClient is null) return;
+
+        // The SAME handlers. The whitelist bot is a second connection, not a second bot -
+        // it shares every command implementation and all state with the main one.
+        _factionClient.Log += OnLog;
+        _factionClient.Ready += OnFactionReadyAsync;
+        _factionClient.SlashCommandExecuted += OnSlashCommand;
+        _factionClient.AutocompleteExecuted += OnAutocomplete;
+        _factionClient.ButtonExecuted += OnComponent;
+        _factionClient.SelectMenuExecuted += OnComponent;
+        _factionClient.ModalSubmitted += OnComponent;
+
+        _health.Register("discord-whitelist", _ =>
+        {
+            var state = _factionClient.ConnectionState;
+            return Task.FromResult(state switch
+            {
+                ConnectionState.Connected => HealthResult.Healthy($"latency {_factionClient.Latency}ms"),
+                ConnectionState.Connecting => HealthResult.Degraded("connecting"),
+                _ => HealthResult.Unhealthy($"whitelist bot gateway {state}"),
+            });
+        });
+
+        try
+        {
+            await _factionClient.LoginAsync(TokenType.Bot, _options.FactionToken).ConfigureAwait(false);
+            await _factionClient.StartAsync().ConfigureAwait(false);
+            _logger.LogInformation("Whitelist bot starting with {Count} command(s)", FactionCommands.Count);
+        }
+        catch (Exception ex)
+        {
+            /* A bad FACTION_BOT_TOKEN must not take the main bot down with it. The whitelist
+               bot shows offline and /health says which one is broken; everything else keeps
+               working. */
+            _logger.LogError(ex, "Whitelist bot could not log in - FACTION_BOT_TOKEN may be wrong or revoked. " +
+                                 "The main bot is unaffected, but the whitelist commands will not appear");
+        }
+    }
+
+    private async Task OnFactionReadyAsync()
+    {
+        try
+        {
+            var properties = _commands.Values
+                .Where(c => FactionCommands.Contains(c.Name))
+                .Select(c => c.Build())
+                .ToArray();
+
+            /* Global, matching the Node bot: this application is invited to each faction's
+               guild, and guild-scoped registration would need every guild id listed here. */
+            await _factionClient!.BulkOverwriteGlobalApplicationCommandsAsync(properties).ConfigureAwait(false);
+
+            _logger.LogInformation("Whitelist bot logged in as {User} with {Count} command(s)",
+                _factionClient.CurrentUser?.Username ?? "?", properties.Length);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Whitelist bot command registration failed");
+        }
     }
 
     private async Task OnReady()
@@ -139,7 +228,13 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
 
     private async Task RegisterCommandsAsync()
     {
-        var properties = _commands.Values.Select(c => c.Build()).ToArray();
+        /* When the whitelist bot is on, these register on IT and not here. Registering them
+           on both applications puts two identical entries in the picker and whichever one
+           the user clicks answers twice. */
+        var properties = _commands.Values
+            .Where(c => !_options.FactionBotEnabled || !FactionCommands.Contains(c.Name))
+            .Select(c => c.Build())
+            .ToArray();
 
         /* Guild-scoped registration when a guild is configured, because global commands take
            up to an hour to propagate - long enough that you conclude the code is broken.
@@ -329,11 +424,18 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         if (_stopping is not null) await _stopping.CancelAsync().ConfigureAwait(false);
         await _client.StopAsync().ConfigureAwait(false);
         await _client.LogoutAsync().ConfigureAwait(false);
+
+        if (_factionClient is not null)
+        {
+            await _factionClient.StopAsync().ConfigureAwait(false);
+            await _factionClient.LogoutAsync().ConfigureAwait(false);
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         _stopping?.Dispose();
         await _client.DisposeAsync().ConfigureAwait(false);
+        if (_factionClient is not null) await _factionClient.DisposeAsync().ConfigureAwait(false);
     }
 }
