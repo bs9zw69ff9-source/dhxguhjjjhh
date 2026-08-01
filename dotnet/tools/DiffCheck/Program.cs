@@ -179,8 +179,9 @@ if (Stage("--penal", 1) is { } penalArgs)
 
         var ok = b.JailMinutes == sc.GetProperty("minutes").GetInt32()
               && b.Bail == sc.GetProperty("bail").GetInt32()
-              && b.Execution == sc.GetProperty("execution").GetBoolean()
-              && b.Variable == sc.GetProperty("variable").GetBoolean()
+              && b.Bailable == sc.GetProperty("bailable").GetBoolean()
+              && b.AssociatedBail == sc.GetProperty("associated").GetBoolean()
+              && b.Ranges == sc.GetProperty("ranges").GetBoolean()
               && b.SentenceLabel() == sc.GetProperty("sentence").GetString()
               && b.BailLabel() == sc.GetProperty("bailLabel").GetString();
         if (!ok)

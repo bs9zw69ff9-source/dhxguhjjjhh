@@ -234,6 +234,17 @@ public static class Program
            component handler for the menu and its modals. One instance, registered twice. */
         builder.Services.AddSingleton<ConfigPanel>();
         builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<ConfigPanel>());
+
+        /* The public server browser. Its own HttpClient, because the master server list is
+           ~90KB and has nothing to do with the VPN detectors' timeouts or rate limits. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Servers.MasterServerList(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("pavlov-ms"),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.MasterServerList>>(),
+            features.PavlovVersion));
+        builder.Services.AddSingleton<ServerBrowser>();
+        builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ServerBrowser>());
+        builder.Services.AddSingleton<ISlashCommand>(sp =>
+            new ServerLookupCommand(sp.GetRequiredService<ServerBrowser>()));
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),

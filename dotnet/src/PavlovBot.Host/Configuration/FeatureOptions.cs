@@ -81,6 +81,17 @@ public sealed record FeatureOptions
     /// <summary>In-game names that must never be banned by any path.</summary>
     public IReadOnlyList<string> MasterNames { get; init; } = [];
 
+    /// <summary>
+    /// The Pavlov build the public server browser asks about. Null uses the built-in default.
+    /// </summary>
+    /// <remarks>
+    /// Vankrupt put the version in the URL PATH rather than in the response, so a game update
+    /// makes the master server return an empty list instead of an error. That is
+    /// indistinguishable from "no servers are online" unless somebody can change the version
+    /// without a deploy - which is what this setting is for.
+    /// </remarks>
+    public string? PavlovVersion { get; init; }
+
     public TimeSpan LogPollInterval { get; init; } = TimeSpan.FromMilliseconds(1500);
     public TimeSpan MoneyLogInterval { get; init; } = TimeSpan.FromSeconds(10);
     /// <summary>
@@ -108,6 +119,7 @@ public sealed record FeatureOptions
         {
             LedgerDirectory = Text(configuration, "MODSAVE_PATH"),
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
+            PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
             /* Resolved the way the Node bot resolves it: an explicit override first, then
                derived from the server install root. It was previously built as
