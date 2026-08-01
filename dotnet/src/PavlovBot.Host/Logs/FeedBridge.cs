@@ -1,6 +1,9 @@
 using Microsoft.Extensions.Logging;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Rcon;
+using PavlovBot.Core.Evasion;
+using PavlovBot.Core.Vpn;
+using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Vpn;
 
 namespace PavlovBot.Host.Logs;
@@ -25,6 +28,8 @@ public sealed class FeedBridge
     private readonly FeedWebhooks _feeds;
     private readonly RconRegistry _rcon;
     private readonly VpnScreeningService? _vpn;
+    private readonly IpTrackingService _tracking;
+    private readonly IMasterNames? _masters;
     private readonly ILogger<FeedBridge> _logger;
 
     /// <summary>Who was online at the last sweep, and when we first saw them.</summary>
@@ -38,9 +43,12 @@ public sealed class FeedBridge
         FeedWebhooks feeds,
         RconRegistry rcon,
         ILogger<FeedBridge> logger,
-        VpnScreeningService? vpn = null)
+        VpnScreeningService? vpn = null,
+        IMasterNames? masters = null)
     {
         ArgumentNullException.ThrowIfNull(tracking);
+        _tracking = tracking;
+        _masters = masters;
         _feeds = feeds;
         _rcon = rcon;
         _vpn = vpn;
@@ -60,7 +68,7 @@ public sealed class FeedBridge
 
         if (!_feeds.IsConfigured(FeedWebhooks.Connect)) return;
 
-        string? location = null, verdict = null;
+        VpnRecord? screening = null;
 
         /* Screening is cached per address, so this is one lookup the first time an address
            is seen and free afterwards. A guessed address is NOT screened: acting on a
@@ -70,12 +78,7 @@ public sealed class FeedBridge
         {
             try
             {
-                if (await _vpn.CheckAsync(address).ConfigureAwait(false) is { } record)
-                {
-                    var place = new[] { record.City, record.Country }.Where(p => !string.IsNullOrEmpty(p)).ToList();
-                    location = place.Count > 0 ? string.Join(", ", place) : null;
-                    verdict = record.Decision.Label;
-                }
+                screening = await _vpn.CheckAsync(address).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -84,12 +87,36 @@ public sealed class FeedBridge
             }
         }
 
-        await Safe(() => _feeds.PostConnectAsync(
-            name,
-            // An unconfident address is marked rather than hidden. Presenting a guess as
-            // fact is what turns a correlation into an accusation.
-            join.Confident ? join.Ip : join.Ip is { Length: > 0 } ? $"{join.Ip}?" : null,
-            location, verdict, join.At)).ConfigureAwait(false);
+        var account = _tracking.Account(join.AccountId);
+        var flags = _tracking.LoadFlags();
+        var flagged = (join.Ip is { Length: > 0 } seen && flags.Ips.Contains(seen)) ||
+                      flags.Ids.Contains(join.AccountId) ||
+                      (join.Name is { Length: > 0 } who && flags.Names.Contains(who));
+
+        var card = ConnectCard.Build(
+            name, join.AccountId, join.Ip, join.Confident,
+            server: ServerLabel(join.File),
+            account: account,
+            alts: _tracking.AltsOf(join.AccountId),
+            vpn: screening,
+            flagged: flagged,
+            master: _masters?.IsMaster(name) ?? false,
+            at: join.At);
+
+        await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
+    }
+
+    /// <summary>Which server a log path belongs to, for the card's Server field.</summary>
+    private string ServerLabel(string file)
+    {
+        /* Matched against the configured RCON servers by name appearing in the path, which
+           is how a multi-server install lays its logs out. Falls back to the file name -
+           wrong-but-visible beats confidently naming the wrong server. */
+        foreach (var server in _rcon.Servers)
+            if (file.Contains(server, StringComparison.OrdinalIgnoreCase))
+                return server;
+
+        return _rcon.Servers.Count == 1 ? _rcon.Servers.First() : Path.GetFileName(file);
     }
 
     private Task OnKillAsync(PavlovBot.Core.Logs.KillEvent kill)

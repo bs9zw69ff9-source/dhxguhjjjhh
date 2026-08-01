@@ -99,6 +99,34 @@ public sealed class FeedWebhooks : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Post an embed. Only the connect feed uses this - see <see cref="ConnectCard"/>.
+    /// </summary>
+    public async Task PostEmbedAsync(string label, Embed embed, CancellationToken ct = default)
+    {
+        if (!_clients.TryGetValue(label, out var client)) return;
+
+        try
+        {
+            await client.SendMessageAsync(embeds: [embed], allowedMentions: AllowedMentions.None).ConfigureAwait(false);
+            _metrics.Increment("feed_posts_total", MetricLabels.Of("feed", label), help: "Feed lines posted");
+
+            if (_confirmed.TryAdd(label, true))
+            {
+                _status[label] = "delivering";
+                _logger.LogInformation("{Label} feed confirmed - first line delivered", label);
+            }
+        }
+        catch (Exception ex)
+        {
+            _status[label] = $"failing: {ex.Message}";
+            _metrics.Increment("feed_errors_total", MetricLabels.Of("feed", label), help: "Feed posts that failed");
+            _logger.LogWarning("{Label} feed post failed: {Message}", label, ex.Message);
+        }
+
+        _ = ct;
+    }
+
     // ---- the feeds ----
 
     /// <summary>
