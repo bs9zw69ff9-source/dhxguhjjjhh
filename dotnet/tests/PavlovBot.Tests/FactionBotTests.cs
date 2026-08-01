@@ -72,3 +72,52 @@ public class FactionBotTests
         Assert.Equal("faction-token", options.FactionToken);
     }
 }
+
+/// <summary>
+/// Where the ban-message file lives.
+/// </summary>
+/// <remarks>
+/// The C# bot built it as &lt;MODSAVE_PATH&gt;/ModSave/banlist.txt. MODSAVE_PATH already
+/// points AT the ModSave directory, so that was a doubled path that does not exist - the
+/// file a banned player's message is written to went somewhere the game never reads, and
+/// MODSAVE_BLACKLIST_PATH was ignored entirely.
+/// </remarks>
+public class ModsaveBanlistPathTests
+{
+    private static FeatureOptions Bind(params (string Key, string Value)[] settings) =>
+        FeatureOptions.Bind(new ConfigurationBuilder()
+            .AddInMemoryCollection(settings.Select(s => new KeyValuePair<string, string?>(s.Key, s.Value)))
+            .Build());
+
+    [Fact]
+    public void AnExplicitOverrideWins()
+    {
+        var options = Bind(
+            ("MODSAVE_BLACKLIST_PATH", "/custom/banlist.txt"),
+            ("PAVLOV_BASE_1", "/home/steam/pavlovserver"),
+            ("MODSAVE_PATH", "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave"));
+
+        Assert.Equal("/custom/banlist.txt", options.ModsaveBanlistPath);
+    }
+
+    [Fact]
+    public void ItIsDerivedFromTheInstallRoot_NotFromTheLedgerDirectory()
+    {
+        // The ledger directory IS .../Config/ModSave, so appending ModSave again produced
+        // .../Config/ModSave/ModSave/banlist.txt.
+        var options = Bind(
+            ("PAVLOV_BASE_1", "/home/steam/pavlovserver"),
+            ("MODSAVE_PATH", "/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave"));
+
+        Assert.Equal("/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/banlist.txt",
+            options.ModsaveBanlistPath);
+        Assert.DoesNotContain("ModSave/ModSave", options.ModsaveBanlistPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheDefaultRootMatchesTheNodeBot()
+    {
+        // index.js: PAVLOV_BASE_1 || "/home/steam/pavlovserver"
+        Assert.Equal("/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/banlist.txt", Bind().ModsaveBanlistPath);
+    }
+}

@@ -93,8 +93,16 @@ public sealed record FeatureOptions
             LedgerDirectory = Text(configuration, "MODSAVE_PATH"),
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
-            ModsaveBanlistPath = Text(configuration, "MODSAVE_PATH") is { } modsave
-                ? System.IO.Path.Combine(modsave, "ModSave", "banlist.txt") : null,
+            /* Resolved the way the Node bot resolves it: an explicit override first, then
+               derived from the server install root. It was previously built as
+               <MODSAVE_PATH>/ModSave/banlist.txt - but MODSAVE_PATH already points AT the
+               ModSave directory, so that was a doubled path that does not exist, and
+               MODSAVE_BLACKLIST_PATH was ignored entirely. The ban-message file was
+               therefore written somewhere the game never reads. */
+            ModsaveBanlistPath = Text(configuration, "MODSAVE_BLACKLIST_PATH")
+                ?? System.IO.Path.Combine(
+                    Text(configuration, "PAVLOV_BASE_1") ?? "/home/steam/pavlovserver",
+                    "Pavlov", "Saved", "Config", "ModSave", "banlist.txt"),
 
             /* Two DIFFERENT webhooks. CONNECT carries addresses and belongs in a private
                channel; JOIN is the plain public log. The port read CONNECT into the join
