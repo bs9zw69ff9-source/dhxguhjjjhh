@@ -136,6 +136,50 @@ public sealed class FeedBridge
     /// look like a join, and the sweep after a restart would announce a leave for every one
     /// of them - a wall of noise that says nothing true.
     /// </remarks>
+    /// <summary>
+    /// Who left, given the previous roster and the current one.
+    /// </summary>
+    /// <remarks>
+    /// PURE, and extracted for one reason: the rest of this class needs a live RCON
+    /// connection, so the leave logic had no test at all - which is exactly the kind of
+    /// place a bug sits unnoticed while joins keep working and nobody can say why.
+    /// </remarks>
+    /// <param name="primed">False on the first sweep, when nothing has left yet.</param>
+    internal static IReadOnlyList<(string Player, TimeSpan Session)> Leavers(
+        IReadOnlyDictionary<string, DateTimeOffset> previous,
+        IReadOnlyCollection<string> current,
+        bool primed,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(current);
+
+        if (!primed) return [];
+
+        var online = current.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return previous
+            .Where(entry => !online.Contains(entry.Key))
+            .Select(entry => (entry.Key, now - entry.Value))
+            .ToList();
+    }
+
+    /// <summary>Carry forward each player's first-seen time, so a session length is real.</summary>
+    internal static Dictionary<string, DateTimeOffset> NextRoster(
+        IReadOnlyDictionary<string, DateTimeOffset> previous,
+        IReadOnlyCollection<string> current,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(current);
+
+        var next = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        foreach (var player in current)
+            next[player] = previous.TryGetValue(player, out var since) ? since : now;
+
+        return next;
+    }
+
     public async Task TickRosterAsync(CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -152,20 +196,25 @@ public sealed class FeedBridge
             return;
         }
 
-        var next = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
-        foreach (var player in current)
-            next[player] = _online.TryGetValue(player, out var since) ? since : now;
+        var leavers = Leavers(_online, current, _primed, now);
 
-        if (_primed)
+        /* Logged at INFORMATION on the first sweep and whenever anybody leaves. "Leaves do
+           not work" is otherwise indistinguishable from "the roster is empty", and the two
+           have completely different causes - one is this code, the other is RCON. */
+        if (!_primed)
         {
-            foreach (var (player, since) in _online)
-            {
-                if (next.ContainsKey(player)) continue;
-                await Safe(() => _feeds.PostLeaveAsync(player, now - since, now)).ConfigureAwait(false);
-            }
+            _logger.LogInformation(
+                "Leave tracking primed with {Count} player(s) online. Leaves are reported from the " +
+                "roster, so an empty roster here means none will ever be reported", current.Count);
         }
 
-        _online = next;
+        foreach (var (player, session) in leavers)
+            await Safe(() => _feeds.PostLeaveAsync(player, session, now)).ConfigureAwait(false);
+
+        if (leavers.Count > 0)
+            _logger.LogDebug("Reported {Count} leave(s)", leavers.Count);
+
+        _online = NextRoster(_online, current, now);
         _primed = true;
         _ = ct;
     }
