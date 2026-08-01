@@ -14,6 +14,20 @@ public enum ChargeSpecial
 
     /// <summary>Jail and bail both depend on the associated crime.</summary>
     Variable,
+
+    /// <summary>
+    /// A real jail sentence, but NO SET BAIL PRICE - it is decided per case.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Variable"/>, which means the whole charge depends on an
+    /// associated crime and therefore carries no jail timer either. This one has a fixed
+    /// sentence and an open price, which is the state the controlled-substances section is
+    /// in: the penal code sheet sets the time and leaves the fine to the officer.
+    ///
+    /// It exists so that "no figure was ever chosen" is a thing the table can SAY, rather
+    /// than being indistinguishable from a charge whose bail is genuinely zero.
+    /// </remarks>
+    NoFixedBail,
 }
 
 /// <param name="Code">e.g. "PC 104", "VC 604".</param>
@@ -60,6 +74,7 @@ public static class PenalCode
             [500] = "Crimes Against Government",
             [600] = "Vehicle Code",
             [700] = "Organized Crime",
+            [800] = "Controlled Substances",
         }.ToFrozenDictionary();
 
     public static readonly IReadOnlyList<Charge> Charges =
@@ -123,6 +138,17 @@ public static class PenalCode
         new("PC 705", "Operating an Illegal Business", ChargeClass.Misdemeanor, 4, 150, null),
         new("PC 706", "Criminal Conspiracy", ChargeClass.Felony, 6, 350, null),
         new("PC 707", "Aiding and Abetting", ChargeClass.MisdemeanorOrFelony, 0, null, ChargeSpecial.Variable),
+
+        /* Controlled substances. Jail times and classes come from the penal code sheet;
+           the sheet sets NO BAIL for this section, so every charge here is NoFixedBail -
+           a real sentence with a price the officer decides. Inventing six figures would
+           mean players paying numbers nobody chose. */
+        new("PC 801", "Possession of Controlled Substance", ChargeClass.Misdemeanor, 3, null, ChargeSpecial.NoFixedBail),
+        new("PC 802", "Possession of Narcotics with Intent to Distribute", ChargeClass.Felony, 5, null, ChargeSpecial.NoFixedBail),
+        new("PC 803", "Sale of Illegal Narcotics", ChargeClass.Felony, 6, null, ChargeSpecial.NoFixedBail),
+        new("PC 804", "Manufacturing Illegal Narcotics", ChargeClass.Felony, 8, null, ChargeSpecial.NoFixedBail),
+        new("PC 805", "Illegal Distribution of Prescription Drugs", ChargeClass.Felony, 3, null, ChargeSpecial.NoFixedBail),
+        new("PC 806", "Possession of Drug Paraphernalia", ChargeClass.Misdemeanor, 4, null, ChargeSpecial.NoFixedBail),
     ];
 
     private static readonly FrozenDictionary<string, Charge> ByCode =
@@ -175,6 +201,7 @@ public static class PenalCode
         var bail = 0;
         var execution = false;
         var variable = false;
+        var unpriced = 0;
 
         foreach (var code in codes)
         {
@@ -186,6 +213,7 @@ public static class PenalCode
             if (charge.BailAt(rate) is { } b) bail += b;
             if (charge.Special == ChargeSpecial.Execution) execution = true;
             if (charge.Special == ChargeSpecial.Variable) variable = true;
+            if (charge.Special == ChargeSpecial.NoFixedBail) unpriced++;
         }
 
         /* Reported, not just applied. A booking that says "35 min" when the player will
@@ -194,13 +222,14 @@ public static class PenalCode
         var capped = capMinutes > 0 && !execution && minutes > capMinutes;
         if (capped) minutes = capMinutes;
 
-        return new Booking(matched, minutes, bail, execution, variable, capped, capped ? capMinutes : null);
+        return new Booking(matched, minutes, bail, execution, variable, capped, capped ? capMinutes : null, unpriced);
     }
 }
 
 /// <summary>The result of booking a set of charges.</summary>
 /// <param name="Capped">True when the stacked total was clamped by the sentence cap.</param>
 /// <param name="CapMinutes">The cap that applied, for the message that explains the clamp.</param>
+/// <param name="Unpriced">Charges carrying a sentence but no set bail figure.</param>
 public sealed record Booking(
     IReadOnlyList<Charge> Charges,
     int JailMinutes,
@@ -208,7 +237,8 @@ public sealed record Booking(
     bool Execution,
     bool Variable,
     bool Capped = false,
-    int? CapMinutes = null)
+    int? CapMinutes = null,
+    int Unpriced = 0)
 {
     /// <summary>"Execution", "9 min", "9 min + based on the associated charge", "No jail time".</summary>
     public string SentenceLabel()
@@ -225,6 +255,14 @@ public sealed record Booking(
     {
         if (Execution) return "No bail (execution)";
         if (Variable) return "Based on the associated charge";
-        return "$" + Bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"));
+
+        var amount = "$" + Bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"));
+
+        /* An unpriced charge is called out rather than silently contributing nothing. The
+           total is otherwise a number that looks complete and is not, and the officer would
+           have no way to know a fine still needs setting by hand. */
+        return Unpriced == 0
+            ? amount
+            : $"{amount} + {Unpriced} charge(s) with no set price";
     }
 }

@@ -130,4 +130,63 @@ public class SentenceCapTests
 
         Assert.Equal(0, booking.JailMinutes);
     }
+
+    // ---- controlled substances ----
+
+    [Fact]
+    public void TheControlledSubstancesSectionExists()
+    {
+        Assert.True(PenalCode.Sections.ContainsKey(800));
+        Assert.Equal(6, PenalCode.Sections[800].Count);
+        Assert.Equal("Controlled Substances", PenalCode.SectionTitles[800]);
+        Assert.True(PenalCode.Sections[800].Count <= 25);   // Discord's select limit
+    }
+
+    [Theory]
+    [InlineData("PC 801", 3)]
+    [InlineData("PC 802", 5)]
+    [InlineData("PC 803", 6)]
+    [InlineData("PC 804", 8)]
+    [InlineData("PC 805", 3)]
+    [InlineData("PC 806", 4)]
+    public void EachControlledSubstanceChargeKeepsItsSentence(string code, int minutes)
+    {
+        /* NoFixedBail must NOT zero the jail time the way Execution and Variable do - the
+           sentence is fixed here and only the price is open. */
+        var charge = PenalCode.Get(code);
+
+        Assert.NotNull(charge);
+        Assert.Equal(minutes, charge!.JailMinutes);
+        Assert.Equal(ChargeSpecial.NoFixedBail, charge.Special);
+        Assert.Null(charge.BailAt(1.0));
+    }
+
+    [Fact]
+    public void AnUnpricedChargeIsCalledOutOnTheReceipt()
+    {
+        /* Otherwise the total looks complete and is not, and the officer has no way to know
+           a fine still needs setting by hand. */
+        var booking = PenalCode.Book(["PC 100", "PC 801"]);
+
+        Assert.Equal(1, booking.Unpriced);
+        Assert.Contains("no set price", booking.BailLabel(), StringComparison.Ordinal);
+        Assert.Contains("$25", booking.BailLabel(), StringComparison.Ordinal);   // the priced one still counts
+    }
+
+    [Fact]
+    public void APricedBookingSaysNothingAboutUnpricedCharges()
+    {
+        Assert.Equal("$25", PenalCode.Book(["PC 100"]).BailLabel());
+    }
+
+    [Fact]
+    public void UnpricedChargesStillServeTheirTime()
+    {
+        // The sentence is the part the sheet DID specify, and it must survive the cap logic.
+        var booking = PenalCode.Book(["PC 804", "PC 803"]);
+
+        Assert.Equal(14, booking.JailMinutes);
+        Assert.Equal(0, booking.Bail);
+        Assert.Equal(2, booking.Unpriced);
+    }
 }

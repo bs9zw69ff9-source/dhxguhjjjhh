@@ -15,8 +15,8 @@ public class PenalCodeTests
     [Fact]
     public void TheChargeTableIsComplete()
     {
-        Assert.Equal(59, PenalCode.Charges.Count);
-        Assert.Equal(7, PenalCode.Sections.Count);
+        Assert.Equal(65, PenalCode.Charges.Count);
+        Assert.Equal(8, PenalCode.Sections.Count);
     }
 
     [Fact]
@@ -62,8 +62,18 @@ public class PenalCodeTests
             // A charge either has a bail figure or a reason it does not.
             Assert.True(c.Bail is not null || c.Special is not null,
                 $"{c.Code} has neither a bail figure nor a special case");
-            // A special charge carries no jail timer.
-            if (c.Special is not null) Assert.Equal(0, c.JailMinutes);
+
+            /* Execution and Variable carry no jail timer - one is not a sentence in minutes,
+               the other depends entirely on an associated crime. NoFixedBail is different:
+               the SENTENCE is fixed and only the price is open, so it keeps its minutes. */
+            if (c.Special is ChargeSpecial.Execution or ChargeSpecial.Variable)
+                Assert.Equal(0, c.JailMinutes);
+
+            if (c.Special is ChargeSpecial.NoFixedBail)
+            {
+                Assert.Null(c.Bail);
+                Assert.True(c.JailMinutes > 0, $"{c.Code} is unpriced but carries no sentence either");
+            }
         }
     }
 
