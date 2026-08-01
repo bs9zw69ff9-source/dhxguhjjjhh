@@ -122,7 +122,8 @@ public static class PenalCode
         new("PC 704", "Smuggling", ChargeClass.Felony, 6, 400, null),
         new("PC 705", "Operating an Illegal Business", ChargeClass.Misdemeanor, 4, 150, null),
         new("PC 706", "Criminal Conspiracy", ChargeClass.Felony, 6, 350, null),
-        new("PC 707", "Aiding and Abetting", ChargeClass.MisdemeanorOrFelony, 0, null, ChargeSpecial.Variable),    ];
+        new("PC 707", "Aiding and Abetting", ChargeClass.MisdemeanorOrFelony, 0, null, ChargeSpecial.Variable),
+    ];
 
     private static readonly FrozenDictionary<string, Charge> ByCode =
         Charges.ToFrozenDictionary(c => c.Code, StringComparer.OrdinalIgnoreCase);
@@ -150,8 +151,23 @@ public static class PenalCode
                 SectionTitles.TryGetValue(kv.Key, out var t) ? t : $"Section {kv.Key}",
                 kv.Value.Count))];
 
-    /// <summary>Total jail and bail for a set of charge codes, with the special-case flags.</summary>
-    public static Booking Book(IEnumerable<string> codes, double rate = 1.0)
+    /// <summary>
+    /// Total jail and bail for a set of charge codes.
+    /// </summary>
+    /// <param name="capMinutes">
+    /// The most jail a single booking can carry, however many charges are stacked. Zero or
+    /// less means no cap.
+    /// </param>
+    /// <remarks>
+    /// THE CAP APPLIES TO JAIL AND NOT TO BAIL, deliberately. Stacking eight charges should
+    /// cost eight charges' worth of money - that is the deterrent - but it should not put
+    /// somebody in a cell for half an hour, because a sentence nobody will sit through is
+    /// one they disconnect through instead.
+    ///
+    /// EXECUTION IS NOT CAPPED. It is not a number of minutes, so there is nothing to clamp;
+    /// capping it would silently convert a capital charge into a short sentence.
+    /// </remarks>
+    public static Booking Book(IEnumerable<string> codes, double rate = 1.0, int capMinutes = 0)
     {
         ArgumentNullException.ThrowIfNull(codes);
         var matched = new List<Charge>();
@@ -172,24 +188,34 @@ public static class PenalCode
             if (charge.Special == ChargeSpecial.Variable) variable = true;
         }
 
-        return new Booking(matched, minutes, bail, execution, variable);
+        /* Reported, not just applied. A booking that says "35 min" when the player will
+           serve 15 is a receipt that lies, and the officer needs to know the cap is what
+           decided the sentence rather than the charges. */
+        var capped = capMinutes > 0 && !execution && minutes > capMinutes;
+        if (capped) minutes = capMinutes;
+
+        return new Booking(matched, minutes, bail, execution, variable, capped, capped ? capMinutes : null);
     }
 }
 
 /// <summary>The result of booking a set of charges.</summary>
+/// <param name="Capped">True when the stacked total was clamped by the sentence cap.</param>
+/// <param name="CapMinutes">The cap that applied, for the message that explains the clamp.</param>
 public sealed record Booking(
     IReadOnlyList<Charge> Charges,
     int JailMinutes,
     int Bail,
     bool Execution,
-    bool Variable)
+    bool Variable,
+    bool Capped = false,
+    int? CapMinutes = null)
 {
     /// <summary>"Execution", "9 min", "9 min + based on the associated charge", "No jail time".</summary>
     public string SentenceLabel()
     {
         if (Execution) return "Execution";
         var parts = new List<string>(2);
-        if (JailMinutes > 0) parts.Add($"{JailMinutes} min");
+        if (JailMinutes > 0) parts.Add($"{JailMinutes} min" + (Capped ? " (capped)" : ""));
         if (Variable) parts.Add("based on the associated charge");
         return parts.Count > 0 ? string.Join(" + ", parts) : "No jail time";
     }

@@ -20,7 +20,12 @@ public sealed record Arrest(
     string ArrestedBy, DateTimeOffset At);
 
 /// <summary>The bail multiplier, scaled by <c>/bail</c>.</summary>
-public sealed record PoliceConfig(double BailRate = 1.0);
+/// <param name="MaxJailMinutes">
+/// The most jail one booking can carry however many charges are stacked. Zero means
+/// uncapped, which is the behaviour before the cap existed - a default that changes
+/// nobody's sentences until somebody chooses a number.
+/// </param>
+public sealed record PoliceConfig(double BailRate = 1.0, int MaxJailMinutes = 0);
 
 /// <summary><c>/warrant</c> - issue, clear and check warrants.</summary>
 public sealed class WarrantCommand(SerializedStore store, Access access, Paged paged, ILogger<WarrantCommand> logger) : ISlashCommand
@@ -188,6 +193,7 @@ public sealed class ArrestCommand : ISlashCommand
             .WithDescription("Police - Book a player on penal-code charges")
             .AddOption("playerid", ApplicationCommandOptionType.String, "Player to arrest", isRequired: true, isAutocomplete: true)
             .AddOption("codes", ApplicationCommandOptionType.String, "Charge codes, comma separated. Leave empty to pick from a menu.", isRequired: false)
+            .AddOption("minutes", ApplicationCommandOptionType.Integer, "Override the jail time. Bail still stacks from the charges.", isRequired: false)
             .Build();
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
@@ -204,7 +210,8 @@ public sealed class ArrestCommand : ISlashCommand
         var raw = command.Data.Options.FirstOrDefault(o => o.Name == "codes")?.Value as string ?? "";
         var codes = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var rate = _store.Read(Datasets.PoliceConfig, new PoliceConfig()).BailRate;
+        var config = _store.Read(Datasets.PoliceConfig, new PoliceConfig());
+        var rate = config.BailRate;
 
         /* No codes typed: open the picker. Typing them is faster once you know them by
            heart; picking is the only usable option when you do not. The Node bot only ever
@@ -218,11 +225,17 @@ public sealed class ArrestCommand : ISlashCommand
                 return;
             }
 
-            await _booking.BeginAsync(command, player, rate).ConfigureAwait(false);
+            await _booking.BeginAsync(command, player, rate, config.MaxJailMinutes).ConfigureAwait(false);
             return;
         }
 
-        var booking = PenalCode.Book(codes, rate);
+        var booking = PenalCode.Book(codes, rate, config.MaxJailMinutes);
+
+        /* An officer's explicit time wins over the computed one, and is itself held to the
+           cap - the cap is a maximum sentence, not a tie-breaker between two ways of
+           arriving at one. Bail is untouched: it stacks from the charges either way. */
+        if (command.Data.Options.FirstOrDefault(o => o.Name == "minutes")?.Value is long chosen)
+            booking = Override(booking, (int)chosen, config.MaxJailMinutes);
 
         if (booking.Charges.Count == 0)
         {
@@ -236,6 +249,29 @@ public sealed class ArrestCommand : ISlashCommand
 
         var embed = await RecordAsync(player, booking, command.User.Username, rate, ct).ConfigureAwait(false);
         await Reply(command, embed).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Replace the computed jail time with the officer's, still held to the cap.
+    /// </summary>
+    /// <remarks>
+    /// Execution is left alone: it is not a number of minutes, and overriding it would turn
+    /// a capital charge into a short sentence by typing a number into an unrelated field.
+    /// </remarks>
+    internal static Booking Override(Booking booking, int minutes, int capMinutes)
+    {
+        ArgumentNullException.ThrowIfNull(booking);
+        if (booking.Execution) return booking;
+
+        var wanted = Math.Max(0, minutes);
+        var capped = capMinutes > 0 && wanted > capMinutes;
+
+        return booking with
+        {
+            JailMinutes = capped ? capMinutes : wanted,
+            Capped = capped,
+            CapMinutes = capped ? capMinutes : null,
+        };
     }
 
     /// <summary>Book the arrest and describe it. Shared by the typed and picked paths.</summary>
@@ -269,10 +305,17 @@ public sealed class ArrestCommand : ISlashCommand
             $"`{c.Code}` {c.Name} — {(c.Special is not null ? c.Special.ToString() : $"{c.JailMinutes} min")}" +
             (c.BailAt(rate) is { } bail ? $", ${bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}" : ""));
 
-        return Theme.Punishment($"{Theme.Deny} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
+        var embed = Theme.Punishment($"{Theme.Deny} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
             .AddField("Sentence", booking.SentenceLabel(), true)
             .AddField("Bail", booking.BailLabel(), true)
             .AddField("Arresting officer", officer, true);
+
+        // Said out loud, because a receipt whose sentence does not match its charges is
+        // otherwise just wrong-looking.
+        if (booking.Capped)
+            embed.AddField("Capped", $"Charges totalled more than the **{booking.CapMinutes} min** limit. Bail is not capped.");
+
+        return embed;
     }
 
     /// <summary>An officer confirmed a picked booking.</summary>
@@ -365,12 +408,15 @@ public sealed class BailCommand(SerializedStore store, Access access) : ISlashCo
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Mod - Scale every charge's bail price")
+            .WithDescription("Mod - Bail prices and the sentence cap")
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("action").WithDescription("What to do")
                 .WithType(ApplicationCommandOptionType.String).WithRequired(true)
-                .AddChoice("show", "show").AddChoice("set", "set").AddChoice("reset", "reset"))
+                .AddChoice("show", "show").AddChoice("set", "set").AddChoice("reset", "reset")
+                .AddChoice("jailcap", "jailcap"))
             .AddOption("percent", ApplicationCommandOptionType.Integer, "Percentage of the base price, e.g. 150", isRequired: false)
+            .AddOption("minutes", ApplicationCommandOptionType.Integer,
+                "jailcap: the most jail one booking can carry. 0 removes the cap.", isRequired: false)
             .Build();
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
@@ -382,14 +428,38 @@ public sealed class BailCommand(SerializedStore store, Access access) : ISlashCo
 
         if (action == "show")
         {
-            await Reply(command, Theme.Notice("Bail rate",
-                $"Currently **{current.BailRate * 100:0}%** of the base prices.")).ConfigureAwait(false);
+            await Reply(command, Theme.Notice("Police settings",
+                $"Bail is **{current.BailRate * 100:0}%** of the base prices.\n" +
+                (current.MaxJailMinutes > 0
+                    ? $"Jail is capped at **{current.MaxJailMinutes} min** per booking, however many charges stack. Bail is never capped."
+                    : "Jail is **uncapped** — stacked charges add up with no limit. Set one with `/bail jailcap minutes:20`."))).ConfigureAwait(false);
             return;
         }
 
         if (!access.Allows(RequiredAccess.Mod, command))
         {
             await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            return;
+        }
+
+        if (action == "jailcap")
+        {
+            var minutes = command.Data.Options.FirstOrDefault(o => o.Name == "minutes")?.Value as long?;
+            if (minutes is null or < 0)
+            {
+                await Reply(command, Theme.Failure("Give a number of minutes",
+                    "For example `20`. Use `0` to remove the cap entirely.")).ConfigureAwait(false);
+                return;
+            }
+
+            // `with`, not a fresh record: constructing one would silently reset the bail rate.
+            await store.WriteAsync(Datasets.PoliceConfig, current with { MaxJailMinutes = (int)minutes.Value }, ct).ConfigureAwait(false);
+
+            await Reply(command, Theme.Success("Sentence cap updated", minutes.Value > 0
+                ? $"A booking can now carry at most **{minutes.Value} min** of jail, however many charges are stacked.\n\n" +
+                  "Bail is **not** capped — stacking still costs the full amount, which is the deterrent. " +
+                  "Execution charges are unaffected."
+                : "The cap is off. Stacked charges add up with no limit.")).ConfigureAwait(false);
             return;
         }
 
@@ -406,7 +476,9 @@ public sealed class BailCommand(SerializedStore store, Access access) : ISlashCo
             rate = percent.Value / 100.0;
         }
 
-        await store.WriteAsync(Datasets.PoliceConfig, new PoliceConfig(rate), ct).ConfigureAwait(false);
+        /* `with`, not a fresh PoliceConfig: constructing one would default MaxJailMinutes
+           back to zero, so changing the bail rate would quietly remove the sentence cap. */
+        await store.WriteAsync(Datasets.PoliceConfig, current with { BailRate = rate }, ct).ConfigureAwait(false);
 
         // Show the effect on a real charge, because "1.5" means nothing until you see it
         // land on a number somebody is going to pay.
