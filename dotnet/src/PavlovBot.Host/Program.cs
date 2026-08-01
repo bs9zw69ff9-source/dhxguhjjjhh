@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Net.Http;
+using System.Reflection;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Economy;
@@ -259,6 +260,13 @@ public static class Program
         RegisterProcessHealth(host.Services.GetRequiredService<HealthRegistry>(), options);
 
         var logger = host.Services.GetRequiredService<ILogger<IHost>>();
+
+        /* WHICH BUILD IS ACTUALLY RUNNING. Without this, a deploy that published a new
+           binary but left the old process alive - which is what `pm2 start` does to an app
+           that is already running - is indistinguishable from a fix that did not work. The
+           deploy script reads this line back to confirm the restart took. */
+        logger.LogInformation("build {Build}", BuildStamp());
+
         logger.LogInformation("Starting with {Servers} RCON server(s), data in {DataDirectory}",
             options.Servers.Count, options.DataDirectory);
 
@@ -393,6 +401,32 @@ public static class Program
                 return Task.FromResult(HealthResult.Unhealthy($"America/New_York unavailable: {ex.Message}"));
             }
         });
+    }
+
+    /// <summary>
+    /// The commit this binary was built from, plus when.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to the assembly's write time when no revision was stamped in, so a local
+    /// build still says something that changes between builds. An unchanging stamp is the
+    /// signal that the process was never replaced.
+    /// </remarks>
+    private static string BuildStamp()
+    {
+        var informational = System.Reflection.Assembly.GetEntryAssembly()
+            ?.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        // "1.0.0+<sha>" when the SDK stamped a SourceRevisionId; take the part after '+'.
+        if (informational is { Length: > 0 } && informational.Split('+') is { Length: > 1 } parts)
+            return parts[^1];
+
+        var location = System.Reflection.Assembly.GetEntryAssembly()?.Location;
+        var built = location is { Length: > 0 } && File.Exists(location)
+            ? File.GetLastWriteTimeUtc(location)
+            : DateTime.UtcNow;
+
+        return $"local-{built:yyyyMMddHHmmss}";
     }
 
     private static LogLevel ParseLogLevel(string? value) => value?.Trim().ToLowerInvariant() switch

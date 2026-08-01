@@ -126,9 +126,14 @@ fi
 # it shows up the first time a particular gateway payload arrives, which is the
 # worst possible time to find out.
 echo "==> Building (self-contained, ReadyToRun)"
+# The commit is stamped INTO the binary so the running process can say which build it
+# is. That is the only way to tell "the fix does not work" apart from "the fix was
+# never actually started".
+REVISION="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 dotnet publish dotnet/src/PavlovBot.Host \
   -c Release -r linux-x64 --self-contained true \
   -p:PublishReadyToRun=true -p:PublishTrimmed=false \
+  -p:SourceRevisionId="$REVISION" \
   -o "$OUT"
 
 # ---- 2. verify ---------------------------------------------------------------
@@ -220,9 +225,30 @@ fi
 
 # ---- 4. start ----------------------------------------------------------------
 mkdir -p logs
-echo "==> Starting $APP"
-pm2 start ecosystem.csharp.config.js --update-env
+
+# `pm2 start` ON AN APP THAT IS ALREADY RUNNING DOES NOT RESTART IT. pm2 reports
+# "Script already launched" and leaves the existing process alone, so a deploy would
+# publish a new binary, pass the selftest against that new binary, print "Started",
+# and leave the OLD process serving - for hours, with every fix apparently having no
+# effect and nothing anywhere saying why.
+if pm2 describe "$APP" >/dev/null 2>&1; then
+  echo "==> Restarting $APP (it was already running)"
+  pm2 restart "$APP" --update-env
+else
+  echo "==> Starting $APP"
+  pm2 start ecosystem.csharp.config.js --update-env
+fi
 pm2 save
+
+# Prove the process that is now running is the build we just made, rather than
+# trusting that the restart did what it said.
+sleep 2
+RUNNING_BUILD="$(pm2 logs "$APP" --nostream --lines 200 2>/dev/null | grep -o 'build [0-9a-f]\{7,\}' | tail -1 || true)"
+if [ -n "$RUNNING_BUILD" ]; then
+  echo "==> Running $RUNNING_BUILD (deployed $(git rev-parse --short HEAD))"
+else
+  echo "==> Could not read a build stamp from the log; check 'pm2 logs $APP' by hand." >&2
+fi
 
 echo
 echo "Started. Watch it come up:"
