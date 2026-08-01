@@ -379,9 +379,15 @@ async function recordArrest(playerId, charges, by, rate = 1) {
     minutes: charges.reduce((s, c) => s + (c.min || 0), 0),
     // Bail is stamped at the rate in effect when the arrest was made, so history
     // stays accurate even if prices change later.
-    bail: charges.reduce((s, c) => s + (typeof c.bail === "number" ? Math.round(c.bail * rate) : 0), 0),
-    execution: charges.some(c => c.special === "execution"),
-    variable: charges.some(c => c.special === "variable"),
+    // A non-bailable booking records NO figure: writing the sum of the bailable charges
+    // would leave a number that reads as a payable price. The charges are stored
+    // alongside, so the real answer is always re-derivable.
+    bail: charges.some(c => !PENAL.isBailable(c))
+      ? 0
+      : charges.reduce((s, c) => s + (typeof c.bail === "number" ? Math.round(c.bail * rate) : 0), 0),
+    bailable: charges.every(c => PENAL.isBailable(c)),
+    associated: charges.some(c => c.special === "associated"),
+    ranges: charges.some(c => c.special === "ranges"),
     by, at: Date.now(),
   };
   await update(FILES.ARRESTS, {}, (m) => { const k = String(playerId).toLowerCase(); m[k] = _asList(m[k]); m[k].push(entry); return m; });

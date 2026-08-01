@@ -43,8 +43,8 @@ public class SentenceCapTests
     {
         /* The whole point of the split. If bail were capped too, stacking charges would
            cost nothing extra and there would be no deterrent left. */
-        var uncapped = PenalCode.Book(["PC 100", "PC 200", "PC 300", "PC 400"], capMinutes: 0);
-        var capped = PenalCode.Book(["PC 100", "PC 200", "PC 300", "PC 400"], capMinutes: 2);
+        var uncapped = PenalCode.Book(Stack, capMinutes: 0);
+        var capped = PenalCode.Book(Stack, capMinutes: 2);
 
         Assert.Equal(uncapped.Bail, capped.Bail);
         Assert.True(capped.Bail > 0);
@@ -63,32 +63,25 @@ public class SentenceCapTests
     }
 
     [Fact]
-    public void ExecutionIsNotCapped()
-    {
-        /* It is not a number of minutes, so there is nothing to clamp - capping it would
-           silently turn a capital charge into a short sentence. */
-        var booking = PenalCode.Book(["PC 210"], capMinutes: 1);
-
-        Assert.True(booking.Execution);
-        Assert.False(booking.Capped);
-        Assert.Equal("Execution", booking.SentenceLabel());
-    }
+    public void TheSentenceLabelSaysWhenItWasCapped() =>
+        Assert.Contains("capped", PenalCode.Book(Stack, capMinutes: 15).SentenceLabel(), StringComparison.Ordinal);
 
     [Fact]
-    public void TheSentenceLabelSaysWhenItWasCapped()
+    public void CappingDoesNotMakeANonBailableBookingBailable()
     {
-        Assert.Contains("capped", PenalCode.Book(Stack, capMinutes: 15).SentenceLabel(), StringComparison.Ordinal);
+        /* The two rules are independent, and a shorter sentence is not a decision that the
+           charge has become payable. */
+        var booking = PenalCode.Book(["PC 211", "PC 403"], capMinutes: 5);
+
+        Assert.Equal(5, booking.JailMinutes);
+        Assert.False(booking.Bailable);
     }
 
     // ---- the officer's override ----
 
     [Fact]
-    public void AnOfficersTimeReplacesTheComputedOne()
-    {
-        var booking = ArrestCommand.Override(PenalCode.Book(Stack), minutes: 4, capMinutes: 0);
-
-        Assert.Equal(4, booking.JailMinutes);
-    }
+    public void AnOfficersTimeReplacesTheComputedOne() =>
+        Assert.Equal(4, ArrestCommand.Override(PenalCode.Book(Stack), minutes: 4, capMinutes: 0).JailMinutes);
 
     [Fact]
     public void TheOverrideLeavesBailAlone()
@@ -99,6 +92,15 @@ public class SentenceCapTests
 
         Assert.Equal(computed.Bail, overridden.Bail);
         Assert.Equal(computed.Charges.Count, overridden.Charges.Count);
+    }
+
+    [Fact]
+    public void TheOverrideDoesNotMakeANonBailableBookingBailable()
+    {
+        var overridden = ArrestCommand.Override(PenalCode.Book(["PC 801"]), minutes: 1, capMinutes: 0);
+
+        Assert.False(overridden.Bailable);
+        Assert.Equal("No bail - the sentence must be served", overridden.BailLabel());
     }
 
     [Fact]
@@ -114,22 +116,8 @@ public class SentenceCapTests
     }
 
     [Fact]
-    public void OverridingAnExecutionDoesNothing()
-    {
-        // Otherwise a number typed into an unrelated field downgrades a capital charge.
-        var booking = ArrestCommand.Override(PenalCode.Book(["PC 210"]), minutes: 2, capMinutes: 0);
-
-        Assert.True(booking.Execution);
-        Assert.Equal("Execution", booking.SentenceLabel());
-    }
-
-    [Fact]
-    public void ANegativeOverrideIsFlooredAtZero()
-    {
-        var booking = ArrestCommand.Override(PenalCode.Book(Stack), minutes: -5, capMinutes: 0);
-
-        Assert.Equal(0, booking.JailMinutes);
-    }
+    public void ANegativeOverrideIsFlooredAtZero() =>
+        Assert.Equal(0, ArrestCommand.Override(PenalCode.Book(Stack), minutes: -5, capMinutes: 0).JailMinutes);
 
     // ---- controlled substances ----
 
@@ -139,7 +127,6 @@ public class SentenceCapTests
         Assert.True(PenalCode.Sections.ContainsKey(800));
         Assert.Equal(6, PenalCode.Sections[800].Count);
         Assert.Equal("Controlled Substances", PenalCode.SectionTitles[800]);
-        Assert.True(PenalCode.Sections[800].Count <= 25);   // Discord's select limit
     }
 
     [Theory]
@@ -149,44 +136,43 @@ public class SentenceCapTests
     [InlineData("PC 804", 8)]
     [InlineData("PC 805", 3)]
     [InlineData("PC 806", 4)]
-    public void EachControlledSubstanceChargeKeepsItsSentence(string code, int minutes)
+    public void EveryControlledSubstanceChargeIsServedNotPaid(string code, int minutes)
     {
-        /* NoFixedBail must NOT zero the jail time the way Execution and Variable do - the
-           sentence is fixed here and only the price is open. */
+        /* No bail anywhere in this section, and a real sentence in every row - so the time
+           must survive both the bail rule and the cap logic. */
         var charge = PenalCode.Get(code);
 
         Assert.NotNull(charge);
         Assert.Equal(minutes, charge!.JailMinutes);
-        Assert.Equal(ChargeSpecial.NoFixedBail, charge.Special);
+        Assert.Equal(BailRule.None, charge.Rule);
         Assert.Null(charge.BailAt(1.0));
     }
 
     [Fact]
-    public void AnUnpricedChargeIsCalledOutOnTheReceipt()
+    public void ADrugStackStillServesItsTime()
     {
-        /* Otherwise the total looks complete and is not, and the officer has no way to know
-           a fine still needs setting by hand. */
-        var booking = PenalCode.Book(["PC 100", "PC 801"]);
-
-        Assert.Equal(1, booking.Unpriced);
-        Assert.Contains("no set price", booking.BailLabel(), StringComparison.Ordinal);
-        Assert.Contains("$25", booking.BailLabel(), StringComparison.Ordinal);   // the priced one still counts
-    }
-
-    [Fact]
-    public void APricedBookingSaysNothingAboutUnpricedCharges()
-    {
-        Assert.Equal("$25", PenalCode.Book(["PC 100"]).BailLabel());
-    }
-
-    [Fact]
-    public void UnpricedChargesStillServeTheirTime()
-    {
-        // The sentence is the part the sheet DID specify, and it must survive the cap logic.
         var booking = PenalCode.Book(["PC 804", "PC 803"]);
 
         Assert.Equal(14, booking.JailMinutes);
         Assert.Equal(0, booking.Bail);
-        Assert.Equal(2, booking.Unpriced);
+        Assert.False(booking.Bailable);
     }
+
+    // ---- the receipt ----
+
+    [Fact]
+    public void TheReceiptNamesThePriceOrSaysThereIsNone()
+    {
+        /* A blank price column is indistinguishable from a charge that costs nothing, and
+           the difference between "free" and "you cannot pay this" is the whole point. */
+        Assert.Equal("2 min, $10", ArrestCommand.ChargeLine(PenalCode.Get("PC 100")!, 1.0));
+        Assert.Equal("3 min, no bail", ArrestCommand.ChargeLine(PenalCode.Get("PC 801")!, 1.0));
+        Assert.Equal("no jail, $50", ArrestCommand.ChargeLine(PenalCode.Get("VC 600")!, 1.0));
+        Assert.Equal("3 min, bail from the associated charge", ArrestCommand.ChargeLine(PenalCode.Get("PC 700")!, 1.0));
+        Assert.Equal("ranges with the associated charge, no bail", ArrestCommand.ChargeLine(PenalCode.Get("PC 707")!, 1.0));
+    }
+
+    [Fact]
+    public void TheReceiptShowsTheScaledPrice() =>
+        Assert.Equal("2 min, $20", ArrestCommand.ChargeLine(PenalCode.Get("PC 100")!, 2.0));
 }

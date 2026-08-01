@@ -20,9 +20,15 @@ test("every charge is well-formed and codes are unique", () => {
 test("sections group by the hundreds series and cover every charge", () => {
   const total = P.sectionList().reduce((s, x) => s + x.count, 0);
   assert.equal(total, P.CHARGES.length);
+  assert.equal(P.CHARGES.length, 72);
   assert.equal(P.SECTIONS["100"].every(c => c.code.startsWith("PC 1")), true);
   assert.equal(P.SECTIONS["600"].every(c => c.code.startsWith("VC 6")), true);
-  assert.deepEqual(P.sectionList().map(s => s.num), ["100", "200", "300", "400", "500", "600", "700"]);
+  assert.deepEqual(P.sectionList().map(s => s.num), ["100", "200", "300", "400", "500", "600", "700", "800"]);
+});
+
+test("no section overflows Discord's 25-option charge picker", () => {
+  // A 26th charge would silently vanish from the menu, and only from the menu.
+  for (const s of P.sectionList()) assert.ok(s.count <= 25, `section ${s.num} has ${s.count}`);
 });
 
 test("getCharge resolves a known code and rejects junk", () => {
@@ -33,53 +39,98 @@ test("getCharge resolves a known code and rejects junk", () => {
   assert.equal(P.getCharge("PC 999"), null);
 });
 
+test("the table matches the C# one, so a rollback does not re-price arrests", () => {
+  // Spot-checked against dotnet/src/PavlovBot.Core/Penal/PenalCode.cs.
+  const rows = [
+    ["PC 100", "Disorderly Conduct", 2, 10],
+    ["PC 107", "Failure to Obey a Lawful Order", 3, 75],
+    ["PC 210", "Homicide", 8, 250],
+    ["PC 300", "Petty Theft (<$500)", 3, 400],
+    ["PC 403", "Possession of Explosives", 8, 500],
+    ["VC 606", "Driving Without a License", 2, 600],
+  ];
+  for (const [code, name, min, bail] of rows) {
+    const ch = P.getCharge(code);
+    assert.equal(ch.name, name, code);
+    assert.equal(ch.min, min, code);
+    assert.equal(ch.bail, bail, code);
+  }
+});
+
 test("bookingTotal sums the jail minutes and bail", () => {
-  const t = P.bookingTotal(["PC 100", "PC 104"]);   // 2 + 2 min, $25 + $30
+  const t = P.bookingTotal(["PC 100", "PC 104"]);   // 2 + 2 min, $10 + $50
   assert.equal(t.minutes, 4);
-  assert.equal(t.bail, 55);
-  assert.equal(t.execution, false);
-  assert.equal(t.variable, false);
+  assert.equal(t.bail, 60);
+  assert.equal(t.bailable, true);
+  assert.equal(t.ranges, false);
   assert.equal(t.charges.length, 2);
 });
 
-test("homicide is an execution: no timed jail, no bail", () => {
-  const ch = P.getCharge("PC 210");
-  assert.equal(ch.special, "execution");
-  assert.equal(ch.min, 0);
+test("a no-bail charge cannot be paid off", () => {
+  /* "N/A" in the bail column means NOT BAILABLE - the sentence is served. Reading it
+     as "no price has been chosen yet" would let somebody buy their way out of
+     manslaughter for whatever number an officer typed. */
+  const ch = P.getCharge("PC 211");
+  assert.equal(ch.special, "nobail");
+  assert.equal(ch.min, 10);
   assert.equal(ch.bail, null);
-  const t = P.bookingTotal(["PC 210", "PC 100"]);
-  assert.equal(t.execution, true);
-  assert.equal(P.sentenceLabel(t.minutes, t), "Execution");
-  assert.equal(P.bailLabel(t.bail, t), "No bail (execution)");
+  const t = P.bookingTotal(["PC 211"]);
+  assert.equal(t.bailable, false);
+  assert.equal(P.bailLabel(t.bail, t), "No bail - the sentence must be served");
+  assert.equal(P.sentenceLabel(t.minutes, t), "10 min");
 });
 
-test("aiding and abetting is variable: jail and bail depend on the associated crime", () => {
+test("one non-bailable charge makes the whole booking non-bailable", () => {
+  // Otherwise the parking ticket gets paid and the manslaughter walks out with it.
+  const t = P.bookingTotal(["VC 607", "PC 801"]);
+  assert.equal(t.bailable, false);
+  assert.equal(P.bailLabel(t.bail, t), "No bail - the sentence must be served");
+});
+
+test("illegal gambling takes its price from the associated crime", () => {
+  const t = P.bookingTotal(["PC 700"]);
+  assert.equal(t.associated, true);
+  assert.equal(t.minutes, 3);                                   // the sentence is still fixed
+  assert.equal(P.bailLabel(t.bail, t), "Based on the associated charge");
+  assert.equal(P.bailLabel(...(() => { const x = P.bookingTotal(["PC 100", "PC 700"]); return [x.bail, x]; })()),
+    "$10 + based on the associated charge");
+});
+
+test("aiding and abetting ranges with the associated crime, and carries no bail", () => {
   const ch = P.getCharge("PC 707");
-  assert.equal(ch.special, "variable");
+  assert.equal(ch.special, "ranges");
   assert.equal(ch.cls, "Misdemeanor / Felony");
   const t = P.bookingTotal(["PC 707"]);
-  assert.equal(t.variable, true);
-  assert.equal(P.sentenceLabel(t.minutes, t), "based on the associated charge");
-  assert.equal(P.bailLabel(t.bail, t), "Based on the associated charge");
+  assert.equal(t.ranges, true);
+  assert.equal(t.bailable, false);
+  assert.equal(P.sentenceLabel(t.minutes, t), "ranges with the associated charge");
 });
 
 test("infractions carry bail but no jail time", () => {
-  const t = P.bookingTotal(["VC 600"]);   // Speeding: no jail, $10
+  const t = P.bookingTotal(["VC 600"]);   // Speeding: no jail, $50
   assert.equal(t.minutes, 0);
-  assert.equal(t.bail, 10);
+  assert.equal(t.bail, 50);
   assert.equal(P.sentenceLabel(t.minutes, t), "No jail time");
-  assert.equal(P.bailLabel(t.bail, t), "$10");
+  assert.equal(P.bailLabel(t.bail, t), "$50");
 });
 
 test("a bail rate scales prices and rounds each charge to the nearest dollar", () => {
-  // PC 205 base bail $250 -> +21% = $302.5 -> rounds to $303 (nearest dollar).
-  assert.equal(P.chargeBail(P.getCharge("PC 205"), 1.21), 303);
-  assert.equal(P.chargeBail(P.getCharge("PC 205"), 1), 250);          // rate 1 = base
-  assert.equal(P.chargeBail(P.getCharge("PC 210"), 1.5), null);       // execution: no bail
-  // Total rounds per charge, then sums: $25*1.1=27.5->28, $30*1.1=33 -> 61
+  // PC 205 base bail $500 -> +21% = $605.
+  assert.equal(P.chargeBail(P.getCharge("PC 205"), 1.21), 605);
+  assert.equal(P.chargeBail(P.getCharge("PC 205"), 1), 500);          // rate 1 = base
+  assert.equal(P.chargeBail(P.getCharge("PC 801"), 1.5), null);       // no bail: no figure
+  // Total rounds per charge, then sums: $10*1.1=11, $50*1.1=55 -> 66
   const t = P.bookingTotal(["PC 100", "PC 104"], 1.1);
-  assert.equal(t.bail, 61);
+  assert.equal(t.bail, 66);
   assert.equal(t.minutes, 4);   // jail time is unaffected by the bail rate
+});
+
+test("a charge line names the price, or says there is none", () => {
+  // A blank price is indistinguishable from a charge that costs nothing.
+  assert.equal(P.chargeTime(P.getCharge("PC 100")), "2 min • $10");
+  assert.equal(P.chargeTime(P.getCharge("PC 801")), "3 min • no bail");
+  assert.equal(P.chargeTime(P.getCharge("VC 600")), "No jail • $50");
+  assert.equal(P.chargeTime(P.getCharge("PC 700")), "3 min • bail by charge");
 });
 
 test("sentenceLabel and bailLabel format the plain cases", () => {

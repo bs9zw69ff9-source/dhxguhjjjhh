@@ -168,12 +168,14 @@ public sealed class ArrestCommand : ISlashCommand
     private readonly AuditLog _audit;
     private readonly Access _access;
     private readonly ArrestBooking _booking;
+    private readonly PavlovBot.Host.Rcon.RconRegistry _rcon;
     private readonly ILogger<ArrestCommand> _logger;
 
     public ArrestCommand(SerializedStore store, AuditLog audit, Access access,
-        ArrestBooking booking, ILogger<ArrestCommand> logger)
+        ArrestBooking booking, PavlovBot.Host.Rcon.RconRegistry rcon, ILogger<ArrestCommand> logger)
     {
         _store = store;
+        _rcon = rcon;
         _audit = audit;
         _access = access;
         _booking = booking;
@@ -187,13 +189,15 @@ public sealed class ArrestCommand : ISlashCommand
 
     public string Name => "arrest";
 
+    /// <remarks>
+    /// NO OPTIONS. Everything - who, what they are charged with, how long - is chosen from
+    /// the menu the command opens. Seventy-two codes is more than anybody memorises, and the
+    /// typed form meant an officer had to know the code before they could look it up.
+    /// </remarks>
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription("Police - Book a player on penal-code charges")
-            .AddOption("playerid", ApplicationCommandOptionType.String, "Player to arrest", isRequired: true, isAutocomplete: true)
-            .AddOption("codes", ApplicationCommandOptionType.String, "Charge codes, comma separated. Leave empty to pick from a menu.", isRequired: false)
-            .AddOption("minutes", ApplicationCommandOptionType.Integer, "Override the jail time. Bail still stacks from the charges.", isRequired: false)
             .Build();
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
@@ -206,62 +210,22 @@ public sealed class ArrestCommand : ISlashCommand
             return;
         }
 
-        var player = Sanitize.Id(command.Data.Options.First(o => o.Name == "playerid").Value as string ?? "");
-        var raw = command.Data.Options.FirstOrDefault(o => o.Name == "codes")?.Value as string ?? "";
-        var codes = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
         var config = _store.Read(Datasets.PoliceConfig, new PoliceConfig());
-        var rate = config.BailRate;
 
-        /* No codes typed: open the picker. Typing them is faster once you know them by
-           heart; picking is the only usable option when you do not. The Node bot only ever
-           had the picker, so requiring codes here was a regression for everybody who has
-           not memorised fifty-nine of them. */
-        if (codes.Length == 0)
-        {
-            if (player.Length == 0)
-            {
-                await Reply(command, Theme.Failure("That name has nothing usable in it")).ConfigureAwait(false);
-                return;
-            }
-
-            await _booking.BeginAsync(command, player, rate, config.MaxJailMinutes).ConfigureAwait(false);
-            return;
-        }
-
-        var booking = PenalCode.Book(codes, rate, config.MaxJailMinutes);
-
-        /* An officer's explicit time wins over the computed one, and is itself held to the
-           cap - the cap is a maximum sentence, not a tie-breaker between two ways of
-           arriving at one. Bail is untouched: it stacks from the charges either way. */
-        if (command.Data.Options.FirstOrDefault(o => o.Name == "minutes")?.Value is long chosen)
-            booking = Override(booking, (int)chosen, config.MaxJailMinutes);
-
-        if (booking.Charges.Count == 0)
-        {
-            /* Unknown codes are SKIPPED, never guessed at - so an arrest naming only
-               unknown codes books nothing, and says so rather than silently jailing
-               somebody for zero minutes. */
-            await Reply(command, Theme.Failure("No recognised charges",
-                $"None of `{Sanitize.Code(raw)}` matched the penal code. Nothing was recorded.")).ConfigureAwait(false);
-            return;
-        }
-
-        var embed = await RecordAsync(player, booking, command.User.Username, rate, ct).ConfigureAwait(false);
-        await Reply(command, embed).ConfigureAwait(false);
+        await _booking.BeginAsync(command, _rcon.AllOnlinePlayers(), config.BailRate, config.MaxJailMinutes)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
     /// Replace the computed jail time with the officer's, still held to the cap.
     /// </summary>
     /// <remarks>
-    /// Execution is left alone: it is not a number of minutes, and overriding it would turn
-    /// a capital charge into a short sentence by typing a number into an unrelated field.
+    /// BAIL IS UNTOUCHED, including whether there is any. An officer choosing a shorter
+    /// sentence is not deciding that a non-bailable charge has become bailable.
     /// </remarks>
     internal static Booking Override(Booking booking, int minutes, int capMinutes)
     {
         ArgumentNullException.ThrowIfNull(booking);
-        if (booking.Execution) return booking;
 
         var wanted = Math.Max(0, minutes);
         var capped = capMinutes > 0 && wanted > capMinutes;
@@ -274,12 +238,36 @@ public sealed class ArrestCommand : ISlashCommand
         };
     }
 
+    /// <summary>One charge's sentence and price, as it reads on the receipt.</summary>
+    /// <remarks>
+    /// "no bail" is printed rather than left blank. A blank is indistinguishable from a
+    /// charge that costs nothing, and the difference is the whole point of the column.
+    /// </remarks>
+    internal static string ChargeLine(Charge charge, double rate)
+    {
+        ArgumentNullException.ThrowIfNull(charge);
+
+        var sentence = charge.SentenceRanges
+            ? "ranges with the associated charge"
+            : charge.JailMinutes > 0 ? $"{charge.JailMinutes} min" : "no jail";
+
+        var price = charge.BailAt(rate) is { } bail
+            ? $"${bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}"
+            : charge.Rule == BailRule.Associated ? "bail from the associated charge" : "no bail";
+
+        return $"{sentence}, {price}";
+    }
+
     /// <summary>Book the arrest and describe it. Shared by the typed and picked paths.</summary>
     private async Task<EmbedBuilder> RecordAsync(
         string player, Booking booking, string officer, double rate, CancellationToken ct)
     {
+        /* A non-bailable booking records NO bail figure. The stored record is shared with
+           the Node bot and has no field for "cannot be bailed out", so writing the sum of
+           the bailable charges would leave a number that reads as a payable price - and the
+           charges are stored alongside it, so the real answer is always re-derivable. */
         var arrest = new Arrest(player, booking.Charges.Select(c => c.Code).ToList(),
-            booking.JailMinutes, booking.Bail, officer, DateTimeOffset.UtcNow);
+            booking.JailMinutes, booking.Bailable ? booking.Bail : 0, officer, DateTimeOffset.UtcNow);
 
         await _store.UpdateAsync(Datasets.Arrests,
             new Dictionary<string, List<Arrest>>(StringComparer.OrdinalIgnoreCase),
@@ -301,9 +289,7 @@ public sealed class ArrestCommand : ISlashCommand
         _logger.LogInformation("arrest | player=\"{Player}\" | codes={Codes} | {Minutes}min ${Bail} | by={By}",
             player, string.Join(",", arrest.Codes), booking.JailMinutes, booking.Bail, officer);
 
-        var lines = booking.Charges.Select(c =>
-            $"`{c.Code}` {c.Name} — {(c.Special is not null ? c.Special.ToString() : $"{c.JailMinutes} min")}" +
-            (c.BailAt(rate) is { } bail ? $", ${bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}" : ""));
+        var lines = booking.Charges.Select(c => $"`{c.Code}` {c.Name} — {ChargeLine(c, rate)}");
 
         var embed = Theme.Punishment($"{Theme.Deny} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
             .AddField("Sentence", booking.SentenceLabel(), true)
@@ -457,8 +443,7 @@ public sealed class BailCommand(SerializedStore store, Access access) : ISlashCo
 
             await Reply(command, Theme.Success("Sentence cap updated", minutes.Value > 0
                 ? $"A booking can now carry at most **{minutes.Value} min** of jail, however many charges are stacked.\n\n" +
-                  "Bail is **not** capped — stacking still costs the full amount, which is the deterrent. " +
-                  "Execution charges are unaffected."
+                  "Bail is **not** capped — stacking still costs the full amount, which is the deterrent."
                 : "The cap is off. Stacked charges add up with no limit.")).ConfigureAwait(false);
             return;
         }
