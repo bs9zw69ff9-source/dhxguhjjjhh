@@ -45,7 +45,6 @@ public sealed record FeatureOptions
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
     public ulong? PlayerListChannel { get; init; }
-    public ulong? DashboardChannel { get; init; }
 
     public VpnKeys VpnKeys { get; init; } = new();
     public VpnThresholds VpnThresholds { get; init; } = VpnThresholds.Default;
@@ -115,7 +114,6 @@ public sealed record FeatureOptions
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
             PlayerListChannel = Snowflake(configuration, "PLAYERLIST_CHANNEL"),
-            DashboardChannel = Snowflake(configuration, "DASHBOARD_CHANNEL"),
 
             VpnKeys = new VpnKeys(
                 IpHub: Text(configuration, "IPHUB_API_KEY"),

@@ -269,23 +269,6 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
-        if (_features.DashboardChannel is not null)
-        {
-            _registry.Register(new ServiceDefinition
-            {
-                Name = "dashboard",
-                Interval = TimeSpan.FromMinutes(1),
-                Tick = ct => _autoPost.PostAsync("dashboard", _features.DashboardChannel, () =>
-                {
-                    var wanted = _store.Read(PavlovBot.Host.Storage.Datasets.Warrants,
-                        new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase))
-                        .Count(kv => kv.Value.Count > 0);
-                    return Task.FromResult(_boards.BuildDashboard(_bans.ActiveBans().Count, wanted));
-                }, ct),
-                DependsOn = ["player-cache"],
-            });
-        }
-
         // ---- persistence ----
         _registry.Register(new ServiceDefinition
         {
