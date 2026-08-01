@@ -43,6 +43,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly ModsaveBanlist _modsave;
     private readonly RosterService _rosters;
     private readonly PavlovBot.Core.Data.SerializedStore _store;
+    private readonly PavlovBot.Host.Logs.FeedBridge _bridge;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -62,6 +63,7 @@ public sealed class BackgroundServiceHost : IHostedService
         ModsaveBanlist modsave,
         RosterService rosters,
         PavlovBot.Core.Data.SerializedStore store,
+        PavlovBot.Host.Logs.FeedBridge bridge,
         ILogger<BackgroundServiceHost> logger)
     {
         _registry = registry;
@@ -81,6 +83,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _modsave = modsave;
         _rosters = rosters;
         _store = store;
+        _bridge = bridge;
         _logger = logger;
     }
 
@@ -98,7 +101,16 @@ public sealed class BackgroundServiceHost : IHostedService
         {
             Name = "player-cache",
             Interval = _options.PlayerCacheInterval,
-            Tick = _rcon.RefreshRostersAsync,
+            Tick = async ct =>
+            {
+                await _rcon.RefreshRostersAsync(ct).ConfigureAwait(false);
+
+                /* Leave lines come from the roster because Pavlov's log has no disconnect
+                   line to rely on. Driven from HERE rather than its own timer so the diff
+                   is always against the roster that was just fetched - two timers would
+                   race and report a leave the moment a refresh landed mid-diff. */
+                await _bridge.TickRosterAsync(ct).ConfigureAwait(false);
+            },
             // Depends on rcon-health so the ordering in /health reads the way the system
             // actually layers, and so a future RCON-owning service can be stopped last.
             DependsOn = ["rcon-health"],

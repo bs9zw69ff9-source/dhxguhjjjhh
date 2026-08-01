@@ -162,6 +162,7 @@ public static class Program
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<Paged>());
 
         builder.Services.AddSingleton<FeedWebhooks>();
+        builder.Services.AddSingleton<FeedBridge>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
         builder.Services.AddSingleton<AuditLog>();
@@ -277,6 +278,7 @@ public static class Program
 
         var feeds = host.Services.GetRequiredService<FeedWebhooks>();
         feeds.Register(FeedWebhooks.Join, features.JoinWebhook);
+        feeds.Register(FeedWebhooks.Connect, features.ConnectWebhook);
         feeds.Register(FeedWebhooks.Kill, features.KillWebhook);
         feeds.Register(FeedWebhooks.Money, features.MoneyWebhook);
 
@@ -288,6 +290,11 @@ public static class Program
            in storage while silently doing nothing - the bot resumes recording addresses for
            exactly the accounts somebody asked it not to. */
         host.Services.GetRequiredService<OwnerActions>().RestoreIgnoreList();
+
+        /* RESOLVED, not just registered. The bridge subscribes to the tracker's events in
+           its constructor, and a service nobody asks for is never constructed - which is
+           exactly how the join, connect and kill feeds came to be silent. */
+        host.Services.GetRequiredService<FeedBridge>();
 
         if (features.MasterNames.Count == 0)
             logger.LogWarning("MASTER_NAMES is not set - no account is protected from an auto-ban, " +

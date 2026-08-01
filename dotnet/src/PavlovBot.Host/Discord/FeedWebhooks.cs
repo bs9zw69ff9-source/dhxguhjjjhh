@@ -101,21 +101,52 @@ public sealed class FeedWebhooks : IAsyncDisposable
 
     // ---- the feeds ----
 
+    /// <summary>
+    /// The plain join/leave log. NO ADDRESSES, NO ACCOUNT IDS - safe in a public channel.
+    /// </summary>
     public const string Join = "join";
+
+    /// <summary>
+    /// The connection feed, WITH ADDRESSES. A private admin channel only.
+    /// </summary>
+    /// <remarks>
+    /// SEPARATE FROM <see cref="Join"/>, and the separation is the point. An address is
+    /// personal data that locates somebody's home; the join log is something servers put in
+    /// a public channel. Collapsing the two - which this bot did during the port, by reading
+    /// CONNECT_WEBHOOK_URL into the join feed - either publishes addresses to a public
+    /// channel or silences the public log, depending on which URL the owner set.
+    /// </remarks>
+    public const string Connect = "connect";
+
     public const string Kill = "kill";
     public const string Money = "money";
 
     private static string Stamp(DateTimeOffset at) => EasternTime.Stamp(at);
 
-    /// <param name="verdict">The VPN verdict word, when one is known.</param>
-    public Task PostJoinAsync(string name, string? ip, string? location, string? verdict, DateTimeOffset at, CancellationToken ct = default)
+    /* The line builders are separate from the posting so they can be tested for what they
+       DO NOT contain. "The public feed never carries an address" is the property the whole
+       Join/Connect split exists to guarantee, and it is not observable through PostAsync -
+       which silently does nothing when no webhook is configured. */
+
+    /// <summary>The public line. Deliberately carries nothing but a name and a time.</summary>
+    public static string JoinLine(string name, DateTimeOffset at) =>
+        $"[{Stamp(at)}] JOIN  {Sanitize.Message(name)}";
+
+    public static string ConnectLine(string name, string? ip, string? location, string? verdict, DateTimeOffset at)
     {
         var parts = new List<string> { $"[{Stamp(at)}] JOIN  {Sanitize.Message(name)}" };
         if (ip is { Length: > 0 }) parts.Add($"ip={ip}");
         if (location is { Length: > 0 }) parts.Add(location);
         if (verdict is { Length: > 0 }) parts.Add($"vpn={verdict}");
-        return PostAsync(Join, string.Join("  |  ", parts), ct);
+        return string.Join("  |  ", parts);
     }
+
+    public Task PostJoinAsync(string name, DateTimeOffset at, CancellationToken ct = default) =>
+        PostAsync(Join, JoinLine(name, at), ct);
+
+    /// <param name="verdict">The VPN verdict word, when one is known.</param>
+    public Task PostConnectAsync(string name, string? ip, string? location, string? verdict, DateTimeOffset at, CancellationToken ct = default) =>
+        PostAsync(Connect, ConnectLine(name, ip, location, verdict, at), ct);
 
     public Task PostLeaveAsync(string name, TimeSpan? session, DateTimeOffset at, CancellationToken ct = default)
     {

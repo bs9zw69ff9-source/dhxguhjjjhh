@@ -39,6 +39,9 @@ public sealed record FeatureOptions
     public string? KillWebhook { get; init; }
     public string? MoneyWebhook { get; init; }
 
+    /// <summary>The address-bearing connection feed. Private channels only.</summary>
+    public string? ConnectWebhook { get; init; }
+
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
     public ulong? PlayerListChannel { get; init; }
@@ -81,7 +84,11 @@ public sealed record FeatureOptions
             ModsaveBanlistPath = Text(configuration, "MODSAVE_PATH") is { } modsave
                 ? System.IO.Path.Combine(modsave, "ModSave", "banlist.txt") : null,
 
-            JoinWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
+            /* Two DIFFERENT webhooks. CONNECT carries addresses and belongs in a private
+               channel; JOIN is the plain public log. The port read CONNECT into the join
+               feed and never read JOIN_WEBHOOK_URL at all. */
+            ConnectWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
+            JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
             MoneyWebhook = Text(configuration, "MONEY_WEBHOOK_URL"),
 
