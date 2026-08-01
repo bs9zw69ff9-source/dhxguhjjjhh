@@ -39,6 +39,20 @@ public sealed class LogTailer
         public long Offset;
         public string Carry = "";      // a partial final line, held until its newline arrives
         public bool Primed;            // has the initial positioning happened
+
+        /// <summary>
+        /// Whether the current run of read failures has already been reported.
+        /// </summary>
+        /// <remarks>
+        /// This poll runs every 1.5 seconds, so an unreadable log would produce forty log
+        /// lines a minute. It used to be logged at Debug for that reason - which meant that
+        /// at the default level a completely dead log pipeline said NOTHING AT ALL, and the
+        /// bot looked healthy while every feed and ban-evasion check sat idle with no input.
+        ///
+        /// So: WARN once per outage, stay quiet while it persists, and reset on the next
+        /// successful read so a later outage is reported again.
+        /// </remarks>
+        public bool FailureReported;
     }
 
     private readonly Dictionary<string, FileState> _files = new(StringComparer.Ordinal);
@@ -105,8 +119,20 @@ public sealed class LogTailer
 
         try
         {
+            /* These flags are necessary but NOT sufficient. On Unix, .NET requests an
+               advisory flock whatever FileShare says, so this open still fails while Pavlov
+               holds the log exclusively. What actually makes it work is
+               System.IO.DisableFileLocking, set in PavlovBot.Host.csproj - see the comment
+               there. Without it every poll here fails and the whole log pipeline is dead. */
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);   // the server holds it open for writing
+            // Opened successfully: a previous outage, if any, is over.
+            if (state.FailureReported)
+            {
+                state.FailureReported = false;
+                _logger.LogInformation("{Path} is readable again", path);
+            }
+
             stream.Seek(state.Offset, SeekOrigin.Begin);
 
             var buffer = new byte[Math.Min(info.Length - state.Offset, 8 * 1024 * 1024)];
@@ -132,7 +158,18 @@ public sealed class LogTailer
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogDebug("Could not read {Path}: {Message}", path, ex.Message);
+            if (!state.FailureReported)
+            {
+                state.FailureReported = true;
+                _logger.LogWarning(
+                    "CANNOT READ {Path}: {Message}. Nothing in the log pipeline works while this persists - " +
+                    "no joins, kills, address tracking or ban-evasion checks. Check the bot can read the file " +
+                    "and that PAVLOV_LOGS points at the right one", path, ex.Message);
+            }
+            else
+            {
+                _logger.LogDebug("Still cannot read {Path}: {Message}", path, ex.Message);
+            }
             return [];
         }
     }

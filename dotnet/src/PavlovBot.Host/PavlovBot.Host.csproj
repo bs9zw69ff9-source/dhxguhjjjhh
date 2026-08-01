@@ -19,6 +19,24 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- THE BOT MUST BE ABLE TO READ Pavlov.log WHILE THE GAME SERVER HAS IT OPEN.
+
+         On Unix, .NET's FileStream takes an advisory flock REGARDLESS of the FileShare
+         flags passed to it: opening with FileShare.ReadWrite | FileShare.Delete still
+         requests LOCK_SH, and that fails with "the process cannot access the file because
+         it is being used by another process" whenever the writer holds LOCK_EX. Pavlov
+         does exactly that with its own log.
+
+         The effect was total and silent: every poll failed, so no join, kill, address or
+         flagged-join ever reached the bot. The connect, join and kill feeds and ban-evasion
+         detection all had nothing to act on, while the bot itself looked perfectly healthy.
+
+         Set here rather than via AppContext.SetSwitch in Main so it is in effect from
+         process start, before any code can open a file first. -->
+    <RuntimeHostConfigurationOption Include="System.IO.DisableFileLocking" Value="true" Trim="true" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Discord.Net.Webhook" Version="3.20.1" />
     <PackageReference Include="Discord.Net.WebSocket" Version="3.20.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />

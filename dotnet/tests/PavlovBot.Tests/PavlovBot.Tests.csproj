@@ -4,6 +4,14 @@
     <RootNamespace>PavlovBot.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Mirrors PavlovBot.Host: the log tailer's ability to read Pavlov.log while the game
+         server holds it open depends on this switch, so the test process must be configured
+         the same way or LogTailerLockingTests would be testing a different runtime than the
+         one that ships. -->
+    <RuntimeHostConfigurationOption Include="System.IO.DisableFileLocking" Value="true" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
