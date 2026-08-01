@@ -163,6 +163,7 @@ public static class Program
 
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton<FeedBridge>();
+        builder.Services.AddSingleton<EvasionResponder>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
         builder.Services.AddSingleton<AuditLog>();
@@ -295,6 +296,11 @@ public static class Program
            its constructor, and a service nobody asks for is never constructed - which is
            exactly how the join, connect and kill feeds came to be silent. */
         host.Services.GetRequiredService<FeedBridge>();
+
+        /* Same reason, and this one matters more: the responder subscribes to the tracker's
+           Flagged event in its constructor. Registered but never resolved, ban-evasion
+           detection would keep logging catches and taking no action. */
+        host.Services.GetRequiredService<EvasionResponder>();
 
         if (features.MasterNames.Count == 0)
             logger.LogWarning("MASTER_NAMES is not set - no account is protected from an auto-ban, " +
