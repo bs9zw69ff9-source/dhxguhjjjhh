@@ -24,9 +24,94 @@ public sealed record PlaytimeEntry(string Player, long Minutes, DateTimeOffset? 
 /// cycle". An empty board would overwrite yesterday's real one with "no data" during a
 /// restart or a transient read failure - showing stale numbers is strictly better.
 /// </remarks>
-public sealed class Boards(SerializedStore store, RconRegistry rcon)
+public sealed class Boards(SerializedStore store, RconRegistry rcon, string? ledgerDirectory = null)
 {
     private const int TopRows = 15;
+
+    /// <summary>The whole economy: every ledger, richest first.</summary>
+    /// <param name="Total">Across EVERY ledger, not just the rows shown.</param>
+    public sealed record CashStanding(IReadOnlyList<(string Player, long Balance)> Top, long Total, int Ledgers);
+
+    /// <summary>
+    /// Read every player's balance out of the ModSave directory.
+    /// </summary>
+    /// <remarks>
+    /// Straight from the files the game itself writes, exactly as the Node bot does it.
+    /// There is no cached copy to go stale, and a balance the bot invented would be worse
+    /// than no board at all.
+    ///
+    /// <c>banlist.txt</c> lives in the same directory and is not a ledger.
+    /// </remarks>
+    public CashStanding? ReadCash()
+    {
+        if (string.IsNullOrWhiteSpace(ledgerDirectory) || !Directory.Exists(ledgerDirectory)) return null;
+
+        var balances = new List<(string Player, long Balance)>();
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(ledgerDirectory, "*.txt"))
+            {
+                var player = Path.GetFileNameWithoutExtension(file);
+                if (string.Equals(player, "banlist", StringComparison.OrdinalIgnoreCase)) continue;
+
+                try
+                {
+                    var text = File.ReadAllText(file).Trim();
+                    // A ledger the game is mid-write on parses as nothing. Skipping it drops
+                    // one row for one cycle; guessing zero would announce that somebody lost
+                    // all their money.
+                    if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var balance))
+                        balances.Add((player, balance));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        balances.Sort((a, b) => b.Balance.CompareTo(a.Balance));
+        return new CashStanding(balances.Take(TopRows).ToList(), balances.Sum(b => b.Balance), balances.Count);
+    }
+
+    /// <summary>
+    /// Players ranked by account balance - what <c>LEADERBOARD_CHANNEL</c> is for.
+    /// </summary>
+    /// <remarks>
+    /// THIS CHANNEL IS THE CASH BOARD. The port originally posted the playtime board here,
+    /// which put a playtime leaderboard in a channel called cash-leaderboard while the Node
+    /// bot posted the real one alongside it. Playtime is still tracked for
+    /// <c>/whitelist playtime</c>; it is simply not what this board shows.
+    /// </remarks>
+    public Embed? BuildCashBoard()
+    {
+        var standing = ReadCash();
+
+        /* Null here means the path is wrong or unreadable, which is a configuration problem
+           the owner has to see. Returning null would skip the cycle silently and leave a
+           board that just never updates. */
+        if (standing is null)
+        {
+            return Theme.Failure($"{Theme.Money} Richest players",
+                    "Economy records are unreadable. `MODSAVE_PATH` is not set, or the bot cannot read it.")
+                .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+                .Build();
+        }
+
+        if (standing.Ledgers == 0) return null;
+
+        var top = standing.Top.Count > 0 ? Math.Max(standing.Top[0].Balance, 1) : 1;
+        var lines = standing.Top.Select((row, i) =>
+            $"`{i + 1,2}.` {Medal(i)} **{Sanitize.Code(row.Player)}** — ${row.Balance.ToString("N0", CultureInfo.InvariantCulture)}" +
+            (i < 5 ? $"\n{Theme.Bar(Math.Max(row.Balance, 0), top)}" : ""));
+
+        return Theme.Notice($"{Theme.Money} Richest players — top {standing.Top.Count}",
+                $"Combined **${standing.Total.ToString("N0", CultureInfo.InvariantCulture)}** across " +
+                $"**{standing.Ledgers}** ledger(s)\n\n{string.Join("\n", lines)}")
+            .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+            .Build();
+    }
 
     public Dictionary<string, PlaytimeEntry> Playtime() =>
         store.Read(Datasets.Playtime, new Dictionary<string, PlaytimeEntry>(StringComparer.OrdinalIgnoreCase));
@@ -60,26 +145,13 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon)
             }, ct);
     }
 
-    /// <summary>Players ranked by time on the server.</summary>
-    public Embed? BuildPlaytimeBoard()
-    {
-        var rows = Playtime().Values
-            .Where(e => e.Minutes > 0)
-            .OrderByDescending(e => e.Minutes)
-            .Take(TopRows)
-            .ToList();
+    /* THERE IS NO PLAYTIME BOARD, deliberately. It was removed from this bot before the
+       port, and the port reintroduced it by wiring it to LEADERBOARD_CHANNEL - which is the
+       cash board's channel.
 
-        if (rows.Count == 0) return null;
-
-        var top = rows[0].Minutes;
-        var lines = rows.Select((e, i) =>
-            $"`{i + 1,2}.` {Medal(i)} **{Sanitize.Code(e.Player)}** — {Hours(e.Minutes)}\n" +
-            $"{Theme.Bar(e.Minutes, top)}");
-
-        return Theme.Notice($"{Theme.Rank} Playtime leaderboard", string.Join("\n", lines))
-            .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
-            .Build();
-    }
+       Playtime is still ACCUMULATED above, because `/whitelist playtime` reports it and the
+       Node bot reads the same dataset. Tracking it costs one write a minute; stopping would
+       leave that command answering with numbers frozen at the cutover. */
 
     /// <summary>Players ranked by jail time served - the "most wanted" board.</summary>
     public Embed? BuildArrestBoard()

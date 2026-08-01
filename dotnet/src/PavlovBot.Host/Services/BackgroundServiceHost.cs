@@ -205,8 +205,10 @@ public sealed class BackgroundServiceHost : IHostedService
             {
                 Name = "leaderboard",
                 Interval = _features.LeaderboardInterval,
+                // CASH, not playtime. LEADERBOARD_CHANNEL is the money board - see
+                // Boards.BuildCashBoard.
                 Tick = ct => _autoPost.PostAsync("leaderboard", _features.LeaderboardChannel,
-                    () => Task.FromResult(_boards.BuildPlaytimeBoard()), ct),
+                    () => Task.FromResult(_boards.BuildCashBoard()), ct),
             });
         }
 

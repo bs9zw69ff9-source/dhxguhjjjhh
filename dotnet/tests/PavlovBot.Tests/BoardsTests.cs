@@ -15,6 +15,7 @@ public class BoardsTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "pavlovbot-boards-" + Guid.NewGuid().ToString("N"));
     private readonly SerializedStore _store;
+    private readonly string _ledgers;
     private readonly Boards _boards;
 
     public BoardsTests()
@@ -29,7 +30,10 @@ public class BoardsTests : IDisposable
             DataDirectory = _directory,
         };
         var rcon = new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
-        _boards = new Boards(_store, rcon);
+
+        _ledgers = Path.Combine(_directory, "modsave");
+        Directory.CreateDirectory(_ledgers);
+        _boards = new Boards(_store, rcon, _ledgers);
     }
 
     [Fact]
@@ -37,7 +41,7 @@ public class BoardsTests : IDisposable
     {
         /* Null means "skip this cycle". An empty board would overwrite yesterday's real one
            with "no data" during a restart or a transient read failure. */
-        Assert.Null(_boards.BuildPlaytimeBoard());
+        Assert.Null(_boards.BuildCashBoard());
         Assert.Null(_boards.BuildArrestBoard());
         Assert.Null(_boards.BuildStaffBoard());
         await Task.CompletedTask;
@@ -52,31 +56,79 @@ public class BoardsTests : IDisposable
     }
 
     [Fact]
-    public async Task PlaytimeAccumulates()
+    public void TheCashBoardRanksByBalance()
     {
-        await _store.WriteAsync(Datasets.Playtime, new Dictionary<string, PlaytimeEntry>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Alice"] = new("Alice", 125, DateTimeOffset.UtcNow),
-            ["Bob"] = new("Bob", 40, DateTimeOffset.UtcNow),
-        });
+        /* LEADERBOARD_CHANNEL is the CASH board. The port wired the playtime board here,
+           which put a playtime leaderboard in a channel called cash-leaderboard. */
+        File.WriteAllText(Path.Combine(_ledgers, "Alice.txt"), "1250");
+        File.WriteAllText(Path.Combine(_ledgers, "Bob.txt"), "40");
 
-        var board = _boards.BuildPlaytimeBoard();
+        var board = _boards.BuildCashBoard();
+
         Assert.NotNull(board);
-        Assert.Contains("Alice", board!.Description, StringComparison.Ordinal);
-        Assert.Contains("2h 5m", board.Description, StringComparison.Ordinal);
-        // Highest first.
+        Assert.Contains("$1,250", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("Richest", board.Title, StringComparison.Ordinal);
+        Assert.DoesNotContain("Playtime", board.Title, StringComparison.Ordinal);
         Assert.True(board.Description.IndexOf("Alice", StringComparison.Ordinal) <
                     board.Description.IndexOf("Bob", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task PlayersWithNoRecordedTimeAreNotListed()
+    public void TheCombinedTotalCoversEveryLedgerNotJustTheRowsShown()
     {
-        await _store.WriteAsync(Datasets.Playtime, new Dictionary<string, PlaytimeEntry>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Ghost"] = new("Ghost", 0, null),
-        });
-        Assert.Null(_boards.BuildPlaytimeBoard());
+        for (var i = 0; i < 20; i++)
+            File.WriteAllText(Path.Combine(_ledgers, $"p{i:00}.txt"), "100");
+
+        var board = _boards.BuildCashBoard();
+
+        // 20 x 100, even though only the top 15 are listed.
+        Assert.Contains("$2,000", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("**20** ledger(s)", board.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheBanlistIsNotALedger()
+    {
+        // It lives in the same directory and would otherwise appear as a player.
+        File.WriteAllText(Path.Combine(_ledgers, "banlist.txt"), "0");
+        File.WriteAllText(Path.Combine(_ledgers, "Alice.txt"), "10");
+
+        Assert.DoesNotContain("banlist", _boards.BuildCashBoard()!.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AHalfWrittenLedgerIsSkippedRatherThanReadAsZero()
+    {
+        /* Reading an unparseable balance as 0 would announce that somebody had lost all
+           their money, in a channel everybody watches. */
+        File.WriteAllText(Path.Combine(_ledgers, "Alice.txt"), "1000");
+        File.WriteAllText(Path.Combine(_ledgers, "Bob.txt"), "");
+
+        var board = _boards.BuildCashBoard();
+
+        Assert.DoesNotContain("Bob", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("**1** ledger(s)", board.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnreadableLedgerPathReportsTheProblemRatherThanSkipping()
+    {
+        /* A wrong MODSAVE_PATH must not present as a board that simply never updates -
+           there would be nothing anywhere saying why. */
+        var rcon = new RconRegistry(
+            new BotOptions
+            {
+                DiscordToken = "t",
+                Servers = [new RconOptions { Name = "server1", Host = "127.0.0.1", Port = 9100, Password = "x" }],
+                Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+                DataDirectory = _directory,
+            },
+            new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+
+        var board = new Boards(_store, rcon, ledgerDirectory: null).BuildCashBoard();
+
+        Assert.NotNull(board);
+        Assert.Contains("MODSAVE_PATH", board!.Description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -119,15 +171,12 @@ public class BoardsTests : IDisposable
     }
 
     [Fact]
-    public async Task APlayerNameCannotInjectFormattingIntoABoard()
+    public void APlayerNameCannotInjectFormattingIntoABoard()
     {
         // Names are attacker-controlled, and a board is staff-facing.
-        await _store.WriteAsync(Datasets.Playtime, new Dictionary<string, PlaytimeEntry>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["ev`il"] = new("ev`il", 10, DateTimeOffset.UtcNow),
-        });
+        File.WriteAllText(Path.Combine(_ledgers, "ev`il.txt"), "10");
 
-        Assert.DoesNotContain("ev`il", _boards.BuildPlaytimeBoard()!.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("ev`il", _boards.BuildCashBoard()!.Description, StringComparison.Ordinal);
     }
 
     [Fact]

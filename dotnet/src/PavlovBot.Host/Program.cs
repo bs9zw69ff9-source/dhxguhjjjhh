@@ -168,7 +168,10 @@ public static class Program
         builder.Services.AddSingleton<IBalanceStore>(_ => new LedgerFileStore(features.LedgerDirectory));
         builder.Services.AddSingleton<Ledger>();
         builder.Services.AddSingleton<AutoPost>();
-        builder.Services.AddSingleton<Boards>();
+        builder.Services.AddSingleton(sp => new Boards(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<RconRegistry>(),
+            features.LedgerDirectory));
 
         builder.Services.AddSingleton(sp => new RosterService(
             features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>()));
