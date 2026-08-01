@@ -99,7 +99,18 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
                 .Build();
         }
 
-        if (standing.Ledgers == 0) return null;
+        /* An explicit empty board, NOT null. Null means "skip this cycle and leave what is
+           already posted", which is right for a board whose content is merely stale - and
+           wrong here, because what is already posted is the PLAYTIME board this one
+           replaced. Skipping would leave a playtime leaderboard sitting in the cash channel
+           indefinitely, looking for all the world like it was still being updated. */
+        if (standing.Ledgers == 0)
+        {
+            return Theme.Notice($"{Theme.Money} Richest players",
+                    "No ledgers on file yet. Balances appear here once players have money.")
+                .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+                .Build();
+        }
 
         var top = standing.Top.Count > 0 ? Math.Max(standing.Top[0].Balance, 1) : 1;
         var lines = standing.Top.Select((row, i) =>

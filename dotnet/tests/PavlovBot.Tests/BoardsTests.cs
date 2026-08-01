@@ -41,7 +41,6 @@ public class BoardsTests : IDisposable
     {
         /* Null means "skip this cycle". An empty board would overwrite yesterday's real one
            with "no data" during a restart or a transient read failure. */
-        Assert.Null(_boards.BuildCashBoard());
         Assert.Null(_boards.BuildArrestBoard());
         Assert.Null(_boards.BuildStaffBoard());
         await Task.CompletedTask;
@@ -53,6 +52,19 @@ public class BoardsTests : IDisposable
         /* Saying "nobody is on" because the sweep has not run yet is a lie the board would
            tell every single time the bot restarts. */
         Assert.Null(_boards.BuildPlayerList());
+    }
+
+    [Fact]
+    public void AnEmptyLedgerDirectoryStillPostsABoard()
+    {
+        /* NOT null. Null skips the cycle and leaves whatever is already in the channel -
+           which is the PLAYTIME board this one replaced. Skipping would leave a playtime
+           leaderboard in the cash channel indefinitely, looking like it was still live. */
+        var board = _boards.BuildCashBoard();
+
+        Assert.NotNull(board);
+        Assert.Contains("Richest", board!.Title, StringComparison.Ordinal);
+        Assert.DoesNotContain("Playtime", board.Title, StringComparison.Ordinal);
     }
 
     [Fact]
