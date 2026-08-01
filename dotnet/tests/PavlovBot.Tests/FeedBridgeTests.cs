@@ -1,12 +1,10 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Logs;
-using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Observability;
-using PavlovBot.Host.Rcon;
-using PavlovBot.Rcon;
 using PavlovBot.Host.Storage;
 using Xunit;
 
@@ -16,9 +14,10 @@ namespace PavlovBot.Tests;
 /// The wire between the log reader and the webhooks.
 /// </summary>
 /// <remarks>
-/// It did not exist. IpTrackingService raised Joined and Kill for every parsed line and
-/// nothing subscribed, so the connect, join and kill feeds were complete, tested and never
-/// reached by any code path.
+/// It did not exist. IpTrackingService raised Joined, Confirmed and Kill for every parsed
+/// line and nothing subscribed, so the connect, join and kill feeds were complete, tested
+/// and never reached by any code path. <c>Confirmed</c> stayed unsubscribed a second time
+/// after the others were wired up, which is what took leaves and the connection card down.
 /// </remarks>
 public class FeedBridgeTests : IDisposable
 {
@@ -26,26 +25,25 @@ public class FeedBridgeTests : IDisposable
     private readonly SerializedStore _store;
     private readonly IpTrackingService _tracking;
     private readonly FeedWebhooks _feeds;
-    private readonly RconRegistry _rcon;
+    private readonly ServerLabels _servers = new();
+    private readonly Captured _log = new();
+
+    private const string File = "/home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log";
+    private const string Accept = "[2026.07.31-13.33.00:000]LogNet: NotifyAcceptingConnection accepted from: 203.0.113.5:7777";
+    private const string Login = "[2026.07.31-13.33.22:000]LogNet: Login request: ?Name=Pkdestroy userId: EOS:0002abc";
+    private const string Close = "[2026.07.31-13.33.50:000]LogNet: UChannel::Close: UniqueId: EOS:0002abc RemoteAddr: 203.0.113.5:7777";
 
     public FeedBridgeTests()
     {
         _store = new SerializedStore(new FileKeyValueBackend(_directory), new SystemTextJsonCodec());
         _tracking = new IpTrackingService(_store, new MetricsRegistry(), NullLogger<IpTrackingService>.Instance);
         _feeds = new FeedWebhooks(NullLogger<FeedWebhooks>.Instance, new MetricsRegistry());
-        _rcon = new RconRegistry(
-            new BotOptions
-            {
-                DiscordToken = "t",
-                Servers = [new RconOptions { Name = "server1", Host = "127.0.0.1", Port = 9100, Password = "x" }],
-                Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
-                DataDirectory = _directory,
-            },
-            new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+        _servers.Assign([File]);
     }
 
-    private FeedBridge Build() =>
-        new(_tracking, _feeds, _rcon, NullLogger<FeedBridge>.Instance);
+    private FeedBridge Build() => new(_tracking, _feeds, _servers, _log);
+
+    private Task Feed(string text) => _tracking.IngestAsync(new LogLine(File, text));
 
     [Fact]
     public void ConstructingTheBridgeSubscribesToTheTracker()
@@ -55,8 +53,8 @@ public class FeedBridgeTests : IDisposable
            the class would not have been enough either. */
         Assert.Null(Record.Exception(() => Build()));
 
-        var joined = typeof(IpTrackingService).GetEvent(nameof(IpTrackingService.Joined));
-        Assert.NotNull(joined);
+        Assert.NotNull(typeof(IpTrackingService).GetEvent(nameof(IpTrackingService.Joined)));
+        Assert.NotNull(typeof(IpTrackingService).GetEvent(nameof(IpTrackingService.Confirmed)));
     }
 
     [Fact]
@@ -67,32 +65,38 @@ public class FeedBridgeTests : IDisposable
            surface as a failed log ingest, taking the address tracking down with the feed. */
         Build();
 
-        await _tracking.IngestAsync(new LogLine("Pavlov.log",
-            "[2026.07.31-20.00.00:000][  0]LogNet: Join succeeded: Alice"));
+        await Feed(Accept);
+        await Feed(Login);
+
+        Assert.DoesNotContain("Feed post failed", _log.Lines);
     }
 
     [Fact]
-    public async Task NobodyLeavesOnTheFirstSweep()
+    public async Task ADisconnectLineReachesTheLeavePath()
     {
-        /* On startup everyone already online would otherwise be announced as leaving the
-           moment the second sweep ran - a wall of noise that says nothing true. */
-        var bridge = Build();
+        /* END TO END, and the one that would have caught this: a real log line goes in, and
+           the leave path comes out. The previous version diffed the RCON roster instead, so
+           no log line could ever produce a leave and no test noticed. */
+        Build();
 
-        await bridge.TickRosterAsync();
-        await bridge.TickRosterAsync();
+        await Feed(Accept);
+        await Feed(Login);
+        await Feed(Close);
+
+        Assert.Contains(_log.Lines, l => l.Contains("First disconnect line seen", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task AnEmptyRosterFromAnUnreachableServerIsNotEverybodyLeaving()
+    public async Task ADisconnectWithNoKnownNameIsNotAnnounced()
     {
-        /* An empty server and an unreachable one look identical from here. The roster has
-           never been fetched in this test, so the sweep must decline to conclude anything -
-           announcing that the whole server left because RCON blipped is worse than silence. */
-        var bridge = Build();
+        /* A close line for somebody who was dropped before any login line named them. The
+           feed would read "left Server 1" with nobody in front of it, and the connection
+           card would have no player on it. */
+        Build();
 
-        await bridge.TickRosterAsync();
+        await Feed(Close);
 
-        Assert.Equal(DateTimeOffset.MinValue, _rcon.Roster("server1").TakenAt);
+        Assert.DoesNotContain(_log.Lines, l => l.Contains("Feed post failed", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -109,7 +113,7 @@ public class FeedBridgeTests : IDisposable
     {
         // The point of the split. If an address can reach the public feed, the split is
         // decorative.
-        var line = FeedWebhooks.JoinLine("Alice", DateTimeOffset.UtcNow);
+        var line = FeedWebhooks.JoinLine("Alice", "Server 1", DateTimeOffset.UtcNow);
 
         Assert.Contains("Alice", line, StringComparison.Ordinal);
         Assert.DoesNotContain("ip=", line, StringComparison.Ordinal);
@@ -130,8 +134,8 @@ public class FeedBridgeTests : IDisposable
     public void APlayerNameCannotInjectALineBreakIntoAFeed()
     {
         /* Names are attacker-controlled and these feeds are plain text, so a newline would
-           let a player forge an entire extra log line - "[..] LEAVE somebodyelse". */
-        var line = FeedWebhooks.JoinLine("Alice\n[12:00:00] LEAVE Bob", DateTimeOffset.UtcNow);
+           let a player forge an entire extra log line - "[..] Bob left Server 1". */
+        var line = FeedWebhooks.JoinLine("Alice\n[12:00:00] Bob left Server 1", "Server 1", DateTimeOffset.UtcNow);
 
         Assert.DoesNotContain("\n", line, StringComparison.Ordinal);
     }
@@ -140,5 +144,19 @@ public class FeedBridgeTests : IDisposable
     {
         try { Directory.Delete(_directory, recursive: true); } catch (IOException) { }
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>Keeps what was logged, so "the handler ran" is observable without a webhook.</summary>
+    private sealed class Captured : ILogger<FeedBridge>, IDisposable
+    {
+        public List<string> Lines { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => this;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Lines.Add(formatter(state, exception));
+
+        public void Dispose() { }
     }
 }

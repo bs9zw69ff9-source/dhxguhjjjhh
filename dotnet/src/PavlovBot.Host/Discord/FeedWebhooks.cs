@@ -156,9 +156,24 @@ public sealed class FeedWebhooks : IAsyncDisposable
        Join/Connect split exists to guarantee, and it is not observable through PostAsync -
        which silently does nothing when no webhook is configured. */
 
-    /// <summary>The public line. Deliberately carries nothing but a name and a time.</summary>
-    public static string JoinLine(string name, DateTimeOffset at) =>
-        $"[{Stamp(at)}] JOIN  {Sanitize.Message(name)}";
+    /// <summary>
+    /// The public line. Deliberately carries nothing but a name, a server and a time.
+    /// </summary>
+    /// <remarks>
+    /// The wording is the Node bot's, to the character: "[stamp] Name joined Server 1". This
+    /// is the feed people actually read, and the port had changed it to "[stamp] JOIN name" -
+    /// which searches differently, sorts differently by eye, and dropped which server the
+    /// player was on entirely.
+    /// </remarks>
+    public static string JoinLine(string name, string? server, DateTimeOffset at) =>
+        $"[{Stamp(at)}] {Sanitize.Message(name)} joined {Where(server)}";
+
+    public static string LeaveLine(string name, string? server, DateTimeOffset at) =>
+        $"[{Stamp(at)}] {Sanitize.Message(name)} left {Where(server)}";
+
+    /// <summary>An unknown server is named unspecifically, never guessed at.</summary>
+    private static string Where(string? server) =>
+        string.IsNullOrWhiteSpace(server) ? "the server" : Sanitize.Message(server);
 
     public static string ConnectLine(string name, string? ip, string? location, string? verdict, DateTimeOffset at)
     {
@@ -169,22 +184,15 @@ public sealed class FeedWebhooks : IAsyncDisposable
         return string.Join("  |  ", parts);
     }
 
-    public Task PostJoinAsync(string name, DateTimeOffset at, CancellationToken ct = default) =>
-        PostAsync(Join, JoinLine(name, at), ct);
+    public Task PostJoinAsync(string name, string? server, DateTimeOffset at, CancellationToken ct = default) =>
+        PostAsync(Join, JoinLine(name, server, at), ct);
 
     /// <param name="verdict">The VPN verdict word, when one is known.</param>
     public Task PostConnectAsync(string name, string? ip, string? location, string? verdict, DateTimeOffset at, CancellationToken ct = default) =>
         PostAsync(Connect, ConnectLine(name, ip, location, verdict, at), ct);
 
-    public Task PostLeaveAsync(string name, TimeSpan? session, DateTimeOffset at, CancellationToken ct = default)
-    {
-        var line = $"[{Stamp(at)}] LEAVE {Sanitize.Message(name)}";
-        if (session is { } played) line += $"  |  played {Format(played)}";
-        return PostAsync(Join, line, ct);
-    }
-
-    private static string Format(TimeSpan span) =>
-        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m" : $"{span.Minutes}m";
+    public Task PostLeaveAsync(string name, string? server, DateTimeOffset at, CancellationToken ct = default) =>
+        PostAsync(Join, LeaveLine(name, server, at), ct);
 
     public Task PostKillAsync(string? killer, string killed, string? weapon, DateTimeOffset at, CancellationToken ct = default)
     {

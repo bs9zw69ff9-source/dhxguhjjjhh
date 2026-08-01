@@ -173,6 +173,7 @@ public static class Program
             sp.GetRequiredService<PavlovBot.Host.Verification.VerificationService>());
 
         builder.Services.AddSingleton<FeedWebhooks>();
+        builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
         builder.Services.AddSingleton<FeedBridge>();
         builder.Services.AddSingleton<EvasionResponder>();
         builder.Services.AddSingleton(sp => new MoneyLog(

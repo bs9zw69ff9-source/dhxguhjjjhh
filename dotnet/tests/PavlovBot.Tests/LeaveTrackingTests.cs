@@ -1,109 +1,120 @@
+using PavlovBot.Host.Discord;
 using PavlovBot.Host.Logs;
 using Xunit;
 
 namespace PavlovBot.Tests;
 
 /// <summary>
-/// Leave reporting, which had no test at all because it needed a live RCON connection.
+/// Leave lines, and where they come from.
 /// </summary>
 /// <remarks>
-/// Joins come from the LOG and leaves come from the ROSTER, so the two fail independently:
-/// joins can work perfectly while no leave is ever reported, and nothing in the output
-/// distinguishes "this logic is wrong" from "the roster is empty".
+/// THE DISCONNECT LINE, not the RCON roster. The port derived leaves by diffing the roster
+/// between sweeps, and on a live server that produced nothing at all: an unreachable server
+/// and an empty one are indistinguishable from a roster diff, so the sweep declined to
+/// conclude anything - correctly, and forever.
+///
+/// Pavlov's close line carries the address and the account id together. It is the same line
+/// the address tracking already treats as a CONFIRMED pairing, and the same one the Node bot
+/// has always posted leaves from.
 /// </remarks>
 public class LeaveTrackingTests
 {
-    private static readonly DateTimeOffset Now = new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddYears(56);
 
-    private static Dictionary<string, DateTimeOffset> Online(params (string Player, int MinutesAgo)[] players) =>
-        players.ToDictionary(p => p.Player, p => Now.AddMinutes(-p.MinutesAgo), StringComparer.OrdinalIgnoreCase);
+    // ---- the debounce ----
 
     [Fact]
-    public void SomebodyMissingFromTheRosterHasLeft()
+    public void OneDisconnectIsReportedOnce()
     {
-        var leavers = FeedBridge.Leavers(Online(("Alice", 10), ("Bob", 5)), ["Alice"], primed: true, Now);
+        /* A single disconnect writes several close lines milliseconds apart. Without the
+           debounce, every player leaving posts three or four identical lines and as many
+           connection cards - which is what "the feed is spamming" looks like from outside. */
+        var seen = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
 
-        var left = Assert.Single(leavers);
-        Assert.Equal("Bob", left.Player);
-        Assert.Equal(TimeSpan.FromMinutes(5), left.Session);
+        Assert.True(FeedBridge.Report(seen, "76561198000000001", Now));
+        Assert.False(FeedBridge.Report(seen, "76561198000000001", Now.AddMilliseconds(40)));
+        Assert.False(FeedBridge.Report(seen, "76561198000000001", Now.AddSeconds(19)));
     }
 
     [Fact]
-    public void TheFirstSweepReportsNobody()
+    public void ARejoinAndASecondDropAreBothReported()
     {
-        /* Everyone already online would otherwise be announced as leaving the moment the
-           second sweep ran - a wall of noise that says nothing true. */
-        Assert.Empty(FeedBridge.Leavers(Online(("Alice", 10)), [], primed: false, Now));
+        // The failure mode on the other side: somebody with an unstable connection dropping
+        // repeatedly is exactly who staff want to see, and silence would hide it.
+        var seen = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+
+        Assert.True(FeedBridge.Report(seen, "abc", Now));
+        Assert.True(FeedBridge.Report(seen, "abc", Now.AddSeconds(21)));
     }
 
     [Fact]
-    public void AnEmptyRosterMeansEverybodyLeft()
+    public void TwoPlayersLeavingTogetherAreBothReported()
     {
-        // The last player leaving is the case that matters most, and the one an
-        // "ignore empty rosters" guard would swallow.
-        var leavers = FeedBridge.Leavers(Online(("Alice", 10), ("Bob", 5)), [], primed: true, Now);
+        // The debounce is per ACCOUNT. A round ending drops everybody at once, and one line
+        // for the whole server would be worse than none.
+        var seen = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
 
-        Assert.Equal(2, leavers.Count);
+        Assert.True(FeedBridge.Report(seen, "alice", Now));
+        Assert.True(FeedBridge.Report(seen, "bob", Now));
+    }
+
+    // ---- the wording ----
+
+    [Fact]
+    public void TheLinesReadTheWayTheNodeBotsDid()
+    {
+        /* Character-for-character. This is the feed people read every day, and a line that
+           suddenly reads "[stamp] LEAVE name" searches differently and drops which server
+           the player was on. */
+        Assert.EndsWith("Pkdestroy joined Server 1", FeedWebhooks.JoinLine("Pkdestroy", "Server 1", Now), StringComparison.Ordinal);
+        Assert.EndsWith("Pkdestroy left Server 1", FeedWebhooks.LeaveLine("Pkdestroy", "Server 1", Now), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void NobodyLeavesWhenTheRosterIsUnchanged()
+    public void AnUnknownServerIsNotGuessedAt()
     {
-        Assert.Empty(FeedBridge.Leavers(Online(("Alice", 10)), ["Alice"], primed: true, Now));
+        // "Server 1" for what is actually server 2 sends staff to the wrong place.
+        Assert.EndsWith("joined the server", FeedWebhooks.JoinLine("Alice", null, Now), StringComparison.Ordinal);
+        Assert.EndsWith("left the server", FeedWebhooks.LeaveLine("Alice", "   ", Now), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void CasingDoesNotInventALeave()
+    public void ALeaveLineCannotBeForgedByAPlayerName()
     {
-        /* Pavlov display names are not case-stable between replies. A case-sensitive
-           comparison would report a leave and a join every single sweep. */
-        Assert.Empty(FeedBridge.Leavers(Online(("Alice", 10)), ["alice"], primed: true, Now));
+        /* Names are attacker-controlled and the feed is plain text, so a newline would let a
+           player forge an entire extra line - including somebody else leaving. */
+        var line = FeedWebhooks.LeaveLine("Alice\n[2026-07-31 13:33:53] Admin left Server 1", "Server 1", Now);
+
+        Assert.DoesNotContain("\n", line, StringComparison.Ordinal);
+    }
+
+    // ---- the server numbering ----
+
+    [Fact]
+    public void ServersAreNumberedByDiscoveryOrder()
+    {
+        string[] logs = ["/home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log",
+                         "/home/steam/pavlov-ttt/Pavlov/Saved/Logs/Pavlov.log"];
+
+        Assert.Equal("Server 1", ServerLabels.Label(logs, logs[0]));
+        // Numbered by ORDER, not by folder name - the second install is rarely "…server2".
+        Assert.Equal("Server 2", ServerLabels.Label(logs, logs[1]));
     }
 
     [Fact]
-    public void ANewPlayerIsNotALeave()
+    public void AnUnrecognisedLogIsNotNumbered()
     {
-        Assert.Empty(FeedBridge.Leavers(Online(("Alice", 10)), ["Alice", "Carol"], primed: true, Now));
+        Assert.Equal("the server", ServerLabels.Label([], "/somewhere/else/Pavlov.log"));
     }
 
     [Fact]
-    public void SessionLengthSurvivesAcrossSweeps()
+    public void TheLabelsAreLiveOnceAssigned()
     {
-        /* The first-seen time must be CARRIED, not reset each sweep - otherwise every
-           reported session is exactly one poll interval long. */
-        var previous = Online(("Alice", 30));
-        var next = FeedBridge.NextRoster(previous, ["Alice"], Now);
+        var labels = new ServerLabels();
+        Assert.Equal("the server", labels.Of("/a/Pavlov.log"));
 
-        Assert.Equal(previous["Alice"], next["Alice"]);
+        labels.Assign(["/a/Pavlov.log", "/b/Pavlov.log"]);
 
-        var leavers = FeedBridge.Leavers(next, [], primed: true, Now);
-        Assert.Equal(TimeSpan.FromMinutes(30), Assert.Single(leavers).Session);
-    }
-
-    [Fact]
-    public void ANewcomerStartsTheirSessionNow()
-    {
-        var next = FeedBridge.NextRoster(Online(), ["Carol"], Now);
-
-        Assert.Equal(Now, next["Carol"]);
-    }
-
-    [Fact]
-    public void SomebodyWhoLeavesIsDroppedFromTheRoster()
-    {
-        // Otherwise they would be reported as leaving again on every subsequent sweep.
-        var next = FeedBridge.NextRoster(Online(("Alice", 10), ("Bob", 5)), ["Alice"], Now);
-
-        Assert.False(next.ContainsKey("Bob"));
-        Assert.Single(next);
-    }
-
-    [Fact]
-    public void RejoiningAfterALeaveRestartsTheSession()
-    {
-        var afterLeave = FeedBridge.NextRoster(Online(("Alice", 30)), [], Now);
-        var afterRejoin = FeedBridge.NextRoster(afterLeave, ["Alice"], Now.AddMinutes(5));
-
-        Assert.Equal(Now.AddMinutes(5), afterRejoin["Alice"]);
+        Assert.Equal("Server 2", labels.Of("/b/Pavlov.log"));
     }
 }

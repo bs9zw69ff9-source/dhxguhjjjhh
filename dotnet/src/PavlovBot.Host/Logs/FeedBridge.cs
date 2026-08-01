@@ -1,7 +1,6 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Host.Discord;
-using PavlovBot.Host.Rcon;
-using PavlovBot.Core.Evasion;
 using PavlovBot.Core.Vpn;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Vpn;
@@ -13,35 +12,52 @@ namespace PavlovBot.Host.Logs;
 /// </summary>
 /// <remarks>
 /// This is the wire that was missing. <see cref="IpTrackingService"/> raised
-/// <c>Joined</c> and <c>Kill</c> for every line it parsed, and nothing subscribed - so the
-/// connection feed, the join log and the kill log were complete, tested, and never called
-/// by anything. The bot looked healthy: the log tailer ran, the registry filled up, and the
-/// three webhooks sat silent because no code path reached them.
+/// <c>Joined</c>, <c>Confirmed</c> and <c>Kill</c> for every line it parsed, and nothing
+/// subscribed - so the connection feed, the join log and the kill log were complete, tested,
+/// and never called by anything.
 ///
-/// LEAVES COME FROM THE ROSTER, not the log. Pavlov's log has no disconnect line this bot
-/// can rely on, so a player who vanishes between two RCON sweeps is a leave. That makes
-/// leave times accurate only to the sweep interval, which is the honest limit of what the
-/// server tells us.
+/// LEAVES COME FROM THE DISCONNECT LINE. An earlier version of this class derived them by
+/// diffing the RCON roster between sweeps, on the belief that Pavlov's log had no usable
+/// disconnect line. It does: the close line carries the address and the account id together,
+/// which is the same line <see cref="IpTrackingService.Confirmed"/> is raised for and the
+/// same one the Node bot has always used. The roster diff produced no leaves at all on a
+/// live server - an empty or stale roster is indistinguishable from an empty one, so the
+/// sweep correctly declined to conclude anything, forever.
+///
+/// THE CONNECTION CARD IS POSTED FROM THE SAME LINE, and that is the point of it. On the
+/// login line the address is a timing correlation with a nearby log entry; on the close line
+/// the address and the account are printed together and the pairing is certain. A card is
+/// worth reading precisely because the address on it is not a guess.
 /// </remarks>
 public sealed class FeedBridge
 {
     private readonly FeedWebhooks _feeds;
-    private readonly RconRegistry _rcon;
     private readonly VpnScreeningService? _vpn;
     private readonly IpTrackingService _tracking;
     private readonly IMasterNames? _masters;
+    private readonly ServerLabels _servers;
     private readonly ILogger<FeedBridge> _logger;
 
-    /// <summary>Who was online at the last sweep, and when we first saw them.</summary>
-    private Dictionary<string, DateTimeOffset> _online = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// One report per account per disconnect.
+    /// </summary>
+    /// <remarks>
+    /// A single disconnect writes SEVERAL close lines milliseconds apart, so without this
+    /// every player leaving would produce three or four identical leave lines and as many
+    /// connection cards. Twenty seconds is the Node bot's window and is comfortably longer
+    /// than the burst, while still letting somebody who rejoins and drops again be reported.
+    /// </remarks>
+    private static readonly TimeSpan ConfirmDebounce = TimeSpan.FromSeconds(20);
 
-    /// <summary>False until the first sweep has completed.</summary>
-    private bool _primed;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _reported = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Logged once, so "no leaves" can be told apart from "no disconnect lines".</summary>
+    private bool _sawDisconnect;
 
     public FeedBridge(
         IpTrackingService tracking,
         FeedWebhooks feeds,
-        RconRegistry rcon,
+        ServerLabels servers,
         ILogger<FeedBridge> logger,
         VpnScreeningService? vpn = null,
         IMasterNames? masters = null)
@@ -50,73 +66,104 @@ public sealed class FeedBridge
         _tracking = tracking;
         _masters = masters;
         _feeds = feeds;
-        _rcon = rcon;
+        _servers = servers;
         _vpn = vpn;
         _logger = logger;
 
         tracking.Joined += OnJoinedAsync;
+        tracking.Confirmed += OnConfirmedAsync;
         tracking.Kill += OnKillAsync;
     }
 
-    private async Task OnJoinedAsync(PlayerJoined join)
-    {
-        var name = join.Name ?? join.AccountId;
+    /// <summary>The public join line. No address, no account id - safe in a public channel.</summary>
+    private Task OnJoinedAsync(PlayerJoined join) =>
+        Safe(() => _feeds.PostJoinAsync(join.Name ?? join.AccountId, _servers.Of(join.File), join.At));
 
-        /* The PUBLIC line first, and unconditionally. It carries no address, so it must not
-           be delayed by - or lost to - anything the address lookup does. */
-        await Safe(() => _feeds.PostJoinAsync(name, join.At)).ConfigureAwait(false);
+    /// <summary>
+    /// A disconnect: the public leave line, and the connection card with the certain address.
+    /// </summary>
+    private async Task OnConfirmedAsync(PlayerConfirmed confirmed)
+    {
+        if (!_sawDisconnect)
+        {
+            _sawDisconnect = true;
+            _logger.LogInformation(
+                "First disconnect line seen - leave lines and the connection feed are live");
+        }
+
+        /* An account with no recorded name is a partial connection: somebody who was
+           dropped before a login line named them. "unknown left Server 1" is noise, and the
+           connection card would have nobody on it. The Node bot skips these too. */
+        if (confirmed.Name is not { Length: > 0 } name) return;
+
+        if (!ShouldReport(confirmed.AccountId, confirmed.At)) return;
+
+        var server = _servers.Of(confirmed.File);
+        await Safe(() => _feeds.PostLeaveAsync(name, server, confirmed.At)).ConfigureAwait(false);
 
         if (!_feeds.IsConfigured(FeedWebhooks.Connect)) return;
 
         VpnRecord? screening = null;
 
-        /* Screening is cached per address, so this is one lookup the first time an address
-           is seen and free afterwards. A guessed address is NOT screened: acting on a
-           correlation that might belong to the player who connected a second earlier is how
-           the wrong person gets a VPN verdict attached to their name. */
-        if (_vpn is not null && join.Confident && join.Ip is { Length: > 0 } address)
+        // Cached per address, so this is one lookup the first time an address is seen and
+        // free afterwards. The address is certain here, so there is nothing to gate on.
+        if (_vpn is not null)
         {
             try
             {
-                screening = await _vpn.CheckAsync(address).ConfigureAwait(false);
+                screening = await _vpn.CheckAsync(confirmed.Ip).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 // The address is the point of this feed; the verdict is decoration.
-                _logger.LogDebug(ex, "Could not screen {Address} for the connect feed", address);
+                _logger.LogDebug(ex, "Could not screen {Address} for the connect feed", confirmed.Ip);
             }
         }
 
-        var account = _tracking.Account(join.AccountId);
         var flags = _tracking.LoadFlags();
-        var flagged = (join.Ip is { Length: > 0 } seen && flags.Ips.Contains(seen)) ||
-                      flags.Ids.Contains(join.AccountId) ||
-                      (join.Name is { Length: > 0 } who && flags.Names.Contains(who));
+        var flagged = flags.Ips.Contains(confirmed.Ip) ||
+                      flags.Ids.Contains(confirmed.AccountId) ||
+                      flags.Names.Contains(name);
 
         var card = ConnectCard.Build(
-            name, join.AccountId, join.Ip, join.Confident,
-            server: ServerLabel(join.File),
-            account: account,
-            alts: _tracking.AltsOf(join.AccountId),
+            name, confirmed.AccountId, confirmed.Ip, confidentIp: true,
+            server: server,
+            account: _tracking.Account(confirmed.AccountId),
+            alts: _tracking.AltsOf(confirmed.AccountId),
             vpn: screening,
             flagged: flagged,
             master: _masters?.IsMaster(name) ?? false,
-            at: join.At);
+            at: confirmed.At);
 
         await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
     }
 
-    /// <summary>Which server a log path belongs to, for the card's Server field.</summary>
-    private string ServerLabel(string file)
-    {
-        /* Matched against the configured RCON servers by name appearing in the path, which
-           is how a multi-server install lays its logs out. Falls back to the file name -
-           wrong-but-visible beats confidently naming the wrong server. */
-        foreach (var server in _rcon.Servers)
-            if (file.Contains(server, StringComparison.OrdinalIgnoreCase))
-                return server;
+    private bool ShouldReport(string accountId, DateTimeOffset at) => Report(_reported, accountId, at);
 
-        return _rcon.Servers.Count == 1 ? _rcon.Servers.First() : Path.GetFileName(file);
+    /// <summary>
+    /// False while this account is still inside its debounce window; true otherwise, and
+    /// then the window starts again.
+    /// </summary>
+    /// <remarks>
+    /// PURE, and extracted for one reason: a debounce that is slightly wrong is invisible.
+    /// Too tight and every disconnect posts four identical lines; too loose and a player who
+    /// rejoins and drops again is silently never reported. Neither shows up in a code read.
+    /// </remarks>
+    internal static bool Report(IDictionary<string, DateTimeOffset> reported, string accountId, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(reported);
+
+        if (reported.TryGetValue(accountId, out var last) && at - last < ConfirmDebounce) return false;
+        reported[accountId] = at;
+
+        // Bounded: without this, a long-running bot accumulates an entry per account seen.
+        if (reported.Count > 1000)
+        {
+            foreach (var stale in reported.Where(e => at - e.Value > ConfirmDebounce).Select(e => e.Key).ToList())
+                reported.Remove(stale);
+        }
+
+        return true;
     }
 
     private Task OnKillAsync(PavlovBot.Core.Logs.KillEvent kill)
@@ -127,103 +174,6 @@ public sealed class FeedBridge
 
         return Safe(() => _feeds.PostKillAsync(kill.Killer, kill.Killed, kill.KilledBy, DateTimeOffset.UtcNow));
     }
-
-    /// <summary>
-    /// Emit LEAVE lines for anyone who has dropped off the roster since the last sweep.
-    /// </summary>
-    /// <remarks>
-    /// THE FIRST SWEEP EMITS NOTHING. On startup everyone already online would otherwise
-    /// look like a join, and the sweep after a restart would announce a leave for every one
-    /// of them - a wall of noise that says nothing true.
-    /// </remarks>
-    /// <summary>
-    /// Who left, given the previous roster and the current one.
-    /// </summary>
-    /// <remarks>
-    /// PURE, and extracted for one reason: the rest of this class needs a live RCON
-    /// connection, so the leave logic had no test at all - which is exactly the kind of
-    /// place a bug sits unnoticed while joins keep working and nobody can say why.
-    /// </remarks>
-    /// <param name="primed">False on the first sweep, when nothing has left yet.</param>
-    internal static IReadOnlyList<(string Player, TimeSpan Session)> Leavers(
-        IReadOnlyDictionary<string, DateTimeOffset> previous,
-        IReadOnlyCollection<string> current,
-        bool primed,
-        DateTimeOffset now)
-    {
-        ArgumentNullException.ThrowIfNull(previous);
-        ArgumentNullException.ThrowIfNull(current);
-
-        if (!primed) return [];
-
-        var online = current.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        return previous
-            .Where(entry => !online.Contains(entry.Key))
-            .Select(entry => (entry.Key, now - entry.Value))
-            .ToList();
-    }
-
-    /// <summary>Carry forward each player's first-seen time, so a session length is real.</summary>
-    internal static Dictionary<string, DateTimeOffset> NextRoster(
-        IReadOnlyDictionary<string, DateTimeOffset> previous,
-        IReadOnlyCollection<string> current,
-        DateTimeOffset now)
-    {
-        ArgumentNullException.ThrowIfNull(previous);
-        ArgumentNullException.ThrowIfNull(current);
-
-        var next = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
-        foreach (var player in current)
-            next[player] = previous.TryGetValue(player, out var since) ? since : now;
-
-        return next;
-    }
-
-    public async Task TickRosterAsync(CancellationToken ct = default)
-    {
-        var now = DateTimeOffset.UtcNow;
-        var current = _rcon.AllOnlinePlayers();
-
-        /* An empty roster is ambiguous: an empty server and an unreachable one look
-           identical from here. Announcing that everybody left because RCON blipped is worse
-           than saying nothing, so an empty result is only believed when at least one
-           server's roster was actually refreshed recently. A cache that succeeded once an
-           hour ago is not evidence the server is up now. */
-        if (current.Count == 0 && !RosterIsFresh())
-        {
-            _logger.LogDebug("Roster sweep skipped - no recent roster from any server");
-            return;
-        }
-
-        var leavers = Leavers(_online, current, _primed, now);
-
-        /* Logged at INFORMATION on the first sweep and whenever anybody leaves. "Leaves do
-           not work" is otherwise indistinguishable from "the roster is empty", and the two
-           have completely different causes - one is this code, the other is RCON. */
-        if (!_primed)
-        {
-            _logger.LogInformation(
-                "Leave tracking primed with {Count} player(s) online. Leaves are reported from the " +
-                "roster, so an empty roster here means none will ever be reported", current.Count);
-        }
-
-        foreach (var (player, session) in leavers)
-            await Safe(() => _feeds.PostLeaveAsync(player, session, now)).ConfigureAwait(false);
-
-        if (leavers.Count > 0)
-            _logger.LogDebug("Reported {Count} leave(s)", leavers.Count);
-
-        _online = NextRoster(_online, current, now);
-        _primed = true;
-        _ = ct;
-    }
-
-    /// <summary>Generous - it only has to rule out a roster that has gone stale entirely.</summary>
-    private static readonly TimeSpan RosterFreshness = TimeSpan.FromMinutes(5);
-
-    private bool RosterIsFresh() =>
-        _rcon.Servers.Any(s => DateTimeOffset.UtcNow - _rcon.Roster(s).TakenAt < RosterFreshness);
 
     /// <summary>A feed failure must never propagate into the thing being logged.</summary>
     private async Task Safe(Func<Task> post)

@@ -98,6 +98,51 @@ public class IpTrackingServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AMasterStillAppearsInTheJoinLog()
+    {
+        /* Untracked means UNRECORDED, not invisible. The owner is usually the one testing
+           the join log, and a log that silently omits them reads as a dead feed - while the
+           line itself still carries no address, which is the whole point of the exemption. */
+        var store = new SerializedStore(new FileKeyValueBackend(_directory), new SystemTextJsonCodec());
+        var service = new IpTrackingService(store, new MetricsRegistry(), NullLogger<IpTrackingService>.Instance,
+            masters: new OnlyMaster("Owner"));
+        service.Untracked.Add("Owner");
+
+        PlayerJoined? seen = null;
+        service.Joined += join => { seen = join; return Task.CompletedTask; };
+
+        await service.IngestAsync(new LogLine(File, Accept));
+        await service.IngestAsync(new LogLine(File,
+            "[2026.07.15-12.00.01:000]LogNet: Login request: ?Name=Owner userId: EOS:0009owner"));
+
+        Assert.NotNull(seen);
+        Assert.Equal("Owner", seen!.Name);
+        Assert.Null(seen.Ip);                          // no address, ever
+        Assert.Null(service.Account("0009owner"));     // and still nothing recorded
+    }
+
+    [Fact]
+    public async Task AnIgnoredNameThatIsNotAMasterStaysSilent()
+    {
+        // The ignore list has other uses - a bot account, a server-side observer. Those
+        // asked to be invisible and must stay that way.
+        _service.Untracked.Add("Watcher");
+
+        var raised = false;
+        _service.Joined += _ => { raised = true; return Task.CompletedTask; };
+
+        await Feed("[2026.07.15-12.00.01:000]LogNet: Login request: ?Name=Watcher userId: EOS:0009watch");
+
+        Assert.False(raised);
+    }
+
+    private sealed class OnlyMaster(string name) : PavlovBot.Host.Moderation.IMasterNames
+    {
+        public bool IsMaster(string who) => string.Equals(who, name, StringComparison.OrdinalIgnoreCase);
+        public bool IsExempt(string who) => IsMaster(who);
+    }
+
+    [Fact]
     public async Task APlaceholderIdIsNotTracked()
     {
         await Feed("[2026.07.15-12.00.01:000]LogNet: Login request: ?Name=Alice userId: INVALID");

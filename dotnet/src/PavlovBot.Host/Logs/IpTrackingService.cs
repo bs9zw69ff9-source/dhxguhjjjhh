@@ -47,6 +47,7 @@ public sealed class IpTrackingService
     private readonly MetricsRegistry _metrics;
     private readonly ILogger<IpTrackingService> _logger;
     private readonly TimeProvider _time;
+    private readonly PavlovBot.Host.Moderation.IMasterNames? _masters;
 
     /// <summary>After a ban, how long a disconnect still counts as confirming that account.</summary>
     private static readonly TimeSpan PendingFlagWindow = TimeSpan.FromMinutes(5);
@@ -64,8 +65,10 @@ public sealed class IpTrackingService
         MetricsRegistry metrics,
         ILogger<IpTrackingService> logger,
         JoinCorrelator? correlator = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        PavlovBot.Host.Moderation.IMasterNames? masters = null)
     {
+        _masters = masters;
         _store = store;
         _metrics = metrics;
         _logger = logger;
@@ -219,7 +222,18 @@ public sealed class IpTrackingService
         // A pre-authentication line identifies nobody; correlating it would attribute a
         // real address to a phantom account.
         if (placeholder) return;
-        if (login.Name is not null && Untracked.Contains(login.Name)) return;
+
+        if (login.Name is { } named && Untracked.Contains(named))
+        {
+            /* An ignore-listed name is not recorded - no address, no alt trail, which is
+               the whole point of the exemption. A MASTER still gets the public join LINE,
+               because a join log that silently omits the owner reads as a broken log to the
+               one person most likely to be watching it. It carries no address either way. */
+            if (_masters?.IsMaster(named) == true && Joined is { } forMaster)
+                await forMaster(new PlayerJoined(file, login.Id, named, null, false, at)).ConfigureAwait(false);
+
+            return;
+        }
 
         await RecordAsync(login.Id, login.Name, guessedIp: guess.Confident ? guess.Ip : null, confirmedIp: null, at, ct)
             .ConfigureAwait(false);

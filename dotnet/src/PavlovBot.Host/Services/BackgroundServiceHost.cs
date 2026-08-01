@@ -43,7 +43,14 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly ModsaveBanlist _modsave;
     private readonly RosterService _rosters;
     private readonly PavlovBot.Core.Data.SerializedStore _store;
+    /// <summary>
+    /// Held only so the bridge is CONSTRUCTED. It does its work entirely through the events
+    /// it subscribes to in its constructor, and a service that is registered but never
+    /// resolved is never built - which is how the feeds were silent for weeks.
+    /// </summary>
     private readonly PavlovBot.Host.Logs.FeedBridge _bridge;
+
+    private readonly PavlovBot.Host.Logs.ServerLabels _servers;
     private readonly PavlovBot.Host.Verification.VerificationService _verification;
     private readonly PavlovBot.Host.Discord.Commands.MenuPanel _menuPanel;
 
@@ -66,6 +73,7 @@ public sealed class BackgroundServiceHost : IHostedService
         RosterService rosters,
         PavlovBot.Core.Data.SerializedStore store,
         PavlovBot.Host.Logs.FeedBridge bridge,
+        PavlovBot.Host.Logs.ServerLabels servers,
         PavlovBot.Host.Verification.VerificationService verification,
         PavlovBot.Host.Discord.Commands.MenuPanel menuPanel,
         ILogger<BackgroundServiceHost> logger)
@@ -88,6 +96,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _rosters = rosters;
         _store = store;
         _bridge = bridge;
+        _servers = servers;
         _verification = verification;
         _menuPanel = menuPanel;
         _logger = logger;
@@ -107,16 +116,7 @@ public sealed class BackgroundServiceHost : IHostedService
         {
             Name = "player-cache",
             Interval = _options.PlayerCacheInterval,
-            Tick = async ct =>
-            {
-                await _rcon.RefreshRostersAsync(ct).ConfigureAwait(false);
-
-                /* Leave lines come from the roster because Pavlov's log has no disconnect
-                   line to rely on. Driven from HERE rather than its own timer so the diff
-                   is always against the roster that was just fetched - two timers would
-                   race and report a leave the moment a refresh landed mid-diff. */
-                await _bridge.TickRosterAsync(ct).ConfigureAwait(false);
-            },
+            Tick = ct => _rcon.RefreshRostersAsync(ct),
             // Depends on rcon-health so the ordering in /health reads the way the system
             // actually layers, and so a future RCON-owning service can be stopped last.
             DependsOn = ["rcon-health"],
@@ -147,6 +147,11 @@ public sealed class BackgroundServiceHost : IHostedService
            1.5 seconds, because this is what catches a flagged join. A slower poll means a
            ban evader plays for that long before anything notices. */
         var logPaths = LogTailer.Discover(_features.LogPaths, _logger);
+
+        /* Named BEFORE the tail starts, so the very first join line already says "Server 1"
+           rather than "the server" - the discovery order IS the numbering. */
+        _servers.Assign(logPaths);
+
         if (logPaths.Count > 0)
         {
             _registry.Register(new ServiceDefinition
