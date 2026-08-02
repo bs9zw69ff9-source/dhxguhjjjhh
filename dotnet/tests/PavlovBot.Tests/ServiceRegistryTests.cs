@@ -86,7 +86,12 @@ public class ServiceRegistryTests
         var status = registry.Status().Single();
         Assert.Equal(ServiceState.Stopped, status.State);
         Assert.True(status.Failures >= 3);
-        Assert.Equal("nope", status.LastError);
+
+        /* The TYPE is kept alongside the message now. A bare "Object reference not set to an
+           instance of an object" identifies nothing, and it is exactly what a null deref in
+           a tick produces. */
+        Assert.Equal("InvalidOperationException: nope", status.LastError);
+        Assert.NotEmpty(status.Errors);
     }
 
     [Fact]

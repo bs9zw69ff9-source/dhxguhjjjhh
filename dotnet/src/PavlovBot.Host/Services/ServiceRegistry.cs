@@ -32,6 +32,11 @@ public sealed record ServiceDefinition
     public Func<CancellationToken, Task<HealthResult>>? HealthCheck { get; init; }
 }
 
+/// <param name="At">When it happened, so an old failure is not read as a current one.</param>
+/// <param name="Message">What actually went wrong.</param>
+public sealed record ServiceFailure(DateTimeOffset At, string Message);
+
+/// <param name="RecentErrors">The last few failures, newest first. Empty when there are none.</param>
 public sealed record ServiceStatus(
     string Name,
     ServiceState State,
@@ -43,7 +48,11 @@ public sealed record ServiceStatus(
     long Overruns,
     string? LastError,
     DateTimeOffset? LastTickAt,
-    double? LastDurationMs);
+    double? LastDurationMs,
+    IReadOnlyList<ServiceFailure>? RecentErrors = null)
+{
+    public IReadOnlyList<ServiceFailure> Errors => RecentErrors ?? [];
+}
 
 /// <summary>
 /// Lifecycle and supervision for the bot's recurring work.
@@ -79,6 +88,21 @@ public sealed class ServiceRegistry : IAsyncDisposable
         public int ConsecutiveFailures;
         public long Overruns;
         public string? LastError;
+
+        /// <summary>
+        /// The last few failures, newest last. Bounded, and bounded deliberately small.
+        /// </summary>
+        /// <remarks>
+        /// A COUNT IS NOT A DIAGNOSIS. "12 failed" says something is wrong and nothing about
+        /// what, and the message was thrown away the moment the next failure overwrote
+        /// LastError - so a service that failed twelve times for two different reasons
+        /// looked identical to one that failed twelve times for one.
+        ///
+        /// Five, not fifty: this is read in a Discord embed with a hard character limit, and
+        /// the useful question is "what is going wrong now", not "what has ever gone wrong".
+        /// </remarks>
+        public readonly Queue<ServiceFailure> Recent = new();
+
         public DateTimeOffset? LastTickAt;
         public double? LastDurationMs;
         public CancellationTokenSource? Stopping;
@@ -181,7 +205,7 @@ public sealed class ServiceRegistry : IAsyncDisposable
         catch (Exception ex)
         {
             record.State = ServiceState.Failed;
-            record.LastError = ex.Message;
+            Remember(record, ex);
             _metrics.Gauge("service_up", 0, MetricLabels.Of("service", name));
 
             /* A non-critical service that fails to start must not abort the rest of
@@ -190,6 +214,25 @@ public sealed class ServiceRegistry : IAsyncDisposable
             _logger.LogWarning(ex, "Service {Name} failed to start (non-critical, continuing)", name);
         }
     }
+
+    /// <summary>Keep at most <see cref="MaxRecentErrors"/> failures, newest last.</summary>
+    private static void Remember(Record record, Exception ex)
+    {
+        /* The TYPE as well as the message. "Object reference not set to an instance of an
+           object" identifies nothing on its own, and it is exactly the message a null deref
+           in a tick produces. */
+        var message = ex.Message.Length > 0 ? $"{ex.GetType().Name}: {ex.Message}" : ex.GetType().Name;
+
+        record.LastError = message;
+
+        lock (record.Recent)
+        {
+            record.Recent.Enqueue(new ServiceFailure(DateTimeOffset.UtcNow, message));
+            while (record.Recent.Count > MaxRecentErrors) record.Recent.Dequeue();
+        }
+    }
+
+    private const int MaxRecentErrors = 5;
 
     private async Task LoopAsync(Record record, TimeSpan interval, CancellationToken ct)
     {
@@ -226,7 +269,7 @@ public sealed class ServiceRegistry : IAsyncDisposable
         {
             record.Failures++;
             record.ConsecutiveFailures++;
-            record.LastError = ex.Message;
+            Remember(record, ex);
             _metrics.Increment("service_ticks_total", MetricLabels.Of("service", name, "outcome", "failure"));
             _logger.LogWarning(ex, "Service {Name} tick failed", name);
         }
@@ -311,7 +354,14 @@ public sealed class ServiceRegistry : IAsyncDisposable
             r.Definition.Name, r.State,
             r.StartedAt is { } at ? DateTimeOffset.UtcNow - at : TimeSpan.Zero,
             r.Definition.Interval, r.Ticks, r.Failures, r.ConsecutiveFailures, r.Overruns,
-            r.LastError, r.LastTickAt, r.LastDurationMs)).ToList();
+            r.LastError, r.LastTickAt, r.LastDurationMs,
+            RecentErrors: Snapshot(r))).ToList();
+
+    /// <summary>Newest first, which is the order somebody reads them in.</summary>
+    private static IReadOnlyList<ServiceFailure> Snapshot(Record record)
+    {
+        lock (record.Recent) return [.. record.Recent.Reverse()];
+    }
 
     /// <summary>Roll every service into one verdict, honouring per-service checks.</summary>
     public async Task<HealthResult> HealthAsync(CancellationToken ct = default)

@@ -176,7 +176,64 @@ public sealed class HealthCommand(HealthRegistry health, ServiceRegistry service
             embed.AddField($"Services ({services.Running}/{services.Count})", string.Join("\n", lines));
         }
 
+        /* WHAT went wrong, not just how many times. A count says something is broken and
+           nothing about what, and every one of these has been debugged by reading the code
+           instead - which is not a thing an owner can do at 2am. */
+        if (Errors(status) is { Length: > 0 } errors) embed.AddField("Recent errors", errors);
+
         await Reply(command, embed).ConfigureAwait(false);
+    }
+
+    /// <summary>Discord caps an embed field at 1024 characters.</summary>
+    private const int MaxFieldLength = 1024;
+
+    /// <summary>
+    /// The recent failures across every service, newest first.
+    /// </summary>
+    /// <remarks>
+    /// Interleaved by TIME rather than grouped by service, because the question being asked
+    /// is "what just went wrong" - and when two services fail together, seeing them next to
+    /// each other is usually the whole diagnosis.
+    /// </remarks>
+    internal static string Errors(IReadOnlyList<ServiceStatus> status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+
+        var failures = status
+            .SelectMany(s => s.Errors.Select(e => (s.Name, e.At, e.Message)))
+            .OrderByDescending(e => e.At)
+            .ToList();
+
+        if (failures.Count == 0) return "";
+
+        var body = new System.Text.StringBuilder();
+        var shown = 0;
+
+        foreach (var (name, at, message) in failures)
+        {
+            // Relative, because "how long ago" is what says whether it is still happening.
+            var line = $"<t:{at.ToUnixTimeSeconds()}:R> `{name}` — {Trim(message, 160)}\n";
+
+            /* Stop BEFORE overflowing rather than truncating mid-line: Discord rejects an
+               over-long field outright, which would lose the whole health reply - the exact
+               failure mode this field exists to diagnose. */
+            if (body.Length + line.Length > MaxFieldLength - 40) break;
+
+            body.Append(line);
+            shown++;
+        }
+
+        if (shown < failures.Count) body.Append($"*and {failures.Count - shown} more*");
+
+        return body.ToString();
+    }
+
+    private static string Trim(string text, int max)
+    {
+        // Newlines would break the one-line-per-failure layout, and the first line of a
+        // stack trace is the only part that fits anyway.
+        var flat = text.ReplaceLineEndings(" ").Trim();
+        return flat.Length <= max ? flat : flat[..max] + "…";
     }
 
     private static string Glyph(HealthStatus status) => status switch
