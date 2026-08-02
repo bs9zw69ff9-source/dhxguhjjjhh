@@ -36,6 +36,7 @@ public sealed class FeedBridge
     private readonly IpTrackingService _tracking;
     private readonly IMasterNames? _masters;
     private readonly VpnResponder? _vpnBans;
+    private readonly PavlovBot.Host.Economy.LedgerSync? _ledgers;
     private readonly ServerLabels _servers;
     private readonly ILogger<FeedBridge> _logger;
 
@@ -76,12 +77,14 @@ public sealed class FeedBridge
         ILogger<FeedBridge> logger,
         VpnScreeningService? vpn = null,
         IMasterNames? masters = null,
-        VpnResponder? vpnBans = null)
+        VpnResponder? vpnBans = null,
+        PavlovBot.Host.Economy.LedgerSync? ledgers = null)
     {
         ArgumentNullException.ThrowIfNull(tracking);
         _tracking = tracking;
         _masters = masters;
         _vpnBans = vpnBans;
+        _ledgers = ledgers;
         _feeds = feeds;
         _servers = servers;
         _vpn = vpn;
@@ -96,6 +99,11 @@ public sealed class FeedBridge
     private Task OnJoinedAsync(PlayerJoined join)
     {
         var name = join.Name ?? join.AccountId;
+
+        /* BEFORE the feed line, and before this server reads the file: pull the newest
+           ledger onto every install so money carried over from another server is already
+           there when they spawn in. */
+        SyncLedger(name);
 
         // One line per arrival, not one per login line. See _announced.
         if (!Report(_announced, name, join.At)) return Task.CompletedTask;
@@ -135,6 +143,10 @@ public sealed class FeedBridge
         }
 
         if (!ShouldReport(confirmed.AccountId, confirmed.At)) return;
+
+        /* The economy mod saves a balance AT DISCONNECT, so this is the moment the file
+           just changed - propagate it before they turn up on another server. */
+        SyncLedger(name);
 
         var server = _servers.Of(confirmed.File);
         await Safe(() => _feeds.PostLeaveAsync(name, server, confirmed.At)).ConfigureAwait(false);
@@ -181,6 +193,15 @@ public sealed class FeedBridge
            Posted first deliberately: if the ban throws, staff still get the evidence. */
         if (_vpnBans is not null && screening is not null)
             await Safe(() => _vpnBans.RespondAsync(name, screening)).ConfigureAwait(false);
+    }
+
+    /// <summary>Never lets a sync failure interrupt the log line it rode in on.</summary>
+    private void SyncLedger(string player)
+    {
+        if (_ledgers is null) return;
+
+        try { _ledgers.Sync(player); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Ledger sync failed for {Player}", player); }
     }
 
     private bool ShouldReport(string accountId, DateTimeOffset at) => Report(_reported, accountId, at);

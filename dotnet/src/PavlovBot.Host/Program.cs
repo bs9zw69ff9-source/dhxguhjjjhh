@@ -106,6 +106,11 @@ public static class Program
         builder.Services.AddSingleton(sp => new ModsaveBanlist(
             features.ModsaveBanlistPath, sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<ILogger<ModsaveBanlist>>()));
+        /* Pavlov's own whitelist, across every install. Resolved ONCE at startup and logged:
+           a write that reaches two installs out of three is the failure worth seeing early,
+           and it is invisible if nothing ever says how many were found. */
+        var installs = PavlovInstalls.Discover(
+            builder.Configuration["PAVLOV_BASES"], builder.Configuration["PAVLOV_BASE_1"]);
         builder.Services.AddSingleton<IpTrackingService>();
         builder.Services.AddSingleton(sp => new LogTailer(sp.GetRequiredService<ILoggerFactory>().CreateLogger<LogTailer>()));
 
@@ -174,6 +179,12 @@ public static class Program
 
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
+        /* Cross-install ledger sync, which was never ported: without it a player's money
+           stays on whichever server they last played and every other install is stale. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.LedgerSync(
+            installs, features.LedgerDirectory,
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Economy.LedgerSync>>(),
+            enabled: !string.Equals(builder.Configuration["MODSAVE_SYNC"], "off", StringComparison.OrdinalIgnoreCase)));
         builder.Services.AddSingleton<FeedBridge>();
         builder.Services.AddSingleton<EvasionResponder>();
         /* Acts on a VPN verdict. Without it the screening ran on every connection, decided
@@ -258,11 +269,6 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand>(sp =>
             new PlayersCommand(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<Paged>()));
 
-        /* Pavlov's own whitelist, across every install. Resolved ONCE at startup and logged:
-           a write that reaches two installs out of three is the failure worth seeing early,
-           and it is invisible if nothing ever says how many were found. */
-        var installs = PavlovInstalls.Discover(
-            builder.Configuration["PAVLOV_BASES"], builder.Configuration["PAVLOV_BASE_1"]);
         builder.Services.AddSingleton<WhitelistFile>();
         builder.Services.AddSingleton<ISlashCommand>(sp => new TesterCommand(
             sp.GetRequiredService<WhitelistFile>(),
