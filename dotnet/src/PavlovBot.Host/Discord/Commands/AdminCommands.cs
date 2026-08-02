@@ -335,16 +335,27 @@ public sealed class VpnCheckCommand(VpnScreeningService vpn, Access access) : IS
             return;
         }
 
+        /* Three states, not two. A detector with no key was never asked; one that answered
+           has a verdict; one that failed now says WHY - a bad key, a spent quota, a timeout
+           and a blocked port are four different fixes, and this screen used to render all
+           four as the same two words. */
         var lines = probes.OrderBy(p => p.Tier).ThenBy(p => p.Name, StringComparer.Ordinal).Select(p =>
-            $"{(p.Answered ? Theme.Ok : Theme.Bad)} **{p.Name}** — {p.Role}\n" +
-            $"{Theme.Dot} {(p.Answered ? p.Detail ?? "answered" : p.Error ?? "no verdict")} ({p.DurationMs:0}ms)");
+            $"{Mark(p)} **{p.Name}** — {p.Role}\n" +
+            $"{Theme.Dot} {p.Outcome}" + (p.Configured ? $" ({p.DurationMs:0}ms)" : ""));
 
-        var embed = Theme.Notice($"VPN detectors — probed with {ip}", string.Join("\n", lines));
+        var answered = probes.Count(p => p.Answered);
+        var embed = Theme.Notice($"VPN detectors — probed with {ip}",
+            $"**{answered}** of **{probes.Count(p => p.Configured)}** configured detector(s) returned a verdict.\n\n" +
+            string.Join("\n", lines));
 
         if (vpn.ConfigurationWarning() is { } warning) embed.AddField($"{Theme.Warn} Configuration", warning);
 
         await Reply(command, embed).ConfigureAwait(false);
     }
+
+    /// <summary>Answered, failed, or never asked - three states need three marks.</summary>
+    private static string Mark(PavlovBot.Host.Vpn.DetectorProbe probe) =>
+        !probe.Configured ? Theme.Dot : probe.Answered ? Theme.Ok : Theme.Bad;
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
         command.ModifyOriginalResponseAsync(m =>

@@ -6,6 +6,14 @@ using PavlovBot.Rcon;
 
 namespace PavlovBot.Host.Vpn;
 
+/// <param name="Document">The parsed body, or null when there is none.</param>
+/// <param name="Failure">Why there is no body. Null when there is one.</param>
+public sealed record JsonFetch(JsonDocument? Document, string? Failure)
+{
+    public static JsonFetch Ok(JsonDocument document) => new(document, null);
+    public static JsonFetch Failed(string why) => new(null, why);
+}
+
 /// <summary>
 /// HTTP JSON with a hard timeout, jittered retry, and rate-limit memory.
 /// </summary>
@@ -46,15 +54,38 @@ public sealed class ResilientJsonClient
         IReadOnlyCollection<string>? secrets = null,
         int attempts = 3,
         TimeSpan? timeout = null,
+        CancellationToken ct = default) =>
+        (await FetchAsync(url, label, headers, secrets, attempts, timeout, ct).ConfigureAwait(false)).Document;
+
+    /// <summary>
+    /// The same fetch, but it also says WHY when there is nothing to return.
+    /// </summary>
+    /// <remarks>
+    /// The reason used to exist only in the application log, and only at Warning - so
+    /// <c>/vpncheck</c>, the command whose entire job is telling you what is wrong with the
+    /// detectors, printed the bare words "no verdict" for a bad key, an exhausted quota, a
+    /// firewall and a timeout alike. Four completely different fixes behind one blank
+    /// answer, on the one screen built to distinguish them.
+    ///
+    /// It is still SCRUBBED and still never throws. A reason is worth nothing if it leaks
+    /// the key it is complaining about into a Discord channel.
+    /// </remarks>
+    public async Task<JsonFetch> FetchAsync(
+        string url,
+        string label,
+        IReadOnlyDictionary<string, string>? headers = null,
+        IReadOnlyCollection<string>? secrets = null,
+        int attempts = 3,
+        TimeSpan? timeout = null,
         CancellationToken ct = default)
     {
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
 
         if (_rateLimitedUntil.TryGetValue(host, out var until) && _time.GetUtcNow() < until)
         {
-            _logger.LogDebug("{Label} skipped - rate limited for another {Seconds}s",
-                label, (int)(until - _time.GetUtcNow()).TotalSeconds);
-            return null;
+            var seconds = (int)(until - _time.GetUtcNow()).TotalSeconds;
+            _logger.LogDebug("{Label} skipped - rate limited for another {Seconds}s", label, seconds);
+            return JsonFetch.Failed($"rate limited - not retrying for another {seconds}s");
         }
 
         for (var attempt = 0; attempt < attempts; attempt++)
@@ -80,7 +111,8 @@ public sealed class ResilientJsonClient
                     _rateLimitedUntil[host] = _time.GetUtcNow() + wait;
                     _logger.LogWarning("{Label} rate limited ({Status}) - pausing lookups to it for {Seconds}s",
                         label, (int)response.StatusCode, (int)wait.TotalSeconds);
-                    return null;
+                    return JsonFetch.Failed(
+                        $"HTTP {(int)response.StatusCode} - quota or rate limit reached, paused for {(int)wait.TotalSeconds}s");
                 }
 
                 if ((int)response.StatusCode >= 500) throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
@@ -92,21 +124,39 @@ public sealed class ResilientJsonClient
                        body has no verdict in it, so it would otherwise fall through and
                        read as a bland "no verdict" forever. Name it ONCE per host so it
                        is fixable instead of merely mysterious. */
+                    var hint = await ErrorHint(response, secrets).ConfigureAwait(false);
+                    var advice = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                        ? "Check the API key is correct and active."
+                        : "No verdict will be recorded from it.";
+
+                    // Logged once per host so a flood of joins does not repeat it, but
+                    // RETURNED every time - the diagnostic command has to be able to ask.
                     if (_authWarned.TryAdd(host, 0))
                     {
-                        var hint = await ErrorHint(response, secrets).ConfigureAwait(false);
-                        _logger.LogWarning(
-                            "{Label} rejected the request (HTTP {Status}){Hint}. {Advice}",
-                            label, (int)response.StatusCode, hint,
-                            response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                                ? "Check the API key is correct and active."
-                                : "No verdict will be recorded from it.");
+                        _logger.LogWarning("{Label} rejected the request (HTTP {Status}){Hint}. {Advice}",
+                            label, (int)response.StatusCode, hint, advice);
                     }
-                    return null;
+
+                    return JsonFetch.Failed(
+                        $"HTTP {(int)response.StatusCode}{hint}" +
+                        (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                            ? " - check the API key" : ""));
                 }
 
                 var body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-                return JsonDocument.Parse(body);
+
+                try
+                {
+                    return JsonFetch.Ok(JsonDocument.Parse(body));
+                }
+                catch (JsonException)
+                {
+                    /* A 200 carrying something that is not JSON is a captive portal, an
+                       HTML error page, or a proxy in the way - none of which look like a
+                       network failure from here, and all of which retry forever otherwise. */
+                    _logger.LogWarning("{Label} returned {Status} but the body was not JSON", label, (int)response.StatusCode);
+                    return JsonFetch.Failed("responded, but the body was not JSON");
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -114,7 +164,7 @@ public sealed class ResilientJsonClient
                 {
                     var message = ex is OperationCanceledException ? "timed out" : Scrub(ex.Message, secrets);
                     _logger.LogWarning("{Label} lookup failed: {Message}", label, message);
-                    return null;
+                    return JsonFetch.Failed(message.Length > 160 ? message[..160] : message);
                 }
 
                 /* Exponential backoff with full jitter. Five detectors retry the same
@@ -124,7 +174,8 @@ public sealed class ResilientJsonClient
                 await Task.Delay(Backoff.Delay(attempt, baseMs: 300, maxMs: 5_000), _time, ct).ConfigureAwait(false);
             }
         }
-        return null;
+
+        return JsonFetch.Failed("no response after retries");
     }
 
     private static async Task<string> ErrorHint(HttpResponseMessage response, IReadOnlyCollection<string>? secrets)

@@ -34,6 +34,7 @@ public sealed class VpnScreeningService
     private readonly IReadOnlyList<IVpnDetector> _detectors;
     private readonly SerializedStore _store;
     private readonly IGeoLocator _geo;
+    private readonly IReadOnlyList<IVpnDetector> _all;
     private readonly VpnThresholds _thresholds;
     private readonly MetricsRegistry _metrics;
     private readonly ILogger<VpnScreeningService> _logger;
@@ -61,7 +62,8 @@ public sealed class VpnScreeningService
         TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(detectors);
-        _detectors = detectors.Where(d => d.Enabled).ToList();
+        _all = detectors.ToList();
+        _detectors = _all.Where(d => d.Enabled).ToList();
         _store = store;
         _geo = geo;
         _metrics = metrics;
@@ -75,6 +77,9 @@ public sealed class VpnScreeningService
     public bool Enabled => _detectors.Count > 0;
 
     public IReadOnlyList<IVpnDetector> Detectors => _detectors;
+
+    /// <summary>Every detector the build knows about, configured or not. For diagnostics.</summary>
+    public IReadOnlyList<IVpnDetector> AllDetectors => _all;
 
     private IReadOnlyList<IVpnDetector> Tier(int tier) => _detectors.Where(d => d.Tier == tier).ToList();
 
@@ -175,19 +180,29 @@ public sealed class VpnScreeningService
         var detectors = Tier(tier);
         if (detectors.Count == 0) return new TierOutcome(0, 0, 0, []);
 
-        var readings = await Task.WhenAll(detectors.Select(async detector =>
+        var outcomes = await Task.WhenAll(detectors.Select(async detector =>
         {
             try { return await detector.LookupAsync(ip, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // A detector must never take down the screen. Null = "no verdict", which
-                // is counted separately from "answered clean".
+                // A detector must never take down the screen. No reading = "no verdict",
+                // which is counted separately from "answered clean".
                 _logger.LogWarning("{Detector} threw for {Ip}: {Message}", detector.Name, ip, ex.Message);
-                return null;
+                return DetectorOutcome.None(ex.Message);
             }
         })).ConfigureAwait(false);
 
-        return TierOutcome.From(readings);
+        /* Said out loud, once per screen, at INFORMATION. A tier where nothing answered
+           produces a record with no verdict in it, and every surface downstream then shows
+           "not checked" - correctly, but with no way to tell whether that means the keys
+           are wrong, the quota is spent, or the host cannot reach the internet at all. */
+        if (outcomes.Length > 0 && outcomes.All(o => o.Reading is null))
+        {
+            _logger.LogInformation("No tier {Tier} detector could screen {Ip}: {Reasons}", tier, ip,
+                string.Join("; ", detectors.Zip(outcomes, (d, o) => $"{d.Name}: {o.Failure ?? "no verdict"}")));
+        }
+
+        return TierOutcome.From(outcomes.Select(o => o.Reading));
     }
 
     private Task SaveAsync(VpnRecord record, CancellationToken ct) =>
@@ -206,19 +221,27 @@ public sealed class VpnScreeningService
     /// </remarks>
     public async Task<IReadOnlyList<DetectorProbe>> ProbeAsync(string ip, CancellationToken ct = default)
     {
-        return await Task.WhenAll(_detectors.Select(async detector =>
+        return await Task.WhenAll(_all.Select(async detector =>
         {
+            /* An UNCONFIGURED detector is listed, not hidden. Omitting it made "I have no
+               key for this" and "this one is broken" the same blank space, so the one
+               screen that should answer "why is nothing screening?" could not tell you that
+               five of the six providers simply have no key set. */
+            if (!detector.Enabled)
+                return new DetectorProbe(detector.Name, detector.Tier, false, null, null, 0, null, Configured: false);
+
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
-                var reading = await detector.LookupAsync(ip, ct).ConfigureAwait(false);
-                return new DetectorProbe(detector.Name, detector.Tier, reading is not null, reading?.Flagged,
-                    reading?.Detail, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, null);
+                var outcome = await detector.LookupAsync(ip, ct).ConfigureAwait(false);
+                return new DetectorProbe(detector.Name, detector.Tier, outcome.Reading is not null,
+                    outcome.Reading?.Flagged, outcome.Reading?.Detail,
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, outcome.Failure, true);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 return new DetectorProbe(detector.Name, detector.Tier, false, null, null,
-                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, ex.Message);
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, ex.Message, true);
             }
         })).ConfigureAwait(false);
     }
@@ -236,11 +259,19 @@ public sealed class VpnScreeningService
 }
 
 /// <param name="Answered">False means the detector could not be reached or gave no verdict.</param>
+/// <param name="Configured">False when no API key is set. It was never asked, not failed.</param>
 public sealed record DetectorProbe(
-    string Name, int Tier, bool Answered, bool? Flagged, string? Detail, double DurationMs, string? Error)
+    string Name, int Tier, bool Answered, bool? Flagged, string? Detail, double DurationMs, string? Error,
+    bool Configured = true)
 {
     /// <summary>What this detector is FOR, in words, for the diagnostic output.</summary>
     public string Role => Tier == 1 ? "Regular check (every IP)" : "Final confirmation (flagged IPs only)";
+
+    /// <summary>The one line that says what happened, and never a bare "no verdict".</summary>
+    public string Outcome =>
+        !Configured ? "no API key set - not checked"
+        : Answered ? Detail ?? "answered"
+        : Error ?? "no verdict, and no reason given";
 }
 
 /// <summary>Whois-style geolocation. Separate from reputation: it is free and always run.</summary>

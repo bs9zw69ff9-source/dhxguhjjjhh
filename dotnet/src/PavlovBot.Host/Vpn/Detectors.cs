@@ -4,11 +4,30 @@ using PavlovBot.Core.Vpn;
 
 namespace PavlovBot.Host.Vpn;
 
+/// <param name="Reading">The verdict, or null when there is none.</param>
+/// <param name="Failure">Why there is no verdict. Null when there is one.</param>
+/// <remarks>
+/// The failure text is the whole point of this type. Every path that could not produce a
+/// verdict used to return a bare null, so a bad key, an exhausted quota, a blocked outbound
+/// port and a provider that simply omitted the field all arrived as the same nothing - and
+/// <c>/vpncheck</c>, whose entire job is telling you which of those it is, could only print
+/// "no verdict".
+/// </remarks>
+public sealed record DetectorOutcome(DetectorReading? Reading, string? Failure)
+{
+    public static DetectorOutcome Answered(DetectorReading reading) => new(reading, null);
+
+    public static DetectorOutcome None(string why) => new(null, why);
+
+    /// <summary>The provider answered, but the body had nothing to read a verdict from.</summary>
+    public static DetectorOutcome Unusable(string what) => new(null, $"answered, but {what}");
+}
+
 /// <summary>One reputation provider.</summary>
 /// <remarks>
-/// <see cref="LookupAsync"/> MUST NOT throw and MUST return null when the lookup itself
-/// failed. Null is tracked separately from "answered clean", so an outage cannot be read
-/// as innocence.
+/// <see cref="LookupAsync"/> MUST NOT throw, and MUST return an outcome with no reading
+/// when the lookup itself failed. "No verdict" is tracked separately from "answered clean",
+/// so an outage cannot be read as innocence.
 /// </remarks>
 public interface IVpnDetector
 {
@@ -20,7 +39,7 @@ public interface IVpnDetector
     /// <summary>False when unconfigured. An unconfigured detector is skipped, not failed.</summary>
     bool Enabled { get; }
 
-    Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct);
+    Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct);
 }
 
 /// <summary>API keys for the reputation providers.</summary>
@@ -93,18 +112,21 @@ public sealed class IpHubDetector(ResilientJsonClient client, VpnKeys keys) : IV
     public int Tier => 1;
     public bool Enabled => !string.IsNullOrEmpty(keys.IpHub);
 
-    public async Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct)
+    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
     {
-        using var document = await client.GetAsync(
+        var fetch = await client.FetchAsync(
             $"https://v2.api.iphub.info/ip/{Uri.EscapeDataString(ip)}", Name,
             headers: new Dictionary<string, string> { ["X-Key"] = keys.IpHub! },
             secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
 
-        if (document is null) return null;
-        var root = document.RootElement;
-        if (JsonHelp.Int(root, "block") is not { } block) return null;
+        using var document = fetch.Document;
+        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
 
-        return new DetectorReading
+        var root = document.RootElement;
+        if (JsonHelp.Int(root, "block") is not { } block)
+            return DetectorOutcome.Unusable("the response had no `block` field");
+
+        return DetectorOutcome.Answered(new DetectorReading
         {
             Name = Name, Tier = Tier,
             Flagged = block == 1,
@@ -118,7 +140,7 @@ public sealed class IpHubDetector(ResilientJsonClient client, VpnKeys keys) : IV
             Asn = VpnMerge.NormaliseAsn(JsonHelp.Text(root, "asn")),
             Country = JsonHelp.Text(root, "countryName"),
             CountryCode = JsonHelp.Text(root, "countryCode"),
-        };
+        });
     }
 }
 
@@ -129,16 +151,19 @@ public sealed class VpnApiDetector(ResilientJsonClient client, VpnKeys keys) : I
     public int Tier => 1;
     public bool Enabled => !string.IsNullOrEmpty(keys.VpnApi);
 
-    public async Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct)
+    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
     {
-        using var document = await client.GetAsync(
+        var fetch = await client.FetchAsync(
             $"https://vpnapi.io/api/{Uri.EscapeDataString(ip)}?key={keys.VpnApi}", Name,
             headers: new Dictionary<string, string> { ["Accept"] = "application/json" },
             secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
 
-        if (document is null) return null;
+        using var document = fetch.Document;
+        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
+
         var root = document.RootElement;
-        if (JsonHelp.Member(root, "security") is not { } security) return null;
+        if (JsonHelp.Member(root, "security") is not { } security)
+            return DetectorOutcome.Unusable("the response had no `security` object - usually an invalid or expired key");
 
         var network = JsonHelp.Member(root, "network") ?? default;
         var location = JsonHelp.Member(root, "location") ?? default;
@@ -146,7 +171,7 @@ public sealed class VpnApiDetector(ResilientJsonClient client, VpnKeys keys) : I
         var hits = new[] { "vpn", "proxy", "tor", "relay" }.Where(k => JsonHelp.Bool(security, k) == true).ToList();
         var organization = JsonHelp.Text(network, "autonomous_system_organization");
 
-        return new DetectorReading
+        return DetectorOutcome.Answered(new DetectorReading
         {
             Name = Name, Tier = Tier,
             Flagged = hits.Count > 0,
@@ -162,7 +187,7 @@ public sealed class VpnApiDetector(ResilientJsonClient client, VpnKeys keys) : I
             CountryCode = JsonHelp.Text(location, "country_code"),
             Region = JsonHelp.Text(location, "region"),
             City = JsonHelp.Text(location, "city"),
-        };
+        });
     }
 }
 
@@ -173,17 +198,20 @@ public sealed class IpapiIsDetector(ResilientJsonClient client, VpnKeys keys) : 
     public int Tier => 1;
     public bool Enabled => true;   // keyless-capable
 
-    public async Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct)
+    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
     {
         var key = string.IsNullOrEmpty(keys.IpapiIs) ? "" : $"&key={keys.IpapiIs}";
-        using var document = await client.GetAsync(
+        var fetch = await client.FetchAsync(
             $"https://api.ipapi.is/?q={Uri.EscapeDataString(ip)}{key}", Name,
             headers: new Dictionary<string, string> { ["Accept"] = "application/json" },
             secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
 
-        if (document is null) return null;
+        using var document = fetch.Document;
+        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
+
         var root = document.RootElement;
-        if (JsonHelp.Bool(root, "is_vpn") is null) return null;
+        if (JsonHelp.Bool(root, "is_vpn") is null)
+            return DetectorOutcome.Unusable("the response had no `is_vpn` field - usually the free quota being spent");
 
         var location = JsonHelp.Member(root, "location") ?? default;
         var asn = JsonHelp.Member(root, "asn") ?? default;
@@ -198,7 +226,7 @@ public sealed class IpapiIsDetector(ResilientJsonClient client, VpnKeys keys) : 
         var datacenter = JsonHelp.Bool(root, "is_datacenter");
         var companyType = JsonHelp.Text(company, "type");
 
-        return new DetectorReading
+        return DetectorOutcome.Answered(new DetectorReading
         {
             Name = Name, Tier = Tier,
             Flagged = hits.Count > 0,
@@ -218,7 +246,7 @@ public sealed class IpapiIsDetector(ResilientJsonClient client, VpnKeys keys) : 
             CountryCode = JsonHelp.Text(location, "country_code"),
             Region = JsonHelp.Text(location, "state") ?? JsonHelp.Text(location, "region"),
             City = JsonHelp.Text(location, "city"),
-        };
+        });
     }
 }
 
@@ -236,20 +264,24 @@ public sealed class ProxyCheckDetector(ResilientJsonClient client, VpnKeys keys)
     public int Tier => 1;
     public bool Enabled => true;   // keyless-capable
 
-    public async Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct)
+    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
     {
         var key = string.IsNullOrEmpty(keys.ProxyCheck) ? "" : $"&key={keys.ProxyCheck}";
-        using var document = await client.GetAsync(
+        var fetch = await client.FetchAsync(
             $"https://proxycheck.io/v2/{Uri.EscapeDataString(ip)}?vpn=1&risk=1&asn=1{key}", Name,
             headers: new Dictionary<string, string> { ["Accept"] = "application/json" },
             secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
 
-        if (document is null) return null;
+        using var document = fetch.Document;
+        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
+
         var root = document.RootElement;
 
         var status = JsonHelp.Text(root, "status");
-        if (status is not ("ok" or "warning")) return null;
-        if (JsonHelp.Member(root, ip) is not { } record) return null;
+        if (status is not ("ok" or "warning"))
+            return DetectorOutcome.Unusable($"status was `{status ?? "missing"}` - usually the keyless 100/day quota being spent");
+        if (JsonHelp.Member(root, ip) is not { } record)
+            return DetectorOutcome.Unusable($"the response carried no record for {ip}");
 
         // VPN | Business | Residential | Public Proxy | Compromised Server | ...
         var type = (JsonHelp.Text(record, "type") ?? "").ToLowerInvariant();
@@ -257,7 +289,7 @@ public sealed class ProxyCheckDetector(ResilientJsonClient client, VpnKeys keys)
         var risk = JsonHelp.Number(record, "risk");
         var operatorName = JsonHelp.Member(record, "operator") is { } op ? JsonHelp.Text(op, "name") : null;
 
-        return new DetectorReading
+        return DetectorOutcome.Answered(new DetectorReading
         {
             Name = Name, Tier = Tier,
             Flagged = proxy == "yes",
@@ -278,7 +310,7 @@ public sealed class ProxyCheckDetector(ResilientJsonClient client, VpnKeys keys)
             CountryCode = JsonHelp.Text(record, "isocode"),
             Region = JsonHelp.Text(record, "region"),
             City = JsonHelp.Text(record, "city"),
-        };
+        });
     }
 }
 
@@ -302,9 +334,9 @@ public sealed class SentinelDetector(ResilientJsonClient client, VpnKeys keys, I
     public int Tier => 1;
     public bool Enabled => !string.IsNullOrEmpty(keys.Sentinel);
 
-    public async Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct)
+    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
     {
-        using var document = await client.GetAsync(
+        var fetch = await client.FetchAsync(
             $"https://sntlhq.com/v1/lookup/{Uri.EscapeDataString(ip)}", Name,
             headers: new Dictionary<string, string>
             {
@@ -313,7 +345,8 @@ public sealed class SentinelDetector(ResilientJsonClient client, VpnKeys keys, I
             },
             secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
 
-        if (document is null) return null;
+        using var document = fetch.Document;
+        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
 
         var reading = SentinelParser.Parse(document.RootElement, out var unrecognised);
         if (unrecognised is not null && !_shapeWarned)
@@ -323,7 +356,10 @@ public sealed class SentinelDetector(ResilientJsonClient client, VpnKeys keys, I
             _shapeWarned = true;
             logger.LogWarning("sentinel {Detail}", unrecognised);
         }
-        return reading;
+
+        return reading is null
+            ? DetectorOutcome.Unusable(unrecognised ?? "the response had no verdict in it")
+            : DetectorOutcome.Answered(reading);
     }
 }
 
@@ -336,15 +372,18 @@ public sealed class IpqsDetector(ResilientJsonClient client, VpnKeys keys) : IVp
     public int Tier => 2;
     public bool Enabled => !string.IsNullOrEmpty(keys.Ipqs);
 
-    public async Task<DetectorReading?> LookupAsync(string ip, CancellationToken ct)
+    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
     {
-        using var document = await client.GetAsync(
+        var fetch = await client.FetchAsync(
             $"https://www.ipqualityscore.com/api/json/ip/{keys.Ipqs}/{Uri.EscapeDataString(ip)}?strictness=1", Name,
             secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
 
-        if (document is null) return null;
+        using var document = fetch.Document;
+        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
+
         var root = document.RootElement;
-        if (JsonHelp.Bool(root, "success") != true) return null;
+        if (JsonHelp.Bool(root, "success") != true)
+            return DetectorOutcome.Unusable(JsonHelp.Text(root, "message") ?? "`success` was not true - usually an invalid key or a spent quota");
 
         var vpn = JsonHelp.Bool(root, "vpn") ?? false;
         var proxy = JsonHelp.Bool(root, "proxy") ?? false;
@@ -358,7 +397,7 @@ public sealed class IpqsDetector(ResilientJsonClient client, VpnKeys keys) : IVp
         var connectionType = (JsonHelp.Text(root, "connection_type") ?? "").ToLowerInvariant();
         var hasType = connectionType.Length > 0;
 
-        return new DetectorReading
+        return DetectorOutcome.Answered(new DetectorReading
         {
             Name = Name, Tier = Tier,
             Flagged = vpn || proxy || tor,
@@ -379,6 +418,6 @@ public sealed class IpqsDetector(ResilientJsonClient client, VpnKeys keys) : IVp
             CountryCode = JsonHelp.Text(root, "country_code"),
             Region = JsonHelp.Text(root, "region"),
             City = JsonHelp.Text(root, "city"),
-        };
+        });
     }
 }
