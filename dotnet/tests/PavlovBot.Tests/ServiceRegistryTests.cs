@@ -67,6 +67,41 @@ public class ServiceRegistryTests
     }
 
     [Fact]
+    public void TheRconSessionOutlastsItsOwnHealthProbe()
+    {
+        /* THE CONNECTION IS ONLY PERSISTENT BY ACCIDENT OTHERWISE. Nothing sends on an idle
+           session, so what keeps it open is the health probe touching it. Raise the probe
+           interval past the idle timeout and every probe finds a stale session, tears it
+           down and reconnects - a fresh authenticated TCP session per sweep, forever, with
+           nothing anywhere saying so. */
+        var probe = TimeSpan.FromMinutes(10);
+
+        var held = PavlovBot.Host.Rcon.RconRegistry.HoldOpen(TimeSpan.FromMinutes(5), probe);
+
+        Assert.True(held > probe, $"a {probe.TotalMinutes}min probe would idle out a {held.TotalMinutes}min session");
+    }
+
+    [Fact]
+    public void AGenerousIdleTimeoutIsLeftAlone()
+    {
+        // The floor only ever raises it. An operator asking for a longer-lived session gets
+        // one; they cannot accidentally ask for one that churns.
+        var configured = TimeSpan.FromHours(1);
+
+        Assert.Equal(configured,
+            PavlovBot.Host.Rcon.RconRegistry.HoldOpen(configured, TimeSpan.FromSeconds(60)));
+    }
+
+    [Fact]
+    public void TheDefaultsAlreadyHoldTheConnectionOpen()
+    {
+        // 60s probe against a 5min recycle - four probes land inside every window, which is
+        // why the connection has in fact been persistent all along.
+        Assert.Equal(TimeSpan.FromMinutes(5),
+            PavlovBot.Host.Rcon.RconRegistry.HoldOpen(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(60)));
+    }
+
+    [Fact]
     public async Task AThrowingTickIsContainedAndCounted()
     {
         /* The whole point. In the Node bot this was an unhandled rejection, which can take

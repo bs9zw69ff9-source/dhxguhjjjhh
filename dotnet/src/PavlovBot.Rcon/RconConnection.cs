@@ -40,6 +40,36 @@ internal sealed class RconConnection : IAsyncDisposable
     /// <summary>True when the session has sat unused long enough to be worth recycling.</summary>
     public bool IsStale => DateTimeOffset.UtcNow - _lastUsed > _options.IdleTimeout;
 
+    /// <summary>
+    /// Ask the OS to probe the peer while the session is idle.
+    /// </summary>
+    /// <remarks>
+    /// Without this, a server that CRASHED or a link that dropped leaves a socket that still
+    /// reads as Connected - TCP has no way to know until something is sent. The bot would
+    /// then believe it had a live session and only discover otherwise on the next command,
+    /// which is a failed sweep and a gap in the feeds rather than a reconnect.
+    ///
+    /// Best effort: these options are not supported everywhere, and a connection without
+    /// them still works exactly as before - the command-level retry is the backstop.
+    /// </remarks>
+    private static void KeepAlive(TcpClient tcp)
+    {
+        try
+        {
+            tcp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+
+            // Probe after 30s idle, then every 10s, and give up after 3 failures - so a dead
+            // peer is detected in about a minute rather than at the next command.
+            tcp.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 30);
+            tcp.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 10);
+            tcp.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+        }
+        catch (Exception ex) when (ex is SocketException or PlatformNotSupportedException or ArgumentException)
+        {
+            // Nothing to do about it, and nothing depends on it.
+        }
+    }
+
     private static string Md5Hex(string input)
     {
         var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
@@ -53,6 +83,8 @@ internal sealed class RconConnection : IAsyncDisposable
         var tcp = new TcpClient { NoDelay = true };   // a 3-byte command must not wait on Nagle
         try
         {
+            KeepAlive(tcp);
+
             await tcp.ConnectAsync(_options.Host, _options.Port, ct).ConfigureAwait(false);
             var stream = tcp.GetStream();
 

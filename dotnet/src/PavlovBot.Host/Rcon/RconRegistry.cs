@@ -42,7 +42,39 @@ public sealed class RconRegistry : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(options);
         _metrics = metrics;
         _logger = logger;
-        _clients = options.Servers.ToDictionary(s => s.Name, s => new RconClient(s), StringComparer.Ordinal);
+
+        _clients = options.Servers
+            .Select(s => s with { IdleTimeout = HoldOpen(s.IdleTimeout, options.RconHealthInterval) })
+            .ToDictionary(s => s.Name, s => new RconClient(s), StringComparer.Ordinal);
+
+        var idle = options.Servers.Count > 0
+            ? HoldOpen(options.Servers[0].IdleTimeout, options.RconHealthInterval)
+            : TimeSpan.Zero;
+
+        _logger.LogInformation(
+            "RCON: {Count} server(s), one connection each, held open - probed every {Probe:0}s, " +
+            "recycled only after {Idle:0}s idle",
+            _clients.Count, options.RconHealthInterval.TotalSeconds, idle.TotalSeconds);
+    }
+
+    /// <summary>
+    /// An idle timeout that the health probe is guaranteed to land inside.
+    /// </summary>
+    /// <remarks>
+    /// THE CONNECTION IS ONLY PERSISTENT BY ACCIDENT OTHERWISE. Nothing sends on an idle
+    /// session, so what actually keeps it open is the health probe touching it every 60s -
+    /// comfortably inside the five-minute recycle. Raise RCON_HEALTH_INTERVAL_MS past that
+    /// and every probe finds a stale session, tears it down and reconnects: the bot would
+    /// still work, and would be opening a fresh authenticated TCP session per sweep forever
+    /// while nothing anywhere said so.
+    ///
+    /// So the relationship is enforced rather than assumed - the recycle is always at least
+    /// three probes wide.
+    /// </remarks>
+    internal static TimeSpan HoldOpen(TimeSpan configured, TimeSpan probeInterval)
+    {
+        var floor = probeInterval * 3;
+        return configured > floor ? configured : floor;
     }
 
     public IReadOnlyCollection<string> Servers => _clients.Keys;

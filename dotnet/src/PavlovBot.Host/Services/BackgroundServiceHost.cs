@@ -251,15 +251,17 @@ public sealed class BackgroundServiceHost : IHostedService
 
         if (_features.PlayerCountChannels.Count > 0 || _features.ShackTotalChannel is not null)
         {
-            /* SIX MINUTES, and the interval is load-bearing. Discord allows two channel
-               renames per ten minutes PER CHANNEL; a one-minute tick would spend the
-               allowance in two minutes and then silently stop updating, which looks exactly
-               like the feature being broken. Unchanged names are not written at all, so an
-               idle server costs nothing and the budget is there when the count moves. */
+            /* FIVE MINUTES, and the interval is load-bearing. Discord allows two channel
+               renames per ten minutes PER CHANNEL, so this sits exactly ON the limit rather
+               than under it - chosen deliberately for freshness. The cost is no headroom: a
+               retry or a little clock skew puts a tick over, and Discord.Net WAITS OUT a
+               rename rate limit rather than failing, so the effect is a late name and not a
+               lost one. Unchanged names are not written at all, which is what keeps an idle
+               server from spending the allowance it would need when the count moves. */
             _registry.Register(new ServiceDefinition
             {
                 Name = "player-count-channels",
-                Interval = TimeSpan.FromMinutes(6),
+                Interval = TimeSpan.FromMinutes(5),
                 Tick = ct => _counts.TickAsync(
                     new PavlovBot.Host.Discord.PlayerCountChannels.Targets(
                         _features.PlayerCountChannels, _features.ShackTotalChannel), ct),
