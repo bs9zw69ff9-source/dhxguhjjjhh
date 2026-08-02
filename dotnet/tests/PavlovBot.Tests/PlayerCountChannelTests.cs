@@ -175,4 +175,30 @@ public class PlayerCountChannelTests
         Assert.Empty(channels.Renames);
         Assert.Equal(0, channels.NameReads);
     }
+
+    [Fact]
+    public async Task TheRunReportsOneLinePerChannel()
+    {
+        /* /counts renders exactly this, so it has to say something for every configured
+           channel - a channel missing from the report reads as a channel that was skipped
+           for an unknown reason, which is the state the whole feature keeps ending up in. */
+        var channels = new FakeChannels((100UL, "Server 1 0/24"));
+
+        var report = await Build(channels).RunAsync(
+            new PlayerCountChannels.Targets([100UL], TotalChannel: 999UL));
+
+        Assert.Equal(2, report.Count);
+        Assert.All(report, line => Assert.False(string.IsNullOrWhiteSpace(line)));
+    }
+
+    [Fact]
+    public async Task AChannelTheBotCannotSeeSaysSoInTheReport()
+    {
+        // The words /counts keys its "most likely" hint off, so they have to be there.
+        var report = await Build(new FakeChannels()).RunAsync(
+            new PlayerCountChannels.Targets([], TotalChannel: 999UL));
+
+        Assert.Contains(report, line => line.Contains("FAILED", StringComparison.Ordinal));
+        Assert.Contains(report, line => line.Contains("not visible", StringComparison.Ordinal));
+    }
 }

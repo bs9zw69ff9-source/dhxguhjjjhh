@@ -85,6 +85,27 @@ public sealed class PlayerCountChannels(
 
     public async Task TickAsync(Targets targets, CancellationToken ct = default)
     {
+        var report = await RunAsync(targets, ct).ConfigureAwait(false);
+
+        /* ONE LINE PER TICK, at INFORMATION. Every part of this used to be silent unless it
+           actually renamed something, so "the channels are not updating" had no answer short
+           of reading the code - and the causes (no permission, wrong id, a stale roster, or
+           simply nothing to change) are four different fixes. */
+        if (report.Count > 0)
+            logger.LogInformation("Player-count channels: {Report}", string.Join("  |  ", report));
+    }
+
+    /// <summary>
+    /// Do the work and say what happened, one line per channel.
+    /// </summary>
+    /// <remarks>
+    /// Separated from the logging so <c>/counts</c> can run it on demand. The tick is five
+    /// minutes apart, which makes every attempt at diagnosing it a five-minute wait - and
+    /// three of those is most of an afternoon spent finding out that a permission was
+    /// missing.
+    /// </remarks>
+    public async Task<IReadOnlyList<string>> RunAsync(Targets targets, CancellationToken ct = default)
+    {
         ArgumentNullException.ThrowIfNull(targets);
 
         var servers = rcon.Servers.ToList();
@@ -109,12 +130,7 @@ public sealed class PlayerCountChannels(
         if (targets.TotalChannel is { } total)
             report.Add(await UpdateTotalAsync(total, ct).ConfigureAwait(false));
 
-        /* ONE LINE PER TICK, at INFORMATION. Every part of this used to be silent unless it
-           actually renamed something, so "the channels are not updating" had no answer short
-           of reading the code - and the causes (no permission, wrong id, a stale roster, or
-           simply nothing to change) are four different fixes. */
-        if (report.Count > 0)
-            logger.LogInformation("Player-count channels: {Report}", string.Join("  |  ", report));
+        return report;
     }
 
     private async Task<string> UpdateServerAsync(ulong channelId, string server, int number, CancellationToken ct)
