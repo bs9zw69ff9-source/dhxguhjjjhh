@@ -248,6 +248,7 @@ public static class Program
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ServerBrowser>());
         builder.Services.AddSingleton<ISlashCommand>(sp =>
             new ServerLookupCommand(sp.GetRequiredService<ServerBrowser>()));
+        builder.Services.AddSingleton<ISlashCommand, FeedsCommand>();
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),
@@ -319,6 +320,14 @@ public static class Program
         feeds.Register(FeedWebhooks.Connect, features.ConnectWebhook);
         feeds.Register(FeedWebhooks.Kill, features.KillWebhook);
         feeds.Register(FeedWebhooks.Money, features.MoneyWebhook);
+
+        /* Said out loud at startup, at INFORMATION. A feed with no URL is a choice and a
+           feed with a dead URL is a fault, and for a long time they looked identical from
+           outside - the status was tracked from the first day and nothing ever printed it.
+           `/feeds` shows the same thing on demand. */
+        logger.LogInformation("Feeds: {Status}",
+            string.Join(" | ", feeds.Status.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => $"{kv.Key}={kv.Value}")));
 
         if (host.Services.GetRequiredService<VpnScreeningService>().ConfigurationWarning() is { } warning)
             logger.LogWarning("{Warning}", warning);

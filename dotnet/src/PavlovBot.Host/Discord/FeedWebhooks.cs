@@ -27,20 +27,38 @@ namespace PavlovBot.Host.Discord;
 public sealed class FeedWebhooks : IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, DiscordWebhookClient> _clients = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _urls = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, bool> _confirmed = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _status = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _retryAfter = new(StringComparer.Ordinal);
     private readonly ILogger<FeedWebhooks> _logger;
     private readonly MetricsRegistry _metrics;
+    private readonly TimeProvider _time;
 
-    public FeedWebhooks(ILogger<FeedWebhooks> logger, MetricsRegistry metrics)
+    /// <summary>How long to wait before trying to open a failed webhook again.</summary>
+    private static readonly TimeSpan ReopenAfter = TimeSpan.FromMinutes(1);
+
+    public FeedWebhooks(ILogger<FeedWebhooks> logger, MetricsRegistry metrics, TimeProvider? time = null)
     {
         _logger = logger;
         _metrics = metrics;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>
     /// Register a feed. An unset URL disables it silently - that is a choice, not a fault.
     /// </summary>
+    /// <remarks>
+    /// NO NETWORK HERE, and that is the fix for a feed that stayed dead until a restart.
+    /// <c>new DiscordWebhookClient(url)</c> performs a BLOCKING HTTP call and throws if the
+    /// webhook cannot be fetched - so a webhook that had been rotated or deleted, or simply
+    /// a moment where Discord was unreachable as the bot booted, permanently disabled that
+    /// feed for the lifetime of the process. It logged once, at startup, and every later
+    /// post returned silently.
+    ///
+    /// The URL is stored and the client opened on first use, retried on a timer. A feed
+    /// therefore recovers on its own once the webhook is reachable again.
+    /// </remarks>
     public void Register(string label, string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -50,28 +68,73 @@ public sealed class FeedWebhooks : IAsyncDisposable
             return;
         }
 
-        try
+        /* Syntax IS checked now, because a typo in .env is a configuration error the owner
+           can fix immediately, and it costs nothing to say so at startup. */
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var parsed) ||
+            !parsed.AbsolutePath.Contains("/webhooks/", StringComparison.OrdinalIgnoreCase))
         {
-            _clients[label] = new DiscordWebhookClient(url);
-            _status[label] = "configured, nothing posted yet";
+            _status[label] = "invalid URL - not a Discord webhook address";
+            _logger.LogError(
+                "{Label} webhook URL does not look like a Discord webhook (expected .../api/webhooks/<id>/<token>). " +
+                "That feed will do nothing", label);
+            return;
         }
-        catch (Exception ex)
-        {
-            /* A malformed URL is a CONFIGURATION error and has to be loud. The silent
-               version of this bug is a feed that simply never appears. */
-            _status[label] = $"invalid URL: {ex.Message}";
-            _logger.LogError("{Label} webhook URL is not usable: {Message}. That feed will do nothing", label, ex.Message);
-        }
+
+        _urls[label] = url.Trim();
+        _status[label] = "configured, nothing posted yet";
     }
 
     public IReadOnlyDictionary<string, string> Status => _status;
 
-    public bool IsConfigured(string label) => _clients.ContainsKey(label);
+    /// <summary>True when a URL is set for this feed, whether or not it is currently open.</summary>
+    public bool IsConfigured(string label) => _urls.ContainsKey(label);
+
+    /// <summary>
+    /// The open client for a feed, opening it if this is the first use.
+    /// </summary>
+    /// <remarks>
+    /// Returns null when the webhook cannot be opened, and does not retry more than once a
+    /// minute - the call is a blocking round trip, and a dead webhook on a busy feed would
+    /// otherwise add most of a second to every join.
+    /// </remarks>
+    private DiscordWebhookClient? Client(string label)
+    {
+        if (_clients.TryGetValue(label, out var open)) return open;
+        if (!_urls.TryGetValue(label, out var url)) return null;
+
+        var now = _time.GetUtcNow();
+        if (_retryAfter.TryGetValue(label, out var until) && now < until) return null;
+
+        try
+        {
+            var client = new DiscordWebhookClient(url);
+            _clients[label] = client;
+            _retryAfter.TryRemove(label, out _);
+            _status[label] = "open, nothing posted yet";
+            return client;
+        }
+        catch (Exception ex)
+        {
+            _retryAfter[label] = now + ReopenAfter;
+
+            /* Named, because the two causes need different fixes and look identical from
+               here: a webhook that was deleted or rotated needs a new URL in .env, and one
+               that is merely unreachable fixes itself. */
+            var advice = ex is InvalidOperationException
+                ? "the webhook no longer exists - it was probably deleted, or the channel was. Set a new URL in .env"
+                : "could not reach Discord - will try again shortly";
+
+            _status[label] = $"not delivering: {advice}";
+            _logger.LogError("{Label} webhook could not be opened: {Message}. {Advice}", label, ex.Message, advice);
+            _metrics.Increment("feed_errors_total", MetricLabels.Of("feed", label), help: "Feed posts that failed");
+            return null;
+        }
+    }
 
     /// <summary>Post one line. Never throws - a feed failure must not fail the thing being logged.</summary>
     public async Task PostAsync(string label, string content, CancellationToken ct = default)
     {
-        if (!_clients.TryGetValue(label, out var client) || content.Length == 0) return;
+        if (content.Length == 0 || Client(label) is not { } client) return;
 
         try
         {
@@ -93,9 +156,28 @@ public sealed class FeedWebhooks : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _status[label] = $"failing: {ex.Message}";
-            _metrics.Increment("feed_errors_total", MetricLabels.Of("feed", label), help: "Feed posts that failed");
-            _logger.LogWarning("{Label} feed post failed: {Message}", label, ex.Message);
+            Failed(label, ex);
+        }
+    }
+
+    /// <summary>
+    /// Record a failed post, and close the client so the next attempt reopens it.
+    /// </summary>
+    /// <remarks>
+    /// A webhook deleted while the bot is running leaves an open client that fails every
+    /// post forever. Dropping it means the retry timer applies and the feed recovers by
+    /// itself if the URL is put back.
+    /// </remarks>
+    private void Failed(string label, Exception ex)
+    {
+        _status[label] = $"failing: {ex.Message}";
+        _metrics.Increment("feed_errors_total", MetricLabels.Of("feed", label), help: "Feed posts that failed");
+        _logger.LogWarning("{Label} feed post failed: {Message}", label, ex.Message);
+
+        if (_clients.TryRemove(label, out var dead))
+        {
+            dead.Dispose();
+            _retryAfter[label] = _time.GetUtcNow() + ReopenAfter;
         }
     }
 
@@ -104,7 +186,7 @@ public sealed class FeedWebhooks : IAsyncDisposable
     /// </summary>
     public async Task PostEmbedAsync(string label, Embed embed, CancellationToken ct = default)
     {
-        if (!_clients.TryGetValue(label, out var client)) return;
+        if (Client(label) is not { } client) return;
 
         try
         {
@@ -119,9 +201,7 @@ public sealed class FeedWebhooks : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _status[label] = $"failing: {ex.Message}";
-            _metrics.Increment("feed_errors_total", MetricLabels.Of("feed", label), help: "Feed posts that failed");
-            _logger.LogWarning("{Label} feed post failed: {Message}", label, ex.Message);
+            Failed(label, ex);
         }
 
         _ = ct;
