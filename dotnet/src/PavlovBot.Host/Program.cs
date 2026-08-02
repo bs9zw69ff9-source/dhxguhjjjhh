@@ -349,6 +349,22 @@ public static class Program
         logger.LogInformation("Pavlov installs: {Installs}",
             string.Join(", ", installs.Select(Path.GetFileName)));
 
+        /* Every path the bot WRITES INTO A GAME INSTALL, resolved and checked. These were
+           only ever visible by their effects, and the effect of a wrong one used to be a
+           directory tree created beside the real one that the game never reads. */
+        foreach (var (label, path) in new[]
+        {
+            ("ModSave ban list", features.ModsaveBanlistPath),
+            ("economy ledger", features.LedgerDirectory is { } d ? Path.Combine(d, "<player>.txt") : null),
+            ("faction rosters", features.RosterDirectory is { } r ? Path.Combine(r, "<faction>") : null),
+        }.Concat(installs.Select(i => ("whitelist", (string?)PavlovInstalls.WhitelistPath(i)))))
+        {
+            if (path is null) continue;
+
+            logger.LogInformation("Game file - {Label}: {Path}{Problem}", label, path,
+                GameFiles.Problem(path) is { } problem ? $"  <-- {problem}" : "");
+        }
+
         logger.LogInformation("Feeds: {Status}",
             string.Join(" | ", feeds.Status.OrderBy(kv => kv.Key, StringComparer.Ordinal)
                 .Select(kv => $"{kv.Key}={kv.Value}")));

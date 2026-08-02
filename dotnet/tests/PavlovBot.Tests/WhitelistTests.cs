@@ -35,15 +35,62 @@ public class WhitelistTests : IDisposable
     // ---- adding ----
 
     [Fact]
-    public async Task AddingCreatesTheFileAndTheDirectory()
+    public async Task AddingCreatesTheFileInADirectoryThatAlreadyExists()
     {
-        var nested = Path.Combine(_root, "Pavlov", "Saved", "Config", "whitelist.txt");
+        // The file legitimately may not exist yet - a server with nobody whitelisted has no
+        // whitelist.txt - but the directory holding it does on a real install.
+        var config = Path.Combine(_root, "Pavlov", "Saved", "Config");
+        Directory.CreateDirectory(config);
+        var nested = Path.Combine(config, "whitelist.txt");
 
         var result = await _whitelist.AddAsync(nested, "76561198000000001");
 
         Assert.True(result.Ok);
         Assert.True(result.Changed);
         Assert.Equal(["76561198000000001"], _whitelist.Read(nested));
+    }
+
+    [Fact]
+    public async Task AWholeMissingTreeIsRefused_NotBuilt()
+    {
+        /* THE DUPLICATE-MODSAVE BUG. Every writer into a game install called CreateDirectory
+           unconditionally, so a wrong path did not fail - it BUILT a config tree beside the
+           real one. Nothing errored, the bot reported success, the game never read a byte of
+           it, and the only symptom was a directory nobody put there. */
+        var wrong = Path.Combine(_root, "not-an-install", "Pavlov", "Saved", "Config", "whitelist.txt");
+
+        var result = await _whitelist.AddAsync(wrong, "somebody");
+
+        Assert.False(result.Ok);
+        Assert.False(Directory.Exists(Path.Combine(_root, "not-an-install")), "the bot built a game tree");
+        Assert.Contains("does not exist", result.Error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OneMissingLevelIsAllowed_BecauseModSaveIsMadeByTheMod()
+    {
+        /* ModSave is created by the mod, not by the base game, so on a fresh install
+           Config/ exists and Config/ModSave/ does not - and the Node bot creates it there.
+           Refusing outright would break a new server. */
+        var config = Path.Combine(_root, "Pavlov", "Saved", "Config");
+        Directory.CreateDirectory(config);
+
+        Assert.Null(GameFiles.Problem(Path.Combine(config, "ModSave", "banlist.txt")));
+
+        // ...but two levels is a tree, and a tree means the path is wrong.
+        Assert.NotNull(GameFiles.Problem(Path.Combine(config, "ModSave", "Deeper", "banlist.txt")));
+    }
+
+    [Fact]
+    public void AGameFilePathIsCheckedByItsDirectory()
+    {
+        var config = Path.Combine(_root, "Config");
+        Directory.CreateDirectory(config);
+
+        Assert.Null(GameFiles.Problem(Path.Combine(config, "whitelist.txt")));
+        Assert.NotNull(GameFiles.Problem(Path.Combine(_root, "a", "b", "c", "whitelist.txt")));
+        Assert.NotNull(GameFiles.Problem(null));
+        Assert.NotNull(GameFiles.Problem("   "));
     }
 
     [Fact]

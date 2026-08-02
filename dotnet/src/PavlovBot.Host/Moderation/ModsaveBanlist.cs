@@ -34,6 +34,9 @@ public sealed class ModsaveBanlist(
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
+    /// <summary>Said once. This runs on a timer, and a wrong path is wrong every tick.</summary>
+    private bool _pathWarned;
+
     public bool Enabled => !string.IsNullOrWhiteSpace(path);
 
     /// <summary>
@@ -56,9 +59,21 @@ public sealed class ModsaveBanlist(
                 .Append("\n\n");
         }
 
+        /* NOT CreateDirectory. This lives in a directory the game owns and already made, so
+           a missing one means the path is wrong - and building it produces a second ModSave
+           tree beside the real one that the game never reads. */
+        if (!Storage.GameFiles.Prepare(path!, out var problem))
+        {
+            if (!_pathWarned)
+            {
+                _pathWarned = true;
+                logger.LogError("Not writing the ModSave ban list: {Problem}", problem);
+            }
+            return 0;
+        }
+
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path!))!);
             var temp = $"{path}.tmp";
             await File.WriteAllTextAsync(temp, body.ToString(), ct).ConfigureAwait(false);
             File.Move(temp, path!, overwrite: true);

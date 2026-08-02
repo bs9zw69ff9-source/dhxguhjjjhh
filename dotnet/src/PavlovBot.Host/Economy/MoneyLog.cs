@@ -164,9 +164,12 @@ public sealed class LedgerFileStore(string? directory) : IBalanceStore
         var path = PathFor(playerId);
         if (path is null) return false;
 
+        /* NOT CreateDirectory. The ledger directory is the game's, and creating it would
+           produce a second one the game never reads while the bot reported success. */
+        if (!PavlovBot.Host.Storage.GameFiles.Prepare(path, out _)) return false;
+
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var temp = $"{path}.tmp";
             File.WriteAllText(temp, balance.ToString(System.Globalization.CultureInfo.InvariantCulture));
             File.Move(temp, path, overwrite: true);

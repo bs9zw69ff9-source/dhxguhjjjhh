@@ -153,7 +153,11 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger)
     /// </remarks>
     private static async Task WriteAsync(string path, string contents, CancellationToken ct)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        /* NOT CreateDirectory. Config/ is the game's directory and already exists on a real
+           install, so a missing one means this install root is wrong - and creating it
+           builds a Pavlov tree the game never reads, which /tester would then report as a
+           successful grant. */
+        if (!GameFiles.Prepare(path, out var problem)) throw new DirectoryNotFoundException(problem);
 
         var temp = path + ".tmp";
         await File.WriteAllTextAsync(temp, contents, ct).ConfigureAwait(false);
