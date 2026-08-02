@@ -136,31 +136,28 @@ public class LedgerFileStoreTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "pavlovbot-ledger-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void ARoundTripPreservesTheBalance()
+    public void TheBotDoesNotWritePlayerLedgers()
     {
+        /* A player ledger belongs to the GAME SERVER. The bot writing one is how balances
+           got out of step with what the servers actually held, so the write is gone
+           entirely - it refuses rather than half-succeeding. */
+        Directory.CreateDirectory(_directory);
         var store = new LedgerFileStore(_directory);
-        Assert.True(store.Write("Alice", 5000));
-        Assert.Equal(5000, store.Read("Alice"));
+
+        Assert.False(store.Write("Alice", 5000));
+        Assert.False(File.Exists(Path.Combine(_directory, "Alice.txt")));
     }
 
     [Fact]
-    public void SpacesInNamesAreKept()
+    public void ReadingIsUnaffected()
     {
-        /* Filenames must match what the GAME writes. Stripping spaces would send wages to
-           a phantom "ButterLife.txt" that nothing reads. */
-        var store = new LedgerFileStore(_directory);
-        store.Write("Butter Life", 700);
+        /* Only the write went. A read cannot corrupt a file the game is also using, and the
+           boards and /stats still need balances. */
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(Path.Combine(_directory, "Butter Life.txt"), "700");
 
-        Assert.True(File.Exists(Path.Combine(_directory, "Butter Life.txt")));
-        Assert.Equal(700, store.Read("Butter Life"));
-    }
-
-    [Fact]
-    public void PathSeparatorsAreStrippedSoALedgerCannotEscapeItsDirectory()
-    {
-        var store = new LedgerFileStore(_directory);
-        store.Write("../escape", 1);
-        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(_directory)!, "escape.txt")));
+        // ...including names with spaces, which is what the game actually writes.
+        Assert.Equal(700, new LedgerFileStore(_directory).Read("Butter Life"));
     }
 
     [Fact]

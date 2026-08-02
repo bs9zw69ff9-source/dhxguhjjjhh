@@ -62,7 +62,7 @@ public sealed class ModsaveBanlist(
         /* NOT CreateDirectory. This lives in a directory the game owns and already made, so
            a missing one means the path is wrong - and building it produces a second ModSave
            tree beside the real one that the game never reads. */
-        if (!Storage.GameFiles.Prepare(path!, out var problem))
+        if (Storage.GameFiles.Problem(path) is { } problem)
         {
             if (!_pathWarned)
             {

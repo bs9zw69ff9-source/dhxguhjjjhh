@@ -96,6 +96,15 @@ public sealed class RosterService
 
             var path = PathFor(file);
             var temp = $"{path}.tmp";
+            /* Only into a directory that already exists. The bot never creates one inside a
+               game install - a missing one means the configured roster path is wrong, and
+               building it produces a tree the game never reads. */
+            if (Storage.GameFiles.Problem(path) is { } problem)
+            {
+                _logger.LogWarning("Not writing {Path}: {Problem}", path, problem);
+                return false;
+            }
+
             await File.WriteAllTextAsync(temp, string.Join("\n", lines) + "\n", ct).ConfigureAwait(false);
             File.Move(temp, path, overwrite: true);
             return true;

@@ -87,80 +87,21 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger)
     }
 
     /// <summary>
-    /// Add an entry if it is not already present.
+    /// Refuses. whitelist.txt belongs to the game server and the bot does not write it.
     /// </summary>
     /// <remarks>
-    /// APPENDED to whatever is already in the file, never rewritten from a parsed copy -
-    /// anything the parser did not understand would otherwise be dropped on the first edit.
+    /// Reading is unaffected, so <c>/tester list</c> still shows who is on it and the
+    /// command can still tell an admin the exact line to add by hand.
     /// </remarks>
-    public async Task<WhitelistResult> AddAsync(string path, string entry, CancellationToken ct = default)
+    public Task<WhitelistResult> AddAsync(string path, string entry, CancellationToken ct = default) =>
+        Task.FromResult(Refused(path));
+
+    public Task<WhitelistResult> RemoveAsync(string path, string entry, CancellationToken ct = default) =>
+        Task.FromResult(Refused(path));
+
+    private WhitelistResult Refused(string path)
     {
-        try
-        {
-            var existing = File.Exists(path)
-                ? await File.ReadAllTextAsync(path, ct).ConfigureAwait(false)
-                : "";
-
-            if (Entries(existing.Split('\n')).Contains(entry, StringComparer.OrdinalIgnoreCase))
-                return new WhitelistResult(path, Ok: true, Changed: false);
-
-            // A file that does not end in a newline would otherwise join its last entry to
-            // the new one, silently corrupting both.
-            var body = existing.Length > 0 && !existing.EndsWith('\n') ? existing + "\n" : existing;
-
-            await WriteAsync(path, body + entry + "\n", ct).ConfigureAwait(false);
-            return new WhitelistResult(path, Ok: true, Changed: true);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            /* ANY failure is reported rather than thrown. A bad path throws ArgumentException
-               rather than IOException, and one install being misconfigured must not stop the
-               other two being written - the reply says which one did not take. */
-            logger.LogWarning("Could not add to {Path}: {Message}", path, ex.Message);
-            return new WhitelistResult(path, Ok: false, Changed: false, ex.Message);
-        }
-    }
-
-    /// <summary>Remove every line matching the entry, leaving everything else untouched.</summary>
-    public async Task<WhitelistResult> RemoveAsync(string path, string entry, CancellationToken ct = default)
-    {
-        try
-        {
-            if (!File.Exists(path)) return new WhitelistResult(path, Ok: true, Changed: false);
-
-            var lines = await File.ReadAllLinesAsync(path, ct).ConfigureAwait(false);
-            var kept = lines.Where(l => !string.Equals(l.Trim(), entry, StringComparison.OrdinalIgnoreCase)).ToList();
-
-            if (kept.Count == lines.Length) return new WhitelistResult(path, Ok: true, Changed: false);
-
-            await WriteAsync(path, string.Join("\n", kept).TrimEnd('\n') + "\n", ct).ConfigureAwait(false);
-            return new WhitelistResult(path, Ok: true, Changed: true);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning("Could not remove from {Path}: {Message}", path, ex.Message);
-            return new WhitelistResult(path, Ok: false, Changed: false, ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Temp file, then rename.
-    /// </summary>
-    /// <remarks>
-    /// A rename within a filesystem is atomic, so a reader - which here is a game server
-    /// that may load this file at any map change - sees either the old file or the new one,
-    /// never a half-written one.
-    /// </remarks>
-    private static async Task WriteAsync(string path, string contents, CancellationToken ct)
-    {
-        /* NOT CreateDirectory. Config/ is the game's directory and already exists on a real
-           install, so a missing one means this install root is wrong - and creating it
-           builds a Pavlov tree the game never reads, which /tester would then report as a
-           successful grant. */
-        if (!GameFiles.Prepare(path, out var problem)) throw new DirectoryNotFoundException(problem);
-
-        var temp = path + ".tmp";
-        await File.WriteAllTextAsync(temp, contents, ct).ConfigureAwait(false);
-        File.Move(temp, path, overwrite: true);
+        logger.LogWarning("Not writing {Path}: {Refusal}", path, GameFiles.Refusal("whitelist.txt"));
+        return new WhitelistResult(path, Ok: false, Changed: false, GameFiles.Refusal("whitelist.txt"));
     }
 }

@@ -15,15 +15,19 @@ namespace PavlovBot.Host.Discord.Commands;
 /// removes is doing two of them: a tester whitelisted on servers 1 and 2 and rejected by
 /// server 3 looks, from their side, like the server being broken.
 ///
-/// ONE USERNAME PER LINE, written exactly as given. An earlier version resolved the name to
-/// the account id the bot had recorded for it, on the assumption that the file was keyed the
-/// way the ban list is. It is not, and that would have written an id into a file matched on
-/// name - accepted by everything that touches it, and matching nobody.
+/// READ-ONLY. whitelist.txt belongs to the game server, and the bot does not write files the
+/// server owns. So this shows what is on each install's whitelist and gives back the exact
+/// line to paste - which is most of the value, because the two things that actually go wrong
+/// by hand are editing only two installs out of three and mistyping the name.
+///
+/// ONE USERNAME PER LINE, exactly as it appears in game. An earlier version resolved the
+/// name to the account id the bot had recorded, on the assumption the file was keyed the way
+/// the ban list is. It is not - that would have put an id into a file matched on name,
+/// accepted by everything that touches it and matching nobody.
 /// </remarks>
 public sealed class TesterCommand(
     WhitelistFile whitelist,
     Access access,
-    AuditLog audit,
     IReadOnlyList<string> installs,
     ILogger<TesterCommand> logger) : ISlashCommand
 {
@@ -41,13 +45,9 @@ public sealed class TesterCommand(
 
         return new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Admin - Whitelist a tester on every server")
+            .WithDescription("Admin - Check the whitelist and get the line to add")
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("add").WithDescription("Give a player whitelist access on every server")
-                .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption(Player()))
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithName("remove").WithDescription("Take whitelist access away on every server")
+                .WithName("check").WithDescription("Is this player whitelisted, and what line adds them")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(Player()))
             .AddOption(new SlashCommandOptionBuilder()
@@ -69,17 +69,13 @@ public sealed class TesterCommand(
         }
 
         var sub = command.Data.Options.FirstOrDefault();
-        var action = sub?.Name ?? "list";
 
-        if (action == "list")
+        if ((sub?.Name ?? "list") == "list")
         {
             await Reply(command, ListEmbed()).ConfigureAwait(false);
             return;
         }
 
-        /* The username, VERBATIM apart from what cannot go in a line of this file. The file
-           is matched against the player's actual in-game name, so anything else written
-           here matches nobody. */
         var entry = WhitelistFile.Entry(sub?.Options.FirstOrDefault(o => o.Name == "playerid")?.Value as string);
         if (entry.Length == 0)
         {
@@ -87,52 +83,38 @@ public sealed class TesterCommand(
             return;
         }
 
-        var results = new List<WhitelistResult>();
-        foreach (var install in installs)
+        /* PER INSTALL, because the failure this exists to catch is a whitelist edited on two
+           servers out of three - from the player's side that is indistinguishable from the
+           third server being broken. */
+        var listed = installs
+            .Select(i => (Install: Path.GetFileName(i), Path: PavlovInstalls.WhitelistPath(i)))
+            .Select(x => (x.Install, x.Path,
+                Has: whitelist.Read(x.Path).Contains(entry, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+
+        var missing = listed.Count(x => !x.Has);
+
+        var embed = missing == 0
+            ? Theme.Success($"{Sanitize.Code(entry)} is whitelisted everywhere",
+                string.Join("\n", listed.Select(x => $"{Theme.Ok} `{x.Install}` — whitelisted")))
+            : Theme.Warning($"{Sanitize.Code(entry)} is missing from {missing} server(s)",
+                string.Join("\n", listed.Select(x =>
+                    $"{(x.Has ? Theme.Ok : Theme.Bad)} `{x.Install}` — {(x.Has ? "whitelisted" : "NOT whitelisted")}")));
+
+        if (missing > 0)
         {
-            var path = PavlovInstalls.WhitelistPath(install);
-            results.Add(action == "add"
-                ? await whitelist.AddAsync(path, entry, ct).ConfigureAwait(false)
-                : await whitelist.RemoveAsync(path, entry, ct).ConfigureAwait(false));
+            embed.AddField("Add them by hand",
+                "The bot does not write files the game server owns. Append this line to each " +
+                $"whitelist below that is missing it:\n```\n{Sanitize.Code(entry)}\n```");
+
+            foreach (var x in listed.Where(x => !x.Has))
+                embed.AddField(x.Install, $"`{x.Path}`");
         }
 
-        await audit.RecordAsync($"tester-{action}", command.User.Username, entry, entry, ct).ConfigureAwait(false);
-        logger.LogInformation("tester {Action} | \"{Entry}\" | {Ok}/{Total} install(s)",
-            action, entry, results.Count(r => r.Ok), results.Count);
+        logger.LogInformation("tester check | \"{Entry}\" | missing on {Missing}/{Total}",
+            entry, missing, installs.Count);
 
-        await Reply(command, Summarise(action, entry, results)).ConfigureAwait(false);
-    }
-
-    private static EmbedBuilder Summarise(string action, string entry, IReadOnlyList<WhitelistResult> results)
-    {
-        var failed = results.Where(r => !r.Ok).ToList();
-        var changed = results.Count(r => r.Changed);
-        var verb = action == "add" ? "Whitelisted" : "Removed from the whitelist";
-
-        var lines = results.Select(r =>
-            $"{(r.Ok ? Theme.Ok : Theme.Bad)} `{r.Install}` — " +
-            (r.Ok ? (r.Changed ? "written" : "already correct") : r.Error ?? "failed"));
-
-        /* Partial failure is called out at the top rather than left to be spotted in the
-           list. Two installs out of three is the state that gets somebody told their access
-           works when one server will still reject them. */
-        var embed = failed.Count > 0
-            ? Theme.Failure($"{verb} on {results.Count - failed.Count}/{results.Count} server(s)",
-                $"`{Sanitize.Code(entry)}`\n\n" + string.Join("\n", lines))
-            : Theme.Success($"{verb} — {Sanitize.Code(entry)}",
-                $"On **{results.Count}** server(s)" +
-                (changed == 0 ? " *(nothing to change)*" : "") + "\n\n" + string.Join("\n", lines));
-
-        if (action == "add")
-        {
-            /* The name has to match EXACTLY, and the person running this is typing it from
-               memory or from a Discord handle that may not be the in-game one. */
-            embed.AddField("Note",
-                "Written exactly as typed — it must match their in-game name character for character. " +
-                "The whitelist also only applies when the server has it enabled.");
-        }
-
-        return embed;
+        await Reply(command, embed).ConfigureAwait(false);
     }
 
     private EmbedBuilder ListEmbed()

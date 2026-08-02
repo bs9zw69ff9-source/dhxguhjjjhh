@@ -32,170 +32,60 @@ public class WhitelistTests : IDisposable
         Assert.Equal(["76561198000000001", "0002abc"], entries);
     }
 
-    // ---- adding ----
+    // ---- writing: refused ----
 
     [Fact]
-    public async Task AddingCreatesTheFileInADirectoryThatAlreadyExists()
+    public async Task TheBotDoesNotWriteWhitelistTxt()
     {
-        // The file legitimately may not exist yet - a server with nobody whitelisted has no
-        // whitelist.txt - but the directory holding it does on a real install.
-        var config = Path.Combine(_root, "Pavlov", "Saved", "Config");
-        Directory.CreateDirectory(config);
-        var nested = Path.Combine(config, "whitelist.txt");
+        /* whitelist.txt belongs to the GAME SERVER. The bot writing it is one of the ways it
+           ended up touching files the server owns, so both mutations refuse outright rather
+           than half-succeeding on some installs. */
+        var add = await _whitelist.AddAsync(Path0, "Pkdestroy");
+        var remove = await _whitelist.RemoveAsync(Path0, "Pkdestroy");
 
-        var result = await _whitelist.AddAsync(nested, "76561198000000001");
-
-        Assert.True(result.Ok);
-        Assert.True(result.Changed);
-        Assert.Equal(["76561198000000001"], _whitelist.Read(nested));
+        Assert.False(add.Ok);
+        Assert.False(remove.Ok);
+        Assert.False(File.Exists(Path0), "the bot created whitelist.txt");
     }
 
     [Fact]
-    public async Task AWholeMissingTreeIsRefused_NotBuilt()
+    public async Task TheRefusalSaysWhoOwnsTheFile()
     {
-        /* THE DUPLICATE-MODSAVE BUG. Every writer into a game install called CreateDirectory
-           unconditionally, so a wrong path did not fail - it BUILT a config tree beside the
-           real one. Nothing errored, the bot reported success, the game never read a byte of
-           it, and the only symptom was a directory nobody put there. */
-        var wrong = Path.Combine(_root, "not-an-install", "Pavlov", "Saved", "Config", "whitelist.txt");
+        // The reply an admin sees has to tell them what to do instead, not just "failed".
+        var result = await _whitelist.AddAsync(Path0, "Pkdestroy");
 
-        var result = await _whitelist.AddAsync(wrong, "somebody");
-
-        Assert.False(result.Ok);
-        Assert.False(Directory.Exists(Path.Combine(_root, "not-an-install")), "the bot built a game tree");
-        Assert.Contains("does not exist", result.Error!, StringComparison.Ordinal);
+        Assert.Contains("game server owns", result.Error!, StringComparison.Ordinal);
+        Assert.Contains("Edit it on the server", result.Error!, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void OneMissingLevelIsAllowed_BecauseModSaveIsMadeByTheMod()
+    public async Task AnExistingWhitelistIsNotTouched()
     {
-        /* ModSave is created by the mod, not by the base game, so on a fresh install
-           Config/ exists and Config/ModSave/ does not - and the Node bot creates it there.
-           Refusing outright would break a new server. */
-        var config = Path.Combine(_root, "Pavlov", "Saved", "Config");
-        Directory.CreateDirectory(config);
+        // The worst outcome would be a refusal that still managed to truncate the file.
+        await File.WriteAllTextAsync(Path0, "# testers\nalice\nbob\n");
 
-        Assert.Null(GameFiles.Problem(Path.Combine(config, "ModSave", "banlist.txt")));
+        await _whitelist.AddAsync(Path0, "carol");
+        await _whitelist.RemoveAsync(Path0, "alice");
 
-        // ...but two levels is a tree, and a tree means the path is wrong.
-        Assert.NotNull(GameFiles.Problem(Path.Combine(config, "ModSave", "Deeper", "banlist.txt")));
+        Assert.Equal("# testers\nalice\nbob\n", await File.ReadAllTextAsync(Path0));
+    }
+
+    // ---- reading: unaffected ----
+
+    [Fact]
+    public void ReadingStillWorks()
+    {
+        /* /tester list still shows who is whitelisted, and can tell an admin the exact line
+           to add by hand. A read cannot corrupt a file the game is also using. */
+        File.WriteAllText(Path0, "# testers\nalice\nBart.simpson.2010kk\n\n// old\n");
+
+        Assert.Equal(["alice", "Bart.simpson.2010kk"], _whitelist.Read(Path0));
     }
 
     [Fact]
-    public void AGameFilePathIsCheckedByItsDirectory()
+    public void ReadingAFileThatIsNotThereIsEmpty_NotAnError()
     {
-        var config = Path.Combine(_root, "Config");
-        Directory.CreateDirectory(config);
-
-        Assert.Null(GameFiles.Problem(Path.Combine(config, "whitelist.txt")));
-        Assert.NotNull(GameFiles.Problem(Path.Combine(_root, "a", "b", "c", "whitelist.txt")));
-        Assert.NotNull(GameFiles.Problem(null));
-        Assert.NotNull(GameFiles.Problem("   "));
-    }
-
-    [Fact]
-    public async Task AddingTwiceDoesNotDuplicate()
-    {
-        await _whitelist.AddAsync(Path0, "abc");
-        var second = await _whitelist.AddAsync(Path0, "abc");
-
-        Assert.True(second.Ok);
-        Assert.False(second.Changed);     // "already correct", not a second line
-        Assert.Single(_whitelist.Read(Path0));
-    }
-
-    [Fact]
-    public async Task EverythingAlreadyInTheFileSurvivesAnEdit()
-    {
-        /* The file is HAND-MAINTAINED. Rewriting it from a parsed copy would silently delete
-           comments and anything the parser did not understand - which is somebody's access. */
-        await File.WriteAllTextAsync(Path0, "# testers, do not remove\nexisting-one\n\nexisting-two\n");
-
-        await _whitelist.AddAsync(Path0, "new-one");
-
-        var text = await File.ReadAllTextAsync(Path0);
-        Assert.Contains("# testers, do not remove", text, StringComparison.Ordinal);
-        Assert.Contains("existing-one", text, StringComparison.Ordinal);
-        Assert.Contains("existing-two", text, StringComparison.Ordinal);
-        Assert.Contains("new-one", text, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task AFileWithNoTrailingNewlineDoesNotJoinTwoEntries()
-    {
-        // Hand-edited files routinely lack one, and "abcdef" instead of "abc\ndef" silently
-        // revokes one person and whitelists nobody.
-        await File.WriteAllTextAsync(Path0, "abc");
-
-        await _whitelist.AddAsync(Path0, "def");
-
-        Assert.Equal(["abc", "def"], _whitelist.Read(Path0));
-    }
-
-    [Fact]
-    public async Task MatchingIsCaseInsensitive()
-    {
-        await _whitelist.AddAsync(Path0, "AbC");
-        var again = await _whitelist.AddAsync(Path0, "abc");
-
-        Assert.False(again.Changed);
-        Assert.Single(_whitelist.Read(Path0));
-    }
-
-    // ---- removing ----
-
-    [Fact]
-    public async Task RemovingTakesOutOnlyTheOneLine()
-    {
-        await File.WriteAllTextAsync(Path0, "# keep me\nalice\nbob\ncarol\n");
-
-        var result = await _whitelist.RemoveAsync(Path0, "bob");
-
-        Assert.True(result.Changed);
-        Assert.Equal(["alice", "carol"], _whitelist.Read(Path0));
-        Assert.Contains("# keep me", await File.ReadAllTextAsync(Path0), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task RemovingSomebodyWhoIsNotThereChangesNothing()
-    {
-        await File.WriteAllTextAsync(Path0, "alice\n");
-
-        var result = await _whitelist.RemoveAsync(Path0, "bob");
-
-        Assert.True(result.Ok);
-        Assert.False(result.Changed);
-        Assert.Equal(["alice"], _whitelist.Read(Path0));
-    }
-
-    [Fact]
-    public async Task RemovingFromAFileThatDoesNotExistIsNotAnError()
-    {
-        var result = await _whitelist.RemoveAsync(Path.Combine(_root, "nope", "whitelist.txt"), "bob");
-
-        Assert.True(result.Ok);
-        Assert.False(result.Changed);
-    }
-
-    [Fact]
-    public async Task NoTemporaryFileIsLeftBehind()
-    {
-        // The atomic write renames its temp file. One left on disk would be read by nobody
-        // and would confuse whoever next opens the directory.
-        await _whitelist.AddAsync(Path0, "abc");
-
-        Assert.False(File.Exists(Path0 + ".tmp"));
-    }
-
-    [Fact]
-    public async Task AnUnwritablePathIsReportedRatherThanThrowing()
-    {
-        /* One install failing must not take the command down - the other two still need
-           writing, and the reply has to say which one did not. */
-        var result = await _whitelist.AddAsync(Path.Combine(_root, "\0bad", "whitelist.txt"), "abc");
-
-        Assert.False(result.Ok);
-        Assert.NotNull(result.Error);
+        Assert.Empty(_whitelist.Read(Path.Combine(_root, "nope", "whitelist.txt")));
     }
 
     // ---- install discovery ----
@@ -287,11 +177,14 @@ public class WhitelistTests : IDisposable
     }
 
     [Fact]
-    public async Task ANameWithASpaceRoundTripsThroughTheFile()
+    public void ANameWithASpaceSurvivesAReadBack()
     {
-        await _whitelist.AddAsync(Path0, WhitelistFile.Entry("A Player Name"));
+        // The bot no longer writes the file, but it still has to READ names the game wrote -
+        // and those routinely contain spaces.
+        File.WriteAllText(Path0, "A Player Name\n");
 
         Assert.Equal(["A Player Name"], _whitelist.Read(Path0));
+        Assert.Equal("A Player Name", WhitelistFile.Entry("A Player Name"));
     }
 
     public void Dispose()

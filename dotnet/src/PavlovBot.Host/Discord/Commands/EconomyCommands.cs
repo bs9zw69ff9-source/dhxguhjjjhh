@@ -99,7 +99,9 @@ public sealed class CapsCommand : ISlashCommand
             /* Reporting the intended balance after a failed write is how a bot tells a
                player they were paid when they were not. */
             await Reply(command, Theme.Failure("Not applied",
-                "The ledger write failed - their balance is unchanged. Check MODSAVE_PATH and permissions.")).ConfigureAwait(false);
+                "The bot no longer writes player ledger files - those belong to the game server, and "
+                + "writing them is what put balances out of step with what the servers held. "
+                + "Their balance is unchanged; adjust it in game instead.")).ConfigureAwait(false);
             return;
         }
 

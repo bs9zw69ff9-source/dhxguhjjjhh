@@ -159,25 +159,19 @@ public sealed class LedgerFileStore(string? directory) : IBalanceStore
         }
     }
 
+    /// <summary>
+    /// Refuses. A player ledger belongs to the game server and the bot does not write it.
+    /// </summary>
+    /// <remarks>
+    /// The reads above are untouched - the boards and /stats still show balances. Only the
+    /// write is gone, and with it every way this could put a number into a file the game is
+    /// also using: a wrong ledger path, a stale value from a slow save, a zero written for a
+    /// player the bot had never seen.
+    /// </remarks>
     public bool Write(string playerId, long balance)
     {
-        var path = PathFor(playerId);
-        if (path is null) return false;
-
-        /* NOT CreateDirectory. The ledger directory is the game's, and creating it would
-           produce a second one the game never reads while the bot reported success. */
-        if (!PavlovBot.Host.Storage.GameFiles.Prepare(path, out _)) return false;
-
-        try
-        {
-            var temp = $"{path}.tmp";
-            File.WriteAllText(temp, balance.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            File.Move(temp, path, overwrite: true);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
+        _ = playerId;
+        _ = balance;
+        return false;
     }
 }

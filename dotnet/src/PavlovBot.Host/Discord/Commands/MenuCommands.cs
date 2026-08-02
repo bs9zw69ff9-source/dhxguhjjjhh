@@ -33,6 +33,14 @@ public sealed class GiveMenuCommand(
             .WithDescription("Admin - Grant RCON menu access to a player")
             .AddOption("member", ApplicationCommandOptionType.User, "Which Discord member", isRequired: true)
             .AddOption("playerid", ApplicationCommandOptionType.String, "Their in-game name", isRequired: true, isAutocomplete: true)
+            /* The tier was MISSING entirely, which is why every grant produced a menu with
+               nothing in it: without it there is no bit code to send and no way to ask for
+               the Mod and Access Manager powers High Staff is defined by. */
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("menu").WithDescription("Which menu to grant")
+                .WithType(ApplicationCommandOptionType.String).WithRequired(true)
+                .AddChoice("Staff", RconMenu.Staff)
+                .AddChoice("High Staff", RconMenu.HighStaff))
             .Build();
 
     private Dictionary<string, MenuBinding> Bindings() =>
@@ -53,6 +61,7 @@ public sealed class GiveMenuCommand(
 
         var member = command.Data.Options.First(o => o.Name == "member").Value as IUser;
         var requested = Sanitize.Id(command.Data.Options.First(o => o.Name == "playerid").Value as string ?? "");
+        var tier = command.Data.Options.FirstOrDefault(o => o.Name == "menu")?.Value as string ?? RconMenu.Staff;
 
         if (member is null || requested.Length == 0)
         {
@@ -87,7 +96,8 @@ public sealed class GiveMenuCommand(
             case MenuClaimAction.Release:
                 await SetGrantAsync(selfId, null, ct).ConfigureAwait(false);
                 foreach (var server in rcon.Servers)
-                    await TrySend(server, $"StripMenu {requested}", ct).ConfigureAwait(false);
+                    foreach (var line in RconMenu.Revoke(requested, wasHighStaff: true))
+                        await TrySend(server, line, ct).ConfigureAwait(false);
 
                 logger.LogInformation("stripmenu | member={Member} | player=\"{Player}\" | by={By}",
                     selfId, requested, command.User.Username);
@@ -97,9 +107,15 @@ public sealed class GiveMenuCommand(
                 return;
         }
 
+        var commands = RconMenu.Grant(requested, tier);
+
         var delivered = 0;
         foreach (var server in rcon.Servers)
-            if (await TrySend(server, $"GiveMenu {requested}", ct).ConfigureAwait(false)) delivered++;
+        {
+            var ok = false;
+            foreach (var line in commands) ok |= await TrySend(server, line, ct).ConfigureAwait(false);
+            if (ok) delivered++;
+        }
 
         if (delivered == 0)
         {
@@ -126,7 +142,7 @@ public sealed class GiveMenuCommand(
         logger.LogInformation("givemenu | member={Member} | player=\"{Player}\" | by={By} | servers={Servers}",
             selfId, requested, command.User.Username, delivered);
 
-        await Reply(command, Theme.Success("Menu access granted",
+        await Reply(command, Theme.Success($"{(RconMenu.IsHighStaff(tier) ? "High Staff" : "Staff")} menu granted",
             $"{member.Mention} → `{Sanitize.Code(requested)}`")
             .AddField("Binding", boundName is null ? "newly bound to this name" : "already bound", true)).ConfigureAwait(false);
     }

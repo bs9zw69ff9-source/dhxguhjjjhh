@@ -375,7 +375,13 @@ public sealed class StripMenuCommand(
 
         foreach (var server in rcon.Servers)
         {
-            try { await rcon.SendAsync(server, $"StripMenu {player}", ct).ConfigureAwait(false); }
+            try
+            {
+                // RemoveMenu, not "StripMenu" - RCON+ has no such verb, so revoking looked
+                // like it worked and left the menu in place.
+                foreach (var line in RconMenu.Revoke(player, wasHighStaff: true))
+                    await rcon.SendAsync(server, line, ct).ConfigureAwait(false);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning("StripMenu failed on {Server}: {Message}", server, ex.Message);

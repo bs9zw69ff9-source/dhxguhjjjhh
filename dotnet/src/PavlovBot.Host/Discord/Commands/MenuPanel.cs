@@ -170,19 +170,16 @@ public sealed class MenuPanel(
 
     private async Task GrantAsync(SocketModal modal, string selfId, string name, string tier, CancellationToken ct)
     {
+        /* The exact RCON+ verbs, from one place. This used to send "GiveMenu <name>" with no
+           bit code and "GiveMod"/"GiveAccessManager", none of which RCON+ acts on - so a
+           claim reported success and granted nothing. */
         var delivered = 0;
         foreach (var server in rcon.Servers)
         {
-            if (await TrySend(server, $"GiveMenu {name}", ct).ConfigureAwait(false)) delivered++;
-
-            /* High staff also get Mod and Access Manager, matching the Node bot. These are
-               best-effort on purpose: the MENU is the grant, and a server that rejected the
-               extras should not make the whole claim read as failed. */
-            if (tier == "highstaff")
-            {
-                await TrySend(server, $"GiveMod {name}", ct).ConfigureAwait(false);
-                await TrySend(server, $"GiveAccessManager {name}", ct).ConfigureAwait(false);
-            }
+            var ok = false;
+            foreach (var line in RconMenu.Grant(name, tier))
+                ok |= await TrySend(server, line, ct).ConfigureAwait(false);
+            if (ok) delivered++;
         }
 
         if (delivered == 0)
@@ -216,9 +213,8 @@ public sealed class MenuPanel(
     {
         foreach (var server in rcon.Servers)
         {
-            await TrySend(server, $"StripMenu {name}", ct).ConfigureAwait(false);
-            await TrySend(server, $"RemoveMod {name}", ct).ConfigureAwait(false);
-            await TrySend(server, $"RemoveAccessManager {name}", ct).ConfigureAwait(false);
+            foreach (var line in RconMenu.Revoke(name, wasHighStaff: true))
+                await TrySend(server, line, ct).ConfigureAwait(false);
         }
 
         /* The GRANT goes, the BINDING stays. Dropping the binding here is exactly what would

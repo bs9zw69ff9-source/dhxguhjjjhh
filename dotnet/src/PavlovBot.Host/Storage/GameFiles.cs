@@ -1,82 +1,87 @@
 namespace PavlovBot.Host.Storage;
 
 /// <summary>
-/// Writing into a Pavlov install, without inventing one.
+/// The bot does not write files the game server owns.
 /// </summary>
 /// <remarks>
-/// THE RULE IS ONE LEVEL. The bot may create the single directory a file lives in, and only
-/// when that directory's own parent already exists. It may never build a chain.
+/// THE RULE: no player ledger files, no whitelist.txt, and no directory inside a Pavlov
+/// install - ever, for any reason.
 ///
-/// Both halves are load-bearing, and each fixes a real failure:
+/// This started as a narrower guard after the bot built a second ModSave tree beside the
+/// real one, and it is now absolute because the narrow version kept finding new ways to be
+/// wrong. Every one of these writes had the same shape of failure: a path that looked
+/// plausible, a write that reported success, and a game server that read a different file.
+/// Nothing errored, so nothing was noticeable until a directory nobody created turned up on
+/// the server or somebody's balance was gone.
 ///
-///   CREATING ONE LEVEL is necessary. ModSave is made by the mod, not by the base game, so
-///   on a fresh install <c>Config/</c> exists and <c>Config/ModSave/</c> does not - and the
-///   Node bot creates it there for exactly this reason. Refusing would break a new server.
+/// READING IS UNAFFECTED. The bot still reads ledgers for the boards, the whitelist for
+/// <c>/tester list</c>, and the ban list for imports - all of which are safe, because a read
+/// cannot corrupt a file the game is also using.
 ///
-///   CREATING A CHAIN IS ALWAYS WRONG. A path pointing somewhere that is not an install has
-///   no <c>Pavlov/Saved/Config</c> above it, and building the whole tree produces a second
-///   config directory beside the real one. Nothing errors, the bot reports success, the game
-///   never reads a byte of it, and the only symptom is a directory nobody put there - which
-///   is a genuinely confusing thing to find on a server and impossible to attribute later.
-///
-/// None of this applies to the bot's own data directory, which it owns and should create.
+/// The bot's OWN data - bot.db, the JSON export, faction backups - is not covered by this
+/// and is written normally. It owns those.
 /// </remarks>
 internal static class GameFiles
 {
     /// <summary>
-    /// Why this path cannot be written, or null when it can.
+    /// Why this file may not be written. Never null: the bot does not write game files.
+    /// </summary>
+    /// <param name="what">What was being written, for a message somebody can act on.</param>
+    public static string Refusal(string what) =>
+        $"{what} is a file the game server owns, and the bot does not write those. " +
+        "Edit it on the server instead.";
+
+    /// <summary>
+    /// Whether this file may be written: only into a directory that ALREADY exists.
     /// </summary>
     /// <remarks>
-    /// The FILE may legitimately not exist - a server with nobody banned has no banlist.txt.
-    /// What must exist is the grandparent, so that at most one directory gets created.
+    /// For the files the bot genuinely owns and the mod merely reads - the ban list, the
+    /// faction rosters. It still never CREATES a directory: a missing one means the
+    /// configured path is wrong, and building it is what produced a second config tree
+    /// beside the real one.
     /// </remarks>
     public static string? Problem(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return "no path configured";
 
         string? directory;
-        try
-        {
-            directory = Path.GetDirectoryName(Path.GetFullPath(path));
-        }
+        try { directory = Path.GetDirectoryName(Path.GetFullPath(path)); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return $"not a usable path: {ex.Message}";
         }
 
         if (string.IsNullOrEmpty(directory)) return "no directory in the path";
-        if (Directory.Exists(directory)) return null;
 
-        var parent = Path.GetDirectoryName(directory);
-        if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent)) return null;   // one level, allowed
-
-        return $"{directory} does not exist and neither does its parent - the bot creates at most one " +
-               "directory inside a game install, because building a whole tree means the configured path " +
-               "is wrong and produces a second config directory the game never reads";
+        return Directory.Exists(directory)
+            ? null
+            : $"{directory} does not exist - the bot never creates a directory inside a game install, " +
+              "because a missing one means the configured path is wrong";
     }
 
     /// <summary>
-    /// Make the containing directory if that is allowed, and report whether writing may go ahead.
+    /// True when a path lies inside one of the game installs.
     /// </summary>
-    public static bool Prepare(string path, out string? problem)
+    /// <remarks>
+    /// Separator-bounded, so "pavlovserver" does not match "pavlovserver-backup" - a prefix
+    /// test would quietly cover directories that are not installs at all.
+    /// </remarks>
+    public static bool InsideInstall(string path, IReadOnlyList<string> installs)
     {
-        problem = Problem(path);
-        if (problem is not null) return false;
+        ArgumentNullException.ThrowIfNull(installs);
 
-        var directory = Path.GetDirectoryName(Path.GetFullPath(path));
-        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        string full;
+        try { full = Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            try
-            {
-                Directory.CreateDirectory(directory);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                problem = $"could not create {directory}: {ex.Message}";
-                return false;
-            }
+            return false;
         }
 
-        return true;
+        return installs.Any(install =>
+        {
+            var root = Path.GetFullPath(install).TrimEnd(Path.DirectorySeparatorChar);
+            return full.Equals(root, StringComparison.Ordinal) ||
+                   full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        });
     }
 }
