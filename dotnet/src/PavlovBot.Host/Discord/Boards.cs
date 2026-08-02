@@ -205,38 +205,6 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
             .Build();
     }
 
-    /// <summary>Who is online right now, per server.</summary>
-    public Embed? BuildPlayerList()
-    {
-        var sections = new List<string>();
-        var total = 0;
-
-        foreach (var server in rcon.Servers)
-        {
-            var roster = rcon.Roster(server);
-
-            /* A roster that has never been fetched is NOT an empty server. Saying "nobody
-               is on" because the sweep has not run yet is a lie the board would tell every
-               time the bot restarts. */
-            if (roster.TakenAt == DateTimeOffset.MinValue) continue;
-
-            total += roster.Players.Count;
-            var names = roster.Players
-                .Select(p => p.Name).Where(n => n.Length > 0)
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-                .Select(n => $"`{Sanitize.Code(n)}`");
-
-            sections.Add($"**{server}** — {roster.Players.Count} online\n" +
-                         (roster.Players.Count > 0 ? string.Join(" ", names) : "*nobody*"));
-        }
-
-        if (sections.Count == 0) return null;
-
-        return Theme.Notice($"{Theme.Up} Online — {total} player(s)", string.Join("\n\n", sections))
-            .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
-            .Build();
-    }
-
     /// <summary>Staff ranked by moderation actions taken.</summary>
     public Embed? BuildStaffBoard()
     {

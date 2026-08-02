@@ -54,14 +54,6 @@ public class BoardsTests : IDisposable
     }
 
     [Fact]
-    public void ARosterThatHasNeverBeenFetchedIsNotAnEmptyServer()
-    {
-        /* Saying "nobody is on" because the sweep has not run yet is a lie the board would
-           tell every single time the bot restarts. */
-        Assert.Null(_boards.BuildPlayerList());
-    }
-
-    [Fact]
     public void AnEmptyLedgerDirectoryStillPostsABoard()
     {
         /* NOT null. Null skips the cycle and leaves whatever is already in the channel -

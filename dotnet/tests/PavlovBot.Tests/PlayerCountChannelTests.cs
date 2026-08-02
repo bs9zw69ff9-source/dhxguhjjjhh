@@ -1,0 +1,178 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using PavlovBot.Core.Servers;
+using PavlovBot.Host.Configuration;
+using PavlovBot.Host.Discord;
+using PavlovBot.Host.Observability;
+using PavlovBot.Host.Rcon;
+using PavlovBot.Host.Servers;
+using PavlovBot.Rcon;
+using Xunit;
+
+namespace PavlovBot.Tests;
+
+/// <summary>
+/// Live player counts as voice channel names.
+/// </summary>
+/// <remarks>
+/// Replaced the player-list board. Two things are worth testing and neither needs a
+/// gateway: the exact NAMES, because a channel name is the kind of thing a later edit
+/// quietly reformats, and the decision NOT to write an unchanged one - which is the only
+/// reason the feature stays inside Discord's two-renames-per-ten-minutes limit.
+/// </remarks>
+public class PlayerCountChannelTests
+{
+    /// <summary>Records renames, and reports whatever name was last written.</summary>
+    private sealed class FakeChannels : IChannelRenamer
+    {
+        private readonly Dictionary<ulong, string> _names = [];
+
+        public List<(ulong Channel, string Name)> Renames { get; } = [];
+        public int NameReads { get; private set; }
+
+        public FakeChannels(params (ulong Id, string Name)[] existing)
+        {
+            foreach (var (id, name) in existing) _names[id] = name;
+        }
+
+        public Task<string?> NameOfAsync(ulong channelId, CancellationToken ct)
+        {
+            NameReads++;
+            return Task.FromResult(_names.TryGetValue(channelId, out var name) ? name : null);
+        }
+
+        public Task<bool> RenameAsync(ulong channelId, string name, CancellationToken ct)
+        {
+            Renames.Add((channelId, name));
+            _names[channelId] = name;
+            return Task.FromResult(true);
+        }
+    }
+
+    // ---- the names ----
+
+    [Fact]
+    public void AServerChannelIsNamedCountOverCapacity()
+    {
+        Assert.Equal("Server 1 3/24", PlayerCountChannels.ServerName(1, 3, 24));
+        Assert.Equal("Server 2 0/24", PlayerCountChannels.ServerName(2, 0, 24));
+        Assert.Equal("Server 3 24/24", PlayerCountChannels.ServerName(3, 24, 24));
+    }
+
+    [Fact]
+    public void AnUnknownCapacityLeavesTheCountAlone()
+    {
+        /* The count is the point and the capacity is decoration, so a server that would not
+           answer ServerInfo still gets a correct name rather than "3/0". */
+        Assert.Equal("Server 1 3", PlayerCountChannels.ServerName(1, 3, null));
+        Assert.Equal("Server 1 3", PlayerCountChannels.ServerName(1, 3, 0));
+    }
+
+    [Fact]
+    public void TheTotalIsACountWithNoDenominator()
+    {
+        /* The only capacity available platform-wide is the sum of every listed server's max
+           slots, which moves as servers come and go and which nobody is trying to fill.
+           "287/7536" reads as a meaningful fraction and is not one. */
+        Assert.Equal("Shack total 287", PlayerCountChannels.TotalName(287));
+        Assert.Equal("Shack total 0", PlayerCountChannels.TotalName(0));
+    }
+
+    [Fact]
+    public void NoNameCarriesAnEmoji()
+    {
+        // Asked for explicitly, and easy to reintroduce by accident later.
+        foreach (var name in new[]
+        {
+            PlayerCountChannels.ServerName(1, 3, 24),
+            PlayerCountChannels.ServerName(9, 0, null),
+            PlayerCountChannels.TotalName(287),
+        })
+        {
+            Assert.All(name, c => Assert.True(char.IsAscii(c), $"\"{name}\" contains a non-ASCII character"));
+        }
+    }
+
+    [Fact]
+    public void TheTotalSumsEveryListedServer()
+    {
+        var servers = new[]
+        {
+            new ServerListing("a", "1.1.1.1", 1, 5, 24, "m", "m", "TDM", "TDM", "1", false, true, null),
+            new ServerListing("b", "1.1.1.2", 1, 0, 24, "m", "m", "TDM", "TDM", "1", false, true, null),
+            new ServerListing("c", "1.1.1.3", 1, 12, 24, "m", "m", "TDM", "TDM", "1", false, true, null),
+        };
+
+        Assert.Equal(17, PlayerCountChannels.TotalPlayers(servers));
+        Assert.Equal(0, PlayerCountChannels.TotalPlayers([]));
+    }
+
+    // ---- the rate limit ----
+
+    private static PlayerCountChannels Build(IChannelRenamer channels)
+    {
+        var options = new BotOptions
+        {
+            DiscordToken = "t",
+            Servers = [new RconOptions { Name = "server1", Host = "127.0.0.1", Port = 9100, Password = "x" }],
+            Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+            DataDirectory = Path.GetTempPath(),
+        };
+
+        var rcon = new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+        var master = new MasterServerList(new HttpClient(), NullLogger<MasterServerList>.Instance);
+
+        return new PlayerCountChannels(channels, rcon, master, NullLogger<PlayerCountChannels>.Instance);
+    }
+
+    [Fact]
+    public async Task AStaleRosterDoesNotOverwriteTheName()
+    {
+        /* An unreachable server and an empty one are indistinguishable from a roster. A blip
+           would otherwise rename the channel to "0/24" and back, spending BOTH renames in
+           the ten-minute window on a number that was never true - so when the real count
+           came back there would be no allowance left to publish it.
+
+           The roster here has never been fetched, which is the state right after a restart. */
+        var channels = new FakeChannels((100UL, "Server 1 5/24"));
+
+        await Build(channels).TickAsync(new PlayerCountChannels.Targets([100UL], null));
+
+        Assert.Empty(channels.Renames);
+    }
+
+    [Fact]
+    public async Task AChannelTheBotCannotSeeIsReportedRatherThanRetriedBlindly()
+    {
+        // No entry for this id, so NameOfAsync returns null.
+        var channels = new FakeChannels();
+
+        await Build(channels).TickAsync(new PlayerCountChannels.Targets([], TotalChannel: 999UL));
+
+        Assert.Empty(channels.Renames);
+    }
+
+    [Fact]
+    public async Task MoreChannelsThanServersIsNotAnError()
+    {
+        /* Three channel ids with one server configured. It must not throw, and it must not
+           rename the extra channels to somebody else's count. */
+        var channels = new FakeChannels((100UL, "Server 1 0/24"), (101UL, "Server 2 0/24"), (102UL, "Server 3 0/24"));
+
+        var thrown = await Record.ExceptionAsync(() =>
+            Build(channels).TickAsync(new PlayerCountChannels.Targets([100UL, 101UL, 102UL], null)));
+
+        Assert.Null(thrown);
+        Assert.Empty(channels.Renames);
+    }
+
+    [Fact]
+    public async Task NoChannelsConfiguredDoesNothing()
+    {
+        var channels = new FakeChannels();
+
+        await Build(channels).TickAsync(new PlayerCountChannels.Targets([], null));
+
+        Assert.Empty(channels.Renames);
+        Assert.Equal(0, channels.NameReads);
+    }
+}

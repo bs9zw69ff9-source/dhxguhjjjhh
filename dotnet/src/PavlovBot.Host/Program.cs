@@ -249,6 +249,10 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand>(sp =>
             new ServerLookupCommand(sp.GetRequiredService<ServerBrowser>()));
         builder.Services.AddSingleton<ISlashCommand, FeedsCommand>();
+
+        // Live player counts as voice channel names, replacing the player-list board.
+        builder.Services.AddSingleton<IChannelRenamer, GatewayChannelRenamer>();
+        builder.Services.AddSingleton<PlayerCountChannels>();
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),

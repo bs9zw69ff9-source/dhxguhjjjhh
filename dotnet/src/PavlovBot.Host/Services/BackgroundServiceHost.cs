@@ -51,6 +51,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Logs.FeedBridge _bridge;
 
     private readonly PavlovBot.Host.Logs.ServerLabels _servers;
+    private readonly PavlovBot.Host.Discord.PlayerCountChannels _counts;
     private readonly PavlovBot.Host.Verification.VerificationService _verification;
     private readonly PavlovBot.Host.Discord.Commands.MenuPanel _menuPanel;
 
@@ -74,6 +75,7 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Core.Data.SerializedStore store,
         PavlovBot.Host.Logs.FeedBridge bridge,
         PavlovBot.Host.Logs.ServerLabels servers,
+        PavlovBot.Host.Discord.PlayerCountChannels counts,
         PavlovBot.Host.Verification.VerificationService verification,
         PavlovBot.Host.Discord.Commands.MenuPanel menuPanel,
         ILogger<BackgroundServiceHost> logger)
@@ -97,6 +99,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _store = store;
         _bridge = bridge;
         _servers = servers;
+        _counts = counts;
         _verification = verification;
         _menuPanel = menuPanel;
         _logger = logger;
@@ -246,14 +249,20 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
-        if (_features.PlayerListChannel is not null)
+        if (_features.PlayerCountChannels.Count > 0 || _features.ShackTotalChannel is not null)
         {
+            /* SIX MINUTES, and the interval is load-bearing. Discord allows two channel
+               renames per ten minutes PER CHANNEL; a one-minute tick would spend the
+               allowance in two minutes and then silently stop updating, which looks exactly
+               like the feature being broken. Unchanged names are not written at all, so an
+               idle server costs nothing and the budget is there when the count moves. */
             _registry.Register(new ServiceDefinition
             {
-                Name = "player-list",
-                Interval = TimeSpan.FromMinutes(1),
-                Tick = ct => _autoPost.PostAsync("playerlist", _features.PlayerListChannel,
-                    () => Task.FromResult(_boards.BuildPlayerList()), ct),
+                Name = "player-count-channels",
+                Interval = TimeSpan.FromMinutes(6),
+                Tick = ct => _counts.TickAsync(
+                    new PavlovBot.Host.Discord.PlayerCountChannels.Targets(
+                        _features.PlayerCountChannels, _features.ShackTotalChannel), ct),
                 DependsOn = ["player-cache"],
             });
         }

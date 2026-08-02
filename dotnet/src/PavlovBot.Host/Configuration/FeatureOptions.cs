@@ -44,7 +44,18 @@ public sealed record FeatureOptions
 
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
-    public ulong? PlayerListChannel { get; init; }
+    /// <summary>
+    /// Voice channels renamed to each server's live player count, in server order.
+    /// </summary>
+    /// <remarks>
+    /// Replaced the player-list board. A voice channel is readable from the sidebar without
+    /// opening anything, and unlike the board it publishes no player NAMES to everybody who
+    /// can see the channel list.
+    /// </remarks>
+    public IReadOnlyList<ulong> PlayerCountChannels { get; init; } = [];
+
+    /// <summary>A voice channel for the platform-wide total, from the Pavlov master server.</summary>
+    public ulong? ShackTotalChannel { get; init; }
 
     /// <summary>Public channel holding the Verify button.</summary>
     public ulong? VerifyChannel { get; init; }
@@ -142,7 +153,8 @@ public sealed record FeatureOptions
 
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
-            PlayerListChannel = Snowflake(configuration, "PLAYERLIST_CHANNEL"),
+            PlayerCountChannels = Snowflakes(configuration, "PLAYER_COUNT_CHANNELS"),
+            ShackTotalChannel = Snowflake(configuration, "SHACK_TOTAL_CHANNEL"),
             VerifyChannel = Snowflake(configuration, "VERIFY_CHANNEL"),
             VerifyStaffChannel = Snowflake(configuration, "VERIFY_STAFF_CHANNEL"),
             VerifiedRole = Snowflake(configuration, "VERIFIED_ROLE"),
@@ -222,7 +234,8 @@ public sealed record FeatureOptions
         $"money feed: {(MoneyWebhook is null ? "off" : "on")}",
         $"cash leaderboard: {(LeaderboardChannel is null ? "off (LEADERBOARD_CHANNEL not set)" : $"channel {LeaderboardChannel}, every {LeaderboardInterval.TotalSeconds:0}s")}",
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
-        $"player list: {(PlayerListChannel is null ? "off (PLAYERLIST_CHANNEL not set)" : $"channel {PlayerListChannel}")}",
+        $"player-count channels: {(PlayerCountChannels.Count == 0 ? "off (PLAYER_COUNT_CHANNELS not set)" : $"{PlayerCountChannels.Count} configured")}",
+        $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
         $"menu panel: {(MenuPanelChannel is null
             ? "off (MENU_PANEL_CHANNEL not set)"
