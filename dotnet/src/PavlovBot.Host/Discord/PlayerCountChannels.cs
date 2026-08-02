@@ -88,27 +88,36 @@ public sealed class PlayerCountChannels(
         ArgumentNullException.ThrowIfNull(targets);
 
         var servers = rcon.Servers.ToList();
+        var report = new List<string>();
 
         for (var index = 0; index < targets.ServerChannels.Count; index++)
         {
+            var channelId = targets.ServerChannels[index];
+
             if (index >= servers.Count)
             {
-                /* More channels configured than servers. Said once per tick rather than
-                   ignored: the channel would otherwise sit with a stale count forever and
-                   look like the feature had stopped working for that one server. */
-                logger.LogWarning(
-                    "Channel {Channel} is configured for server {Number}, but only {Count} server(s) are set up",
-                    targets.ServerChannels[index], index + 1, servers.Count);
+                /* More channels configured than servers. Reported rather than ignored: the
+                   channel would otherwise sit with a stale count forever and look like the
+                   feature had stopped working for that one server. */
+                report.Add($"#{index + 1} no such server (only {servers.Count} configured)");
                 continue;
             }
 
-            await UpdateServerAsync(targets.ServerChannels[index], servers[index], index + 1, ct).ConfigureAwait(false);
+            report.Add(await UpdateServerAsync(channelId, servers[index], index + 1, ct).ConfigureAwait(false));
         }
 
-        if (targets.TotalChannel is { } total) await UpdateTotalAsync(total, ct).ConfigureAwait(false);
+        if (targets.TotalChannel is { } total)
+            report.Add(await UpdateTotalAsync(total, ct).ConfigureAwait(false));
+
+        /* ONE LINE PER TICK, at INFORMATION. Every part of this used to be silent unless it
+           actually renamed something, so "the channels are not updating" had no answer short
+           of reading the code - and the causes (no permission, wrong id, a stale roster, or
+           simply nothing to change) are four different fixes. */
+        if (report.Count > 0)
+            logger.LogInformation("Player-count channels: {Report}", string.Join("  |  ", report));
     }
 
-    private async Task UpdateServerAsync(ulong channelId, string server, int number, CancellationToken ct)
+    private async Task<string> UpdateServerAsync(ulong channelId, string server, int number, CancellationToken ct)
     {
         var roster = rcon.Roster(server);
 
@@ -117,30 +126,26 @@ public sealed class PlayerCountChannels(
         {
             // Leave whatever is there. A wrong number is worse than a slightly old one, and
             // writing one would spend a rename the real count needs when RCON comes back.
-            logger.LogDebug("{Server} has no fresh roster - leaving its channel name alone", server);
-            return;
+            return $"{server} skipped (no fresh roster)";
         }
 
-        await ApplyAsync(channelId, ServerName(number, roster.Players.Count, await MaxPlayersAsync(server, ct).ConfigureAwait(false)), ct)
-            .ConfigureAwait(false);
+        var name = ServerName(number, roster.Players.Count, await MaxPlayersAsync(server, ct).ConfigureAwait(false));
+        return $"\"{name}\" {await ApplyAsync(channelId, name, ct).ConfigureAwait(false)}";
     }
 
-    private async Task UpdateTotalAsync(ulong channelId, CancellationToken ct)
+    private async Task<string> UpdateTotalAsync(ulong channelId, CancellationToken ct)
     {
         var snapshot = await master.GetAsync(ct: ct).ConfigureAwait(false);
 
-        if (snapshot.Servers.Count == 0)
-        {
-            // Same rule as a stale roster: "0" would be a number that was never true.
-            logger.LogDebug("The Pavlov master list is empty - leaving the total channel alone");
-            return;
-        }
+        // Same rule as a stale roster: "0" would be a number that was never true.
+        if (snapshot.Servers.Count == 0) return "Shack total skipped (master list empty)";
 
-        await ApplyAsync(channelId, TotalName(TotalPlayers(snapshot.Servers)), ct).ConfigureAwait(false);
+        var name = TotalName(TotalPlayers(snapshot.Servers));
+        return $"\"{name}\" {await ApplyAsync(channelId, name, ct).ConfigureAwait(false)}";
     }
 
-    /// <summary>Rename, but only when the name would actually change.</summary>
-    private async Task ApplyAsync(ulong channelId, string name, CancellationToken ct)
+    /// <summary>Rename, but only when the name would actually change. Returns what happened.</summary>
+    private async Task<string> ApplyAsync(ulong channelId, string name, CancellationToken ct)
     {
         var current = await channels.NameOfAsync(channelId, ct).ConfigureAwait(false);
 
@@ -149,16 +154,17 @@ public sealed class PlayerCountChannels(
             logger.LogWarning(
                 "Channel {Channel} is not visible to the bot. Either the id is wrong, the bot is not in that " +
                 "server, or it cannot see the channel", channelId);
-            return;
+            return $"FAILED - channel {channelId} not visible";
         }
 
         /* THE RATE LIMIT IS THE REASON THIS CHECK EXISTS. Two renames per ten minutes per
            channel; writing an identical name would spend one for nothing and leave the next
            real change waiting. */
-        if (string.Equals(current, name, StringComparison.Ordinal)) return;
+        if (string.Equals(current, name, StringComparison.Ordinal)) return "unchanged";
 
-        if (await channels.RenameAsync(channelId, name, ct).ConfigureAwait(false))
-            logger.LogInformation("Renamed {Channel}: \"{Old}\" -> \"{New}\"", channelId, current, name);
+        return await channels.RenameAsync(channelId, name, ct).ConfigureAwait(false)
+            ? "renamed"
+            : "FAILED - rename rejected (needs Manage Channels)";
     }
 
     /// <summary>
