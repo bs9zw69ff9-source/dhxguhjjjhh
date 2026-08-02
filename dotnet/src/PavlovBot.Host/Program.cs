@@ -253,6 +253,23 @@ public static class Program
         // Live player counts as voice channel names, replacing the player-list board.
         builder.Services.AddSingleton<IChannelRenamer, GatewayChannelRenamer>();
         builder.Services.AddSingleton<PlayerCountChannels>();
+        // ...and the names half of it, on demand rather than posted.
+        builder.Services.AddSingleton<ISlashCommand>(sp =>
+            new PlayersCommand(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<Paged>()));
+
+        /* Pavlov's own whitelist, across every install. Resolved ONCE at startup and logged:
+           a write that reaches two installs out of three is the failure worth seeing early,
+           and it is invisible if nothing ever says how many were found. */
+        var installs = PavlovInstalls.Discover(
+            builder.Configuration["PAVLOV_BASES"], builder.Configuration["PAVLOV_BASE_1"]);
+        builder.Services.AddSingleton<WhitelistFile>();
+        builder.Services.AddSingleton<ISlashCommand>(sp => new TesterCommand(
+            sp.GetRequiredService<WhitelistFile>(),
+            sp.GetRequiredService<PavlovBot.Host.Logs.IpTrackingService>(),
+            sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<AuditLog>(),
+            installs,
+            sp.GetRequiredService<ILogger<TesterCommand>>()));
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),
@@ -329,6 +346,9 @@ public static class Program
            feed with a dead URL is a fault, and for a long time they looked identical from
            outside - the status was tracked from the first day and nothing ever printed it.
            `/feeds` shows the same thing on demand. */
+        logger.LogInformation("Pavlov installs: {Installs}",
+            string.Join(", ", installs.Select(Path.GetFileName)));
+
         logger.LogInformation("Feeds: {Status}",
             string.Join(" | ", feeds.Status.OrderBy(kv => kv.Key, StringComparer.Ordinal)
                 .Select(kv => $"{kv.Key}={kv.Value}")));
