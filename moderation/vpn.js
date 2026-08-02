@@ -44,7 +44,11 @@ const SENTINEL_API_KEY = process.env.SENTINEL_API_KEY || "";   // sntlhq.com - 1
 // How many detectors must agree. Defaults are deliberately conservative.
 const VPN_SCREEN_MIN     = Math.max(1, Number(process.env.VPN_SCREEN_MIN)     || 1);   // hits needed to escalate to tier 2
 const VPN_CONFIRM_MIN    = Math.max(1, Number(process.env.VPN_CONFIRM_MIN)    || 1);   // tier-2 hits needed to ban
-const VPN_SCREEN_BAN_MIN = Math.max(1, Number(process.env.VPN_SCREEN_BAN_MIN) || 2);   // screen-only consensus needed to ban when tier 2 is unconfigured
+// How many detectors, ACROSS BOTH TIERS, must flag an address before it may be auto-banned.
+// VPN_SCREEN_BAN_MIN is the old name for the same setting, still honoured so an existing
+// .env is not silently reset to the default.
+const VPN_BAN_MIN = Math.max(1, Number(process.env.VPN_BAN_MIN) || Number(process.env.VPN_SCREEN_BAN_MIN) || 2);
+const VPN_SCREEN_BAN_MIN = VPN_BAN_MIN;   // alias, for anything still reading the old name
 
 const _scrub = (s, ...keys) => keys.filter(Boolean).reduce((acc, k) => acc.split(k).join("***"), String(s ?? ""));
 
@@ -381,7 +385,7 @@ async function probeDetectors(ip) {
     confirmTotal:  out.filter(d => d.tier === 2).length,
     up:   out.filter(d => d.status === "up").length,
     down: out.filter(d => d.status === "down" || d.status === "no verdict").length,
-    thresholds: { screenMin: VPN_SCREEN_MIN, confirmMin: VPN_CONFIRM_MIN, screenBanMin: VPN_SCREEN_BAN_MIN },
+    thresholds: { screenMin: VPN_SCREEN_MIN, confirmMin: VPN_CONFIRM_MIN, banMin: VPN_BAN_MIN, screenBanMin: VPN_BAN_MIN },
   };
 }
 
@@ -553,30 +557,39 @@ async function _doVpnCheck(ip) {
     /* TIER 2 - final confirmation. Only spent on an IP the regular checks flagged. */
     if (flagged) {
       conf = await runTier(2, ip);
+
+      /* PERMISSION TO BAN IS A HEAD COUNT ACROSS BOTH TIERS: at least VPN_BAN_MIN
+         detectors flagged the address. Individual providers DO produce false positives on
+         legitimate infrastructure (ipapi.is reports Cloudflare's 1.1.1.1 as "vpn+abuser"),
+         so one source is never enough - but two independent ones agreeing is a different
+         claim entirely.
+
+         The confirmer used to hold a VETO here: one dissent from it made a flag
+         unactionable however many screeners had agreed. On a free IPQS key, which is 35
+         lookups a day, that veto silently became "auto-ban is off" the moment the quota ran
+         out. It still names the verdict as agreed or disputed for whoever reads the card;
+         it no longer overrules a consensus by itself. */
+      const hits = screen.hits + (conf?.hits ?? 0);
+      const answered = screen.answered + (conf?.answered ?? 0);
+      actionable = hits >= VPN_BAN_MIN;
+      const count = `${hits} of ${answered} detector(s) flagged it, ${VPN_BAN_MIN} required -> ${actionable ? "actionable" : "NOT actionable"}`;
+
       if (conf.answered > 0) {
-        confirmed  = conf.hits >= VPN_CONFIRM_MIN;    // authoritative: agreed or disputed
-        actionable = confirmed;
-        reason     = confirmed ? `confirmation agreed (${conf.hits}/${conf.answered})`
-                               : `confirmation disputed it (0/${conf.answered})`;
+        confirmed = conf.hits >= VPN_CONFIRM_MIN;     // the verdict, for display
+        reason = (confirmed ? `confirmation agreed (${conf.hits}/${conf.answered})`
+                            : `confirmation disputed it (0/${conf.answered})`) + `; ${count}`;
       } else {
-        /* Nothing could confirm - either unconfigured, or every confirmer failed. Fall
-           back to REQUIRING REAL CONSENSUS among the regular checks: VPN_SCREEN_BAN_MIN
-           agreeing detectors, with no downward adjustment for how few are configured.
-           Individual providers DO produce false positives on legitimate infrastructure
-           (ipapi.is reports Cloudflare's 1.1.1.1 as "vpn+abuser"), so a single
-           unconfirmed source must never be enough to ban somebody. If too few
-           detectors are available to ever reach the threshold, auto-ban is off and we
-           say so loudly rather than quietly banning on one opinion. */
+        // Nothing could confirm, which only removes a voice from the count. The reason
+        // says which, so a dry quota is distinguishable from having no confirmer at all.
         const configured = tierDetectors(2).length;
-        confirmed  = null;
-        actionable = screen.hits >= VPN_SCREEN_BAN_MIN;
-        reason = `no confirmation available (${configured ? "all confirmers failed" : "none configured"}); ` +
-                 `regular-check consensus ${screen.hits}/${screen.answered} vs required ${VPN_SCREEN_BAN_MIN} -> ${actionable ? "actionable" : "NOT actionable"}`;
-        logger[actionable ? "warn" : "info"]("VPN", `${ip}: ${reason}`);
-        if (!actionable && screen.answered < VPN_SCREEN_BAN_MIN) {
-          logger.warn("VPN", `Only ${screen.answered} regular check(s) answered but ${VPN_SCREEN_BAN_MIN} must agree to ban without a confirmation detector. ` +
-            `Auto-ban cannot trigger in this configuration - add another detector (VPNAPI_KEY / IPHUB_API_KEY) or an IPQS key, or set VPN_SCREEN_BAN_MIN=1 to accept single-source bans.`);
-        }
+        confirmed = null;
+        reason = `no confirmation available (${configured ? "all confirmers failed" : "none configured"}); ${count}`;
+      }
+
+      logger[actionable ? "warn" : "info"]("VPN", `${ip}: ${reason}`);
+      if (!actionable && answered < VPN_BAN_MIN) {
+        logger.warn("VPN", `Only ${answered} detector(s) answered but ${VPN_BAN_MIN} must agree before an address can be auto-banned. ` +
+          `Auto-ban cannot trigger in this configuration - add another detector (VPNAPI_KEY / IPHUB_API_KEY / IPQS_API_KEY), or set VPN_BAN_MIN=1 to accept single-source bans.`);
       }
     }
   }
@@ -735,9 +748,16 @@ async function checkVpnAndAlert(name, ip) {
     return result;
   }
 
-  const label = result.confirmAnswered
-    ? `Confirmed VPN/proxy - ${result.confirmHits}/${result.confirmAnswered} final confirmation(s) agree`
-    : `Confirmed by regular-check consensus - ${result.screenHits}/${result.screenAnswered} detectors agree (no confirmation available)`;
+  /* Three cases, and the middle one is new: a ban is now possible OVER a confirmer's
+     objection, so the label must not claim the confirmation agreed when it did not. A ban
+     record that misstates its own evidence is the thing an appeal turns on. */
+  const totalHits = (result.screenHits ?? 0) + (result.confirmHits ?? 0);
+  const totalAnswered = (result.screenAnswered ?? 0) + (result.confirmAnswered ?? 0);
+  const label = !result.confirmAnswered
+    ? `Confirmed by detector consensus - ${totalHits}/${totalAnswered} agree (no confirmation available)`
+    : result.confirmHits
+      ? `Confirmed VPN/proxy - ${result.confirmHits}/${result.confirmAnswered} final confirmation(s) agree`
+      : `Detector consensus - ${totalHits}/${totalAnswered} flagged it, though the final confirmation disagreed`;
   let res;
   try { res = await banWithIp(name, "both", { permanent: true, ip }); }
   catch (err) { logger.error("VPN", `auto-ban FAILED for ${name}: ${err.message}`); res = { blacklist: { servers: 0 } }; }
@@ -768,6 +788,6 @@ async function checkVpnAndAlert(name, ip) {
 
 
   return { IPHUB_API_KEY, IPINFO_TOKEN, IPQS_API_KEY, PROXYCHECK_API_KEY, VPNAPI_KEY, IPAPIIS_KEY,
-    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_SCREEN_BAN_MIN, VPN_CACHE_TTL_MS, CHECK_SCHEMA, isCompleteCheck, DETECTORS, TIER_ROLE, tierDetectors, vpnDetectionEnabled, runTier, probeDetectors,
+    VPN_SCREEN_MIN, VPN_CONFIRM_MIN, VPN_BAN_MIN, VPN_SCREEN_BAN_MIN, VPN_CACHE_TTL_MS, CHECK_SCHEMA, isCompleteCheck, DETECTORS, TIER_ROLE, tierDetectors, vpnDetectionEnabled, runTier, probeDetectors,
     _backfillGeo, _doVpnCheck, _regionName, _vpnInFlight, checkVpn, checkVpnAndAlert, formatFullLocation, geoLookup, loadVpnChecks, proxycheckLookup, saveVpnCheck };
 };

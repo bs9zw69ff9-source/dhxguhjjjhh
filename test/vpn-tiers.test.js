@@ -147,7 +147,7 @@ function makeAlertable(env = {}, opts = {}) {
     if (v === null) delete process.env[k]; else process.env[k] = v;
   }
   delete require.cache[require.resolve("../moderation/vpn.js")];
-  const bans = [], store = {}, logged = [];
+  const bans = [], store = {}, logged = [], modlog = [];
   const vpn = require("../moderation/vpn.js")({
     FILES: { VPN_CHECKS: "v" },
     logger: { warn() {}, info() {}, error() {}, debug() {} },
@@ -158,12 +158,12 @@ function makeAlertable(env = {}, opts = {}) {
       setDescription() { return this; } addFields() { return this; } setFooter() { return this; } },
     brand: e => e, clinical: e => e, hero: s => s,
     banWithIp: async (n) => { bans.push(n); return { blacklist: { servers: 1 } }; },
-    upsertPermBan: async () => {}, writeModLog: () => {},
+    upsertPermBan: async () => {}, writeModLog: (e) => { modlog.push(e); },
     logAction: async (e) => { logged.push(e.t); }, logBan: async () => {}, postFeed: () => {},
     isMasterName: (n) => (opts.masters ?? []).includes(n),
     isAutobanExempt: () => false,
   });
-  return { vpn, bans, store, logged };
+  return { vpn, bans, store, logged, modlog };
 }
 const routeVpn = (hits) => async (url) => {
   const u = String(url);
@@ -201,7 +201,7 @@ test("regular-check consensus with nothing to confirm DOES ban", async () => {
   assert.deepEqual(bans, ["RealVpn"]);
 });
 
-test("a confirmed flag bans; a disputed flag never does", async () => {
+test("two detectors agreeing is enough to ban, whichever tier they are in", async () => {
   {
     const { vpn, bans } = makeAlertable();
     global.fetch = routeVpn({ iphub: true, vpnapi: true, ipqs: true });
@@ -209,12 +209,44 @@ test("a confirmed flag bans; a disputed flag never does", async () => {
     assert.deepEqual(bans, ["Vpn"], "confirmation agreed -> ban");
   }
   {
-    const { vpn, bans, logged } = makeAlertable();
-    global.fetch = routeVpn({ iphub: true, vpnapi: true, ipqs: false });   // confirmer clears it
-    await vpn.checkVpnAndAlert("FalsePositive", "45.1.1.1");
-    assert.deepEqual(bans, [], "confirmation disputed -> no ban");
-    assert.ok(logged.some(t => /Disputed/.test(t)));
+    // One screener plus the confirmer is two detectors, which is the whole rule - the
+    // confirmer is a voice in the count, not a separate gate.
+    const { vpn, bans } = makeAlertable();
+    global.fetch = routeVpn({ iphub: true, ipqs: true });
+    await vpn.checkVpnAndAlert("Vpn2", "45.1.1.1");
+    assert.deepEqual(bans, ["Vpn2"], "screener + confirmer -> ban");
   }
+});
+
+test("a disputing confirmer is recorded but no longer vetoes a consensus", async () => {
+  /* THE CHANGE. The confirmer used to hold a veto: one dissent made a flag unactionable
+     however many screeners had agreed. On a free IPQS key - 35 lookups a day - that veto
+     silently became "auto-ban is off" the moment the quota ran out. */
+  const { vpn, bans, modlog } = makeAlertable();
+  global.fetch = routeVpn({ iphub: true, vpnapi: true, ipqs: false });   // two agree, confirmer dissents
+  await vpn.checkVpnAndAlert("RealVpn", "45.1.1.1");
+
+  assert.deepEqual(bans, ["RealVpn"], "two screeners agreeing is enough");
+
+  /* And the ban record must not claim the confirmation AGREED when it did not - a ban
+     that misstates its own evidence is the thing an appeal turns on. */
+  const reason = modlog.find(e => e.action === "auto-vpnban")?.reason ?? "";
+  assert.match(reason, /final confirmation disagreed/,
+    `the ban reason should record the disagreement, got: ${reason}`);
+  assert.doesNotMatch(reason, /confirmation\(s\) agree/, "and must not claim it agreed");
+});
+
+test("one screener plus a disputing confirmer is one vote, and does not ban", async () => {
+  // The safety half of the same rule: removing the veto must not make a single source
+  // sufficient. ipapi.is reports Cloudflare's 1.1.1.1 as "vpn+abuser".
+  const { vpn, bans } = makeAlertable();
+  global.fetch = routeVpn({ iphub: true, ipqs: false });
+  const r = await vpn._doVpnCheck("45.1.1.1");
+
+  assert.equal(r.flagged, true);
+  assert.equal(r.actionable, false);
+  await vpn.checkVpnAndAlert("Innocent", "45.1.1.1");
+  assert.deepEqual(bans, [], "one opinion is never enough");
 });
 
 test("an exempt player seen first does not give the IP a free pass", async () => {

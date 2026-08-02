@@ -12,11 +12,14 @@ public class ConnectCardTests
 {
     private static VpnRecord Screened(
         bool flagged = false, bool? confirmed = null, bool? vpn = null, bool? residential = null,
+        bool? actionable = null,
         params DetectorReading[] detectors) =>
         new()
         {
             Ip = "203.0.113.9",
-            Decision = new VpnDecision(flagged, confirmed, flagged, "test"),
+            // Actionable is now INDEPENDENT of the confirmation - two screeners agreeing
+            // bans over a confirmer's objection - so the card's tests have to set it.
+            Decision = new VpnDecision(flagged, confirmed, actionable ?? flagged, "test"),
             Vpn = vpn,
             Residential = residential,
             Asn = "AS577",
@@ -101,14 +104,29 @@ public class ConnectCardTests
     }
 
     [Fact]
-    public void ADisputedVerdictSaysItWasNotBanned()
+    public void ADisputedVerdictThatDidNotBanSaysSo()
     {
         // The one somebody would otherwise act on by mistake.
-        var text = Render(Screened(flagged: true, confirmed: false,
+        var text = Render(Screened(flagged: true, confirmed: false, actionable: false,
             detectors: [Reading("iphub", 1, true), Reading("ipqs", 2, false)]));
 
         Assert.Contains("Disputed", text, StringComparison.Ordinal);
         Assert.Contains("not banned", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADisputedVerdictThatBannedAnywaySaysThatInstead()
+    {
+        /* The confirmer used to hold a veto, so "disputed" and "not banned" were the same
+           thing. Two screeners agreeing now bans over its objection - and a card still
+           reading "not banned" beside a player who had just been banned would be read as a
+           bug in the ban rather than a stale caption. */
+        var text = Render(Screened(flagged: true, confirmed: false, actionable: true,
+            detectors: [Reading("iphub", 1, true), Reading("vpnapi", 1, true), Reading("ipqs", 2, false)]));
+
+        Assert.Contains("Disputed", text, StringComparison.Ordinal);
+        Assert.Contains("banned anyway on consensus", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("(not banned)", text, StringComparison.Ordinal);
     }
 
     [Fact]

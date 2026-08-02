@@ -49,15 +49,56 @@ public class VpnConsensusTests
     }
 
     [Fact]
-    public void ConfirmationDisputingItBlocksTheBan()
+    public void ConfirmationDisputingItIsRecordedButNoLongerAVeto()
     {
-        // The screen said VPN, the accurate detector said no. The accurate one wins -
-        // that is what tier 2 is for.
+        /* THE CHANGE: the confirmer used to hold a veto - one dissent made a booking
+           unactionable however many screeners agreed. On a free IPQS key, which is 35
+           lookups a day, that veto silently became "auto-ban is off" the moment the quota
+           ran out. Three screeners agreeing is now enough, and the dissent still shows on
+           the card so a human can see the disagreement. */
         var decision = VpnConsensus.Decide(Tier(3, 4), Tier(0, 1), 1);
         Assert.True(decision.Flagged);
         Assert.False(decision.Confirmed);
-        Assert.False(decision.Actionable);
+        Assert.True(decision.Actionable);
         Assert.Equal("DISPUTED", decision.Label);
+        Assert.Contains("confirmation disputed it", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADisputedSingleHitStillDoesNotBan()
+    {
+        // One screener for, the confirmer against. That is one vote, not two.
+        var decision = VpnConsensus.Decide(Tier(1, 4), Tier(0, 1), 1);
+        Assert.True(decision.Flagged);
+        Assert.False(decision.Actionable);
+    }
+
+    [Fact]
+    public void AConfirmerCountsTowardsTheTwo()
+    {
+        /* One screener plus the confirmer agreeing is two detectors, which is the whole
+           rule - the confirmer is a voice in the count, not a separate gate. */
+        var decision = VpnConsensus.Decide(Tier(1, 4), Tier(1, 1), 1);
+        Assert.True(decision.Actionable);
+        Assert.True(decision.Confirmed);
+    }
+
+    [Fact]
+    public void TwoDetectorsAgreeingIsEnoughToBan()
+    {
+        // The rule, stated once, in the shape it was asked for.
+        foreach (var (screen, confirm) in new[]
+        {
+            (Tier(2, 4), Tier(0, 0)),      // two screeners, no confirmer available
+            (Tier(2, 4), Tier(0, 1)),      // two screeners, confirmer disagreed
+            (Tier(1, 4), Tier(1, 1)),      // one screener plus the confirmer
+        })
+        {
+            Assert.True(VpnConsensus.Decide(screen, confirm, 1).Actionable);
+        }
+
+        // ...and one alone never is, however it is reached.
+        Assert.False(VpnConsensus.Decide(Tier(1, 4), Tier(0, 0), 1).Actionable);
     }
 
     [Fact]
@@ -87,9 +128,9 @@ public class VpnConsensusTests
     {
         // Two screeners, three required. Auto-ban is simply off, and the reason says so
         // rather than quietly banning on one opinion.
-        var decision = VpnConsensus.Decide(Tier(2, 2), Tier(0, 0), 0, new VpnThresholds(ScreenBanMin: 3));
+        var decision = VpnConsensus.Decide(Tier(2, 2), Tier(0, 0), 0, new VpnThresholds(BanMin: 3));
         Assert.False(decision.Actionable);
-        Assert.Contains("required 3", decision.Reason, StringComparison.Ordinal);
+        Assert.Contains("3 required", decision.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -116,10 +157,80 @@ public class VpnConsensusTests
         /* Worth saying out loud at startup: two screeners with a ban threshold of three
            never bans anybody, and looks identical to one that simply never sees a VPN. */
         Assert.False(VpnConsensus.CanEverAutoBan(configuredScreeners: 2, configuredConfirmers: 0,
-            new VpnThresholds(ScreenBanMin: 3)));
+            new VpnThresholds(BanMin: 3)));
         Assert.True(VpnConsensus.CanEverAutoBan(configuredScreeners: 3, configuredConfirmers: 0,
-            new VpnThresholds(ScreenBanMin: 3)));
+            new VpnThresholds(BanMin: 3)));
+
+        // Both tiers vote, so a screener plus a confirmer reaches two.
         Assert.True(VpnConsensus.CanEverAutoBan(configuredScreeners: 1, configuredConfirmers: 1));
+        Assert.False(VpnConsensus.CanEverAutoBan(configuredScreeners: 1, configuredConfirmers: 0));
+    }
+}
+
+/// <summary>
+/// Applying a changed ban threshold to addresses that were screened under the old one.
+/// </summary>
+/// <remarks>
+/// Records are cached for thirty days. Without re-deciding on read, lowering the threshold
+/// would only affect addresses nobody had ever screened - every player already in the cache
+/// would keep the verdict the OLD rule gave them, and the setting would look like it had
+/// done nothing at all for a month.
+/// </remarks>
+public class CachedVerdictTests
+{
+    private static VpnRecord Record(int screenHits, int screenAnswered, int confirmHits, int confirmAnswered,
+        VpnDecision decision) =>
+        new()
+        {
+            Ip = "203.0.113.9",
+            Decision = decision,
+            ScreenHits = screenHits,
+            ScreenAnswered = screenAnswered,
+            ConfirmHits = confirmHits,
+            ConfirmAnswered = confirmAnswered,
+            CheckedAt = DateTimeOffset.UtcNow,
+        };
+
+    /// <summary>What Redecide does, expressed against the same inputs it uses.</summary>
+    private static VpnDecision Redecide(VpnRecord record, VpnThresholds thresholds) =>
+        VpnConsensus.Decide(
+            new TierOutcome(record.ScreenHits, record.ScreenAnswered, 0, []),
+            record.ConfirmAnswered > 0 ? new TierOutcome(record.ConfirmHits, record.ConfirmAnswered, 0, []) : null,
+            1, thresholds);
+
+    [Fact]
+    public void AVetoedRecordBecomesActionableUnderTheNewRule()
+    {
+        /* The exact shape of the old bug: three screeners flagged it, the confirmer
+           disputed it, and the veto made it unbannable. The counts on the record are enough
+           to decide again - no lookup is spent. */
+        var old = Record(3, 4, 0, 1, new VpnDecision(true, false, Actionable: false, "confirmation disputed it"));
+
+        var now = Redecide(old, new VpnThresholds());
+
+        Assert.True(now.Actionable);
+        Assert.False(now.Confirmed);       // the disagreement is still on the card
+    }
+
+    [Fact]
+    public void ARaisedThresholdTakesEffectOnCachedAddressesToo()
+    {
+        // It has to cut both ways, or the setting is only ever a one-way ratchet.
+        var record = Record(2, 4, 0, 0, new VpnDecision(true, null, Actionable: true, "was actionable"));
+
+        Assert.False(Redecide(record, new VpnThresholds(BanMin: 3)).Actionable);
+    }
+
+    [Fact]
+    public void ACleanCachedRecordStaysClean()
+    {
+        // Re-deciding must never turn a clean address into a bannable one.
+        var record = Record(0, 4, 0, 0, new VpnDecision(false, null, false, "all regular checks clean"));
+
+        var now = Redecide(record, new VpnThresholds());
+
+        Assert.False(now.Flagged);
+        Assert.False(now.Actionable);
     }
 }
 

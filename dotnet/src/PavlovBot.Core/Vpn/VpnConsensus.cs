@@ -18,6 +18,14 @@ namespace PavlovBot.Core.Vpn;
 /// bug fix, not a design flourish. They were once one tri-state, and a <c>null</c>
 /// (inconclusive, or below the screening threshold) read as permission to ban - which
 /// banned players on a single screening hit and made the consensus threshold dead code.
+///
+/// PERMISSION TO BAN IS A HEAD COUNT ACROSS BOTH TIERS: at least
+/// <see cref="VpnThresholds.BanMin"/> detectors flagged the address. The tier-2 confirmer
+/// used to hold a VETO - one dissent from it made a booking unactionable however many
+/// screeners had agreed - and on a free IPQS key, which is 35 lookups a day, that veto
+/// silently became "auto-ban is off" the moment the quota ran out. It still names the
+/// verdict as confirmed or disputed for whoever reads the card; it no longer overrules a
+/// consensus by itself.
 /// </remarks>
 public static class VpnConsensus
 {
@@ -48,46 +56,55 @@ public static class VpnConsensus
         if (!flagged)
             return new VpnDecision(false, null, false, "all regular checks clean");
 
+        /* THE HEAD COUNT, across both tiers. A confirmer's agreement is one more voice for
+           banning, and its disagreement is recorded without being a veto - which is what it
+           used to be, and what quietly turned auto-ban off whenever its quota ran dry. */
+        var hits = screen.Hits + (confirm?.Hits ?? 0);
+        var answered = screen.Answered + (confirm?.Answered ?? 0);
+        var actionable = hits >= limits.BanMin;
+
+        var count = $"{hits} of {answered} detector(s) flagged it, {limits.BanMin} required -> " +
+                    (actionable ? "actionable" : "NOT actionable");
+
         if (confirm is not null && confirm.Answered > 0)
         {
             var confirmed = confirm.Hits >= limits.ConfirmMin;
             return new VpnDecision(
                 Flagged: true,
                 Confirmed: confirmed,
-                Actionable: confirmed,
-                Reason: confirmed
+                Actionable: actionable,
+                Reason: (confirmed
                     ? $"confirmation agreed ({confirm.Hits}/{confirm.Answered})"
-                    : $"confirmation disputed it (0/{confirm.Answered})");
+                    : $"confirmation disputed it (0/{confirm.Answered})") + $"; {count}");
         }
 
-        /* Nothing could confirm. Fall back to requiring REAL CONSENSUS among the regular
-           checks, with NO downward adjustment for how few are configured. If too few
-           detectors exist to ever reach the threshold, auto-ban is simply off - and the
-           reason says so, rather than quietly banning on one opinion. */
-        var actionable = screen.Hits >= limits.ScreenBanMin;
+        // Nothing could confirm, which changes nothing about the count - it only removes a
+        // voice from it, and the reason says which so a dry quota is distinguishable from a
+        // configuration that never had a confirmer.
         var why = configuredConfirmers > 0 ? "all confirmers failed" : "none configured";
 
         return new VpnDecision(
             Flagged: true,
             Confirmed: null,
             Actionable: actionable,
-            Reason: $"no confirmation available ({why}); regular-check consensus " +
-                    $"{screen.Hits}/{screen.Answered} vs required {limits.ScreenBanMin} -> " +
-                    (actionable ? "actionable" : "NOT actionable"));
+            Reason: $"no confirmation available ({why}); {count}");
     }
 
     /// <summary>
-    /// Whether this configuration can ever auto-ban without a tier-2 detector.
+    /// Whether this configuration could ever reach the ban threshold at all.
     /// </summary>
     /// <remarks>
-    /// Worth saying out loud at startup: a setup with two screeners and a ban threshold of
-    /// three never bans anybody, and looks identical to one that simply never sees a VPN.
+    /// Worth saying out loud at startup: a setup with one detector and a ban threshold of
+    /// two never bans anybody, and looks identical to one that simply never sees a VPN.
+    ///
+    /// Counts BOTH TIERS, because both now vote. It is still optimistic - it asks whether
+    /// enough detectors exist, not whether their quotas are intact - so it is a floor on
+    /// what can go wrong, not a guarantee that anything works.
     /// </remarks>
     public static bool CanEverAutoBan(int configuredScreeners, int configuredConfirmers, VpnThresholds? thresholds = null)
     {
         var limits = (thresholds ?? VpnThresholds.Default).Sanitised();
-        if (configuredConfirmers > 0) return configuredConfirmers >= limits.ConfirmMin;
-        return configuredScreeners >= limits.ScreenBanMin;
+        return configuredScreeners + configuredConfirmers >= limits.BanMin;
     }
 }
 

@@ -176,6 +176,9 @@ public static class Program
         builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
         builder.Services.AddSingleton<FeedBridge>();
         builder.Services.AddSingleton<EvasionResponder>();
+        /* Acts on a VPN verdict. Without it the screening ran on every connection, decided
+           a ban, and nothing read the decision. */
+        builder.Services.AddSingleton<VpnResponder>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
         builder.Services.AddSingleton<AuditLog>();

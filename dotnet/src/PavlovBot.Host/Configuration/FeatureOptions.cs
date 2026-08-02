@@ -161,10 +161,13 @@ public sealed record FeatureOptions
 
             GeoapifyKey = Text(configuration, "GEOAPIFY_API_KEY"),
 
+            /* VPN_BAN_MIN is the current name; VPN_SCREEN_BAN_MIN is what it used to be
+               called, kept working so an existing .env is not silently reset to the default
+               the first time somebody deploys this. */
             VpnThresholds = new VpnThresholds(
                 Int(configuration, "VPN_SCREEN_MIN", 1),
                 Int(configuration, "VPN_CONFIRM_MIN", 1),
-                Int(configuration, "VPN_SCREEN_BAN_MIN", 2)),
+                Int(configuration, "VPN_BAN_MIN", Int(configuration, "VPN_SCREEN_BAN_MIN", 2))),
 
             VpnCacheTtl = TimeSpan.FromDays(Int(configuration, "VPN_CACHE_TTL_DAYS", 30)),
 

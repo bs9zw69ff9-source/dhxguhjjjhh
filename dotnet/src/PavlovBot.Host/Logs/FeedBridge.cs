@@ -35,6 +35,7 @@ public sealed class FeedBridge
     private readonly VpnScreeningService? _vpn;
     private readonly IpTrackingService _tracking;
     private readonly IMasterNames? _masters;
+    private readonly VpnResponder? _vpnBans;
     private readonly ServerLabels _servers;
     private readonly ILogger<FeedBridge> _logger;
 
@@ -60,11 +61,13 @@ public sealed class FeedBridge
         ServerLabels servers,
         ILogger<FeedBridge> logger,
         VpnScreeningService? vpn = null,
-        IMasterNames? masters = null)
+        IMasterNames? masters = null,
+        VpnResponder? vpnBans = null)
     {
         ArgumentNullException.ThrowIfNull(tracking);
         _tracking = tracking;
         _masters = masters;
+        _vpnBans = vpnBans;
         _feeds = feeds;
         _servers = servers;
         _vpn = vpn;
@@ -136,6 +139,13 @@ public sealed class FeedBridge
             at: confirmed.At);
 
         await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
+
+        /* ACT on the verdict, after the card is posted. The screening had no consumer at
+           all - it computed a ban decision on every connection and nothing read it - so a
+           VPN user connected and played while the log said a ban had been decided on.
+           Posted first deliberately: if the ban throws, staff still get the evidence. */
+        if (_vpnBans is not null && screening is not null)
+            await Safe(() => _vpnBans.RespondAsync(name, screening)).ConfigureAwait(false);
     }
 
     private bool ShouldReport(string accountId, DateTimeOffset at) => Report(_reported, accountId, at);

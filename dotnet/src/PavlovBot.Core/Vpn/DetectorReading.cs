@@ -78,19 +78,22 @@ public sealed record TierOutcome(
 }
 
 /// <param name="ScreenMin">Tier-1 hits needed to escalate to tier 2.</param>
-/// <param name="ConfirmMin">Tier-2 hits needed to ban.</param>
-/// <param name="ScreenBanMin">
-/// Tier-1 hits needed to ban when NO tier-2 detector could answer. Deliberately higher
-/// than <see cref="ScreenMin"/>: individual providers do produce false positives on
-/// legitimate infrastructure - ipapi.is reports Cloudflare's 1.1.1.1 as "vpn+abuser" - so
-/// a single unconfirmed source must never be enough to ban somebody.
+/// <param name="ConfirmMin">Tier-2 hits needed to mark the verdict CONFIRMED (display only).</param>
+/// <param name="BanMin">
+/// How many detectors, ACROSS BOTH TIERS, must flag an address before it may be banned.
 /// </param>
-public sealed record VpnThresholds(int ScreenMin = 1, int ConfirmMin = 1, int ScreenBanMin = 2)
+/// <remarks>
+/// <see cref="BanMin"/> is deliberately higher than <see cref="ScreenMin"/>: individual
+/// providers do produce false positives on legitimate infrastructure - ipapi.is reports
+/// Cloudflare's 1.1.1.1 as "vpn+abuser" - so a single source must never be enough to ban
+/// somebody. Two independent providers agreeing is a different claim entirely.
+/// </remarks>
+public sealed record VpnThresholds(int ScreenMin = 1, int ConfirmMin = 1, int BanMin = 2)
 {
     public static VpnThresholds Default { get; } = new();
 
     /// <summary>Clamp to at least 1. A threshold of zero would flag every address.</summary>
-    public VpnThresholds Sanitised() => new(Math.Max(1, ScreenMin), Math.Max(1, ConfirmMin), Math.Max(1, ScreenBanMin));
+    public VpnThresholds Sanitised() => new(Math.Max(1, ScreenMin), Math.Max(1, ConfirmMin), Math.Max(1, BanMin));
 }
 
 /// <param name="Flagged">The regular checks reached <see cref="VpnThresholds.ScreenMin"/>.</param>

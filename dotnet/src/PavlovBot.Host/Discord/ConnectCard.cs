@@ -139,7 +139,12 @@ public static class ConnectCard
         }
         else if (decision.Confirmed == false)
         {
-            lines.Add($"⚠️ **Disputed** — {vpn.ScreenHits}/{vpn.ScreenAnswered} flagged, but the confirmer cleared it (not banned)");
+            /* "not banned" is keyed off ACTIONABLE, not off the dispute. The confirmer used
+               to hold a veto, so disputed and not-banned were the same thing; two screeners
+               agreeing now bans over its objection, and a card that still said "not banned"
+               beside a player who had just been banned would be read as a bug in the ban. */
+            lines.Add($"⚠️ **Disputed** — {vpn.ScreenHits}/{vpn.ScreenAnswered} flagged, but the confirmer cleared it " +
+                      (decision.Actionable ? "(banned anyway on consensus)" : "(not banned)"));
             if (tier1.Count > 0) lines.Add(string.Join("  ", tier1.Select(Pip)));
             lines.Add($"→ final: {string.Join("  ", tier2.Select(Pip))}");
         }

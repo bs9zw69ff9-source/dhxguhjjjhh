@@ -106,10 +106,43 @@ public sealed class VpnScreeningService
         if (IsUsable(cached))
         {
             _metrics.Increment("vpn_checks_total", MetricLabels.Of("outcome", "cached"), help: "VPN screenings by outcome");
-            return Task.FromResult<VpnRecord?>(cached);
+            return Task.FromResult<VpnRecord?>(Redecide(cached!));
         }
 
         return _inFlight.GetOrAdd(ip, key => RunAsync(key, ct));
+    }
+
+    /// <summary>
+    /// Re-apply the CURRENT thresholds to a cached record, using the counts it already has.
+    /// </summary>
+    /// <remarks>
+    /// Addresses are cached for thirty days, so without this a change to the ban threshold
+    /// would only reach an address nobody had screened yet - every player already in the
+    /// cache would keep the verdict the OLD rule gave them, and the setting would look like
+    /// it had done nothing for a month.
+    ///
+    /// It costs NOTHING: the record already stores how many detectors flagged it in each
+    /// tier, which is the entire input to the decision. Bumping the cache schema would have
+    /// the same effect and re-screen every known address through every provider, spending a
+    /// day's quota to recompute an answer already on disk.
+    ///
+    /// The record is not written back. It is recomputed on read, which is cheap, and
+    /// persisting it would rewrite the cache on every join.
+    /// </remarks>
+    private VpnRecord Redecide(VpnRecord record)
+    {
+        /* A record with nothing to count is left exactly as it is - a private address, or
+           one saved when detection was off. Re-deciding it would replace a deliberate
+           verdict with "every regular check failed". */
+        if (record.Local || record.ScreenAnswered == 0) return record;
+
+        var screen = new TierOutcome(record.ScreenHits, record.ScreenAnswered, 0, record.Detectors);
+        var confirm = record.ConfirmAnswered > 0
+            ? new TierOutcome(record.ConfirmHits, record.ConfirmAnswered, 0, [])
+            : null;
+
+        var decision = VpnConsensus.Decide(screen, confirm, Tier(2).Count, _thresholds);
+        return decision == record.Decision ? record : record with { Decision = decision };
     }
 
     private async Task<VpnRecord?> RunAsync(string ip, CancellationToken ct)
@@ -252,9 +285,9 @@ public sealed class VpnScreeningService
         if (!Enabled) return "No VPN detector is configured - screening is disabled entirely.";
         if (VpnConsensus.CanEverAutoBan(Tier(1).Count, Tier(2).Count, _thresholds)) return null;
 
-        return $"Only {Tier(1).Count} regular check(s) and {Tier(2).Count} confirmer(s) are configured, but " +
-               $"{_thresholds.ScreenBanMin} must agree to ban without a confirmation detector. " +
-               "Auto-ban cannot trigger in this configuration - add another detector, or lower VPN_SCREEN_BAN_MIN.";
+        return $"Only {_detectors.Count} detector(s) are configured, but {_thresholds.BanMin} must agree " +
+               "before an address can be auto-banned. Auto-ban cannot trigger in this configuration - " +
+               "add another detector, or lower VPN_BAN_MIN.";
     }
 }
 
