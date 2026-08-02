@@ -53,6 +53,29 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger)
         }
     }
 
+    /// <summary>
+    /// A username, reduced to what may safely be one line of this file.
+    /// </summary>
+    /// <remarks>
+    /// NOT <c>Sanitize.Id</c>, which strips everything outside [a-zA-Z0-9_-.]. That is the
+    /// right rule for an RCON argument and the wrong one here: the file is matched against
+    /// the player's actual in-game name, so a name containing a space would be written
+    /// without it and would then match nobody.
+    ///
+    /// The only character that MUST go is a newline. The file is one entry per line, so a
+    /// name containing one would write two entries - which is how somebody whitelists a
+    /// second account by asking to be whitelisted once.
+    /// </remarks>
+    public static string Entry(string? raw)
+    {
+        var text = (raw ?? "").Replace('\r', ' ').Replace('\n', ' ');
+
+        // Control characters would be invisible in the file and in the reply confirming it.
+        text = new string([.. text.Where(c => !char.IsControl(c))]).Trim();
+
+        return text.Length > 64 ? text[..64].Trim() : text;
+    }
+
     /// <summary>The meaningful lines. Pure, and the only place the format is interpreted.</summary>
     internal static IReadOnlyList<string> Entries(IEnumerable<string> lines)
     {

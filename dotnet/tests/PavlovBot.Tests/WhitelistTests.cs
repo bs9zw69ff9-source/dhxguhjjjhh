@@ -196,25 +196,55 @@ public class WhitelistTests : IDisposable
             PavlovInstalls.WhitelistPath("/home/steam/pavlovserver"));
     }
 
-    // ---- name vs unique id ----
+    // ---- what actually gets written ----
 
     [Fact]
-    public void AUniqueIdIsRecognisedAndPassedThrough()
+    public void AUsernameIsWrittenVerbatim()
     {
-        /* Pavlov matches the whitelist on unique ID. An operator pasting one must not have
-           it treated as a display name and looked up. */
-        Assert.True(TesterCommand.LooksLikeId("76561198000000001"));
-        Assert.True(TesterCommand.LooksLikeId("0002abc0002abc0002abc"));
+        /* ONE USERNAME PER LINE, and the file is matched against the player's actual in-game
+           name - so anything reshaped on the way in matches nobody. Sanitize.Id, which the
+           rest of the bot uses for RCON arguments, strips everything outside
+           [a-zA-Z0-9_-.] and would silently drop the space out of this one. */
+        Assert.Equal("A Player Name", WhitelistFile.Entry("A Player Name"));
+        Assert.Equal("Bart.simpson.2010kk", WhitelistFile.Entry("Bart.simpson.2010kk"));
+        Assert.Equal("[TAG] Someone!", WhitelistFile.Entry("[TAG] Someone!"));
+        Assert.Equal("Ünïcødé", WhitelistFile.Entry("Ünïcødé"));
     }
 
     [Fact]
-    public void ADisplayNameIsNotMistakenForAnId()
+    public void SurroundingWhitespaceIsTrimmed()
     {
-        // These get resolved through the account records instead, and flagged when they
-        // cannot be - a name in a file keyed by id never matches anybody.
-        Assert.False(TesterCommand.LooksLikeId("Pkdestroy"));
-        Assert.False(TesterCommand.LooksLikeId("A Very Long Player Name"));
-        Assert.False(TesterCommand.LooksLikeId("short"));
+        // Copied out of Discord, it arrives with a space on the end more often than not.
+        Assert.Equal("Pkdestroy", WhitelistFile.Entry("  Pkdestroy \t"));
+    }
+
+    [Fact]
+    public void ANameCannotForgeASecondEntry()
+    {
+        /* The file is one entry per line, so a newline in the name would whitelist a second
+           account - which is how somebody gets an alt in by asking to be whitelisted once. */
+        var entry = WhitelistFile.Entry("Innocent\nSomebodyElse");
+
+        Assert.DoesNotContain("\n", entry, StringComparison.Ordinal);
+        Assert.DoesNotContain("\r", entry, StringComparison.Ordinal);
+        Assert.Equal("Innocent SomebodyElse", entry);
+    }
+
+    [Fact]
+    public void AnEmptyOrControlOnlyNameYieldsNothing()
+    {
+        // The command refuses on an empty result rather than writing a blank line.
+        Assert.Equal("", WhitelistFile.Entry(null));
+        Assert.Equal("", WhitelistFile.Entry("   "));
+        Assert.Equal("", WhitelistFile.Entry("\r\n\t"));
+    }
+
+    [Fact]
+    public async Task ANameWithASpaceRoundTripsThroughTheFile()
+    {
+        await _whitelist.AddAsync(Path0, WhitelistFile.Entry("A Player Name"));
+
+        Assert.Equal(["A Player Name"], _whitelist.Read(Path0));
     }
 
     public void Dispose()

@@ -2,7 +2,6 @@ using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Text;
-using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Storage;
 
@@ -16,14 +15,13 @@ namespace PavlovBot.Host.Discord.Commands;
 /// removes is doing two of them: a tester whitelisted on servers 1 and 2 and rejected by
 /// server 3 looks, from their side, like the server being broken.
 ///
-/// WHAT PAVLOV MATCHES ON: the whitelist is keyed by UNIQUE ID, not by display name. So a
-/// name is resolved to the account id the bot has recorded for it, and when there is no
-/// recorded id the entry is still written but the reply says plainly that it may not take
-/// effect - a silently ineffective grant is the whole failure mode worth preventing here.
+/// ONE USERNAME PER LINE, written exactly as given. An earlier version resolved the name to
+/// the account id the bot had recorded for it, on the assumption that the file was keyed the
+/// way the ban list is. It is not, and that would have written an id into a file matched on
+/// name - accepted by everything that touches it, and matching nobody.
 /// </remarks>
 public sealed class TesterCommand(
     WhitelistFile whitelist,
-    IpTrackingService tracking,
     Access access,
     AuditLog audit,
     IReadOnlyList<string> installs,
@@ -38,7 +36,7 @@ public sealed class TesterCommand(
     {
         static SlashCommandOptionBuilder Player() =>
             new SlashCommandOptionBuilder()
-                .WithName("playerid").WithDescription("Player name or unique ID")
+                .WithName("playerid").WithDescription("In-game username, exactly as it appears")
                 .WithType(ApplicationCommandOptionType.String).WithRequired(true).WithAutocomplete(true);
 
         return new SlashCommandBuilder()
@@ -79,14 +77,15 @@ public sealed class TesterCommand(
             return;
         }
 
-        var typed = Sanitize.Id(sub?.Options.FirstOrDefault(o => o.Name == "playerid")?.Value as string ?? "");
-        if (typed.Length == 0)
+        /* The username, VERBATIM apart from what cannot go in a line of this file. The file
+           is matched against the player's actual in-game name, so anything else written
+           here matches nobody. */
+        var entry = WhitelistFile.Entry(sub?.Options.FirstOrDefault(o => o.Name == "playerid")?.Value as string);
+        if (entry.Length == 0)
         {
             await Reply(command, Theme.Failure("That name has nothing usable in it")).ConfigureAwait(false);
             return;
         }
-
-        var (entry, resolved) = Resolve(typed);
 
         var results = new List<WhitelistResult>();
         foreach (var install in installs)
@@ -97,39 +96,14 @@ public sealed class TesterCommand(
                 : await whitelist.RemoveAsync(path, entry, ct).ConfigureAwait(false));
         }
 
-        await audit.RecordAsync($"tester-{action}", command.User.Username, typed, entry, ct).ConfigureAwait(false);
-        logger.LogInformation("tester {Action} | {Player} -> {Entry} | {Ok}/{Total} install(s)",
-            action, typed, entry, results.Count(r => r.Ok), results.Count);
+        await audit.RecordAsync($"tester-{action}", command.User.Username, entry, entry, ct).ConfigureAwait(false);
+        logger.LogInformation("tester {Action} | \"{Entry}\" | {Ok}/{Total} install(s)",
+            action, entry, results.Count(r => r.Ok), results.Count);
 
-        await Reply(command, Summarise(action, typed, entry, resolved, results)).ConfigureAwait(false);
+        await Reply(command, Summarise(action, entry, results)).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// What to actually write: the recorded account id when there is one.
-    /// </summary>
-    /// <remarks>
-    /// PURE apart from the lookup, and separated because getting it wrong is invisible - a
-    /// display name in a file keyed by unique id is accepted by every tool that touches it
-    /// and simply never matches a player.
-    /// </remarks>
-    private (string Entry, bool Resolved) Resolve(string typed)
-    {
-        // Already an id: EOS ids and Steam ids are long and have no spaces. Passing one
-        // through untouched means an operator can always bypass the lookup.
-        if (LooksLikeId(typed)) return (typed, true);
-
-        return tracking.AccountByName(typed) is { Id.Length: > 0 } account
-            ? (account.Id, true)
-            : (typed, false);
-    }
-
-    /// <summary>A unique id, rather than a display name.</summary>
-    internal static bool LooksLikeId(string value) =>
-        value.Length >= 16 && !value.Contains(' ', StringComparison.Ordinal) &&
-        value.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-');
-
-    private EmbedBuilder Summarise(
-        string action, string typed, string entry, bool resolved, IReadOnlyList<WhitelistResult> results)
+    private static EmbedBuilder Summarise(string action, string entry, IReadOnlyList<WhitelistResult> results)
     {
         var failed = results.Where(r => !r.Ok).ToList();
         var changed = results.Count(r => r.Changed);
@@ -144,25 +118,18 @@ public sealed class TesterCommand(
            works when one server will still reject them. */
         var embed = failed.Count > 0
             ? Theme.Failure($"{verb} on {results.Count - failed.Count}/{results.Count} server(s)",
-                $"**{Sanitize.Code(typed)}** — `{Sanitize.Code(entry)}`\n\n" + string.Join("\n", lines))
-            : Theme.Success($"{verb} — {Sanitize.Code(typed)}",
-                $"`{Sanitize.Code(entry)}` on **{results.Count}** server(s)" +
+                $"`{Sanitize.Code(entry)}`\n\n" + string.Join("\n", lines))
+            : Theme.Success($"{verb} — {Sanitize.Code(entry)}",
+                $"On **{results.Count}** server(s)" +
                 (changed == 0 ? " *(nothing to change)*" : "") + "\n\n" + string.Join("\n", lines));
-
-        if (!resolved && action == "add")
-        {
-            /* The silently-ineffective case, said out loud. */
-            embed.AddField($"{Theme.Warn} This may not work",
-                "Pavlov matches the whitelist on **unique ID**, and no ID has been recorded for that name yet. " +
-                "The line was written as typed. Have them connect once so the bot learns their ID, then run " +
-                "`/tester add` again — or pass the ID directly.");
-        }
 
         if (action == "add")
         {
+            /* The name has to match EXACTLY, and the person running this is typing it from
+               memory or from a Discord handle that may not be the in-game one. */
             embed.AddField("Note",
-                "The whitelist only applies when the server has it enabled, and Pavlov reads the file at map " +
-                "change — so this usually takes effect on the next rotation rather than immediately.");
+                "Written exactly as typed — it must match their in-game name character for character. " +
+                "The whitelist also only applies when the server has it enabled.");
         }
 
         return embed;

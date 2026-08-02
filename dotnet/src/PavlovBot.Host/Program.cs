@@ -265,7 +265,6 @@ public static class Program
         builder.Services.AddSingleton<WhitelistFile>();
         builder.Services.AddSingleton<ISlashCommand>(sp => new TesterCommand(
             sp.GetRequiredService<WhitelistFile>(),
-            sp.GetRequiredService<PavlovBot.Host.Logs.IpTrackingService>(),
             sp.GetRequiredService<Access>(),
             sp.GetRequiredService<AuditLog>(),
             installs,
