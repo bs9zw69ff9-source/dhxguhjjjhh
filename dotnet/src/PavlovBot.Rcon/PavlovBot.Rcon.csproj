@@ -4,6 +4,14 @@
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Same reason as PavlovBot.Host: the reply parsers are implementation details of the
+         protocol, and they are also the part most worth testing without a live server. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>PavlovBot.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../PavlovBot.Core/PavlovBot.Core.csproj" />
   </ItemGroup>
 </Project>

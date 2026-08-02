@@ -161,6 +161,34 @@ public static class ServerInfoReply
             ServerName: RconReply.Text(scope, "ServerName", "serverName"),
             MapLabel: RconReply.Text(scope, "MapLabel", "MapName", "mapLabel"),
             GameMode: RconReply.Text(scope, "GameMode", "gameMode"),
-            MaxPlayers: RconReply.Int(scope, "MaxPlayers", "maxPlayers"));
+            /* Capacity is NOT a field of its own in Pavlov's reply - it is the denominator
+               of PlayerCount, which is a STRING like "2/24". Reading only MaxPlayers meant
+               every capacity in the bot came back null: /serverinfo showed a bare count and
+               the player-count channels read "Server 1 2" instead of "Server 1: 2/24".
+               MaxPlayers is still tried first, in case a build ever reports one. */
+            MaxPlayers: RconReply.Int(scope, "MaxPlayers", "maxPlayers")
+                        ?? Capacity(RconReply.Text(scope, "PlayerCount", "playerCount")));
+    }
+
+    /// <summary>
+    /// The capacity out of a "2/24" player count.
+    /// </summary>
+    /// <remarks>
+    /// PURE, because the shape is the fragile part: a build that reports a bare "2", or
+    /// nothing at all, must yield null rather than a made-up number - a capacity the bot
+    /// invented would show as a full server nobody can join.
+    /// </remarks>
+    internal static int? Capacity(string? playerCount)
+    {
+        if (playerCount is null) return null;
+
+        var slash = playerCount.IndexOf('/');
+        if (slash < 0) return null;
+
+        return int.TryParse(playerCount[(slash + 1)..].Trim(),
+            System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var max) && max > 0
+            ? max
+            : null;
     }
 }

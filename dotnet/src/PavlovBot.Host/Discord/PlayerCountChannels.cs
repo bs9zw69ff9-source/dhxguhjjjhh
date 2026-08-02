@@ -54,25 +54,29 @@ public sealed class PlayerCountChannels(
 
     // ---- the names ----
 
-    /// <summary>"Server 1 3/24", or "Server 1 3" when the capacity is not known.</summary>
+    /// <summary>"Server 1: 3/24", or "Server 1: 3" when the capacity is not known.</summary>
     /// <remarks>
     /// PURE. The format is the one that was asked for, to the character, and a channel name
     /// is the kind of thing that gets quietly reformatted by a later edit - so it is pinned
     /// by a test rather than by a comment.
+    ///
+    /// The capacity comes from the denominator of Pavlov's PlayerCount string. When a server
+    /// will not answer, the count is still correct and is shown alone rather than beside an
+    /// invented capacity - "3/0" or a guessed 24 would both be worse than saying less.
     /// </remarks>
     internal static string ServerName(int number, int players, int? maxPlayers) =>
         maxPlayers is { } max && max > 0
-            ? $"Server {number} {players}/{max}"
-            : $"Server {number} {players}";
+            ? $"Server {number}: {players}/{max}"
+            : $"Server {number}: {players}";
 
-    /// <summary>"Shack total 287".</summary>
+    /// <summary>"Pavlov Shack: 287".</summary>
     /// <remarks>
     /// NO DENOMINATOR, unlike the per-server names. The only capacity figure available here
     /// is the sum of every listed server's max slots, which moves as servers come and go and
     /// which nobody is trying to fill - "287/7536" reads as a meaningful fraction and is not
     /// one. The count alone is the number people want.
     /// </remarks>
-    internal static string TotalName(int players) => $"Shack total {players}";
+    internal static string TotalName(int players) => $"Pavlov Shack: {players}";
 
     /// <summary>Total players across every server the master list knows about.</summary>
     internal static int TotalPlayers(IEnumerable<ServerListing> servers)
@@ -154,7 +158,7 @@ public sealed class PlayerCountChannels(
         var snapshot = await master.GetAsync(ct: ct).ConfigureAwait(false);
 
         // Same rule as a stale roster: "0" would be a number that was never true.
-        if (snapshot.Servers.Count == 0) return "Shack total skipped (master list empty)";
+        if (snapshot.Servers.Count == 0) return "Pavlov Shack skipped (master list empty)";
 
         var name = TotalName(TotalPlayers(snapshot.Servers));
         return $"\"{name}\" {await ApplyAsync(channelId, name, ct).ConfigureAwait(false)}";

@@ -53,9 +53,9 @@ public class PlayerCountChannelTests
     [Fact]
     public void AServerChannelIsNamedCountOverCapacity()
     {
-        Assert.Equal("Server 1 3/24", PlayerCountChannels.ServerName(1, 3, 24));
-        Assert.Equal("Server 2 0/24", PlayerCountChannels.ServerName(2, 0, 24));
-        Assert.Equal("Server 3 24/24", PlayerCountChannels.ServerName(3, 24, 24));
+        Assert.Equal("Server 1: 3/24", PlayerCountChannels.ServerName(1, 3, 24));
+        Assert.Equal("Server 2: 0/24", PlayerCountChannels.ServerName(2, 0, 24));
+        Assert.Equal("Server 3: 24/24", PlayerCountChannels.ServerName(3, 24, 24));
     }
 
     [Fact]
@@ -63,8 +63,8 @@ public class PlayerCountChannelTests
     {
         /* The count is the point and the capacity is decoration, so a server that would not
            answer ServerInfo still gets a correct name rather than "3/0". */
-        Assert.Equal("Server 1 3", PlayerCountChannels.ServerName(1, 3, null));
-        Assert.Equal("Server 1 3", PlayerCountChannels.ServerName(1, 3, 0));
+        Assert.Equal("Server 1: 3", PlayerCountChannels.ServerName(1, 3, null));
+        Assert.Equal("Server 1: 3", PlayerCountChannels.ServerName(1, 3, 0));
     }
 
     [Fact]
@@ -73,8 +73,8 @@ public class PlayerCountChannelTests
         /* The only capacity available platform-wide is the sum of every listed server's max
            slots, which moves as servers come and go and which nobody is trying to fill.
            "287/7536" reads as a meaningful fraction and is not one. */
-        Assert.Equal("Shack total 287", PlayerCountChannels.TotalName(287));
-        Assert.Equal("Shack total 0", PlayerCountChannels.TotalName(0));
+        Assert.Equal("Pavlov Shack: 287", PlayerCountChannels.TotalName(287));
+        Assert.Equal("Pavlov Shack: 0", PlayerCountChannels.TotalName(0));
     }
 
     [Fact]
@@ -90,6 +90,28 @@ public class PlayerCountChannelTests
         {
             Assert.All(name, c => Assert.True(char.IsAscii(c), $"\"{name}\" contains a non-ASCII character"));
         }
+    }
+
+    [Fact]
+    public void TheCapacityComesFromPavlovsPlayerCountString()
+    {
+        /* Pavlov's ServerInfo has NO MaxPlayers field - the capacity is the denominator of
+           PlayerCount, a string like "2/24". Reading only MaxPlayers meant every capacity in
+           the bot came back null, which is why these channels read "Server 1 2". */
+        Assert.Equal(24, PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity("2/24"));
+        Assert.Equal(10, PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity("0/10"));
+        Assert.Equal(24, PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity(" 2 / 24 "));
+    }
+
+    [Fact]
+    public void AnUnreadableCapacityIsNullRatherThanInvented()
+    {
+        // A number the bot made up would show a server as full that nobody can join.
+        Assert.Null(PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity(null));
+        Assert.Null(PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity("2"));
+        Assert.Null(PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity("2/"));
+        Assert.Null(PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity("2/abc"));
+        Assert.Null(PavlovBot.Rcon.Protocol.ServerInfoReply.Capacity("2/0"));
     }
 
     [Fact]
@@ -133,7 +155,7 @@ public class PlayerCountChannelTests
            came back there would be no allowance left to publish it.
 
            The roster here has never been fetched, which is the state right after a restart. */
-        var channels = new FakeChannels((100UL, "Server 1 5/24"));
+        var channels = new FakeChannels((100UL, "Server 1: 5/24"));
 
         await Build(channels).TickAsync(new PlayerCountChannels.Targets([100UL], null));
 
@@ -156,7 +178,7 @@ public class PlayerCountChannelTests
     {
         /* Three channel ids with one server configured. It must not throw, and it must not
            rename the extra channels to somebody else's count. */
-        var channels = new FakeChannels((100UL, "Server 1 0/24"), (101UL, "Server 2 0/24"), (102UL, "Server 3 0/24"));
+        var channels = new FakeChannels((100UL, "Server 1: 0/24"), (101UL, "Server 2: 0/24"), (102UL, "Server 3: 0/24"));
 
         var thrown = await Record.ExceptionAsync(() =>
             Build(channels).TickAsync(new PlayerCountChannels.Targets([100UL, 101UL, 102UL], null)));
@@ -182,7 +204,7 @@ public class PlayerCountChannelTests
         /* /counts renders exactly this, so it has to say something for every configured
            channel - a channel missing from the report reads as a channel that was skipped
            for an unknown reason, which is the state the whole feature keeps ending up in. */
-        var channels = new FakeChannels((100UL, "Server 1 0/24"));
+        var channels = new FakeChannels((100UL, "Server 1: 0/24"));
 
         var report = await Build(channels).RunAsync(
             new PlayerCountChannels.Targets([100UL], TotalChannel: 999UL));
