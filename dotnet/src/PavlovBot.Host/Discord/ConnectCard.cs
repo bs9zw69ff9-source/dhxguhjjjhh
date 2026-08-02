@@ -21,9 +21,38 @@ namespace PavlovBot.Host.Discord;
 /// FIELDS THAT ARE NOT KNOWN SAY "unknown" RATHER THAN BEING OMITTED. A card whose shape
 /// changes per player is one you have to read carefully to notice something is missing;
 /// a constant shape means an empty field is visible at a glance.
+///
+/// IT MUST NOT BE POSSIBLE TO BUILD A CARD DISCORD REJECTS, and that is what the local
+/// <c>Add</c> is for. <c>EmbedBuilder.Build()</c> validates EAGERLY AND THROWS:
+/// <c>ArgumentException</c> on a field that is empty or over 1024 characters, and
+/// <c>InvalidOperationException</c> when the whole embed exceeds 6000.
+///
+/// This is a guard, not a fix for a reproduced failure - the distinction matters, because
+/// the tempting story is not true. Every free-text value here goes through
+/// <c>Sanitize.Message</c>, which caps at 200, and the four large fields are capped at 1024
+/// each, so the worst case totals roughly 5.1k and stays inside the limit. No live input is
+/// currently known to make this throw.
+///
+/// It is worth doing anyway because of WHERE the throw would land. Construction happens
+/// inline in the log poll, so an exception here does not just cost the card - see
+/// <see cref="Logs.FeedBridge"/> and the tailer's offset handling. A cap that is a few lines
+/// long removes the whole class, and removes it permanently: a later field added without a
+/// truncation, or a detector list that grows, cannot reintroduce it.
 /// </remarks>
 public static class ConnectCard
 {
+    /// <summary>Discord's per-field cap, enforced by <c>EmbedBuilder.Build()</c>.</summary>
+    private const int FieldLimit = 1024;
+
+    /// <summary>
+    /// Discord's total is 6000. Staying under it leaves room for the title, description and
+    /// branded footer, which are not counted as fields but do count towards the total.
+    /// </summary>
+    private const int TotalBudget = 5400;
+
+    /// <summary>Discord's title cap is 256.</summary>
+    private const int TitleLimit = 200;
+
     public static Embed Build(
         string name,
         string accountId,
@@ -39,37 +68,72 @@ public static class ConnectCard
     {
         ArgumentNullException.ThrowIfNull(alts);
 
+        var who = Sanitize.Message(name);
+        var where = Sanitize.Message(server);
+
+        var title = Truncate($"Player information: {who}", TitleLimit);
+        var description = $"{who} just connected on **{where}**.";
+
         var embed = new EmbedBuilder()
             .WithColor(flagged ? Theme.BanRed : vpn?.Decision.Flagged == true ? Theme.Amber : Theme.Green)
-            .WithTitle($"Player information: {Sanitize.Message(name)}")
-            .WithDescription($"{Sanitize.Message(name)} just connected on **{Sanitize.Message(server)}**.");
+            .WithTitle(title)
+            .WithDescription(Truncate(description, 2048));
+
+        /* The running total, seeded with everything that counts towards Discord's 6000 but
+           is not a field. Add() spends what is left, IN THE ORDER THE FIELDS ARE ADDED - so
+           the address and the account id, which are the reason anyone opens this card, are
+           charged first and can never be the ones squeezed out. */
+        var used = title.Length + description.Length + 80;   // 80: the branded footer
+
+        void Add(string label, string? value, bool inline = false)
+        {
+            /* An empty value is an ArgumentException from Build(), not a blank field. Every
+               caller below already substitutes "unknown", but a name that sanitizes away to
+               nothing would still get here - and one alt with an unprintable name would
+               otherwise take down the whole card. */
+            var text = string.IsNullOrWhiteSpace(value) ? "unknown" : value;
+
+            var room = Math.Min(FieldLimit, TotalBudget - used - label.Length);
+            if (room < 8)
+            {
+                /* Out of budget. Dropping a trailing field costs one line of a card;
+                   letting Build() throw costs the card, and used to cost the rest of the
+                   log poll with it. */
+                return;
+            }
+
+            if (text.Length > room) text = Truncate(text, room);
+
+            embed.AddField(label, text, inline);
+            used += label.Length + text.Length;
+        }
 
         /* Address and account id in inline code so they are one tap to copy - these are the
            two things somebody reading this card is most likely to want in their clipboard. */
-        embed.AddField("IP address", ip is { Length: > 0 }
+        Add("IP address", ip is { Length: > 0 }
             // A guessed address is MARKED, never presented as fact. It is a correlation
             // with a nearby log line, and acting on it as certain bans the wrong person.
             ? $"`{ip}`{(confidentIp ? "" : "  ⚠️ *unconfirmed - correlated, not paired*")}"
             : "unknown");
 
-        embed.AddField("Account ID", accountId is { Length: > 0 } ? $"`{accountId}`" : "unknown");
+        Add("Account ID", accountId is { Length: > 0 } ? $"`{accountId}`" : "unknown");
 
-        embed.AddField("First seen", Stamp(account?.FirstSeen), inline: true);
-        embed.AddField("Last seen", Stamp(account?.LastSeen), inline: true);
-        embed.AddField("Known addresses",
+        Add("First seen", Stamp(account?.FirstSeen), inline: true);
+        Add("Last seen", Stamp(account?.LastSeen), inline: true);
+        Add("Known addresses",
             (account?.ConfirmedIps.Count ?? 0).ToString(CultureInfo.InvariantCulture) + " confirmed", inline: true);
 
-        embed.AddField("Possible alts", alts.Count == 0
+        Add("Possible alts", alts.Count == 0
             ? "None"
-            : Truncate(string.Join(", ", alts.Select(a => Sanitize.Message(a.Name ?? a.Id))), 1024));
+            : string.Join(", ", alts.Select(a => Sanitize.Message(a.Name ?? a.Id))));
 
-        embed.AddField("Protected from auto-ban", master ? "Yes — master account" : "No", inline: true);
-        embed.AddField("Server", Sanitize.Message(server), inline: true);
-        embed.AddField("Flag match", flagged
+        Add("Protected from auto-ban", master ? "Yes — master account" : "No", inline: true);
+        Add("Server", where, inline: true);
+        Add("Flag match", flagged
             ? "**Flagged** — matches a standing blacklist entry"
             : "No matches", inline: true);
 
-        embed.AddField("Network", string.Join("\n",
+        Add("Network", string.Join("\n",
             $"ASN: {Code(vpn?.Asn)}",
             $"Organization: {Plain(vpn?.Organization ?? vpn?.Isp)}",
             $"Country: {Plain(vpn?.Country)}"));
@@ -77,7 +141,7 @@ public static class ConnectCard
         /* Explicit yes/no per category, with the risky answer in bold. "unknown" is its own
            answer and is NOT collapsed into "No" - a detector that could not tell you is not
            a detector telling you it is fine. */
-        embed.AddField("Detection", string.Join("\n", new[]
+        Add("Detection", string.Join("\n", new[]
         {
             $"VPN: {YesNo(vpn?.Vpn)}",
             $"Proxy: {YesNo(vpn?.Proxy)}",
@@ -87,11 +151,11 @@ public static class ConnectCard
             vpn?.ThreatScore is { } score ? $"Threat score: **{score:0}**/100" : null,
         }.Where(line => line is not null)));
 
-        embed.AddField("VPN / proxy", Truncate(Verdict(vpn), 1024));
+        Add("VPN / proxy", Verdict(vpn));
 
-        embed.AddField("Location", Truncate(Location(vpn, ip), 1024));
+        Add("Location", Location(vpn, ip));
 
-        embed.AddField("Recent addresses", Truncate(Addresses(account), 1024));
+        Add("Recent addresses", Addresses(account));
 
         return embed.Brand($"Connection log — {EasternTime.Stamp(at)} Eastern").Build();
     }

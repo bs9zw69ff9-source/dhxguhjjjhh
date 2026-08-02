@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Discord;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Host.Discord;
 using PavlovBot.Core.Vpn;
@@ -68,6 +69,9 @@ public sealed class FeedBridge
 
     /// <summary>Logged once, so a confirm skipped for want of a name is not silent.</summary>
     private bool _warnedNameless;
+
+    /// <summary>Logged once, so "no connect webhook" is not mistaken for "cards are broken".</summary>
+    private bool _warnedNoConnectFeed;
 
     public FeedBridge(
         IpTrackingService tracking,
@@ -139,7 +143,21 @@ public sealed class FeedBridge
         var server = _servers.Of(confirmed.File);
         await Safe(() => _feeds.PostLeaveAsync(name, server, confirmed.At)).ConfigureAwait(false);
 
-        if (!_feeds.IsConfigured(FeedWebhooks.Connect)) return;
+        if (!_feeds.IsConfigured(FeedWebhooks.Connect))
+        {
+            /* SAID OUT LOUD, once. "The ip logs don't work" and "no CONNECT_WEBHOOK_URL is
+               set" are the same thing from the channel, and this branch returning silently
+               is what made them indistinguishable. */
+            if (!_warnedNoConnectFeed)
+            {
+                _warnedNoConnectFeed = true;
+                _logger.LogWarning(
+                    "A player disconnected and the connection card was not posted: CONNECT_WEBHOOK_URL is not " +
+                    "set (or is not a valid webhook address), so the connect feed is off. Leave lines are " +
+                    "unaffected - they go to JOIN_WEBHOOK_URL. Run /feeds to see every feed's state");
+            }
+            return;
+        }
 
         VpnRecord? screening = null;
 
@@ -163,15 +181,36 @@ public sealed class FeedBridge
                       flags.Ids.Contains(confirmed.AccountId) ||
                       flags.Names.Contains(name);
 
-        var card = ConnectCard.Build(
-            name, confirmed.AccountId, confirmed.Ip, confidentIp: true,
-            server: server,
-            account: _tracking.Account(confirmed.AccountId),
-            alts: _tracking.AltsOf(confirmed.AccountId),
-            vpn: screening,
-            flagged: flagged,
-            master: _masters?.IsMaster(name) ?? false,
-            at: confirmed.At);
+        /* BUILDING the card is inside the guard, not just posting it. EmbedBuilder.Build()
+           validates eagerly and throws, and this call used to sit outside every try in the
+           method - so a card Discord would reject took out the whole handler, and because
+           this runs inline in the log poll it took the REST OF THAT POLL'S LINES with it:
+           the tailer advances its offset before handing the batch over, so they are gone.
+
+           No input is known to make ConnectCard throw, and it now caps itself so none
+           should. This is the second of the two braces, and it is here because of the cost
+           asymmetry rather than a reproduced failure - a caught exception costs one card,
+           an uncaught one costs every line after it in that poll. */
+        Embed card;
+        try
+        {
+            card = ConnectCard.Build(
+                name, confirmed.AccountId, confirmed.Ip, confidentIp: true,
+                server: server,
+                account: _tracking.Account(confirmed.AccountId),
+                alts: _tracking.AltsOf(confirmed.AccountId),
+                vpn: screening,
+                flagged: flagged,
+                master: _masters?.IsMaster(name) ?? false,
+                at: confirmed.At);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Could not build the connection card for {Player} - Discord would have rejected it. " +
+                "The leave line was still posted", name);
+            return;
+        }
 
         await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
 

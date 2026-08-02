@@ -55,6 +55,13 @@ public sealed class FeedsCommand(FeedWebhooks feeds, FeatureOptions features, Ac
             foreach (var label in Feeds.Select(f => f.Label))
                 await feeds.PostAsync(label, $"[{stamp}] Feed test from /feeds - if you can read this, {label} works", ct)
                     .ConfigureAwait(false);
+
+            /* AND AN EMBED, to the connect feed only. The connection card goes out through a
+               different method than every other feed line - PostEmbedAsync rather than
+               PostAsync - so a text-only test would report the connect webhook healthy while
+               the thing that actually uses it was failing. Those need separate fixes:
+               a dead webhook is a URL in .env, a rejected embed is this code. */
+            await feeds.PostEmbedAsync(FeedWebhooks.Connect, SampleCard(), ct).ConfigureAwait(false);
         }
 
         var lines = Feeds.Select(f =>
@@ -75,13 +82,30 @@ public sealed class FeedsCommand(FeedWebhooks feeds, FeatureOptions features, Ac
                 $"{Theme.Ok} delivering · {Theme.Warn} configured but nothing sent yet · " +
                 $"{Theme.Bad} failing · {Theme.Dot} no URL set\n\n" +
                 (test
-                    ? "A test line was sent to every configured feed. A feed still showing " +
-                      "*configured* after this did not accept it — check the status line."
-                    : "Run `/feeds test:true` to post a line to each one."));
+                    ? "A test line went to every configured feed, plus a sample **connection card** " +
+                      "to `connect` — the cards use a different code path than the plain lines, so " +
+                      "seeing the line but not the card narrows it to the card itself.\n" +
+                      "A feed still showing *configured* after this did not accept it."
+                    : "Run `/feeds test:true` to post a line to each one, and a sample card to `connect`."));
 
         await Reply(command, embed).ConfigureAwait(false);
         _ = features;
     }
+
+    /// <summary>
+    /// A connection card with nobody real on it, shaped exactly like the live one.
+    /// </summary>
+    /// <remarks>
+    /// Built through <see cref="ConnectCard"/> rather than as a hand-made embed, so that a
+    /// card Discord would reject - an over-long field, a bad colour - fails here too. A test
+    /// that passes because it sends something simpler than the real thing is worse than no
+    /// test: it says the feed works and it is the feed that does not.
+    /// </remarks>
+    internal static Embed SampleCard() =>
+        ConnectCard.Build(
+            name: "feed-test", accountId: "0000000000000000", ip: "203.0.113.1", confidentIp: true,
+            server: "test", account: null, alts: [], vpn: null,
+            flagged: false, master: false, at: DateTimeOffset.UtcNow);
 
     /// <param name="Carries">What goes to this feed, so the right URL ends up in the right one.</param>
     private sealed record Feed(string Label, string Variable, string Carries);

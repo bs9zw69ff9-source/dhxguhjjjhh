@@ -165,7 +165,31 @@ public sealed class BackgroundServiceHost : IHostedService
                 {
                     foreach (var path in logPaths)
                         foreach (var line in _tailer.Poll(path))
-                            await _tracking.IngestAsync(line, ct).ConfigureAwait(false);
+                        {
+                            /* PER LINE, and this is not defensive padding. Poll() has
+                               ALREADY advanced its file offset past this whole batch, so an
+                               exception escaping one line silently discards every line
+                               after it - joins, leaves, kills, address pairings - with no
+                               way to ever get them back. The tick handler above catches and
+                               logs, so the bot survived; the data did not.
+
+                               One malformed line, or one downstream handler that throws,
+                               must cost that line and nothing else. */
+                            try
+                            {
+                                await _tracking.IngestAsync(line, ct).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                            {
+                                throw;   // shutting down
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex,
+                                    "Failed to process a line of {Path} - skipping it and continuing. " +
+                                    "The rest of this batch is unaffected", path);
+                            }
+                        }
                 },
             });
         }

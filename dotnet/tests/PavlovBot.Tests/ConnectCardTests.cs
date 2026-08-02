@@ -174,6 +174,20 @@ public class ConnectCardTests
     }
 
     [Fact]
+    public void TheFeedTestCardIsAValidCard()
+    {
+        /* /feeds test:true sends this to the connect webhook, and it is built through
+           ConnectCard rather than hand-made so a card Discord would reject fails there too.
+           A test that passes by sending something simpler than the real thing is worse than
+           no test: it reports the feed healthy and it is the feed that is broken. */
+        var card = PavlovBot.Host.Discord.Commands.FeedsCommand.SampleCard();
+
+        Assert.True(card.Length <= 6000, $"the sample card is {card.Length} characters");
+        Assert.All(card.Fields, f => Assert.True(f.Value.ToString()!.Length <= 1024, f.Name));
+        Assert.False(string.IsNullOrWhiteSpace(card.Title));
+    }
+
+    [Fact]
     public void EveryFieldStaysInsideDiscordsLimit()
     {
         /* An over-long field makes Discord reject the WHOLE message, so a player with two
@@ -192,5 +206,65 @@ public class ConnectCardTests
             Assert.True(field.Value.ToString()!.Length <= 1024, $"{field.Name} is {field.Value.ToString()!.Length}");
 
         Assert.True(embed.Length <= 6000, $"embed is {embed.Length} characters");
+    }
+
+    [Fact]
+    public void AnAltWhoseNameIsUnprintableDoesNotTakeTheCardDown()
+    {
+        /* EmbedBuilder.Build() throws ArgumentException on an EMPTY field value - it does
+           not render a blank field. Sanitize.Message strips non-printables, so a single alt
+           named with nothing but them leaves the joined string empty, and the whole card
+           would have been lost for it. */
+        var ghost = new AccountRecord("2", [], [], ["​​"]);
+
+        var embed = ConnectCard.Build("Pkdestroy", "76561198000000001", "203.0.113.9", true,
+            "server1", null, [ghost], null, flagged: false, master: false, DateTimeOffset.UtcNow);
+
+        var alts = embed.Fields.Single(f => f.Name == "Possible alts");
+        Assert.False(string.IsNullOrWhiteSpace(alts.Value.ToString()));
+    }
+
+    [Fact]
+    public void TheCardStaysValidWhenEveryFieldIsAtItsWorst()
+    {
+        /* Exceeding Discord's 6000 TOTAL is a different exception from the same Build() call
+           (InvalidOperationException, not ArgumentException) and needs its own guard.
+
+           This one does NOT reproduce a live failure, and the version of it that ran against
+           the pre-cap card passed: every free-text value goes through Sanitize.Message, which
+           caps at 200, so the worst case lands near 5.1k. It is here to keep that true. The
+           margin is not large, nothing about it is enforced anywhere else, and a card is
+           biggest exactly on the players worth looking at - so a field added later without a
+           truncation would break the interesting cards and only those. */
+        var long200 = new string('W', 400);   // Sanitize.Message caps these at 200
+
+        var loaded = Screened(true, true, true, null, true,
+            [.. Enumerable.Range(0, 40).Select(i => Reading($"Detector-Number-{i}", (i % 2) + 1, i % 3 == 0))]);
+
+        loaded = loaded with { City = long200, Region = long200, Country = long200, Isp = long200, Provider = long200 };
+
+        var account = new AccountRecord("1",
+            [.. Enumerable.Range(0, 300).Select(i => $"203.0.113.{i % 256}")],
+            [.. Enumerable.Range(0, 300).Select(i => $"198.51.100.{i % 256}")],
+            ["Pkdestroy"]);
+
+        var alts = Enumerable.Range(0, 300)
+            .Select(i => new AccountRecord($"{i}", [], [], [new string('A', 60) + i]))
+            .ToList();
+
+        var embed = ConnectCard.Build(long200, new string('9', 200), "203.0.113.9", false,
+            long200, account, alts, loaded, flagged: true, master: true, DateTimeOffset.UtcNow);
+
+        Assert.True(embed.Length <= 6000, $"embed is {embed.Length} characters");
+        foreach (var field in embed.Fields)
+        {
+            Assert.True(field.Value.ToString()!.Length <= 1024, $"{field.Name} is {field.Value.ToString()!.Length}");
+            Assert.False(string.IsNullOrWhiteSpace(field.Value.ToString()), field.Name);
+        }
+
+        // The two things somebody opens this card FOR are charged against the budget first,
+        // so they are never the fields that get squeezed out by a long alt list.
+        Assert.Contains(embed.Fields, f => f.Name == "IP address");
+        Assert.Contains(embed.Fields, f => f.Name == "Account ID");
     }
 }
