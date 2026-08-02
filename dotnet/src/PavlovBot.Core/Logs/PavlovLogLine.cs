@@ -3,8 +3,11 @@ using System.Text.RegularExpressions;
 
 namespace PavlovBot.Core.Logs;
 
+/// <param name="Name">
+/// Some close lines carry <c>?Name=</c> as well. Null when this one did not.
+/// </param>
 /// <summary>An address and account seen together on ONE line - a certain pairing.</summary>
-public sealed record ConfirmedPairing(string Ip, string Id);
+public sealed record ConfirmedPairing(string Ip, string Id, string? Name = null);
 
 /// <param name="Name">May be null: some login lines carry only the id.</param>
 public sealed record LoginRequest(string? Name, string Id);
@@ -131,9 +134,16 @@ public static partial class PavlovLog
         if (!ip.Success || !id.Success) return null;
 
         var cleaned = CleanId(id.Groups[1].Value);
-        return cleaned.Length > 0 && IsIpv4(ip.Groups[1].Value)
-            ? new ConfirmedPairing(ip.Groups[1].Value, cleaned)
-            : null;
+        if (cleaned.Length == 0 || !IsIpv4(ip.Groups[1].Value)) return null;
+
+        /* Some close lines carry ?Name= as well, and taking it matters more than it looks:
+           an account first seen on a DISCONNECT - anybody already connected when the bot
+           started - otherwise has no name at all, and a leave line for a nameless account is
+           dropped. That is every player online across a restart, silently. */
+        var name = NameOption.Match(line);
+
+        return new ConfirmedPairing(ip.Groups[1].Value, cleaned,
+            name.Success && name.Groups[1].Value.Trim() is { Length: > 0 } who ? who : null);
     }
 
     /// <summary>A login or join request: an id, and a name when the line carries one.</summary>

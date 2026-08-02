@@ -52,8 +52,22 @@ public sealed class FeedBridge
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _reported = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Joins already announced. Pavlov logs a player's login SEVERAL TIMES per connection.
+    /// </summary>
+    /// <remarks>
+    /// The Node bot has always debounced this and the port did not, which is why the join
+    /// log shows the same player arriving two and three times in a row with no leave
+    /// between - it is one connection, logged repeatedly. Keyed by NAME rather than account
+    /// id, because that is what the reader is comparing.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _announced = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Logged once, so "no leaves" can be told apart from "no disconnect lines".</summary>
     private bool _sawDisconnect;
+
+    /// <summary>Logged once, so a confirm skipped for want of a name is not silent.</summary>
+    private bool _warnedNameless;
 
     public FeedBridge(
         IpTrackingService tracking,
@@ -79,8 +93,15 @@ public sealed class FeedBridge
     }
 
     /// <summary>The public join line. No address, no account id - safe in a public channel.</summary>
-    private Task OnJoinedAsync(PlayerJoined join) =>
-        Safe(() => _feeds.PostJoinAsync(join.Name ?? join.AccountId, _servers.Of(join.File), join.At));
+    private Task OnJoinedAsync(PlayerJoined join)
+    {
+        var name = join.Name ?? join.AccountId;
+
+        // One line per arrival, not one per login line. See _announced.
+        if (!Report(_announced, name, join.At)) return Task.CompletedTask;
+
+        return Safe(() => _feeds.PostJoinAsync(name, _servers.Of(join.File), join.At));
+    }
 
     /// <summary>
     /// A disconnect: the public leave line, and the connection card with the certain address.
@@ -97,7 +118,21 @@ public sealed class FeedBridge
         /* An account with no recorded name is a partial connection: somebody who was
            dropped before a login line named them. "unknown left Server 1" is noise, and the
            connection card would have nobody on it. The Node bot skips these too. */
-        if (confirmed.Name is not { Length: > 0 } name) return;
+        if (confirmed.Name is not { Length: > 0 } name)
+        {
+            /* Said ONCE, because it is the difference between "leaves are broken" and
+               "leaves are working and this account is genuinely anonymous" - and from the
+               channel those look identical. */
+            if (!_warnedNameless)
+            {
+                _warnedNameless = true;
+                _logger.LogInformation(
+                    "Disconnect for {Account} skipped - no name recorded for it yet. This is normal for a " +
+                    "player who was already connected when the bot started; if EVERY leave is missing, it " +
+                    "means no login line has ever been matched to this account id", confirmed.AccountId);
+            }
+            return;
+        }
 
         if (!ShouldReport(confirmed.AccountId, confirmed.At)) return;
 

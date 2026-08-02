@@ -249,15 +249,24 @@ public sealed class IpTrackingService
         if (PavlovLog.IsPlaceholderId(pairing.Id)) return;
 
         var existing = Account(pairing.Id);
-        if (existing?.Name is { } name && Untracked.Contains(name)) return;
+        var known = existing?.Name ?? pairing.Name;
+        if (known is { } named && Untracked.Contains(named)) return;
 
-        await RecordAsync(pairing.Id, null, guessedIp: null, confirmedIp: pairing.Ip, at, ct).ConfigureAwait(false);
+        /* RECORD FIRST, then read the name back - the order the Node bot uses, and it is not
+           cosmetic. A close line may carry ?Name=, so an account first seen on a DISCONNECT
+           gets its name from this very line. Reading before the write meant every player who
+           was already connected when the bot started had no name on their first disconnect,
+           and their leave line was dropped for it. */
+        await RecordAsync(pairing.Id, pairing.Name, guessedIp: null, confirmedIp: pairing.Ip, at, ct).ConfigureAwait(false);
 
         // A ban issued while they were online has been waiting for exactly this line.
         await ResolvePendingFlagAsync(pairing.Id, pairing.Ip, at, ct).ConfigureAwait(false);
 
         if (Confirmed is { } confirmed)
-            await confirmed(new PlayerConfirmed(file, pairing.Id, existing?.Name, pairing.Ip, at)).ConfigureAwait(false);
+        {
+            var name = Account(pairing.Id)?.Name ?? known;
+            await confirmed(new PlayerConfirmed(file, pairing.Id, name, pairing.Ip, at)).ConfigureAwait(false);
+        }
 
         _metrics.Increment("ip_confirmations_total", help: "Addresses confirmed against an account");
     }

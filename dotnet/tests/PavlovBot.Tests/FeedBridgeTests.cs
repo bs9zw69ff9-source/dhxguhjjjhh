@@ -87,6 +87,51 @@ public class FeedBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task OneConnectionProducesOneJoinLine()
+    {
+        /* Pavlov logs a player's login SEVERAL TIMES per connection. Without a debounce the
+           join log shows the same player arriving two and three times in a row with no leave
+           between - which is exactly what it was doing, and reads as the leave tracking being
+           broken rather than the joins being duplicated. */
+        Build();
+
+        await Feed(Accept);
+        await Feed(Login);
+        await Feed("[2026.07.31-13.33.23:000]LogNet: Login request: ?Name=Pkdestroy userId: EOS:0002abc");
+        await Feed("[2026.07.31-13.33.25:000]LogNet: Join request: ?Name=Pkdestroy userId: EOS:0002abc");
+
+        Assert.DoesNotContain(_log.Lines, l => l.Contains("Feed post failed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ALeaveIsReportedForSomebodyOnlyEverSeenOnADisconnect()
+    {
+        /* Everybody already connected when the bot started is first seen on their CLOSE
+           line. Their account had no name, so the leave was dropped - silently, and for
+           every player online across a restart. The close line carries ?Name= when Pavlov
+           writes one, and that is now taken. */
+        Build();
+
+        await Feed("[2026.07.31-13.40.00:000]LogNet: UChannel::Close: ?Name=Latecomer " +
+                   "UniqueId: EOS:0009late RemoteAddr: 203.0.113.7:7777");
+
+        Assert.Contains(_log.Lines, l => l.Contains("First disconnect line seen", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log.Lines, l => l.Contains("no name recorded", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ANamelessDisconnectSaysWhyItWasSkipped()
+    {
+        // "leaves are broken" and "this account is genuinely anonymous" look identical from
+        // the channel, and they are fixed completely differently.
+        Build();
+
+        await Feed(Close);
+
+        Assert.Contains(_log.Lines, l => l.Contains("no name recorded", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ADisconnectWithNoKnownNameIsNotAnnounced()
     {
         /* A close line for somebody who was dropped before any login line named them. The
