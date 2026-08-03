@@ -366,6 +366,27 @@ public static class Program
            warns players over RCON before stopping a server, and the registry asks systemd
            whether a silent server was stopped on purpose. See RconRegistry.UseLifecycle. */
         host.Services.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>().UseLifecycle(systemd);
+
+        /* STAFF LOG CHANNELS, attached here for the same reason as the lifecycle above:
+           posting to a channel needs the gateway, the gateway is built from every command,
+           and nearly every command needs AuditLog. A constructor dependency closes that loop
+           and the container cannot resolve it - so the sink is attached once everything
+           exists. Off entirely when neither channel is set. */
+        if (features.ModLogChannel is not null || features.BanLogChannel is not null)
+        {
+            var staffLog = new PavlovBot.Host.Discord.ChannelStaffLog(
+                host.Services.GetRequiredService<PavlovBot.Host.Discord.IAutoPostTarget>(),
+                features.ModLogChannel,
+                features.BanLogChannel,
+                host.Services.GetRequiredService<ILogger<PavlovBot.Host.Discord.ChannelStaffLog>>());
+
+            host.Services.GetRequiredService<PavlovBot.Host.Moderation.AuditLog>().UseSink(staffLog);
+
+            logger.LogInformation(
+                "Staff log channels: mod {Mod}, ban {Ban}",
+                features.ModLogChannel?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unset",
+                features.BanLogChannel?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unset");
+        }
         logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
             systemd.Elevation, string.Join(", ", systemd.Units));
 

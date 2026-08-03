@@ -68,6 +68,18 @@ public sealed record FeatureOptions
     /// </summary>
     public string? StaffWebhook { get; init; }
 
+    /// <summary>
+    /// Channel for staff actions, by id. Works alongside <see cref="StaffWebhook"/>.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the ban channel even when both point at the same place, so splitting
+    /// them later is a config change rather than a code change.
+    /// </remarks>
+    public ulong? ModLogChannel { get; init; }
+
+    /// <summary>Channel for bans, unbans and automatic bans. Falls back to the mod log.</summary>
+    public ulong? BanLogChannel { get; init; }
+
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
     /// <summary>
@@ -187,6 +199,8 @@ public sealed record FeatureOptions
                feed and never read JOIN_WEBHOOK_URL at all. */
             ConnectWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
             StaffWebhook = Text(configuration, "STAFF_WEBHOOK_URL"),
+            ModLogChannel = Snowflake(configuration, "MOD_LOG_CHANNEL"),
+            BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
             MoneyWebhook = Text(configuration, "MONEY_WEBHOOK_URL"),
@@ -303,6 +317,7 @@ public sealed record FeatureOptions
         $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
         $"staff feed: {(StaffWebhook is null ? "off (STAFF_WEBHOOK_URL not set)" : "on")}",
+        $"staff log channels: {(ModLogChannel is null && BanLogChannel is null ? "off (MOD_LOG_CHANNEL / BAN_LOG_CHANNEL not set)" : $"mod {ModLogChannel?.ToString(CultureInfo.InvariantCulture) ?? "unset"}, ban {BanLogChannel?.ToString(CultureInfo.InvariantCulture) ?? "unset"}")}",
         $"menu panel: {(MenuPanelChannel is null
             ? "off (MENU_PANEL_CHANNEL not set)"
             : MenuRoleStaff is null && MenuRoleHighStaff is null

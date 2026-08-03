@@ -28,6 +28,20 @@ public sealed class AuditLog(SerializedStore store, FeedWebhooks? feeds = null)
     /// <summary>Roughly a year of a busy server, and small enough to parse instantly.</summary>
     public const int MaxEntries = 5000;
 
+    private IStaffLogSink? _sink;
+
+    /// <summary>
+    /// Attach a channel to publish actions to. See <see cref="IStaffLogSink"/>.
+    /// </summary>
+    /// <remarks>
+    /// Set from the composition root rather than injected, because posting to a channel needs
+    /// the gateway, the gateway is built from every command, and nearly every command needs
+    /// this type - a constructor dependency closes that loop and the container cannot resolve
+    /// it. The audit log works with no sink at all, which is what every test and every
+    /// unconfigured deployment does.
+    /// </remarks>
+    public void UseSink(IStaffLogSink sink) => _sink = sink;
+
     public async Task RecordAsync(string action, string moderator, string player, string? reason = null, CancellationToken ct = default)
     {
         var at = DateTimeOffset.UtcNow;
@@ -53,16 +67,34 @@ public sealed class AuditLog(SerializedStore store, FeedWebhooks? feeds = null)
            RECORDED FIRST, POSTED SECOND, and the failure of the second never touches the
            first. The dataset is the record that has to survive; the channel is a convenience,
            and a dead webhook must not be able to lose a ban from the audit trail. */
-        if (feeds is null) return;
-
-        try
+        if (feeds is not null)
         {
-            await feeds.PostStaffAsync(action, moderator, player, reason, at, ct).ConfigureAwait(false);
+            try
+            {
+                await feeds.PostStaffAsync(action, moderator, player, reason, at, ct).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // FeedWebhooks already logs and records its own failures, and /feeds reports
+                // them. Rethrowing here would fail the audit write for a cosmetic reason.
+            }
         }
-        catch (Exception)
+
+        /* AND TO A CHANNEL BY ID, if one is configured. Both destinations can be on at once
+           and they are not redundant: a webhook posts under its own name and does not need
+           the gateway connected, a channel id posts as the bot and survives being moved. */
+        if (_sink is not null)
         {
-            // FeedWebhooks already logs and records its own failures, and /feeds reports
-            // them. Rethrowing here would fail the audit write for a cosmetic reason.
+            try
+            {
+                await _sink.PostAsync(
+                    new ModAction(action, moderator, player, Sanitize.Message(reason ?? ""), at), ct)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Same rule: the record is written and cannot be un-written.
+            }
         }
     }
 
