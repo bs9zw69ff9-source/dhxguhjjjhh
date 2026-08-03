@@ -35,8 +35,15 @@ public sealed record FeatureOptions
     /// </remarks>
     public IReadOnlyList<string> PavlovUnits { get; init; } = [];
 
-    /// <summary>Prefix systemctl with <c>sudo -n</c>. Needed unless the bot runs as root.</summary>
-    public bool SystemctlSudo { get; init; }
+    /// <summary>
+    /// Force sudo on or off. Null - the default - detects whether the bot is already root.
+    /// </summary>
+    /// <remarks>
+    /// systemctl has to run as root either way; this is only about HOW. Left unset, the bot
+    /// calls systemctl directly when it is root and goes through <c>sudo -n</c> when it is
+    /// not, which is right for both deployment shapes without anyone declaring one.
+    /// </remarks>
+    public bool? SystemctlSudo { get; init; }
 
     /// <summary>The game's own ban-list file - the message a banned player sees.</summary>
     public string? ModsaveBanlistPath { get; init; }
@@ -146,7 +153,7 @@ public sealed record FeatureOptions
             PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
             PavlovUnits = PavlovBot.Host.Servers.ServiceControl.ParseUnits(Text(configuration, "PAVLOV_UNITS")),
-            SystemctlSudo = Flag(configuration, "PAVLOV_SYSTEMCTL_SUDO"),
+            SystemctlSudo = OptionalFlag(configuration, "PAVLOV_SYSTEMCTL_SUDO"),
             /* Resolved the way the Node bot resolves it: an explicit override first, then
                derived from the server install root. It was previously built as
                <MODSAVE_PATH>/ModSave/banlist.txt - but MODSAVE_PATH already points AT the
@@ -219,9 +226,21 @@ public sealed record FeatureOptions
     /// "1", "yes" and "on" are accepted alongside "true" because a .env is written by hand
     /// and a switch that silently ignores <c>=1</c> is a switch somebody spends an hour on.
     /// </remarks>
-    private static bool Flag(IConfiguration configuration, string key) =>
-        Text(configuration, key) is { } value &&
-        value is "1" or "true" or "TRUE" or "True" or "yes" or "YES" or "Yes" or "on" or "ON" or "On";
+    private static bool Flag(IConfiguration configuration, string key) => OptionalFlag(configuration, key) == true;
+
+    /// <summary>The same switch, but "unset" is distinguishable from "off".</summary>
+    /// <remarks>
+    /// The distinction matters wherever the default is DETECTED rather than fixed - forcing
+    /// a behaviour off and never having asked for it are different intentions, and a plain
+    /// bool cannot tell them apart.
+    /// </remarks>
+    private static bool? OptionalFlag(IConfiguration configuration, string key) =>
+        Text(configuration, key)?.ToLowerInvariant() switch
+        {
+            null => null,
+            "1" or "true" or "yes" or "on" => true,
+            _ => false,
+        };
 
     private static int Int(IConfiguration configuration, string key, int fallback) =>
         int.TryParse(configuration[key], CultureInfo.InvariantCulture, out var value) && value > 0 ? value : fallback;
@@ -255,7 +274,7 @@ public sealed record FeatureOptions
     [
         $"economy: {(LedgerDirectory is null ? "off (MODSAVE_PATH not set)" : LedgerDirectory)}",
         $"whitelists: {(RosterDirectory is null ? "off (FACTION_ROLES_PATH not set)" : RosterDirectory)}",
-        $"/rotatemap units: {string.Join(", ", PavlovUnits)}{(SystemctlSudo ? " (via sudo -n)" : " (direct - needs root)")}",
+        $"systemd units: {string.Join(", ", PavlovUnits)}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
         $"money feed: {(MoneyWebhook is null ? "off" : "on")}",

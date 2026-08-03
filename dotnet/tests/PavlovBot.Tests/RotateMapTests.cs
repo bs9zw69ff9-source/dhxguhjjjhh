@@ -22,11 +22,96 @@ public class RotateMapTests
     // ---- what may become a unit name ----
 
     [Fact]
-    public void TheDefaultUnitsAreTheOnesOnTheBox()
+    public void TheServerNumberToUnitMappingIsTheOneOnTheBox()
     {
-        // pavlovserver, pavlovserver1, pavlovserver2 - the same sequence PavlovInstalls
-        // discovers, so "Server 2" means the same thing here as it does in a join line.
+        /* STATED EXACTLY, because it is off by one and looks like a bug every time somebody
+           reads it: server 1 is `pavlovserver` with no suffix, so server N is
+           `pavlovserver{N-1}`. Getting this wrong restarts the wrong server, which is the
+           kind of mistake that is only noticed by the players on it. */
+        var control = Control();
+
+        Assert.Equal("pavlovserver", control.UnitFor(1));
+        Assert.Equal("pavlovserver1", control.UnitFor(2));
+        Assert.Equal("pavlovserver2", control.UnitFor(3));
+
+        // And the same order the feeds and the player-count channels number servers in.
         Assert.Equal(["pavlovserver", "pavlovserver1", "pavlovserver2"], ServiceControl.DefaultUnits);
+    }
+
+    // ---- verbs ----
+
+    [Theory]
+    [InlineData(UnitAction.Start, "start")]
+    [InlineData(UnitAction.Stop, "stop")]
+    [InlineData(UnitAction.Restart, "restart")]
+    public void EachActionMapsToItsSystemctlVerb(UnitAction action, string expected)
+    {
+        // These three strings are the second word of a privileged command line, and they
+        // come from an enum rather than from anything a caller can influence.
+        Assert.Equal(expected, ServiceControl.Verb(action));
+    }
+
+    [Fact]
+    public async Task ARefusedUnitNameIsRefusedForEveryAction()
+    {
+        // The guard belongs to the runner, so no verb can route around it.
+        foreach (var action in Enum.GetValues<UnitAction>())
+        {
+            var result = await Control().RunAsync("--force", action);
+
+            Assert.False(result.Ok);
+            Assert.Contains("refused before running anything", result.Detail, StringComparison.Ordinal);
+        }
+    }
+
+    // ---- warnings ----
+
+    [Fact]
+    public void StoppingAndRestartingWarnPlayersDifferently()
+    {
+        /* A player told "restarting" waits; a player told "shutting down" goes elsewhere.
+           Telling them the wrong one is a small lie with a real cost either way. */
+        Assert.Equal("Server shutting down...", ServerSwitchCommand.WarningFor(UnitAction.Stop));
+        Assert.Equal("Server restarting...", ServerSwitchCommand.WarningFor(UnitAction.Restart));
+    }
+
+    [Fact]
+    public void EveryWarningSurvivesSanitisingIntact()
+    {
+        // They go out as `Notify <text>` on a line-oriented protocol. If sanitising altered
+        // one, players would see something other than what the command promises.
+        foreach (var action in new[] { UnitAction.Stop, UnitAction.Restart })
+        {
+            var warning = ServerSwitchCommand.WarningFor(action);
+            Assert.Equal(warning, PavlovBot.Core.Text.Sanitize.Message(warning));
+        }
+    }
+
+    // ---- elevation ----
+
+    [Fact]
+    public void SudoIsUsedWhenTheBotIsNotRoot()
+    {
+        /* systemctl HAS to run as root. Left undeclared, the bot works out which of the two
+           routes it needs rather than making the operator assert one - and a wrong assertion
+           here is a command that refuses everything for a reason nobody can see. */
+        var detected = new ServiceControl(ServiceControl.DefaultUnits, useSudo: null,
+            NullLogger<ServiceControl>.Instance);
+
+        Assert.Equal(Environment.IsPrivilegedProcess, !detected.Elevation.Contains("sudo", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ForcingSudoOffWhileNotRootSaysThatItWillFail()
+    {
+        // An override that cannot work should say so where somebody will read it, rather
+        // than presenting as a broken command later.
+        if (Environment.IsPrivilegedProcess) return;   // the assertion is meaningless as root
+
+        var forced = new ServiceControl(ServiceControl.DefaultUnits, useSudo: false,
+            NullLogger<ServiceControl>.Instance);
+
+        Assert.Contains("NOT root", forced.Elevation, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -165,7 +250,12 @@ public class RotateMapTests
 
         Assert.NotNull(advice);
         Assert.Contains("visudo", advice, StringComparison.Ordinal);
-        Assert.Contains("PAVLOV_SYSTEMCTL_SUDO", advice, StringComparison.Ordinal);
+
+        // Every verb, for every unit - a sudoers line that only permits restart makes
+        // /serverswitch stop fail with the same error the advice was meant to fix.
+        foreach (var unit in ServiceControl.DefaultUnits)
+            foreach (var verb in new[] { "start", "stop", "restart" })
+                Assert.Contains($"/bin/systemctl {verb} {unit}", advice, StringComparison.Ordinal);
     }
 
     [Fact]

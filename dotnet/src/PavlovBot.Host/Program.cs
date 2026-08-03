@@ -231,6 +231,7 @@ public static class Program
             features.PavlovUnits, features.SystemctlSudo,
             sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServiceControl>>()));
         builder.Services.AddSingleton<ISlashCommand, RotateMapCommand>();
+        builder.Services.AddSingleton<ISlashCommand, ServerSwitchCommand>();
         builder.Services.AddSingleton<ISlashCommand, GiveMenuCommand>();
         builder.Services.AddSingleton<ISlashCommand, UnlinkNameCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRolesCommand>();
@@ -341,6 +342,14 @@ public static class Program
             if (backend.SeedIfMissing(name, seed)) seeded++;
         }
         if (seeded > 0) logger.LogInformation("Seeded {Count} empty dataset(s)", seeded);
+
+        /* Said at startup because it is DETECTED, not configured - so the one thing an
+           operator cannot look up in .env is how it resolved. A bot that is not root and has
+           no sudoers entry will refuse every /serverswitch, and this is where that is
+           visible before somebody tries it. */
+        var systemd = host.Services.GetRequiredService<PavlovBot.Host.Servers.ServiceControl>();
+        logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
+            systemd.Elevation, string.Join(", ", systemd.Units));
 
         var feeds = host.Services.GetRequiredService<FeedWebhooks>();
         feeds.Register(FeedWebhooks.Join, features.JoinWebhook);

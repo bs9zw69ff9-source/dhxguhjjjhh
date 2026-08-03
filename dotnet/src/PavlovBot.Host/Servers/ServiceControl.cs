@@ -3,10 +3,23 @@ using Microsoft.Extensions.Logging;
 
 namespace PavlovBot.Host.Servers;
 
-/// <param name="Ok">The unit restarted. False means it did not, for the reason given.</param>
+/// <param name="Ok">The action succeeded. False means it did not, for the reason given.</param>
 /// <param name="Unit">The systemd unit this concerns.</param>
 /// <param name="Detail">stderr/stdout, or the reason nothing ran. Never empty.</param>
 public sealed record UnitResult(bool Ok, string Unit, string Detail);
+
+/// <summary>What to do to a unit. The verb passed to systemctl, and nothing else.</summary>
+/// <remarks>
+/// An ENUM rather than a string, so the verb cannot come from anywhere but this list. It is
+/// the second word of a privileged command line; a string parameter here would be a second
+/// injection surface beside the unit name, and a smaller one to notice.
+/// </remarks>
+public enum UnitAction
+{
+    Start,
+    Stop,
+    Restart,
+}
 
 /// <summary>
 /// Restarting the Pavlov game servers through systemd.
@@ -28,21 +41,52 @@ public sealed record UnitResult(bool Ok, string Unit, string Detail);
 /// </remarks>
 public sealed class ServiceControl(
     IReadOnlyList<string> units,
-    bool useSudo,
+    bool? useSudo,
     ILogger<ServiceControl> logger)
 {
     /// <summary>The configured units, in server order: index 0 is "Server 1".</summary>
     public IReadOnlyList<string> Units { get; } = units;
 
     /// <summary>
-    /// The default unit names, matching the default install layout.
+    /// The default unit names, in server order.
     /// </summary>
     /// <remarks>
-    /// <c>pavlovserver</c>, <c>pavlovserver1</c>, <c>pavlovserver2</c> - the same sequence
-    /// <see cref="Storage.PavlovInstalls"/> discovers and the same order the feeds number
-    /// servers in, so "Server 2" means the same thing in a join line and here.
+    /// Server 1 is <c>pavlovserver</c>, server 2 is <c>pavlovserver1</c>, server 3 is
+    /// <c>pavlovserver2</c> - the off-by-one is the operator's naming, not a mistake here.
+    /// It is also the sequence <see cref="Storage.PavlovInstalls"/> discovers and the order
+    /// the feeds number servers in, so "Server 2" means the same thing in a join line, in a
+    /// player-count channel and here.
     /// </remarks>
     public static readonly string[] DefaultUnits = ["pavlovserver", "pavlovserver1", "pavlovserver2"];
+
+    /// <summary>
+    /// Whether systemctl needs <c>sudo</c> to reach root from here.
+    /// </summary>
+    /// <remarks>
+    /// SYSTEMCTL MUST RUN AS ROOT - stopping and starting a system unit is not something an
+    /// unprivileged user may do, and systemd refuses it rather than half-doing it. There are
+    /// two ways to be root and the right one depends on how the bot was deployed, so this
+    /// decides at runtime instead of making the operator declare it:
+    ///
+    ///   ALREADY ROOT (the bot's own process runs as uid 0) - call systemctl directly.
+    ///   Wrapping it in sudo would work but adds a process and a failure mode for nothing.
+    ///
+    ///   NOT ROOT - go through <c>sudo -n</c>. <c>-n</c> is non-interactive: it fails
+    ///   immediately rather than blocking forever on a password prompt that no one is
+    ///   attached to answer, which would otherwise hang the command until its timeout.
+    ///
+    /// <c>PAVLOV_SYSTEMCTL_SUDO</c> overrides the detection in either direction, for the
+    /// setups this cannot see - a container where uid 0 is not really root, or a doas/polkit
+    /// arrangement where sudo is the wrong tool.
+    /// </remarks>
+    private readonly bool _useSudo = useSudo ?? !Environment.IsPrivilegedProcess;
+
+    /// <summary>How the elevation resolved, for the startup line and <c>/health</c>.</summary>
+    public string Elevation => _useSudo
+        ? "via sudo -n (the bot is not root)"
+        : Environment.IsPrivilegedProcess
+            ? "directly (the bot is already root)"
+            : "directly (forced by PAVLOV_SYSTEMCTL_SUDO - the bot is NOT root, so this will be refused)";
 
     /// <summary>
     /// Parse <c>PAVLOV_UNITS</c>. Anything that is not a plausible unit name is dropped.
@@ -100,17 +144,36 @@ public sealed class ServiceControl(
     /// success for having successfully queued a job that may then fail. The interaction is
     /// already deferred, so there is time to wait for the truth.
     /// </remarks>
-    public async Task<UnitResult> RestartAsync(string unit, CancellationToken ct = default)
+    public Task<UnitResult> RestartAsync(string unit, CancellationToken ct = default) =>
+        RunAsync(unit, UnitAction.Restart, ct);
+
+    /// <summary>The systemctl verb for an action. The ONLY place a verb is turned into text.</summary>
+    internal static string Verb(UnitAction action) => action switch
+    {
+        UnitAction.Start => "start",
+        UnitAction.Stop => "stop",
+        _ => "restart",
+    };
+
+    /// <summary>
+    /// <c>systemctl &lt;verb&gt; &lt;unit&gt;</c>, as root. Blocks until systemd says it is done.
+    /// </summary>
+    public async Task<UnitResult> RunAsync(string unit, UnitAction action, CancellationToken ct = default)
     {
         if (!IsPlausibleUnitName(unit))
             return new UnitResult(false, unit, "not a usable systemd unit name - refused before running anything");
 
-        var (file, argv) = useSudo
-            // -n: fail rather than block forever on a password prompt nobody can answer.
-            ? ("sudo", new[] { "-n", "systemctl", "restart", unit })
-            : ("systemctl", new[] { "restart", unit });
+        var verb = Verb(action);
 
-        logger.LogWarning("RESTARTING {Unit} via {File} - every player on it will be disconnected", unit, file);
+        var (file, argv) = _useSudo
+            // -n: fail rather than block forever on a password prompt nobody can answer.
+            ? ("sudo", new[] { "-n", "systemctl", verb, unit })
+            : ("systemctl", new[] { verb, unit });
+
+        /* At WARNING, always. Every one of these disconnects players or leaves a server
+           down, and "who took server 2 offline and when" is a question that gets asked. */
+        logger.LogWarning("systemctl {Verb} {Unit} (via {File}) - players on it will be disconnected",
+            verb, unit, file);
 
         try
         {
@@ -138,15 +201,17 @@ public sealed class ServiceControl(
             var output = (stdout + stderr).Trim();
             var ok = process.ExitCode == 0;
 
-            if (ok) logger.LogInformation("{Unit} restarted", unit);
-            else logger.LogError("{Unit} did NOT restart (exit {Code}): {Output}", unit, process.ExitCode, output);
+            if (ok) logger.LogInformation("systemctl {Verb} {Unit} succeeded", verb, unit);
+            else logger.LogError("systemctl {Verb} {Unit} FAILED (exit {Code}): {Output}", verb, unit, process.ExitCode, output);
 
-            return new UnitResult(ok, unit, output.Length > 0 ? output : ok ? "restarted" : $"exit code {process.ExitCode}");
+            return new UnitResult(ok, unit,
+                output.Length > 0 ? output : ok ? $"{verb} ok" : $"exit code {process.ExitCode}");
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            logger.LogError("{Unit} restart timed out after 90s - it may still be starting", unit);
-            return new UnitResult(false, unit, "timed out after 90s. The unit may still be coming up - check `systemctl status`");
+            logger.LogError("systemctl {Verb} {Unit} timed out after 90s - it may still be in progress", verb, unit);
+            return new UnitResult(false, unit,
+                $"`{verb}` timed out after 90s. It may still be in progress - check `systemctl status {unit}`");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -179,11 +244,16 @@ public sealed class ServiceControl(
             text.Contains("password is required", StringComparison.Ordinal) ||
             text.Contains("a terminal is required", StringComparison.Ordinal))
         {
+            var permitted = string.Join(", ", Units
+                .SelectMany(u => new[] { "start", "stop", "restart" }.Select(v => $"/bin/systemctl {v} {u}")));
+
             return
-                "The bot is not allowed to restart these units. Grant it just this, and nothing else — " +
-                "run `visudo` and add one line, with the user the bot runs as:\n" +
-                $"```\n{Environment.UserName} ALL=(root) NOPASSWD: /bin/systemctl restart {string.Join(", /bin/systemctl restart ", Units)}\n```\n" +
-                "Then set `PAVLOV_SYSTEMCTL_SUDO=true` in the bot's `.env` and restart it.";
+                "systemctl has to run as **root**, and the bot is not allowed to. Grant it exactly these " +
+                "units and verbs and nothing else — run `visudo` and add one line, using the user the bot " +
+                "runs as:\n" +
+                $"```\n{Environment.UserName} ALL=(root) NOPASSWD: {permitted}\n```\n" +
+                "No bot restart is needed after that. If the bot itself runs as root, this is already " +
+                "unnecessary and something else is wrong.";
         }
 
         if (text.Contains("not found", StringComparison.Ordinal) ||
