@@ -95,7 +95,7 @@ public sealed class VpnResponder(
             metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "below_threshold"),
                 help: "VPN verdicts by what was done about them");
 
-            await PostAsync($"[VPN] {Sanitize.Message(player)}  |  flagged but not actioned  |  {decision.Reason}")
+            await PostAsync($"[VPN] {Sanitize.Message(player)}  |  {VpnVerdict.Of(record).Headline}  |  NOT BANNED - {decision.Reason}")
                 .ConfigureAwait(false);
             return VpnBanOutcome.BelowThreshold;
         }
@@ -178,16 +178,15 @@ public sealed class VpnResponder(
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        var hits = record.ScreenHits + record.ConfirmHits;
-        var answered = record.ScreenAnswered + record.ConfirmAnswered;
+        /* THE VERDICT FIRST, from the same place every other surface gets it. This is the
+           reason attached to the ban record and shown to the player, so it is also the thing
+           quoted back in an appeal - three different wordings of one screening across the
+           card, the feed and the ban was how "the bot said I was confirmed" and "the bot said
+           it could not confirm" both ended up being true. */
+        var summary = VpnVerdict.Of(record);
         var brand = record.Provider is { Length: > 0 } name ? $" ({Sanitize.Message(name)})" : "";
 
-        if (record.ConfirmAnswered == 0)
-            return $"VPN/proxy detected{brand} - {hits}/{answered} detectors agree, no confirmation available";
-
-        return record.ConfirmHits > 0
-            ? $"VPN/proxy confirmed{brand} - {record.ConfirmHits}/{record.ConfirmAnswered} final confirmation(s) agree"
-            : $"VPN/proxy detected{brand} - {hits}/{answered} detectors flagged it, though the final confirmation disagreed";
+        return $"{summary.Headline}{brand} — {summary.Plain}";
     }
 
     /// <summary>False while this address is still inside its action window.</summary>

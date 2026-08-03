@@ -34,6 +34,7 @@ public sealed class PlayersCommand(RconRegistry rcon, Paged paged) : ISlashComma
         var sections = new List<string>();
         var total = 0;
         var reported = 0;
+        var anyStale = false;
 
         foreach (var server in rcon.Servers)
         {
@@ -44,7 +45,9 @@ public sealed class PlayersCommand(RconRegistry rcon, Paged paged) : ISlashComma
                time the bot restarted, and it is worth keeping the fix. */
             if (roster.TakenAt == DateTimeOffset.MinValue)
             {
-                sections.Add($"**{Sanitize.Message(server)}** — *no roster yet*");
+                var why = rcon.RosterProblem(server);
+                sections.Add($"**{Sanitize.Message(server)}** — *no roster yet*" +
+                             (why is null ? "" : $"\n{Theme.Bad} {Sanitize.Message(why)}"));
                 continue;
             }
 
@@ -56,11 +59,30 @@ public sealed class PlayersCommand(RconRegistry rcon, Paged paged) : ISlashComma
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .Select(n => $"`{Sanitize.Code(n)}`");
 
-            sections.Add($"**{Sanitize.Message(server)}** — {roster.Players.Count} online\n" +
+            /* HOW OLD IT IS, whenever it is not current. A frozen roster and a quiet server
+               produce exactly the same list, and this command was presenting the one as the
+               other - so "so-and-so is online" could be an hour out of date and read as live.
+               The names are still shown: an old roster is worth something as long as you know
+               that is what you are looking at. */
+            var age = DateTimeOffset.UtcNow - roster.TakenAt;
+            var stale = !rcon.RosterIsFresh(server);
+            anyStale |= stale;
+
+            var heading = $"**{Sanitize.Message(server)}** — {roster.Players.Count} online";
+            if (stale)
+            {
+                heading += $"  {Theme.Warn} **as of {Describe(age)} ago**";
+                if (rcon.RosterProblem(server) is { } problem)
+                    heading += $"\n{Theme.Bad} {Sanitize.Message(problem)}";
+            }
+
+            sections.Add(heading + "\n" +
                          (roster.Players.Count > 0 ? string.Join(" ", names) : "*nobody*"));
         }
 
-        var title = reported > 0 ? $"Online — {total} player(s)" : "Online";
+        var title = reported > 0
+            ? $"Online — {total} player(s){(anyStale ? " (some data is stale)" : "")}"
+            : "Online";
 
         /* PAGED, because a full server's roster can exceed an embed's limits and the board
            this replaces simply truncated. Paged sends a plain embed when it fits on one
@@ -68,4 +90,13 @@ public sealed class PlayersCommand(RconRegistry rcon, Paged paged) : ISlashComma
         return paged.SendAsync(command, title,
             Theme.Paginate(sections.Count > 0 ? sections : ["*No servers are configured.*"]), ct);
     }
+
+    /// <summary>"4 minutes", "2 hours" - enough to judge whether the list is worth believing.</summary>
+    internal static string Describe(TimeSpan age) => age switch
+    {
+        { TotalSeconds: < 90 } => $"{age.TotalSeconds:0} seconds",
+        { TotalMinutes: < 90 } => $"{age.TotalMinutes:0} minutes",
+        { TotalHours: < 36 } => $"{age.TotalHours:0} hours",
+        _ => $"{age.TotalDays:0} days",
+    };
 }

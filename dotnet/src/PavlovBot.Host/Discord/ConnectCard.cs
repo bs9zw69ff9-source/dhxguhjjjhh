@@ -171,52 +171,43 @@ public static class ConnectCard
     /// </remarks>
     private static string Verdict(VpnRecord? vpn)
     {
-        if (vpn is null) return "Not checked";
-        if (vpn.Local) return "Skipped — private/LAN address, nothing to check";
+        var summary = VpnVerdict.Of(vpn);
 
-        var decision = vpn.Decision;
-        var tier1 = vpn.Detectors.Where(d => d.Tier == 1).ToList();
-        var tier2 = vpn.Detectors.Where(d => d.Tier == 2).ToList();
+        /* THE VERDICT FIRST, ON ITS OWN LINE, then a sentence of plain English, then what
+           was done about it. Everything below that line is evidence for somebody who wants
+           it - it used to be the whole field, so the reader was handed
+           "⚠️ Flagged by 2/3 regular check(s) — the confirmer gave no verdict, so
+           unconfirmed" and left to work out what that meant about the person in front of
+           them. Arithmetic is not a verdict. */
+        var lines = new List<string>
+        {
+            $"{Pip(summary.Stance)} **{summary.Headline}**",
+            summary.Plain,
+        };
+
+        if (summary.Concerning || summary.Stance == VpnStance.Clean)
+            lines.Add($"*{summary.Action}*");
+
+        if (vpn is null || vpn.Local) return string.Join("\n", lines);
+
+        if (VpnVerdict.Signals(vpn) is { Count: > 0 } signals)
+            lines.Add($"Signals: **{string.Join(", ", signals)}**");
+
+        // ---- the working, for anyone who needs to show it ----
 
         if (vpn.Detectors.Count == 0)
-            return $"**{decision.Label}** — {decision.Reason}\n*No per-detector breakdown (cached before detectors were recorded).*";
-
-        static string Pip(DetectorReading d) => $"{(d.Flagged ? "🔴" : "🟢")} {d.Name}";
-
-        var lines = new List<string>();
-
-        if (!decision.Flagged)
         {
-            lines.Add(vpn.ScreenAnswered > 0
-                ? $"**Clean** — all {vpn.ScreenAnswered} regular check(s) agree"
-                : "**Clean**");
-            if (tier1.Count > 0) lines.Add(string.Join("  ", tier1.Select(Pip)));
-            if (tier2.Count == 0 && vpn.ScreenAnswered > 0)
-                lines.Add("*Not escalated — no regular check flagged it.*");
-        }
-        else if (decision.Confirmed == true && tier2.Count > 0)
-        {
-            lines.Add($"🚫 **VPN/proxy CONFIRMED** — {vpn.ScreenHits}/{vpn.ScreenAnswered} flagged, " +
-                      $"confirmed {vpn.ConfirmHits}/{vpn.ConfirmAnswered}");
-            if (tier1.Count > 0) lines.Add(string.Join("  ", tier1.Select(Pip)));
-            lines.Add($"→ final: {string.Join("  ", tier2.Select(Pip))}");
-        }
-        else if (decision.Confirmed == false)
-        {
-            /* "not banned" is keyed off ACTIONABLE, not off the dispute. The confirmer used
-               to hold a veto, so disputed and not-banned were the same thing; two screeners
-               agreeing now bans over its objection, and a card that still said "not banned"
-               beside a player who had just been banned would be read as a bug in the ban. */
-            lines.Add($"⚠️ **Disputed** — {vpn.ScreenHits}/{vpn.ScreenAnswered} flagged, but the confirmer cleared it " +
-                      (decision.Actionable ? "(banned anyway on consensus)" : "(not banned)"));
-            if (tier1.Count > 0) lines.Add(string.Join("  ", tier1.Select(Pip)));
-            lines.Add($"→ final: {string.Join("  ", tier2.Select(Pip))}");
+            lines.Add("*No per-detector breakdown — this result was cached before detectors were recorded.*");
         }
         else
         {
-            lines.Add($"⚠️ **Flagged by {vpn.ScreenHits}/{vpn.ScreenAnswered} regular check(s)** — " +
-                      $"{(tier2.Count > 0 ? "the confirmer gave no verdict" : "no confirmer configured")}, so unconfirmed");
-            if (tier1.Count > 0) lines.Add(string.Join("  ", tier1.Select(Pip)));
+            static string Dot(DetectorReading d) => $"{(d.Flagged ? "🔴" : "🟢")} {d.Name}";
+
+            var tier1 = vpn.Detectors.Where(d => d.Tier == 1).ToList();
+            var tier2 = vpn.Detectors.Where(d => d.Tier == 2).ToList();
+
+            if (tier1.Count > 0) lines.Add("Checks: " + string.Join("  ", tier1.Select(Dot)));
+            if (tier2.Count > 0) lines.Add("Confirmer: " + string.Join("  ", tier2.Select(Dot)));
         }
 
         var meta = new[]
@@ -229,6 +220,15 @@ public static class ConnectCard
 
         return string.Join("\n", lines);
     }
+
+    /// <summary>One glyph per stance, so the verdict is legible before it is read.</summary>
+    private static string Pip(VpnStance stance) => stance switch
+    {
+        VpnStance.Confirmed => "🚫",
+        VpnStance.Disputed or VpnStance.Likely => "⚠️",
+        VpnStance.Clean => "✅",
+        _ => "▫️",
+    };
 
     /// <summary>
     /// The addresses on record, confirmed first.

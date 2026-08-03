@@ -89,7 +89,11 @@ public class ConnectCardTests
         Assert.Contains("vpnapi", text, StringComparison.Ordinal);
         Assert.Contains("🔴", text, StringComparison.Ordinal);
         Assert.Contains("🟢", text, StringComparison.Ordinal);
-        Assert.Contains("no confirmer configured", text, StringComparison.Ordinal);
+
+        // The headline leads, and it must not claim more than "likely" without a confirmer.
+        Assert.Contains("VPN / PROXY — LIKELY", text, StringComparison.Ordinal);
+        Assert.Contains("No confirming check is configured", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("CONFIRMED", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -98,8 +102,9 @@ public class ConnectCardTests
         var text = Render(Screened(flagged: true, confirmed: true,
             detectors: [Reading("iphub", 1, true), Reading("ipqs", 2, true)]));
 
-        Assert.Contains("CONFIRMED", text, StringComparison.Ordinal);
-        Assert.Contains("final:", text, StringComparison.Ordinal);
+        Assert.Contains("VPN / PROXY — CONFIRMED", text, StringComparison.Ordinal);
+        Assert.Contains("the confirming check agreed", text, StringComparison.Ordinal);
+        Assert.Contains("Confirmer:", text, StringComparison.Ordinal);
         Assert.Contains("ipqs", text, StringComparison.Ordinal);
     }
 
@@ -110,8 +115,10 @@ public class ConnectCardTests
         var text = Render(Screened(flagged: true, confirmed: false, actionable: false,
             detectors: [Reading("iphub", 1, true), Reading("ipqs", 2, false)]));
 
-        Assert.Contains("Disputed", text, StringComparison.Ordinal);
-        Assert.Contains("not banned", text, StringComparison.Ordinal);
+        Assert.Contains("VPN / PROXY — DISPUTED", text, StringComparison.Ordinal);
+        Assert.Contains("the confirming check cleared it", text, StringComparison.Ordinal);
+        Assert.Contains("Not banned", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUTO-BANNED", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -124,9 +131,12 @@ public class ConnectCardTests
         var text = Render(Screened(flagged: true, confirmed: false, actionable: true,
             detectors: [Reading("iphub", 1, true), Reading("vpnapi", 1, true), Reading("ipqs", 2, false)]));
 
-        Assert.Contains("Disputed", text, StringComparison.Ordinal);
-        Assert.Contains("banned anyway on consensus", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("(not banned)", text, StringComparison.Ordinal);
+        Assert.Contains("VPN / PROXY — DISPUTED", text, StringComparison.Ordinal);
+        Assert.Contains("AUTO-BANNED", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Not banned", text, StringComparison.Ordinal);
+
+        // It must still not claim the confirmation supported the ban.
+        Assert.Contains("the confirming check cleared it", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -169,8 +179,8 @@ public class ConnectCardTests
         // Silence is not innocence, and the card must not imply it is.
         var text = Render(vpn: null);
 
-        Assert.Contains("Not checked", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("Clean", text, StringComparison.Ordinal);
+        Assert.Contains("NOT CHECKED", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("CLEAN", text, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -144,9 +144,18 @@ public sealed class PlayerCountChannels(
         if (roster.TakenAt == DateTimeOffset.MinValue ||
             DateTimeOffset.UtcNow - roster.TakenAt > RosterFreshness)
         {
-            // Leave whatever is there. A wrong number is worse than a slightly old one, and
-            // writing one would spend a rename the real count needs when RCON comes back.
-            return $"{server} skipped (no fresh roster)";
+            /* Leave whatever is there. A wrong number is worse than a slightly old one, and
+               writing one would spend a rename the real count needs when RCON comes back.
+
+               WITH THE REASON, because "skipped (no fresh roster)" says the channel is not
+               being updated without saying why, and this line is the whole diagnostic for a
+               channel that has stopped moving. */
+            var why = rcon.RosterProblem(server)
+                      ?? (roster.TakenAt == DateTimeOffset.MinValue
+                          ? "the roster has never been fetched"
+                          : $"the roster is {(DateTimeOffset.UtcNow - roster.TakenAt).TotalMinutes:0} minutes old");
+
+            return $"{server} skipped ({why})";
         }
 
         var name = ServerName(number, roster.Players.Count, await MaxPlayersAsync(server, ct).ConfigureAwait(false));

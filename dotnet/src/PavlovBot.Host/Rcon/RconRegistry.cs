@@ -111,6 +111,26 @@ public sealed class RconRegistry : IAsyncDisposable
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    /// <summary>
+    /// Why a server's roster is not being updated, or null while it is.
+    /// </summary>
+    /// <remarks>
+    /// Kept because a frozen roster and a quiet server look IDENTICAL from every surface that
+    /// reads one. Every failure path below used to be silent - a throw went to Debug, and an
+    /// unparseable or unsuccessful reply just moved to the next server - so a refresh that had
+    /// stopped working left the last good snapshot in place forever, and <c>/players</c> went
+    /// on presenting it as current.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, string> _rosterProblem = new(StringComparer.Ordinal);
+
+    /// <summary>What is wrong with this server's roster feed, or null when nothing is.</summary>
+    public string? RosterProblem(string server) => _rosterProblem.GetValueOrDefault(server);
+
+    /// <summary>True when the roster is recent enough to be evidence of anything.</summary>
+    public bool RosterIsFresh(string server) =>
+        Roster(server) is { TakenAt: var at } && at != DateTimeOffset.MinValue &&
+        DateTimeOffset.UtcNow - at <= RosterFreshness;
+
     /// <summary>Refresh the cached roster for every server.</summary>
     public async Task RefreshRostersAsync(CancellationToken ct)
     {
@@ -119,26 +139,68 @@ public sealed class RconRegistry : IAsyncDisposable
             try
             {
                 var raw = await SendAsync(server, "RefreshList", ct).ConfigureAwait(false);
-                if (!RconReply.TryParse(raw, out var document) || document is null) continue;
+
+                if (!RconReply.TryParse(raw, out var document) || document is null)
+                {
+                    Problem(server, "the server's reply to RefreshList could not be parsed");
+                    continue;
+                }
+
                 using (document)
                 {
                     /* Only a reply the server called SUCCESSFUL replaces the cache. An
                        unsuccessful RefreshList is not "nobody is online" - treating it that
                        way empties the roster on every hiccup, and anything keyed on the
                        roster then acts as though the server cleared out. */
-                    if (RconReply.Successful(document.RootElement) != true) continue;
+                    if (RconReply.Successful(document.RootElement) != true)
+                    {
+                        Problem(server, "the server refused RefreshList");
+                        continue;
+                    }
 
                     var players = RefreshList.Players(document.RootElement);
                     _rosters[server] = new RosterSnapshot(server, players, DateTimeOffset.UtcNow);
+                    Recovered(server);
+
                     _metrics.Gauge("players_online", players.Count, MetricLabels.Of("server", server),
                         "Players currently on a server");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogDebug(ex, "Roster refresh failed for {Server}", server);
+                Problem(server, ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// Record a refresh failure, and say so ONCE per outage.
+    /// </summary>
+    /// <remarks>
+    /// Once, because this sweep runs every minute or so and a persistent failure would
+    /// otherwise be sixty identical warnings an hour - which is how the previous version came
+    /// to be at Debug, where it said nothing at all at the default level. Warn on the way in,
+    /// inform on the way out, silent in between.
+    /// </remarks>
+    private void Problem(string server, string reason)
+    {
+        if (_rosterProblem.TryGetValue(server, out var existing) && existing == reason)
+        {
+            _logger.LogDebug("Roster refresh still failing for {Server}: {Reason}", server, reason);
+            return;
+        }
+
+        _rosterProblem[server] = reason;
+        _logger.LogWarning(
+            "Roster refresh FAILED for {Server}: {Reason}. The cached roster is now frozen - " +
+            "/players will show how old it is, and the player-count channel will not be renamed " +
+            "from a stale number", server, reason);
+    }
+
+    private void Recovered(string server)
+    {
+        if (_rosterProblem.TryRemove(server, out _))
+            _logger.LogInformation("Roster refresh is working again for {Server}", server);
     }
 
     /// <summary>Probe every server, recording reachability.</summary>

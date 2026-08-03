@@ -275,21 +275,31 @@ public sealed class IpLookupCommand(VpnScreeningService vpn, Access access, Stat
         }).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The same verdict, worded the same way, as the connection card and the ban feed.
+    /// </summary>
+    /// <remarks>
+    /// This used to print "VPN + datacenter (flagged (inconclusive))" - the signals first and
+    /// a parenthesised verdict inside another parenthesis. The signals are what was detected;
+    /// the verdict is what it MEANS, and that is the part being asked for.
+    /// </remarks>
     private static string Verdict(VpnRecord record)
     {
-        if (record.Local) return "private address";
+        var summary = VpnVerdict.Of(record);
 
-        var signals = new List<string>();
-        if (record.Vpn == true) signals.Add("VPN");
-        if (record.Proxy == true) signals.Add("proxy");
-        if (record.Tor == true) signals.Add("Tor");
-        if (record.Hosting == true) signals.Add("datacenter");
+        var mark = summary.Stance switch
+        {
+            VpnStance.Confirmed => Theme.Bad,
+            VpnStance.Disputed or VpnStance.Likely => Theme.Warn,
+            VpnStance.Clean => Theme.Ok,
+            _ => Theme.Dot,
+        };
 
-        if (signals.Count == 0) return $"{Theme.Ok} clean";
+        var line = $"{mark} **{summary.Headline}**\n{summary.Plain}";
 
-        // The verdict word, not just the signals: "flagged, disputed" and "confirmed" mean
-        // very different things to whoever is deciding whether to act.
-        return $"{Theme.Warn} {string.Join(" + ", signals)} ({record.Decision.Label.ToLowerInvariant()})";
+        return VpnVerdict.Signals(record) is { Count: > 0 } signals
+            ? $"{line}\nSignals: **{string.Join(", ", signals)}**"
+            : line;
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

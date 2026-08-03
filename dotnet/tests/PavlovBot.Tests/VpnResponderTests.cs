@@ -45,9 +45,12 @@ public class VpnResponderTests
            record that misstates its own evidence is the thing an appeal turns on. */
         var label = VpnResponder.Label(Record(2, 4, 0, 1));
 
-        Assert.Contains("the final confirmation disagreed", label, StringComparison.Ordinal);
-        Assert.DoesNotContain("confirmation(s) agree", label, StringComparison.Ordinal);
-        Assert.Contains("2/5", label, StringComparison.Ordinal);
+        Assert.Contains("DISPUTED", label, StringComparison.Ordinal);
+        Assert.Contains("the confirming check cleared it", label, StringComparison.Ordinal);
+        Assert.DoesNotContain("agreed", label, StringComparison.Ordinal);
+
+        // The evidence is still on the record, in words rather than a fraction to evaluate.
+        Assert.Contains("2 of 4 checks", label, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -55,8 +58,9 @@ public class VpnResponderTests
     {
         var label = VpnResponder.Label(Record(2, 4, 1, 1));
 
-        Assert.Contains("confirmed", label, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("1/1 final confirmation(s) agree", label, StringComparison.Ordinal);
+        Assert.Contains("CONFIRMED", label, StringComparison.Ordinal);
+        Assert.Contains("the confirming check agreed", label, StringComparison.Ordinal);
+        Assert.DoesNotContain("DISPUTED", label, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -64,8 +68,13 @@ public class VpnResponderTests
     {
         var label = VpnResponder.Label(Record(3, 4, 0, 0));
 
-        Assert.Contains("3/4 detectors agree", label, StringComparison.Ordinal);
-        Assert.Contains("no confirmation available", label, StringComparison.Ordinal);
+        /* No confirmer at all is LIKELY, never CONFIRMED. This is the ban reason a player
+           is shown and quotes back in an appeal, so it must not claim a confirmation that
+           was never run. */
+        Assert.Contains("LIKELY", label, StringComparison.Ordinal);
+        Assert.Contains("3 of 4 checks", label, StringComparison.Ordinal);
+        Assert.Contains("No confirming check is configured", label, StringComparison.Ordinal);
+        Assert.DoesNotContain("CONFIRMED", label, StringComparison.Ordinal);
     }
 
     [Fact]
