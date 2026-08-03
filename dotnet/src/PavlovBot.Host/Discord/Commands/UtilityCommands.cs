@@ -1,3 +1,4 @@
+using System.Reflection;
 using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
@@ -181,7 +182,30 @@ public sealed class HealthCommand(HealthRegistry health, ServiceRegistry service
            instead - which is not a thing an owner can do at 2am. */
         if (Errors(status) is { Length: > 0 } errors) embed.AddField("Recent errors", errors);
 
+        /* WHICH BUILD IS ACTUALLY RUNNING. It was logged once at startup and nowhere else, so
+           "is my fix deployed?" could only be answered by reading a log over SSH - and the
+           question comes up every single time a fix appears not to have worked. An unchanged
+           stamp after a deploy is the signal that the process was never replaced. */
+        embed.WithFooter($"build {BuildStamp()}");
+
         await Reply(command, embed).ConfigureAwait(false);
+    }
+
+    /// <summary>The commit this binary was built from, or a local build's timestamp.</summary>
+    internal static string BuildStamp()
+    {
+        var informational = System.Reflection.Assembly.GetEntryAssembly()
+            ?.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        // "1.0.0+<sha>" when the SDK stamped a SourceRevisionId; take the part after '+'.
+        if (informational is { Length: > 0 } && informational.Split('+') is { Length: > 1 } parts)
+            return parts[^1];
+
+        var location = System.Reflection.Assembly.GetEntryAssembly()?.Location;
+        return location is { Length: > 0 } && File.Exists(location)
+            ? $"local-{File.GetLastWriteTimeUtc(location):yyyyMMdd-HHmm}"
+            : "unknown";
     }
 
     /// <summary>Discord caps an embed field at 1024 characters.</summary>

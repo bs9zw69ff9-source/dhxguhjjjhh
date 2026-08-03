@@ -88,6 +88,70 @@ public class PlayerCountChannelTests
         Assert.Equal("Server 3: 0/100", PlayerCountChannels.ServerName(3, 0, 100));
     }
 
+    // ---- which capacity is shown ----
+
+    [Fact]
+    public void ALiveCapacityAlwaysWins()
+    {
+        /* The reverse would be easier and would hide a MaxPlayers change until the process
+           restarted. The cache only ever answers a question the server declined to. */
+        Assert.Equal(32, PlayerCountChannels.ResolveCapacity(live: 32, lastKnown: 24, fallback: 24));
+        Assert.Equal(16, PlayerCountChannels.ResolveCapacity(live: 16, lastKnown: 100, fallback: 24));
+    }
+
+    [Fact]
+    public void TheLastKnownCapacityCoversASingleFailedRead()
+    {
+        /* THE REGRESSION THIS FIXES. The channel read "Server 1: 0/24" and then fell back to
+           "Server 1: 0" the moment one ServerInfo read failed - a name that reads as a
+           half-working feature, and it appeared exactly when a server was empty or
+           unreachable. A server that answered a minute ago keeps its real number. */
+        Assert.Equal(24, PlayerCountChannels.ResolveCapacity(live: null, lastKnown: 24, fallback: 99));
+        Assert.Equal(32, PlayerCountChannels.ResolveCapacity(live: null, lastKnown: 32, fallback: 24));
+    }
+
+    [Fact]
+    public void OnlyAServerThatHasNeverAnsweredFallsBack()
+    {
+        Assert.Equal(24, PlayerCountChannels.ResolveCapacity(live: null, lastKnown: null, fallback: 24));
+        Assert.Equal(64, PlayerCountChannels.ResolveCapacity(live: null, lastKnown: null, fallback: 64));
+    }
+
+    [Fact]
+    public void ZeroIsNotReported_ItIsAFailedParse()
+    {
+        /* Pavlov returns capacity as the denominator of a "2/24" STRING, so a parse that
+           fails yields 0 rather than null. Treating that as a real capacity would put
+           "Server 1: 0/0" in the sidebar. */
+        Assert.Equal(24, PlayerCountChannels.ResolveCapacity(live: 0, lastKnown: null, fallback: 24));
+        Assert.Equal(24, PlayerCountChannels.ResolveCapacity(live: 0, lastKnown: 0, fallback: 24));
+        Assert.Equal(24, PlayerCountChannels.ResolveCapacity(live: -1, lastKnown: null, fallback: 24));
+    }
+
+    [Fact]
+    public void AMisconfiguredFallbackStillYieldsAUsableName()
+    {
+        // SERVER_MAX_PLAYERS=0 in a .env must not produce "Server 1: 0/0".
+        Assert.Equal(24, PlayerCountChannels.ResolveCapacity(live: null, lastKnown: null, fallback: 0));
+    }
+
+    [Fact]
+    public void TheChannelNameCanNoLongerLoseItsDenominator()
+    {
+        /* Stated over the whole resolution rather than over ServerName alone: the name is
+           built from whatever ResolveCapacity returns, so the guarantee is only real if
+           nothing that function can return produces a bare count. */
+        foreach (var live in new int?[] { null, 0, -1, 24, 32 })
+            foreach (var known in new int?[] { null, 0, 24 })
+            {
+                var name = PlayerCountChannels.ServerName(
+                    1, 0, PlayerCountChannels.ResolveCapacity(live, known, 24));
+
+                Assert.Contains("/", name, StringComparison.Ordinal);
+                Assert.DoesNotContain("/0", name, StringComparison.Ordinal);
+            }
+    }
+
     [Fact]
     public void TheTotalIsACountWithNoDenominator()
     {

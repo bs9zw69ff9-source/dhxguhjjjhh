@@ -298,13 +298,36 @@ public sealed class PlayerCountChannels(
     /// </remarks>
     private async Task<int> CapacityAsync(string server, CancellationToken ct)
     {
-        if (await MaxPlayersAsync(server, ct).ConfigureAwait(false) is { } live && live > 0)
-        {
-            _lastKnownCapacity[server] = live;
-            return live;
-        }
+        var live = await MaxPlayersAsync(server, ct).ConfigureAwait(false);
+        if (live is { } reported && reported > 0) _lastKnownCapacity[server] = reported;
 
-        return _lastKnownCapacity.TryGetValue(server, out var remembered) ? remembered : _defaultCapacity;
+        return ResolveCapacity(
+            live,
+            _lastKnownCapacity.TryGetValue(server, out var remembered) ? remembered : null,
+            _defaultCapacity);
+    }
+
+    /// <summary>
+    /// Which capacity to show: live, else the last known, else the configured fallback.
+    /// </summary>
+    /// <remarks>
+    /// PURE, and separate, because the precedence is the whole fix and it is invisible in a
+    /// code read. The channel showed "Server 1: 0/24" and then fell back to "Server 1: 0"
+    /// when a single ServerInfo read failed - a name that reads as a half-working feature,
+    /// appearing exactly when a server is empty or unreachable.
+    ///
+    /// LIVE OUTRANKS THE CACHE, always. The reverse would be easier and would hide a
+    /// MaxPlayers change until the process restarted. The cache only ever answers a question
+    /// the server declined to, and the fallback only answers one it has never answered.
+    ///
+    /// Zero and negative are treated as "not reported": Pavlov returns the capacity as the
+    /// denominator of a "2/24" string, and a parse that fails yields 0 rather than null.
+    /// </remarks>
+    internal static int ResolveCapacity(int? live, int? lastKnown, int fallback)
+    {
+        if (live is { } reported && reported > 0) return reported;
+        if (lastKnown is { } remembered && remembered > 0) return remembered;
+        return fallback > 0 ? fallback : 24;
     }
 
     /// <summary>A server's capacity as it reports it right now, or null when it will not say.</summary>
