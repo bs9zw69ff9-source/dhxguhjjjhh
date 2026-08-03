@@ -35,6 +35,16 @@ internal sealed class FakeRconServer : IAsyncDisposable
     /// <summary>Artificial delay before replying, for concurrency tests.</summary>
     public TimeSpan ReplyDelay { get; set; } = TimeSpan.Zero;
 
+    /// <summary>
+    /// Verbs the server ACCEPTS AND NEVER ANSWERS.
+    /// </summary>
+    /// <remarks>
+    /// A hung game thread, which is the failure that matters most here: the connection stays
+    /// up and healthy-looking, the command is consumed, and no reply ever comes. Dropping the
+    /// socket instead would be caught by the IOException path and prove nothing.
+    /// </remarks>
+    public HashSet<string> Swallow { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public FakeRconServer(string password = "secret")
     {
         Password = password;
@@ -89,6 +99,7 @@ internal sealed class FakeRconServer : IAsyncDisposable
                     lock (_sync) _commands.Add(command);
 
                     if (ReplyDelay > TimeSpan.Zero) await Task.Delay(ReplyDelay, _cts.Token);
+                    if (Swallow.Contains(command.Split(' ')[0])) continue;
 
                     var reply = $"{{\"Command\":\"{command.Split(' ')[0]}\",\"Successful\":true,\"PlayerList\":[]}}\r\n";
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(reply), _cts.Token);

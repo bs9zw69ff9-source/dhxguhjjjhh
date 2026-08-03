@@ -39,7 +39,7 @@ public sealed class RconClient : IAsyncDisposable
     private readonly RconOptions _options;
     private readonly RconConnection _connection;
     private readonly ConcurrentDictionary<string, CacheEntry> _readCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, Task<string>> _inFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<string>>> _lazyInFlight = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Commands this client issued recently, so log-derived audit can tell its own traffic apart.</summary>
     private readonly ConcurrentDictionary<string, DateTimeOffset> _issued = new(StringComparer.OrdinalIgnoreCase);
@@ -77,24 +77,56 @@ public sealed class RconClient : IAsyncDisposable
         if (_readCache.TryGetValue(key, out var hit) && DateTimeOffset.UtcNow - hit.At < _options.ReadCacheDuration)
             return Task.FromResult(hit.Value);
 
-        /* GetOrAdd can invoke the factory more than once under contention, so the task is
-           built eagerly and the loser of the race is discarded. Without this two callers
-           could each open an exchange for the same read. */
-        return _inFlight.GetOrAdd(key, k => StartRead(k, ct));
+        return Coalesced(key, ct);
     }
 
-    private async Task<string> StartRead(string command, CancellationToken ct)
+    /// <summary>
+    /// Join the in-flight read for this command, or start it.
+    /// </summary>
+    /// <remarks>
+    /// THE SHARED READ IS NOT BOUND TO ONE CALLER'S CANCELLATION. It used to be
+    /// <c>GetOrAdd(key, k =&gt; StartRead(k, ct))</c>, which captured whichever caller
+    /// happened to lose the race, and every joiner then inherited that caller's token: the
+    /// first caller going away - a cancelled slash command, a stopping service - cancelled
+    /// the read that four other callers were waiting on, and they saw a cancellation they
+    /// never asked for. The shared work runs under <see cref="CancellationToken.None"/> and
+    /// each caller waits on it under its OWN token instead.
+    ///
+    /// The old comment here claimed the task was "built eagerly so the loser of the race is
+    /// discarded". It was not - the factory was a lambda, so a lost race started a SECOND
+    /// exchange that ran to completion anyway. Built eagerly now, so that is true.
+    /// </remarks>
+    private async Task<string> Coalesced(string key, CancellationToken ct)
+    {
+        Task<string> shared;
+
+        var mine = new Lazy<Task<string>>(() => StartRead(key), LazyThreadSafetyMode.ExecutionAndPublication);
+        var winner = _lazyInFlight.GetOrAdd(key, mine);
+        shared = winner.Value;
+
+        /* The caller's own cancellation detaches it from the shared read; it does not cancel
+           the read for everybody else. A read nobody is waiting on any more still completes
+           and still populates the cache, which is what the next caller wanted anyway. */
+        if (!ct.CanBeCanceled) return await shared.ConfigureAwait(false);
+
+        var cancelled = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = ct.Register(() => cancelled.TrySetCanceled(ct));
+
+        return await (await Task.WhenAny(shared, cancelled.Task).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    private async Task<string> StartRead(string command)
     {
         try
         {
-            var value = await SendUncachedAsync(command, ct).ConfigureAwait(false);
+            var value = await SendUncachedAsync(command, CancellationToken.None).ConfigureAwait(false);
             // Only a SUCCESS is cached. A failure must never be replayed as an answer.
             _readCache[command] = new CacheEntry(value, DateTimeOffset.UtcNow);
             return value;
         }
         finally
         {
-            _inFlight.TryRemove(command, out _);
+            _lazyInFlight.TryRemove(command, out _);
         }
     }
 

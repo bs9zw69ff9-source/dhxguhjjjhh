@@ -30,6 +30,26 @@ public sealed record ServiceDefinition
     public Func<CancellationToken, Task>? OnStart { get; init; }
     public Func<Task>? OnStop { get; init; }
     public Func<CancellationToken, Task<HealthResult>>? HealthCheck { get; init; }
+
+    /// <summary>
+    /// How long one tick may run before it is abandoned. Null means the default below.
+    /// </summary>
+    /// <remarks>
+    /// A TICK WITH NO TIMEOUT IS A SERVICE THAT CAN STOP FOREVER WITHOUT SAYING SO, and
+    /// that is not theoretical - it is what "it's been 7 minutes and the tick hasn't
+    /// happened" looks like from the outside. The loop awaits Tick before waiting on the
+    /// timer again, so a tick that never returns means no further ticks, ever. The state
+    /// stays Running, LastTickAt stays frozen at whenever it started, ConsecutiveFailures
+    /// stays 0 - so <see cref="ServiceRegistry.ReviveFailedAsync"/>, which looks at exactly
+    /// those two things, never revives it. Even the overrun counter is in a finally that a
+    /// hung tick never reaches.
+    ///
+    /// Every tick in this bot reaches the network - RCON, the Discord API, a VPN provider,
+    /// the Pavlov master list - so every one of them can hang on something that will never
+    /// answer. A timeout converts a permanent silent stall into a logged, counted failure
+    /// that the supervisor can act on.
+    /// </remarks>
+    public TimeSpan? Timeout { get; init; }
 }
 
 /// <param name="At">When it happened, so an old failure is not read as a current one.</param>
@@ -268,6 +288,30 @@ public sealed class ServiceRegistry : IAsyncDisposable
 
     private const int MaxRecentErrors = 5;
 
+    /// <summary>
+    /// How long a tick gets before it is abandoned.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the interval rather than fixed, because the intervals here span three
+    /// orders of magnitude - the log tail runs every 1.5 seconds and the player-count
+    /// channels every five minutes - and one constant cannot suit both. Five intervals is
+    /// generously past any healthy overrun while still catching a stall in minutes rather
+    /// than never.
+    ///
+    /// Floored at 30 seconds so the fast services are not killed by a slow but legitimate
+    /// sweep, and capped at 10 minutes so the slow ones still have a bound at all.
+    /// </remarks>
+    internal static TimeSpan TickBudget(ServiceDefinition definition, TimeSpan interval)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        if (definition.Timeout is { } explicitly) return explicitly;
+
+        var derived = interval * 5;
+        if (derived < TimeSpan.FromSeconds(30)) return TimeSpan.FromSeconds(30);
+        if (derived > TimeSpan.FromMinutes(10)) return TimeSpan.FromMinutes(10);
+        return derived;
+    }
+
     private async Task LoopAsync(Record record, TimeSpan interval, CancellationToken ct)
     {
         if (record.Definition.RunOnStart) await RunTickAsync(record, interval, ct).ConfigureAwait(false);
@@ -288,9 +332,27 @@ public sealed class ServiceRegistry : IAsyncDisposable
     {
         var name = record.Definition.Name;
         var started = Stopwatch.GetTimestamp();
+        var budget = TickBudget(record.Definition, interval);
         try
         {
-            await record.Definition.Tick(ct).ConfigureAwait(false);
+            /* BOUNDED. See ServiceDefinition.Timeout: without this a tick that never returns
+               stops the service permanently while it still reports Running, and nothing in
+               the supervisor is looking at a clock. */
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(budget);
+
+            try
+            {
+                await record.Definition.Tick(deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                /* Reported as a failure rather than swallowed, so it counts towards
+                   ConsecutiveFailures and the service eventually gets restarted. */
+                throw new TimeoutException(
+                    $"tick exceeded its {budget.TotalSeconds:0.#}s budget and was abandoned");
+            }
+
             record.ConsecutiveFailures = 0;
             _metrics.Increment("service_ticks_total", MetricLabels.Of("service", name, "outcome", "success"),
                 help: "Service ticks by outcome");

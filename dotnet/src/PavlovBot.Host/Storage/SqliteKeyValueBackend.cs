@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -34,7 +35,24 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
     /// datasets - and going to SQLite for each would be a syscall per read of data that
     /// changed minutes ago.
     /// </summary>
-    private readonly Dictionary<string, string> _cache = new(StringComparer.Ordinal);
+    /// <remarks>
+    /// IT EXPIRES, because this bot is NOT the only writer of this database. The Node bot is
+    /// the rollback target and shares the same file, and an entry cached here was previously
+    /// held until the process restarted - so anything Node wrote was invisible for the life
+    /// of the process, and the first write from this side silently overwrote it with a value
+    /// derived from a stale read. That is the read-modify-write race the whole SerializedStore
+    /// exists to prevent, reintroduced a layer below it and across processes, where the
+    /// per-key semaphore cannot see it.
+    ///
+    /// A short TTL rather than an invalidation hook: there is nothing to hook. SQLite has no
+    /// cross-process change notification worth building on here, and the alternative - polling
+    /// <c>data_version</c> - buys accuracy this workload does not need. Writes from THIS
+    /// process still update the entry immediately, so the TTL only ever bounds how long a
+    /// FOREIGN write stays unseen.
+    /// </remarks>
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(5);
+
+    private readonly Dictionary<string, (string Data, long At)> _cache = new(StringComparer.Ordinal);
 
     public SqliteKeyValueBackend(string databasePath, ILogger logger)
     {
@@ -70,17 +88,25 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         lock (_sync)
         {
-            if (_cache.TryGetValue(key, out var cached)) return cached;
+            if (_cache.TryGetValue(key, out var cached) && !Expired(cached.At)) return cached.Data;
 
             using var command = _connection.CreateCommand();
             command.CommandText = "SELECT data FROM kv WHERE file = $file";
             command.Parameters.AddWithValue("$file", key);
 
-            if (command.ExecuteScalar() is not string data) return null;
-            _cache[key] = data;
+            if (command.ExecuteScalar() is not string data)
+            {
+                // A row that has been DELETED must not keep serving its old value.
+                _cache.Remove(key);
+                return null;
+            }
+
+            _cache[key] = (data, Stopwatch.GetTimestamp());
             return data;
         }
     }
+
+    private static bool Expired(long at) => Stopwatch.GetElapsedTime(at) > CacheTtl;
 
     public void Write(string key, string json)
     {
@@ -97,7 +123,7 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
 
             // Cache only AFTER the write lands. Caching first would serve a value that
             // was never persisted, and the divergence would survive until restart.
-            _cache[key] = json;
+            _cache[key] = (json, Stopwatch.GetTimestamp());
         }
     }
 

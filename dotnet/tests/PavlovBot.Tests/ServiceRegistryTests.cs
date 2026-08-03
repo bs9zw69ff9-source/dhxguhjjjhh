@@ -171,6 +171,102 @@ public class ServiceRegistryTests
     }
 
     [Fact]
+    public async Task AHungTickIsAbandonedRatherThanStoppingTheServiceForever()
+    {
+        /* THE FAILURE THIS EXISTS FOR: a tick that never returns used to stop the service
+           permanently while it still reported Running. The loop awaits Tick before waiting
+           on the timer again, so no further ticks ever run; LastTickAt stays frozen at
+           whenever it started, ConsecutiveFailures stays 0, and the overrun counter is in a
+           finally the hung tick never reaches. ReviveFailedAsync looks at exactly the state
+           and the failure count, so it never revived it either.
+
+           Every tick in this bot reaches the network, so every one can hang on something
+           that will never answer. "It's been 7 minutes and the tick hasn't happened" is what
+           that looks like from outside. */
+        var started = 0;
+        await using var registry = New();
+
+        registry.Register(Definition("hung", async ct =>
+        {
+            Interlocked.Increment(ref started);
+            await Task.Delay(Timeout.Infinite, ct);
+        }) with
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+            RunOnStart = true,
+            Timeout = TimeSpan.FromMilliseconds(200),
+        });
+
+        await registry.StartAllAsync();
+
+        // The point: it ticks AGAIN. Without the budget this stays at 1 forever.
+        await WaitUntil(() => Volatile.Read(ref started) >= 3);
+        await registry.StopAllAsync();
+
+        var status = registry.Status().Single();
+        Assert.True(status.Failures >= 2, $"only {status.Failures} failures recorded");
+        Assert.Contains("budget", status.LastError!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AHungTickCountsTowardsRevival()
+    {
+        // A stall has to be visible to the supervisor, not just logged - otherwise the only
+        // recovery is somebody noticing and restarting the process.
+        await using var registry = New();
+
+        registry.Register(Definition("hung", async ct => await Task.Delay(Timeout.Infinite, ct)) with
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+            RunOnStart = true,
+            Timeout = TimeSpan.FromMilliseconds(100),
+        });
+
+        await registry.StartAllAsync();
+        await WaitUntil(() => registry.Status().Single().ConsecutiveFailures >= 3);
+        await registry.StopAllAsync();
+
+        Assert.True(registry.Status().Single().ConsecutiveFailures >= 3);
+    }
+
+    [Fact]
+    public void TheDefaultTickBudgetScalesWithTheInterval()
+    {
+        /* The intervals here span three orders of magnitude - 1.5s for the log tail, 5min
+           for the player-count channels - so one constant cannot suit both. */
+        var plain = Definition("x");
+
+        Assert.Equal(TimeSpan.FromSeconds(30), ServiceRegistry.TickBudget(plain, TimeSpan.FromSeconds(1.5)));
+        Assert.Equal(TimeSpan.FromMinutes(5), ServiceRegistry.TickBudget(plain, TimeSpan.FromMinutes(1)));
+        Assert.Equal(TimeSpan.FromMinutes(10), ServiceRegistry.TickBudget(plain, TimeSpan.FromHours(1)));
+
+        // An explicit budget always wins.
+        Assert.Equal(TimeSpan.FromSeconds(7),
+            ServiceRegistry.TickBudget(plain with { Timeout = TimeSpan.FromSeconds(7) }, TimeSpan.FromHours(1)));
+    }
+
+    [Fact]
+    public async Task ShutdownIsNotReportedAsATickFailure()
+    {
+        // The budget must not turn a normal stop into a recorded failure - that would put a
+        // spurious error on /health every time the bot restarts.
+        await using var registry = New();
+
+        registry.Register(Definition("slow", async ct => await Task.Delay(Timeout.Infinite, ct)) with
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+            RunOnStart = true,
+            Timeout = TimeSpan.FromMinutes(5),
+        });
+
+        await registry.StartAllAsync();
+        await Task.Delay(100);
+        await registry.StopAllAsync();
+
+        Assert.Equal(0, registry.Status().Single().Failures);
+    }
+
+    [Fact]
     public async Task ANonCriticalServiceThatFailsToStartDoesNotAbortStartup()
     {
         // The bot should come up with one feature dark, not not at all.

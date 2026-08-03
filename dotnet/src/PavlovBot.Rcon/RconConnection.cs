@@ -117,6 +117,10 @@ internal sealed class RconConnection : IAsyncDisposable
     public async Task<string> SendAsync(string command, CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
+
+        /* Whether this exchange finished cleanly. Anything else means the socket holds an
+           unknown number of unread bytes - see the finally. */
+        var settled = false;
         try
         {
             if (!IsConnected || IsStale)
@@ -131,7 +135,9 @@ internal sealed class RconConnection : IAsyncDisposable
 
             try
             {
-                return await ExchangeAsync(command, ct).ConfigureAwait(false);
+                var reply = await ExchangeAsync(command, ct).ConfigureAwait(false);
+                settled = true;
+                return reply;
             }
             catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
             {
@@ -139,12 +145,37 @@ internal sealed class RconConnection : IAsyncDisposable
                    reap. Rebuild once and retry: from the caller's side this is a transient
                    blip, not a failure worth surfacing. */
                 await ConnectAsync(ct).ConfigureAwait(false);
-                return await ExchangeAsync(command, ct).ConfigureAwait(false);
+                var reply = await ExchangeAsync(command, ct).ConfigureAwait(false);
+                settled = true;
+                return reply;
             }
         }
         finally
         {
             _lastUsed = DateTimeOffset.UtcNow;
+
+            /* AN UNSETTLED EXCHANGE POISONS THE CONNECTION, so it is dropped rather than
+               handed to the next caller.
+
+               THE CASE THIS EXISTS FOR IS THE COMMAND TIMEOUT. RconClient wraps every send
+               in a linked CancellationTokenSource with CancelAfter(CommandTimeout). When it
+               fires mid-exchange the command has ALREADY BEEN WRITTEN and its reply has not
+               been read - and OperationCanceledException is not IOException, so the retry
+               above did not catch it and the socket stayed open with a reply nobody
+               consumed. The next command then wrote, read, and got the PREVIOUS command's
+               answer. Every command after that was off by one, permanently, until the idle
+               recycle five minutes later.
+
+               That is silent and it is not a crash: RefreshList returns a well-formed
+               roster belonging to an older request, ServerInfo returns the reply to a Kick.
+               The class remarks call a shared stream out as "the sort of bug that looks
+               like the bot occasionally reports the wrong player" - the gate prevents it
+               between concurrent callers, and this prevents it between successive ones.
+
+               Reconnecting costs a TCP handshake and an MD5 auth on a path that is already
+               failing. Reading the wrong reply costs correctness, everywhere, silently. */
+            if (!settled) await DisposeSocketAsync().ConfigureAwait(false);
+
             _gate.Release();
         }
     }
@@ -226,8 +257,23 @@ internal sealed class RconConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await DisposeSocketAsync().ConfigureAwait(false);
-        _gate.Dispose();
+        /* TAKE THE GATE FIRST. Disposing the stream out from under an in-flight exchange
+           makes its read throw ObjectDisposedException, and disposing the semaphore while a
+           caller is inside SendAsync makes its Release() throw too - during shutdown, from a
+           finally, which is where an exception is least welcome and least visible.
+
+           Bounded rather than unconditional: a wedged exchange must not stop the process
+           from exiting, and the socket is being torn down either way. */
+        var held = await _gate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        try
+        {
+            await DisposeSocketAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (held) _gate.Release();
+            _gate.Dispose();
+        }
     }
 
     // Kept for parity with the invariant culture used elsewhere in formatting.
