@@ -259,9 +259,29 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _logger.LogInformation("Registered {Count} global command(s) - propagation can take up to an hour", properties.Length);
     }
 
+    /// <summary>
+    /// How long one slash command may run before it is abandoned.
+    /// </summary>
+    /// <remarks>
+    /// Five minutes, which is far longer than any command should take and deliberately so.
+    /// The purpose is to stop a handler hanging FOREVER on something that will never answer,
+    /// not to enforce responsiveness - /rotatemap legitimately spends over a minute
+    /// restarting three servers in sequence, and cutting that off partway would leave a
+    /// server down with nothing coming to start it.
+    /// </remarks>
+    private static readonly TimeSpan CommandBudget = TimeSpan.FromMinutes(5);
+
     private async Task OnSlashCommand(SocketSlashCommand interaction)
     {
         var name = interaction.Data.Name;
+
+        /* ONE SCOPE, SET ONCE, AT THE ONLY PLACE THAT KNOWS ALL OF IT. Every line this
+           command causes anywhere in the bot now carries the command name, the guild, the
+           caller's id and a correlation id - including lines from services several layers
+           down that have never heard of Discord. The alternative was threading four
+           arguments through ~211 logging statements. */
+        using var scope = _logger.BeginInteraction(
+            $"/{name}", interaction.GuildId, interaction.User.Id, out var correlationId);
         if (!_commands.TryGetValue(name, out var command))
         {
             // Almost always a command left registered from an older build.
@@ -282,7 +302,19 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             return;
         }
 
-        var ct = _stopping?.Token ?? CancellationToken.None;
+        /* BOUNDED. The token used to be shutdown-only, so a handler blocked on something that
+           never answers - an RCON gate held by a wedged exchange, a Discord call with no
+           timeout - hung until the process died, holding a thread and leaving the caller on a
+           spinner forever. Discord abandons the interaction token after 15 minutes anyway, so
+           work continuing past that can no longer report anything to anyone.
+
+           Generous on purpose: /rotatemap deliberately waits 5s and then restarts three
+           servers sequentially, and killing that halfway would leave servers down. This is a
+           backstop against hanging, not a latency budget. */
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stopping?.Token ?? CancellationToken.None);
+        deadline.CancelAfter(CommandBudget);
+        var ct = deadline.Token;
+
         try
         {
             await _metrics.TimeAsync("command_duration_ms", MetricLabels.Of("command", name), async () =>
@@ -290,6 +322,23 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 await command.HandleAsync(interaction, ct).ConfigureAwait(false);
                 return true;
             }, "Slash command duration in milliseconds").ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && _stopping?.IsCancellationRequested != true)
+        {
+            _logger.LogError("/{Name} exceeded its {Budget:0}s budget and was abandoned",
+                name, CommandBudget.TotalSeconds);
+            _metrics.Increment("command_errors_total", MetricLabels.Of("command", name));
+
+            try
+            {
+                await interaction.ModifyOriginalResponseAsync(m =>
+                    m.Content = $"That took too long and was stopped (`{correlationId}`). " +
+                                "Nothing further will happen - check `/health`.").ConfigureAwait(false);
+            }
+            catch (Exception nested)
+            {
+                _logger.LogWarning(nested, "Could not report the /{Name} timeout to the caller", name);
+            }
         }
         catch (Exception ex)
         {
@@ -301,9 +350,14 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                    failure is indistinguishable from the bot being dead. The message says
                    what happened without leaking an exception into a public channel. */
                 await interaction.ModifyOriginalResponseAsync(m =>
-                    m.Content = "That didn't work. The error has been logged.").ConfigureAwait(false);
+                    m.Content = $"That didn't work. The error has been logged (`{correlationId}`).").ConfigureAwait(false);
             }
-            catch (Exception) { }
+            catch (Exception nested)
+            {
+                /* Was swallowed entirely. A spinner nobody could replace looks exactly like
+                   the bot hanging, and the reason it could not be replaced is worth knowing. */
+                _logger.LogWarning(nested, "Could not tell the caller that /{Name} failed", name);
+            }
         }
     }
 
@@ -332,6 +386,10 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         if (string.IsNullOrEmpty(customId)) return;
 
         var id = ComponentId.Parse(customId);
+
+        using var scope = _logger.BeginInteraction(
+            $"component:{id.Prefix}", interaction.GuildId, interaction.User.Id, out var correlationId);
+
         var handler = _components.FirstOrDefault(h => string.Equals(h.Prefix, id.Prefix, StringComparison.Ordinal));
 
         if (handler is null)
@@ -365,12 +423,16 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             {
                 // Whether it was acknowledged decides which call is legal, and guessing
                 // wrong throws again - leaving the click with no response at all.
+                var apology = $"That didn't work. The error has been logged (`{correlationId}`).";
                 if (interaction.HasResponded)
-                    await interaction.FollowupAsync("That didn't work. The error has been logged.", ephemeral: true).ConfigureAwait(false);
+                    await interaction.FollowupAsync(apology, ephemeral: true).ConfigureAwait(false);
                 else
-                    await interaction.RespondAsync("That didn't work. The error has been logged.", ephemeral: true).ConfigureAwait(false);
+                    await interaction.RespondAsync(apology, ephemeral: true).ConfigureAwait(false);
             }
-            catch (Exception) { }
+            catch (Exception nested)
+            {
+                _logger.LogWarning(nested, "Could not tell the caller that {CustomId} failed", customId);
+            }
         }
     }
 

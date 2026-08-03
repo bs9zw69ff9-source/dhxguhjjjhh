@@ -333,6 +333,12 @@ public sealed class ServiceRegistry : IAsyncDisposable
         var name = record.Definition.Name;
         var started = Stopwatch.GetTimestamp();
         var budget = TickBudget(record.Definition, interval);
+
+        /* ONE CORRELATION ID PER TICK. Background work interleaves - the log tail, the ban
+           sweep and the channel renamer all write while each other are mid-run - so without
+           this, reading a log meant guessing which lines belonged to which pass. */
+        using var scope = _logger.BeginTick(name);
+
         try
         {
             /* BOUNDED. See ServiceDefinition.Timeout: without this a tick that never returns

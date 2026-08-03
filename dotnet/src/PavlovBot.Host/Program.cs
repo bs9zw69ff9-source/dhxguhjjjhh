@@ -59,6 +59,12 @@ public static class Program
             options.SingleLine = true;
             options.TimestampFormat = "HH:mm:ss ";
             options.UseUtcTimestamp = false;
+
+            /* SCOPES ARE OFF BY DEFAULT. Without this every correlation id, guild, user and
+               command name attached by OperationLog would be computed, carried through the
+               call stack and never printed - correct, invisible, and indistinguishable from
+               broken. */
+            options.IncludeScopes = true;
         });
         builder.Logging.SetMinimumLevel(ParseLogLevel(builder.Configuration["LOG_LEVEL"]));
 
@@ -355,6 +361,11 @@ public static class Program
            no sudoers entry will refuse every /serverswitch, and this is where that is
            visible before somebody tries it. */
         var systemd = host.Services.GetRequiredService<PavlovBot.Host.Servers.ServiceControl>();
+
+        /* Set here rather than injected, because the two need each other: ServiceControl
+           warns players over RCON before stopping a server, and the registry asks systemd
+           whether a silent server was stopped on purpose. See RconRegistry.UseLifecycle. */
+        host.Services.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>().UseLifecycle(systemd);
         logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
             systemd.Elevation, string.Join(", ", systemd.Units));
 

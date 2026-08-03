@@ -78,8 +78,33 @@ public enum UnitState
 public sealed class ServiceControl(
     IReadOnlyList<string> units,
     bool? useSudo,
-    ILogger<ServiceControl> logger)
+    ILogger<ServiceControl> logger) : PavlovBot.Host.Rcon.IServerLifecycle
 {
+    /// <summary>
+    /// Whether this server was stopped on purpose. See <c>IServerLifecycle</c>.
+    /// </summary>
+    /// <remarks>
+    /// ONLY <c>Inactive</c> COUNTS. A failed unit is down for a reason nobody chose, so it
+    /// keeps counting against health; a starting one is on its way up and will answer
+    /// shortly; and <c>Unknown</c> means systemd could not be asked, which must not be
+    /// allowed to excuse a genuine outage. The caller uses this to SUPPRESS an alert, so
+    /// every uncertain answer has to fall on the side of still raising it.
+    /// </remarks>
+    public async Task<bool> IsIntentionallyStoppedAsync(string rconServerName, CancellationToken ct = default)
+    {
+        if (NumberFor(rconServerName) is not { } number || UnitFor(number) is not { } unit) return false;
+
+        return await StateAsync(unit, ct).ConfigureAwait(false) is UnitState.Inactive;
+    }
+
+    /// <summary>The 1-based server number behind an RCON name: "server2" is 2.</summary>
+    internal static int? NumberFor(string rconServerName) =>
+        rconServerName.StartsWith("server", StringComparison.OrdinalIgnoreCase) &&
+        int.TryParse(rconServerName.AsSpan("server".Length), CultureInfo.InvariantCulture, out var number) &&
+        number > 0
+            ? number
+            : null;
+
     /// <summary>The configured units, in server order: index 0 is "Server 1".</summary>
     public IReadOnlyList<string> Units { get; } = units;
 

@@ -34,6 +34,27 @@ public sealed class RconRegistry : IAsyncDisposable
     private readonly MetricsRegistry _metrics;
     private readonly ILogger<RconRegistry> _logger;
 
+    /// <summary>
+    /// Optional. Lets health tell "stopped on purpose" apart from "not answering".
+    /// </summary>
+    /// <remarks>
+    /// Null on a deployment with no systemd, and then health behaves exactly as it did:
+    /// every unreachable server counts. Not being able to ask is not an excuse.
+    /// </remarks>
+    private IServerLifecycle? _lifecycle;
+
+    /// <summary>
+    /// Supply the lifecycle source after construction.
+    /// </summary>
+    /// <remarks>
+    /// A property rather than a constructor argument to avoid a DEPENDENCY CYCLE: the
+    /// systemd-aware type needs the registry to warn players before it stops a server, and
+    /// the registry needs it to know whether a silent server was stopped on purpose. Injecting
+    /// both ways through constructors is not resolvable; one of them has to be set afterwards,
+    /// and health is the side that can work without it.
+    /// </remarks>
+    public void UseLifecycle(IServerLifecycle lifecycle) => _lifecycle = lifecycle;
+
     /// <summary>A roster older than this is stale - reported, not silently served as current.</summary>
     private static readonly TimeSpan RosterFreshness = TimeSpan.FromSeconds(90);
 
@@ -251,31 +272,73 @@ public sealed class RconRegistry : IAsyncDisposable
     /// whole reason for a three-state health model: one of three Pavlov hosts rebooting is
     /// a normal Tuesday, and paging for it trains people to ignore the pager.
     /// </remarks>
-    public Task<HealthResult> HealthAsync(CancellationToken ct = default)
+    public async Task<HealthResult> HealthAsync(CancellationToken ct = default)
     {
-        if (_clients.Count == 0) return Task.FromResult(HealthResult.Unhealthy("no RCON servers configured"));
+        if (_clients.Count == 0) return HealthResult.Unhealthy("no RCON servers configured");
 
-        var down = _lastError.Where(e => e.Value is not null).ToList();
         var probed = _lastError.Count;
 
         // Nothing probed yet is UNKNOWN, not healthy. Reporting green before the first
         // probe would make a bot that never reaches its servers look fine for a minute.
-        if (probed == 0) return Task.FromResult(HealthResult.Degraded("no RCON probe has completed yet"));
+        if (probed == 0) return HealthResult.Degraded("no RCON probe has completed yet");
+
+        /* A SERVER SOMEBODY STOPPED IS NOT AN RCON FAULT.
+        
+           Stopping a server with /serverswitch makes its RCON port stop answering, which is
+           the correct and expected consequence - but health had no way to know that, so a
+           deliberate shutdown lit /health red and left it red until somebody started the
+           server again. An alert that fires on an intended action is an alert people learn
+           to ignore, and this one shares a screen with the faults that do matter.
+        
+           Asked at report time rather than tracked as state: the server can also be stopped
+           from a shell, by a crash-loop backoff, or by another admin, and only systemd knows
+           about those. */
+        var down = _lastError.Where(e => e.Value is not null).Select(e => e.Key).ToList();
+        var expected = new List<string>();
+
+        if (_lifecycle is { } lifecycle && down.Count > 0)
+        {
+            foreach (var server in down.ToList())
+            {
+                try
+                {
+                    if (!await lifecycle.IsIntentionallyStoppedAsync(server, ct).ConfigureAwait(false)) continue;
+                    down.Remove(server);
+                    expected.Add(server);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Could not ask, so the fault stands. Silencing a real outage because a
+                    // lookup failed is the one outcome worth ruling out.
+                    _logger.LogDebug(ex, "Could not check whether {Server} was stopped on purpose", server);
+                }
+            }
+        }
+
+        var note = expected.Count > 0
+            ? $" ({string.Join(", ", expected)} stopped on purpose)"
+            : "";
 
         if (down.Count == 0)
         {
-            var stale = _clients.Keys
+            /* Rosters are only expected from servers that are RUNNING. Without this, stopping
+               a server traded a red RCON check for a "every roster is stale" one, which is
+               the same false alarm wearing a different hat. */
+            var live = _clients.Keys.Where(s => !expected.Contains(s, StringComparer.Ordinal)).ToList();
+
+            var stale = live
                 .Where(s => Roster(s).TakenAt < DateTimeOffset.UtcNow - RosterFreshness)
                 .ToList();
-            return Task.FromResult(stale.Count == _clients.Count && _rosters.Count > 0
-                ? HealthResult.Degraded("every roster is stale")
-                : HealthResult.Healthy($"{_clients.Count} server(s) reachable"));
+
+            return stale.Count == live.Count && live.Count > 0 && _rosters.Count > 0
+                ? HealthResult.Degraded("every roster is stale" + note)
+                : HealthResult.Healthy($"{live.Count} server(s) reachable{note}");
         }
 
-        var detail = string.Join("; ", down.Select(d => $"{d.Key}: {d.Value}"));
-        return Task.FromResult(down.Count >= _clients.Count
+        var detail = string.Join("; ", down.Select(s => $"{s}: {_lastError.GetValueOrDefault(s)}")) + note;
+        return down.Count >= _clients.Count
             ? HealthResult.Unhealthy(detail)
-            : HealthResult.Degraded(detail));
+            : HealthResult.Degraded(detail);
     }
 
     public async ValueTask DisposeAsync()
