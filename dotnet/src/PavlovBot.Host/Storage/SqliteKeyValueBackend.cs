@@ -178,7 +178,7 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
         }
         catch (Exception ex) when (ex is JsonException or IOException)
         {
-            _logger.LogWarning("Could not migrate {File}: {Message}", filePath, ex.Message);
+            _logger.LogWarning(ex, "Could not migrate {File}", filePath);
             return false;
         }
     }
@@ -223,7 +223,7 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _logger.LogWarning("JSON export failed for {Key}: {Message}", key, ex.Message);
+                _logger.LogWarning(ex, "JSON export failed for {Key}", key);
                 try { if (File.Exists(temp)) File.Delete(temp); } catch (IOException) { }
             }
         }

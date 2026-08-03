@@ -63,7 +63,7 @@ public sealed class RosterService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read {File}: {Message}", file, ex.Message);
+            _logger.LogError(ex, "Cannot read {File}", file);
             return null;
         }
     }
@@ -111,7 +111,7 @@ public sealed class RosterService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Write failed for {File}: {Message}", file, ex.Message);
+            _logger.LogError(ex, "Write failed for {File}", file);
             return false;
         }
         finally

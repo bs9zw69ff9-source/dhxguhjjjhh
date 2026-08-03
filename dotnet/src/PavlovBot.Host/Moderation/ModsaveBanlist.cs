@@ -81,7 +81,7 @@ public sealed class ModsaveBanlist(
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            logger.LogWarning("Could not write the modsave ban list: {Message}", ex.Message);
+            logger.LogWarning(ex, "Could not write the modsave ban list");
             return 0;
         }
     }

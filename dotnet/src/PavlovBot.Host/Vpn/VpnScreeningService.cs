@@ -220,7 +220,7 @@ public sealed class VpnScreeningService
             {
                 // A detector must never take down the screen. No reading = "no verdict",
                 // which is counted separately from "answered clean".
-                _logger.LogWarning("{Detector} threw for {Ip}: {Message}", detector.Name, ip, ex.Message);
+                _logger.LogWarning(ex, "{Detector} threw for {Ip}", detector.Name, ip);
                 return DetectorOutcome.None(ex.Message);
             }
         })).ConfigureAwait(false);

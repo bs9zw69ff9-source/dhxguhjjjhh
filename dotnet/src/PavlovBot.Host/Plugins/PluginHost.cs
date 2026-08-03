@@ -144,7 +144,7 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
                 /* A plugin that will not even LOAD is recorded and skipped. ReflectionTypeLoadException
                    in particular means it was built against a different version of something,
                    which is a plugin problem, not a bot problem. */
-                logger.LogError("Could not load plugin assembly {File}: {Message}", Path.GetFileName(file), ex.Message);
+                logger.LogError(ex, "Could not load plugin assembly {File}", Path.GetFileName(file));
             }
         }
 
@@ -163,7 +163,7 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
         {
             // A bad dependency graph disables the whole plugin SYSTEM, not the bot. Starting
             // an arbitrary subset would be worse - a plugin would run without what it needs.
-            logger.LogError("Plugins are not loadable: {Message}. No plugin will run.", ex.Message);
+            logger.LogError(ex, "Plugins are not loadable. No plugin will run.");
             return;
         }
 
