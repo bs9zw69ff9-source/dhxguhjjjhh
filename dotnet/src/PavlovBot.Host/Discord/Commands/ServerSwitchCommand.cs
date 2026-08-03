@@ -27,6 +27,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// </remarks>
 public sealed class ServerSwitchCommand(
     ServiceControl services,
+    PlayerNotice notice,
     RconRegistry rcon,
     Access access,
     AuditLog audit,
@@ -43,12 +44,6 @@ public sealed class ServerSwitchCommand(
         UnitAction.Stop => "Server shutting down...",
         _ => "Server restarting...",
     };
-
-    /// <summary>
-    /// How long players get between the warning and the process dying.
-    /// </summary>
-    /// <remarks>The same five seconds <c>/rotatemap</c> gives, for the same reason.</remarks>
-    private static readonly TimeSpan Grace = TimeSpan.FromSeconds(5);
 
     public ApplicationCommandProperties Build()
     {
@@ -119,16 +114,19 @@ public sealed class ServerSwitchCommand(
 
         // ---- warn, for the actions that drop players ----
 
-        var warned = false;
+        var warned = new NoticeResult(false, "not applicable");
         if (action is UnitAction.Stop or UnitAction.Restart)
         {
-            warned = await WarnAsync(number, WarningFor(action), ct).ConfigureAwait(false);
+            warned = await notice.WarnAsync(number, WarningFor(action), ct).ConfigureAwait(false);
 
             await Reply(command, Theme.Notice($"{Theme.Warn} {Verb(action)} Server {number}",
-                $"`{unit}` — {(warned ? $"broadcast `{WarningFor(action)}`" : "could not warn players (the server is not answering RCON)")}." +
-                $"\n\nGoing ahead in {Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
+                $"`{unit}` — {(warned.Delivered ? $"broadcast `{WarningFor(action)}`" : $"could not warn players: {warned.Detail}")}." +
+                $"\n\nRunning `systemctl {ServiceControl.Verb(action)} {unit}` in {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
 
-            await Task.Delay(Grace, ct).ConfigureAwait(false);
+            /* THE PAUSE IS THE POINT. The broadcast has to reach the client and render
+               before the process it is warning about disappears - sent and acted on in the
+               same instant, the player sees nothing and is simply dropped. */
+            await PlayerNotice.WaitAsync(ct).ConfigureAwait(false);
         }
 
         // ---- act ----
@@ -153,36 +151,8 @@ public sealed class ServerSwitchCommand(
         _ => "Restarting",
     };
 
-    /// <summary>
-    /// Broadcast to the one server being acted on. True when it was accepted.
-    /// </summary>
-    /// <remarks>
-    /// Never throws, and a failure never blocks the action. A server that will not take a
-    /// warning is very often exactly the server somebody is trying to stop.
-    /// </remarks>
-    private async Task<bool> WarnAsync(int serverNumber, string message, CancellationToken ct)
-    {
-        var names = rcon.Servers.ToList();
-        if (serverNumber < 1 || serverNumber > names.Count) return false;
-
-        var server = names[serverNumber - 1];
-        try
-        {
-            // Sanitize.Message even for a constant: the RCON protocol is line oriented, and
-            // every string that reaches it goes through the same door.
-            await rcon.SendAsync(server, $"Notify {Sanitize.Message(message)}", ct).ConfigureAwait(false);
-            logger.LogInformation("Warned {Server}: {Message}", server, message);
-            return true;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning("Could not warn {Server}: {Message}", server, ex.Message);
-            return false;
-        }
-    }
-
     private static EmbedBuilder Report(
-        int number, string unit, UnitAction action, UnitResult result, bool warned, string? advice)
+        int number, string unit, UnitAction action, UnitResult result, NoticeResult warned, string? advice)
     {
         var title = $"Server {number} — {Verb(action).ToLowerInvariant()}";
 
@@ -200,7 +170,15 @@ public sealed class ServerSwitchCommand(
         }
 
         if (action is UnitAction.Stop or UnitAction.Restart)
-            embed.AddField("Players warned", warned ? "Yes" : "No — the server was not answering RCON", inline: true);
+        {
+            embed.AddField("Players warned",
+                warned.Delivered
+                    ? $"Yes, {PlayerNotice.Grace.TotalSeconds:0}s beforehand"
+                    // The REASON, not a guess at it. A missing RCON_HOST_n, a wrong password
+                    // and a closed port are three different fixes behind one sentence.
+                    : $"No — {warned.Detail}",
+                inline: true);
+        }
 
         if (!result.Ok) embed.AddField("systemd said", $"```\n{Sanitize.Code(Truncate(result.Detail))}\n```");
 

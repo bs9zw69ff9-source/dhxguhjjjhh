@@ -298,3 +298,42 @@ public class RotateMapTests
         ]));
     }
 }
+
+/// <summary>
+/// Warning players before a server goes away, and giving them time to read it.
+/// </summary>
+public class PlayerNoticeTests
+{
+    [Fact]
+    public void TheGraceIsFiveSecondsAndRunsBeforeTheSystemCommand()
+    {
+        /* The whole reason the pause exists: the broadcast has to reach the client and
+           render before the process it warns about disappears. Sent and acted on in the same
+           instant, the player sees nothing and is simply dropped. */
+        Assert.Equal(TimeSpan.FromSeconds(5), PlayerNotice.Grace);
+    }
+
+    [Fact]
+    public async Task TheGraceIsActuallyWaited()
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await PlayerNotice.WaitAsync(CancellationToken.None);
+
+        // Timer slack cuts both ways; the assertion is that it is a real wait, not the exact
+        // millisecond count.
+        Assert.True(started.Elapsed >= TimeSpan.FromSeconds(4.5), $"waited only {started.Elapsed}");
+    }
+
+    [Fact]
+    public void ServerNumbersMapToRconSlotsByNameRatherThanByPosition()
+    {
+        /* RCON SLOTS ARE ALLOWED TO HAVE GAPS - RCON_HOST_1 and RCON_HOST_3 with no _2 is a
+           supported configuration. Indexing into the configured list makes "server 2" mean
+           the second CONFIGURED server, so on a box with a gap the bot warns one server and
+           stops another. That is precisely the mistake the numbering exists to prevent, and
+           only the players on the wrong server would ever find out. */
+        Assert.Equal("server1", PlayerNotice.RconNameFor(1));
+        Assert.Equal("server2", PlayerNotice.RconNameFor(2));
+        Assert.Equal("server3", PlayerNotice.RconNameFor(3));
+    }
+}

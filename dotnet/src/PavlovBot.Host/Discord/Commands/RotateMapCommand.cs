@@ -29,6 +29,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// </remarks>
 public sealed class RotateMapCommand(
     ServiceControl services,
+    PlayerNotice notice,
     RconRegistry rcon,
     Access access,
     AuditLog audit,
@@ -38,16 +39,6 @@ public sealed class RotateMapCommand(
 
     /// <summary>The exact line broadcast before a restart.</summary>
     public const string Warning = "All Server Rotating...";
-
-    /// <summary>
-    /// How long players get between the warning and the process dying.
-    /// </summary>
-    /// <remarks>
-    /// Long enough for the notice to render and be read; short enough that nobody assumes
-    /// the command did nothing and runs it again. A restart that begins in the same instant
-    /// as its own warning is a restart with no warning.
-    /// </remarks>
-    private static readonly TimeSpan Grace = TimeSpan.FromSeconds(5);
 
     public ApplicationCommandProperties Build()
     {
@@ -102,13 +93,21 @@ public sealed class RotateMapCommand(
 
         // ---- 1. warn, before anything goes down ----
 
-        var warned = await WarnAsync(targets.Select(t => t.Number).ToList(), ct).ConfigureAwait(false);
+        var notices = new List<NoticeResult>();
+        foreach (var target in targets)
+            notices.Add(await notice.WarnAsync(target.Number, Warning, ct).ConfigureAwait(false));
+
+        var warned = notices.Count(n => n.Delivered);
 
         await Reply(command, Theme.Notice($"{Theme.Warn} Rotating {targets.Count} server(s)",
-            $"Broadcast `{Warning}` to {warned} server(s). Restarting in {Grace.TotalSeconds:0}s…\n\n" +
+            $"Broadcast `{Warning}` to {warned} of {targets.Count} server(s). " +
+            $"Restarting in {PlayerNotice.Grace.TotalSeconds:0}s…\n\n" +
             "This message will update when every unit has finished.")).ConfigureAwait(false);
 
-        await Task.Delay(Grace, ct).ConfigureAwait(false);
+        /* THE PAUSE IS THE POINT. The broadcast has to reach the client and render before
+           the process it is warning about disappears - sent and restarted in the same
+           instant, the player sees nothing and is simply dropped. */
+        await PlayerNotice.WaitAsync(ct).ConfigureAwait(false);
 
         // ---- 2. restart, one at a time ----
 
@@ -126,50 +125,18 @@ public sealed class RotateMapCommand(
             string.Join(", ", targets.Select(t => t.Unit)),
             $"{results.Count(r => r.Ok)}/{results.Count} restarted", ct).ConfigureAwait(false);
 
-        await Reply(command, Report(results, warned, services.Advice(results))).ConfigureAwait(false);
+        await Reply(command, Report(results, notices, services.Advice(results))).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Broadcast the warning. Returns how many servers accepted it.
-    /// </summary>
-    /// <remarks>
-    /// Never throws. A server that will not take the warning is very often the server being
-    /// restarted BECAUSE it will not take anything, and letting that abort the restart would
-    /// disable the command exactly when it is needed.
-    /// </remarks>
-    private async Task<int> WarnAsync(IReadOnlyList<int> serverNumbers, CancellationToken ct)
-    {
-        var names = rcon.Servers.ToList();
-        var delivered = 0;
-
-        foreach (var number in serverNumbers)
-        {
-            if (number < 1 || number > names.Count) continue;
-            var server = names[number - 1];
-
-            try
-            {
-                // Sanitize.Message even though this is a constant: the RCON protocol is line
-                // oriented, and every string that reaches it goes through the same door.
-                await rcon.SendAsync(server, $"Notify {Sanitize.Message(Warning)}", ct).ConfigureAwait(false);
-                delivered++;
-                logger.LogInformation("Rotation warning delivered to {Server}", server);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning("Could not warn {Server} before restart: {Message}", server, ex.Message);
-            }
-        }
-
-        return delivered;
-    }
-
-    private static EmbedBuilder Report(IReadOnlyList<UnitResult> results, int warned, string? advice)
+    private static EmbedBuilder Report(
+        IReadOnlyList<UnitResult> results, IReadOnlyList<NoticeResult> notices, string? advice)
     {
         var ok = results.Count(r => r.Ok);
+        var warned = notices.Count(n => n.Delivered);
 
         var embed = ok == results.Count
-            ? Theme.Success($"Rotated {ok} server(s)", $"Warned {warned}, restarted {ok}.")
+            ? Theme.Success($"Rotated {ok} server(s)",
+                $"Warned {warned} of {notices.Count} {PlayerNotice.Grace.TotalSeconds:0}s beforehand, restarted {ok}.")
             : Theme.Failure($"Rotated {ok} of {results.Count} server(s)",
                 "The units below did not restart. **Players on them may be disconnected with nothing to come back to** — " +
                 "check `systemctl status` on the box.");
@@ -184,6 +151,18 @@ public sealed class RotateMapCommand(
         /* The fix, not just the failure. A permission error is the EXPECTED outcome on a bot
            that does not run as root, and without this it presents as the command being
            broken. */
+        /* WHY a warning did not land, per server. It used to report only a count, so
+           "warned 1 of 3" gave no way to tell an unconfigured RCON slot apart from a server
+           that was refusing connections. */
+        if (notices.Any(n => !n.Delivered))
+        {
+            embed.AddField($"{Theme.Warn} Players not warned",
+                string.Join("\n", notices
+                    .Select((n, i) => (Notice: n, Number: i + 1))
+                    .Where(x => !x.Notice.Delivered)
+                    .Select(x => $"{Theme.Dot} Server {x.Number} — {Sanitize.Message(x.Notice.Detail)}")));
+        }
+
         if (advice is not null) embed.AddField($"{Theme.Warn} How to fix this", advice);
 
         return embed;

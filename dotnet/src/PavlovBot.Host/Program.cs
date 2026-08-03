@@ -230,6 +230,7 @@ public static class Program
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Servers.ServiceControl(
             features.PavlovUnits, features.SystemctlSudo,
             sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServiceControl>>()));
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.PlayerNotice>();
         builder.Services.AddSingleton<ISlashCommand, RotateMapCommand>();
         builder.Services.AddSingleton<ISlashCommand, ServerSwitchCommand>();
         builder.Services.AddSingleton<ISlashCommand, GiveMenuCommand>();
