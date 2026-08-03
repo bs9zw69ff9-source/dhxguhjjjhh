@@ -77,6 +77,17 @@ public sealed record FeatureOptions
     /// <summary>A voice channel for the platform-wide total, from the Pavlov master server.</summary>
     public ulong? ShackTotalChannel { get; init; }
 
+    /// <summary>
+    /// The capacity shown when a server has never reported one. Pavlov Shack servers are 24.
+    /// </summary>
+    /// <remarks>
+    /// A last resort only - a capacity read live from the server wins, and the last one it
+    /// successfully reported wins over this. Configurable rather than a constant because a
+    /// wrong denominator is worse than a missing one, and 24 is only right for the usual
+    /// Shack build.
+    /// </remarks>
+    public int DefaultServerCapacity { get; init; } = 24;
+
     /// <summary>Public channel holding the Verify button.</summary>
     public ulong? VerifyChannel { get; init; }
 
@@ -177,6 +188,7 @@ public sealed record FeatureOptions
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
             PlayerCountChannels = Snowflakes(configuration, "PLAYER_COUNT_CHANNELS"),
             ShackTotalChannel = Snowflake(configuration, "SHACK_TOTAL_CHANNEL"),
+            DefaultServerCapacity = Int(configuration, "SERVER_MAX_PLAYERS", 24),
             VerifyChannel = Snowflake(configuration, "VERIFY_CHANNEL"),
             VerifyStaffChannel = Snowflake(configuration, "VERIFY_STAFF_CHANNEL"),
             VerifiedRole = Snowflake(configuration, "VERIFIED_ROLE"),

@@ -266,7 +266,13 @@ public static class Program
 
         // Live player counts as voice channel names, replacing the player-list board.
         builder.Services.AddSingleton<IChannelRenamer, GatewayChannelRenamer>();
-        builder.Services.AddSingleton<PlayerCountChannels>();
+        builder.Services.AddSingleton(sp => new PlayerCountChannels(
+            sp.GetRequiredService<IChannelRenamer>(),
+            sp.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>(),
+            sp.GetRequiredService<PavlovBot.Host.Servers.MasterServerList>(),
+            sp.GetRequiredService<PavlovBot.Host.Servers.ServiceControl>(),
+            sp.GetRequiredService<ILogger<PlayerCountChannels>>(),
+            features.DefaultServerCapacity));
         builder.Services.AddSingleton<ISlashCommand, CountsCommand>();
         // ...and the names half of it, on demand rather than posted.
         builder.Services.AddSingleton<ISlashCommand>(sp =>

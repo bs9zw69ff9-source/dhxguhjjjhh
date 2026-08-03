@@ -59,12 +59,33 @@ public class PlayerCountChannelTests
     }
 
     [Fact]
-    public void AnUnknownCapacityLeavesTheCountAlone()
+    public void ADenominatorIsAlwaysShown()
     {
-        /* The count is the point and the capacity is decoration, so a server that would not
-           answer ServerInfo still gets a correct name rather than "3/0". */
-        Assert.Equal("Server 1: 3", PlayerCountChannels.ServerName(1, 3, null));
-        Assert.Equal("Server 1: 3", PlayerCountChannels.ServerName(1, 3, 0));
+        /* "Server 1: 0" and "Server 1: 0/24" read as different things: the first looks like
+           the feature is half working, and it is the version people saw exactly when a
+           server was empty or unreachable - the moments they most want the channel to look
+           deliberate. The capacity is resolved before the name is built (live, else last
+           known, else the configured default), so there is never a missing one to render. */
+        Assert.Equal("Server 1: 0/24", PlayerCountChannels.ServerName(1, 0, 24));
+        Assert.Equal("Server 2: 3/32", PlayerCountChannels.ServerName(2, 3, 32));
+    }
+
+    [Fact]
+    public void AnEmptyServerStillShowsItsCapacity()
+    {
+        /* The case that prompted this: "Server 1: 0" looks like a half-working feature, and
+           it is exactly what people saw when a server was empty or had not answered yet -
+           the moments the channel most needs to look deliberate. */
+        Assert.Equal("Server 1: 0/24", PlayerCountChannels.ServerName(1, 0, 24));
+    }
+
+    [Fact]
+    public void ANonStandardCapacityIsShownAsItself()
+    {
+        // The fallback is a last resort, not a fixed denominator. A server that reports 32
+        // shows 32, so the default never misrepresents a server that has answered.
+        Assert.Equal("Server 2: 5/32", PlayerCountChannels.ServerName(2, 5, 32));
+        Assert.Equal("Server 3: 0/100", PlayerCountChannels.ServerName(3, 0, 100));
     }
 
     [Fact]
@@ -84,7 +105,7 @@ public class PlayerCountChannelTests
         foreach (var name in new[]
         {
             PlayerCountChannels.ServerName(1, 3, 24),
-            PlayerCountChannels.ServerName(9, 0, null),
+            PlayerCountChannels.ServerName(9, 0, 24),
             PlayerCountChannels.TotalName(287),
         })
         {

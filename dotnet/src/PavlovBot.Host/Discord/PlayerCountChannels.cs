@@ -44,10 +44,39 @@ public sealed class PlayerCountChannels(
     RconRegistry rcon,
     MasterServerList master,
     ServiceControl services,
-    ILogger<PlayerCountChannels> logger)
+    ILogger<PlayerCountChannels> logger,
+    int defaultCapacity = 24)
 {
     /// <summary>Older than this and the roster is not evidence of anything.</summary>
     private static readonly TimeSpan RosterFreshness = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// The capacity to show when the server has never told us one.
+    /// </summary>
+    /// <remarks>
+    /// A DENOMINATOR IS ALWAYS SHOWN, because "Server 1: 0" and "Server 1: 0/24" read as
+    /// different things: the first looks like the feature is half working, and it is the
+    /// version people see exactly when a server is empty or unreachable - the moments they
+    /// most want the channel to look deliberate.
+    ///
+    /// Only a last resort. A capacity read live from the server wins, and the last one
+    /// successfully read wins over this - so a server with a non-standard MaxPlayers shows
+    /// its own number as soon as it has answered once, and only a server that has never
+    /// answered at all falls back here.
+    /// </remarks>
+    private readonly int _defaultCapacity = defaultCapacity > 0 ? defaultCapacity : 24;
+
+    /// <summary>
+    /// The last capacity each server reported.
+    /// </summary>
+    /// <remarks>
+    /// Cached, but never PREFERRED - ServerInfo is asked every tick and a fresh answer always
+    /// replaces this, so an operator changing MaxPlayers is picked up on the next successful
+    /// read rather than living wrong until restart. It exists only so a server that answered
+    /// an hour ago and is now unreachable keeps its real capacity instead of dropping to the
+    /// generic fallback.
+    /// </remarks>
+    private readonly Dictionary<string, int> _lastKnownCapacity = new(StringComparer.Ordinal);
 
     /// <param name="ServerChannels">One channel id per configured server, in order.</param>
     /// <param name="TotalChannel">The platform-wide total, from the Pavlov master server.</param>
@@ -65,10 +94,8 @@ public sealed class PlayerCountChannels(
     /// will not answer, the count is still correct and is shown alone rather than beside an
     /// invented capacity - "3/0" or a guessed 24 would both be worse than saying less.
     /// </remarks>
-    internal static string ServerName(int number, int players, int? maxPlayers) =>
-        maxPlayers is { } max && max > 0
-            ? $"Server {number}: {players}/{max}"
-            : $"Server {number}: {players}";
+    internal static string ServerName(int number, int players, int maxPlayers) =>
+        $"Server {number}: {players}/{maxPlayers}";
 
     /// <summary>"Server 2: Offline", for a unit systemd is not running.</summary>
     /// <remarks>
@@ -180,6 +207,22 @@ public sealed class PlayerCountChannels(
         }
 
         var roster = rcon.Roster(server);
+        var capacity = await CapacityAsync(server, ct).ConfigureAwait(false);
+
+        /* NEVER FETCHED IS NOT THE SAME AS STALE. With no roster at all there is no previous
+           count to preserve, so leaving the channel alone just leaves whatever it happened to
+           say last time the process ran - which after a restart is an hours-old number with
+           no relationship to anything. Zero out of capacity is at least the right shape and
+           is corrected on the next successful sweep.
+
+           A roster that HAS been fetched and has merely gone stale still keeps its last good
+           count: that one has a real number to preserve, and overwriting it during a blip
+           would burn both renames in the window on a figure that was never true. */
+        if (roster.TakenAt == DateTimeOffset.MinValue && state is UnitState.Active)
+        {
+            var unknown = ServerName(number, 0, capacity);
+            return $"\"{unknown}\" {await ApplyAsync(channelId, unknown, ct).ConfigureAwait(false)} (no roster yet)";
+        }
 
         if (roster.TakenAt == DateTimeOffset.MinValue ||
             DateTimeOffset.UtcNow - roster.TakenAt > RosterFreshness)
@@ -206,7 +249,7 @@ public sealed class PlayerCountChannels(
             return $"{server} skipped ({why})";
         }
 
-        var name = ServerName(number, roster.Players.Count, await MaxPlayersAsync(server, ct).ConfigureAwait(false));
+        var name = ServerName(number, roster.Players.Count, capacity);
         return $"\"{name}\" {await ApplyAsync(channelId, name, ct).ConfigureAwait(false)}";
     }
 
@@ -245,12 +288,26 @@ public sealed class PlayerCountChannels(
     }
 
     /// <summary>
-    /// A server's capacity, asked over RCON.
+    /// A server's capacity: live if it will say, else the last it said, else the default.
     /// </summary>
     /// <remarks>
-    /// Not cached: this runs once every six minutes per server, and a stale capacity after
-    /// somebody changes MaxPlayers would be wrong for as long as the process lived.
+    /// Always returns a usable number, so the name always has a denominator. The three tiers
+    /// exist because the alternative to each is worse: no denominator at all reads as broken,
+    /// a cached figure that outranks a live one hides a MaxPlayers change until restart, and
+    /// the generic default alone would misreport any server that is not the usual size.
     /// </remarks>
+    private async Task<int> CapacityAsync(string server, CancellationToken ct)
+    {
+        if (await MaxPlayersAsync(server, ct).ConfigureAwait(false) is { } live && live > 0)
+        {
+            _lastKnownCapacity[server] = live;
+            return live;
+        }
+
+        return _lastKnownCapacity.TryGetValue(server, out var remembered) ? remembered : _defaultCapacity;
+    }
+
+    /// <summary>A server's capacity as it reports it right now, or null when it will not say.</summary>
     private async Task<int?> MaxPlayersAsync(string server, CancellationToken ct)
     {
         try
