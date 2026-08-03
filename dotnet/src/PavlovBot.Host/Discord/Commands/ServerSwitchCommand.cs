@@ -38,11 +38,25 @@ public sealed class ServerSwitchCommand(
     /// <summary>Ephemeral: this is operator business, not channel business.</summary>
     public bool Ephemeral => true;
 
-    /// <summary>What players are told before the server goes away under them.</summary>
-    internal static string WarningFor(UnitAction action) => action switch
+    /// <summary>
+    /// What players are told before the server goes away under them, or null for nobody.
+    /// </summary>
+    /// <remarks>
+    /// THE ONE PLACE THAT DECIDES WHETHER TO WARN. It used to be three - this method's
+    /// fallback, the branch that sends the broadcast, and the branch that reports whether it
+    /// landed - and three copies of one rule is how a later edit makes them disagree.
+    ///
+    /// STARTING WARNS NOBODY. A stopped server has no players on it to warn and no RCON
+    /// session to reach them through: the process is not running, so the broadcast could not
+    /// be delivered even if there were somebody to receive it. It also skips the grace
+    /// period, because waiting five seconds to bring a server up is five seconds of downtime
+    /// bought for no one.
+    /// </remarks>
+    internal static string? WarningFor(UnitAction action) => action switch
     {
         UnitAction.Stop => "Server shutting down...",
-        _ => "Server restarting...",
+        UnitAction.Restart => "Server restarting...",
+        _ => null,
     };
 
     public ApplicationCommandProperties Build()
@@ -114,13 +128,13 @@ public sealed class ServerSwitchCommand(
 
         // ---- warn, for the actions that drop players ----
 
-        var warned = new NoticeResult(false, "not applicable");
-        if (action is UnitAction.Stop or UnitAction.Restart)
+        var warned = new NoticeResult(false, "nobody to warn");
+        if (WarningFor(action) is { } message)
         {
-            warned = await notice.WarnAsync(number, WarningFor(action), ct).ConfigureAwait(false);
+            warned = await notice.WarnAsync(number, message, ct).ConfigureAwait(false);
 
             await Reply(command, Theme.Notice($"{Theme.Warn} {Verb(action)} Server {number}",
-                $"`{unit}` — {(warned.Delivered ? $"broadcast `{WarningFor(action)}`" : $"could not warn players: {warned.Detail}")}." +
+                $"`{unit}` — {(warned.Delivered ? $"broadcast `{message}`" : $"could not warn players: {warned.Detail}")}." +
                 $"\n\nRunning `systemctl {ServiceControl.Verb(action)} {unit}` in {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
 
             /* THE PAUSE IS THE POINT. The broadcast has to reach the client and render
@@ -169,7 +183,10 @@ public sealed class ServerSwitchCommand(
                 "Nothing brings it back on its own — run `/serverswitch` again with **Start** when you want it up.");
         }
 
-        if (action is UnitAction.Stop or UnitAction.Restart)
+        // Same single source as the broadcast itself: no warning was owed, so no line
+        // about one is shown. A "Players warned: No" beside a starting server reads as a
+        // failure rather than as the nothing it is.
+        if (WarningFor(action) is not null)
         {
             embed.AddField("Players warned",
                 warned.Delivered

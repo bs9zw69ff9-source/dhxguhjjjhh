@@ -76,13 +76,42 @@ public class RotateMapTests
     }
 
     [Fact]
+    public void StartingWarnsNobody()
+    {
+        /* THE POINT: a stopped server has nobody on it to warn, and no RCON session to
+           reach them through - the process is not running, so the broadcast could not be
+           delivered even if somebody were there to receive it.
+
+           Null rather than an empty string, because this is the SINGLE SOURCE for the whole
+           decision: the branch that sends the broadcast, the grace period, and the line in
+           the reply about whether players were warned all key off it. One rule, one place -
+           three copies of it is how a later edit makes them disagree and a starting server
+           picks up a five-second pause for an audience of nobody. */
+        Assert.Null(ServerSwitchCommand.WarningFor(UnitAction.Start));
+    }
+
+    [Fact]
+    public void EveryActionThatDropsPlayersWarnsThem()
+    {
+        // Stated as a rule over the enum rather than case by case, so a fourth action added
+        // later has to make a deliberate choice instead of inheriting a fallback.
+        foreach (var action in Enum.GetValues<UnitAction>())
+        {
+            var warning = ServerSwitchCommand.WarningFor(action);
+
+            if (action is UnitAction.Start) Assert.Null(warning);
+            else Assert.False(string.IsNullOrWhiteSpace(warning), $"{action} drops players and must warn them");
+        }
+    }
+
+    [Fact]
     public void EveryWarningSurvivesSanitisingIntact()
     {
         // They go out as `Notify <text>` on a line-oriented protocol. If sanitising altered
         // one, players would see something other than what the command promises.
-        foreach (var action in new[] { UnitAction.Stop, UnitAction.Restart })
+        foreach (var action in Enum.GetValues<UnitAction>())
         {
-            var warning = ServerSwitchCommand.WarningFor(action);
+            if (ServerSwitchCommand.WarningFor(action) is not { } warning) continue;
             Assert.Equal(warning, PavlovBot.Core.Text.Sanitize.Message(warning));
         }
     }
