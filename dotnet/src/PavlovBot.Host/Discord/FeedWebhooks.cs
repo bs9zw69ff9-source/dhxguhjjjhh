@@ -229,6 +229,21 @@ public sealed class FeedWebhooks : IAsyncDisposable
     public const string Kill = "kill";
     public const string Money = "money";
 
+    /// <summary>
+    /// Staff actions, as they happen. A private staff channel.
+    /// </summary>
+    /// <remarks>
+    /// The live counterpart to the audit dataset. That dataset is what <c>/staffactivity</c>
+    /// reads and it answers "what has this staffer done" perfectly well - but only when
+    /// somebody thinks to ask. A feed answers "what just happened" without anybody asking,
+    /// which is the question a staff channel exists for.
+    ///
+    /// PRIVATE. These lines name the staffer, the target and the reason, and some of them -
+    /// an unban, a menu grant, a server shutdown - are exactly what somebody would want to
+    /// know went unnoticed.
+    /// </remarks>
+    public const string Staff = "staff";
+
     private static string Stamp(DateTimeOffset at) => EasternTime.Stamp(at);
 
     /* The line builders are separate from the posting so they can be tested for what they
@@ -273,6 +288,27 @@ public sealed class FeedWebhooks : IAsyncDisposable
 
     public Task PostLeaveAsync(string name, string? server, DateTimeOffset at, CancellationToken ct = default) =>
         PostAsync(Join, LeaveLine(name, server, at), ct);
+
+    /// <summary>
+    /// One staff action: who did what to whom, and why.
+    /// </summary>
+    /// <remarks>
+    /// PURE, and tested for it. This is the line a staff argument gets settled by, so its
+    /// shape is pinned rather than left to whoever edits the poster next - and it has to
+    /// survive a reason containing a newline, which would otherwise forge a second entry.
+    /// </remarks>
+    public static string StaffLine(string action, string moderator, string target, string? reason, DateTimeOffset at)
+    {
+        var line = $"[{Stamp(at)}] {Sanitize.Message(action).ToUpperInvariant()}  {Sanitize.Message(moderator)}";
+
+        if (target is { Length: > 0 }) line += $" → {Sanitize.Message(target)}";
+        if (reason is { Length: > 0 }) line += $"  ({Sanitize.Message(reason)})";
+
+        return line;
+    }
+
+    public Task PostStaffAsync(string action, string moderator, string target, string? reason, DateTimeOffset at, CancellationToken ct = default) =>
+        PostAsync(Staff, StaffLine(action, moderator, target, reason, at), ct);
 
     public Task PostKillAsync(string? killer, string killed, string? weapon, DateTimeOffset at, CancellationToken ct = default)
     {

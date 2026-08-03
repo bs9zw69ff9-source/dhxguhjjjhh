@@ -374,6 +374,7 @@ public static class Program
         feeds.Register(FeedWebhooks.Connect, features.ConnectWebhook);
         feeds.Register(FeedWebhooks.Kill, features.KillWebhook);
         feeds.Register(FeedWebhooks.Money, features.MoneyWebhook);
+        feeds.Register(FeedWebhooks.Staff, features.StaffWebhook);
 
         /* Said out loud at startup, at INFORMATION. A feed with no URL is a choice and a
            feed with a dead URL is a fault, and for a long time they looked identical from

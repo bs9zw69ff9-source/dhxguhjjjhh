@@ -119,6 +119,8 @@ public sealed class FeedsCommand(FeedWebhooks feeds, FeatureOptions features, Ac
         new(FeedWebhooks.Connect, "CONNECT_WEBHOOK_URL", "Connection cards WITH IP ADDRESSES, plus auto-ban notices. Private channel only."),
         new(FeedWebhooks.Kill, "KILL_WEBHOOK_URL", "Kill lines."),
         new(FeedWebhooks.Money, "MONEY_WEBHOOK_URL", "Balance changes."),
+        new(FeedWebhooks.Staff, "STAFF_WEBHOOK_URL",
+            "Every staff action as it happens - bans, kicks, menu grants, /serverswitch. Private channel only."),
     ];
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

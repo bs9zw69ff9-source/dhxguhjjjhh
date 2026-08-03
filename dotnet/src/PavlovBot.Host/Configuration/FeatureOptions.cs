@@ -62,6 +62,12 @@ public sealed record FeatureOptions
     /// <summary>The address-bearing connection feed. Private channels only.</summary>
     public string? ConnectWebhook { get; init; }
 
+    /// <summary>
+    /// Staff actions as they happen. A private staff channel - these name the staffer,
+    /// the target and the reason.
+    /// </summary>
+    public string? StaffWebhook { get; init; }
+
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
     /// <summary>
@@ -180,6 +186,7 @@ public sealed record FeatureOptions
                channel; JOIN is the plain public log. The port read CONNECT into the join
                feed and never read JOIN_WEBHOOK_URL at all. */
             ConnectWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
+            StaffWebhook = Text(configuration, "STAFF_WEBHOOK_URL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
             MoneyWebhook = Text(configuration, "MONEY_WEBHOOK_URL"),
@@ -295,6 +302,7 @@ public sealed record FeatureOptions
         $"player-count channels: {(PlayerCountChannels.Count == 0 ? "off (PLAYER_COUNT_CHANNELS not set)" : $"{PlayerCountChannels.Count} configured")}",
         $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
+        $"staff feed: {(StaffWebhook is null ? "off (STAFF_WEBHOOK_URL not set)" : "on")}",
         $"menu panel: {(MenuPanelChannel is null
             ? "off (MENU_PANEL_CHANNEL not set)"
             : MenuRoleStaff is null && MenuRoleHighStaff is null

@@ -23,20 +23,48 @@ namespace PavlovBot.Host.Moderation;
 /// the right trade against a file that eventually takes a second to parse - and the ones
 /// anybody asks about are recent.
 /// </remarks>
-public sealed class AuditLog(SerializedStore store)
+public sealed class AuditLog(SerializedStore store, FeedWebhooks? feeds = null)
 {
     /// <summary>Roughly a year of a busy server, and small enough to parse instantly.</summary>
     public const int MaxEntries = 5000;
 
-    public Task RecordAsync(string action, string moderator, string player, string? reason = null, CancellationToken ct = default) =>
-        store.UpdateAsync<List<ModAction>>(Datasets.ModLog, [], log =>
+    public async Task RecordAsync(string action, string moderator, string player, string? reason = null, CancellationToken ct = default)
+    {
+        var at = DateTimeOffset.UtcNow;
+
+        await store.UpdateAsync<List<ModAction>>(Datasets.ModLog, [], log =>
         {
-            log.Add(new ModAction(action, moderator, player, Sanitize.Message(reason ?? ""), DateTimeOffset.UtcNow));
+            log.Add(new ModAction(action, moderator, player, Sanitize.Message(reason ?? ""), at));
 
             // Trim from the FRONT - the oldest go first.
             if (log.Count > MaxEntries) log.RemoveRange(0, log.Count - MaxEntries);
             return log;
-        }, ct);
+        }, ct).ConfigureAwait(false);
+
+        /* AND TO THE STAFF CHANNEL, from here rather than from each command.
+
+           Every staff action in the bot already funnels through this method - seventeen call
+           sites, from bans and kicks to /serverswitch and the automatic VPN bans. Posting at
+           the funnel means the feed is complete by construction: a command added next year
+           appears in the staff channel because it records an audit entry, not because
+           somebody remembered to post one too. Doing it per command is how a staff log ends
+           up missing exactly the action nobody thought to wire up.
+
+           RECORDED FIRST, POSTED SECOND, and the failure of the second never touches the
+           first. The dataset is the record that has to survive; the channel is a convenience,
+           and a dead webhook must not be able to lose a ban from the audit trail. */
+        if (feeds is null) return;
+
+        try
+        {
+            await feeds.PostStaffAsync(action, moderator, player, reason, at, ct).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // FeedWebhooks already logs and records its own failures, and /feeds reports
+            // them. Rethrowing here would fail the audit write for a cosmetic reason.
+        }
+    }
 
     public IReadOnlyList<ModAction> All() => store.Read<List<ModAction>>(Datasets.ModLog, []);
 
