@@ -161,6 +161,16 @@ public sealed class PlayerCountChannels(
     {
         ArgumentNullException.ThrowIfNull(targets);
 
+        /* SWEEP FIRST, for the same reason the total is forced. The rosters are refreshed on
+           their own 60-second timer, so reading them here publishes a count from up to a
+           minute ago and then holds it for five - the channel is systematically behind by
+           however long ago the last sweep happened to run.
+           
+           Three RCON commands every five minutes, against a roster the whole point of which
+           is to be current when it is published. A failed sweep changes nothing: the previous
+           snapshot and its timestamp survive, so the staleness checks below still apply. */
+        await rcon.RefreshRostersAsync(ct).ConfigureAwait(false);
+
         var report = new List<string>();
 
         for (var index = 0; index < targets.ServerChannels.Count; index++)
@@ -255,7 +265,19 @@ public sealed class PlayerCountChannels(
 
     private async Task<string> UpdateTotalAsync(ulong channelId, CancellationToken ct)
     {
-        var snapshot = await master.GetAsync(ct: ct).ConfigureAwait(false);
+        /* FORCED, so the number published is the number that is true NOW.
+           
+           The master list is cached for 60 seconds and this tick runs every five minutes, so
+           an unforced read returns whatever some other caller last fetched - anybody running
+           /server lookup within the previous minute seeds it. The channel then publishes a
+           figure that was already up to a minute old and sits on it for five more, and the
+           NEXT tick publishes the number that was true shortly after the last one. That is
+           the "tick behind" symptom exactly: 112 -> 113 from the cache, then 113 -> 127 the
+           moment something actually asked.
+           
+           One HTTP request per five minutes is not worth optimising away with a cache whose
+           whole purpose is to protect against bursts of interactive commands. */
+        var snapshot = await master.GetAsync(force: true, ct).ConfigureAwait(false);
 
         // Same rule as a stale roster: "0" would be a number that was never true.
         if (snapshot.Servers.Count == 0) return "Pavlov Shack skipped (master list empty)";
