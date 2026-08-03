@@ -143,7 +143,14 @@ public class PlayerCountChannelTests
         var rcon = new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
         var master = new MasterServerList(new HttpClient(), NullLogger<MasterServerList>.Instance);
 
-        return new PlayerCountChannels(channels, rcon, master, NullLogger<PlayerCountChannels>.Instance);
+        /* A unit list with the same shape as the channel list, so the number-to-server
+           mapping resolves. The units do not exist on this box, so StateAsync answers
+           Unknown - which is the point: an unanswerable status check must fall through to
+           the roster logic rather than relabelling every server offline. */
+        var services = new ServiceControl(ServiceControl.DefaultUnits, useSudo: false,
+            NullLogger<ServiceControl>.Instance);
+
+        return new PlayerCountChannels(channels, rcon, master, services, NullLogger<PlayerCountChannels>.Instance);
     }
 
     [Fact]

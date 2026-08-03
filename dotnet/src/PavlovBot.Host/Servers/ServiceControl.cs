@@ -21,6 +21,22 @@ public enum UnitAction
     Restart,
 }
 
+/// <summary>What systemd says a unit is doing right now.</summary>
+/// <remarks>
+/// <see cref="Unknown"/> is its own answer and is NOT "offline". It means the question could
+/// not be asked - systemctl missing, a unit name systemd does not recognise, a query that
+/// timed out - and a caller that collapses it into "down" would relabel every server the
+/// moment the check itself broke.
+/// </remarks>
+public enum UnitState
+{
+    Unknown,
+    Active,
+    Starting,
+    Inactive,
+    Failed,
+}
+
 /// <summary>
 /// Restarting the Pavlov game servers through systemd.
 /// </summary>
@@ -134,6 +150,80 @@ public sealed class ServiceControl(
     /// <summary>The unit for a 1-based server number, or null when there is no such server.</summary>
     public string? UnitFor(int serverNumber) =>
         serverNumber >= 1 && serverNumber <= Units.Count ? Units[serverNumber - 1] : null;
+
+    /// <summary>
+    /// The RCON name for a 1-based server number. <c>RCON_HOST_2</c> is named "server2".
+    /// </summary>
+    /// <remarks>
+    /// BY NAME, NEVER BY POSITION IN THE CONFIGURED LIST. RCON slots may have GAPS -
+    /// <c>RCON_HOST_1</c> and <c>RCON_HOST_3</c> with no <c>_2</c> is supported - so indexing
+    /// makes "server 2" mean the second CONFIGURED server rather than the second server. Kept
+    /// here beside <see cref="UnitFor"/> so one type owns the whole of "what server N is":
+    /// its systemd unit, its RCON name, and the label the feeds print.
+    /// </remarks>
+    public static string RconNameFor(int serverNumber) => $"server{serverNumber}";
+
+    /// <summary>
+    /// Whether systemd currently has this unit running.
+    /// </summary>
+    /// <remarks>
+    /// <c>systemctl is-active</c>, NOT <c>systemctl status</c>. Status is a human-readable
+    /// report - it wraps, it truncates to the terminal width, it is translated, and its
+    /// layout is not a contract. Scraping "Active: active (running)" out of it works until a
+    /// systemd release moves a line or a locale renames a word, and then every server reads
+    /// as offline at once. <c>is-active</c> exists for exactly this question and answers it
+    /// in one word on stdout.
+    ///
+    /// NOT ELEVATED. Querying state is read-only and works as any user, so this deliberately
+    /// does not go through sudo even when the mutating calls do - otherwise a box with a
+    /// sudoers entry for start/stop/restart but not for is-active would report every server
+    /// offline, which is worse than not checking at all.
+    /// </remarks>
+    public async Task<UnitState> StateAsync(string unit, CancellationToken ct = default)
+    {
+        if (!IsPlausibleUnitName(unit)) return UnitState.Unknown;
+
+        try
+        {
+            var info = new ProcessStartInfo("systemctl")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            info.ArgumentList.Add("is-active");
+            info.ArgumentList.Add(unit);
+
+            using var process = Process.Start(info);
+            if (process is null) return UnitState.Unknown;
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));   // a local query; anything slower is broken
+
+            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
+            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+
+            /* The EXIT CODE is not the answer - is-active exits non-zero for anything that is
+               not running, which is a perfectly good answer and not a failure. The word on
+               stdout is the answer. */
+            return stdout.Trim() switch
+            {
+                "active" => UnitState.Active,
+                "activating" or "reloading" => UnitState.Starting,
+                "inactive" or "deactivating" => UnitState.Inactive,
+                "failed" => UnitState.Failed,
+                _ => UnitState.Unknown,
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            /* UNKNOWN, never "offline". Not being able to ask is not the same as the answer
+               being no, and callers key display decisions off this - a systemctl that cannot
+               run must not relabel every server as down. */
+            logger.LogDebug(ex, "Could not read the state of {Unit}", unit);
+            return UnitState.Unknown;
+        }
+    }
 
     /// <summary>
     /// <c>systemctl restart &lt;unit&gt;</c>. Blocks until systemd says it is done.

@@ -43,6 +43,7 @@ public sealed class PlayerCountChannels(
     IChannelRenamer channels,
     RconRegistry rcon,
     MasterServerList master,
+    ServiceControl services,
     ILogger<PlayerCountChannels> logger)
 {
     /// <summary>Older than this and the roster is not evidence of anything.</summary>
@@ -68,6 +69,27 @@ public sealed class PlayerCountChannels(
         maxPlayers is { } max && max > 0
             ? $"Server {number}: {players}/{max}"
             : $"Server {number}: {players}";
+
+    /// <summary>"Server 2: Offline", for a unit systemd is not running.</summary>
+    /// <remarks>
+    /// ONE WORD FOR EVERY WAY OF BEING DOWN. Inactive and failed are different things to an
+    /// operator and the same thing to a player looking at the sidebar deciding where to play,
+    /// and this name is read by the second group. The distinction is not lost - it is in the
+    /// tick report and in <c>systemctl status</c>, where the person who can act on it looks.
+    /// </remarks>
+    internal static string OfflineName(int number) => $"Server {number}: Offline";
+
+    /// <summary>
+    /// Whether a unit state is definite enough to publish "Offline".
+    /// </summary>
+    /// <remarks>
+    /// ONLY THE DEFINITE ONES. Starting is temporary and Unknown is unknowable, and neither
+    /// is evidence a server is off - both fall through to the roster logic, which leaves the
+    /// last good count in place. Publishing "Offline" for either would relabel every channel
+    /// the moment systemctl could not be reached, which is a louder failure than the silence
+    /// this was added to fix.
+    /// </remarks>
+    internal static bool IsOffline(UnitState state) => state is UnitState.Inactive or UnitState.Failed;
 
     /// <summary>"Pavlov Shack: 287".</summary>
     /// <remarks>
@@ -112,23 +134,25 @@ public sealed class PlayerCountChannels(
     {
         ArgumentNullException.ThrowIfNull(targets);
 
-        var servers = rcon.Servers.ToList();
         var report = new List<string>();
 
         for (var index = 0; index < targets.ServerChannels.Count; index++)
         {
             var channelId = targets.ServerChannels[index];
+            var number = index + 1;
 
-            if (index >= servers.Count)
+            /* BY NUMBER, NOT BY POSITION IN THE RCON LIST. RCON slots may have gaps -
+               RCON_HOST_1 and RCON_HOST_3 with no _2 is supported - so indexing into the
+               configured servers made the second channel show the second CONFIGURED server
+               while labelling it "Server 2". A channel that confidently names the wrong
+               server is worse than one that says nothing. */
+            if (services.UnitFor(number) is null)
             {
-                /* More channels configured than servers. Reported rather than ignored: the
-                   channel would otherwise sit with a stale count forever and look like the
-                   feature had stopped working for that one server. */
-                report.Add($"#{index + 1} no such server (only {servers.Count} configured)");
+                report.Add($"#{number} no such server ({services.Units.Count} unit(s) configured)");
                 continue;
             }
 
-            report.Add(await UpdateServerAsync(channelId, servers[index], index + 1, ct).ConfigureAwait(false));
+            report.Add(await UpdateServerAsync(channelId, number, ct).ConfigureAwait(false));
         }
 
         if (targets.TotalChannel is { } total)
@@ -137,8 +161,24 @@ public sealed class PlayerCountChannels(
         return report;
     }
 
-    private async Task<string> UpdateServerAsync(ulong channelId, string server, int number, CancellationToken ct)
+    private async Task<string> UpdateServerAsync(ulong channelId, int number, CancellationToken ct)
     {
+        var server = ServiceControl.RconNameFor(number);
+        var unit = services.UnitFor(number)!;
+
+        /* ASK SYSTEMD FIRST. A server that is down and a server whose roster is merely stale
+           both used to end here as "skipped", so the channel kept its last count - a server
+           that had been off since morning still advertised eight players. systemd knows the
+           difference for certain and costs one local process to ask, where RCON can only ever
+           report a silence that could mean either. */
+        var state = await services.StateAsync(unit, ct).ConfigureAwait(false);
+
+        if (IsOffline(state))
+        {
+            var offline = OfflineName(number);
+            return $"\"{offline}\" {await ApplyAsync(channelId, offline, ct).ConfigureAwait(false)}";
+        }
+
         var roster = rcon.Roster(server);
 
         if (roster.TakenAt == DateTimeOffset.MinValue ||
@@ -150,10 +190,18 @@ public sealed class PlayerCountChannels(
                WITH THE REASON, because "skipped (no fresh roster)" says the channel is not
                being updated without saying why, and this line is the whole diagnostic for a
                channel that has stopped moving. */
-            var why = rcon.RosterProblem(server)
-                      ?? (roster.TakenAt == DateTimeOffset.MinValue
-                          ? "the roster has never been fetched"
-                          : $"the roster is {(DateTimeOffset.UtcNow - roster.TakenAt).TotalMinutes:0} minutes old");
+            var why = state switch
+            {
+                /* NAMED SEPARATELY. The unit is up but nothing can be read from it, which is
+                   a different problem from a server that is simply off, and leaving the last
+                   count up is the right call for exactly this one. */
+                UnitState.Starting => "the unit is still starting up",
+                UnitState.Unknown => "systemd could not be asked, and RCON is not answering either",
+                _ => rcon.RosterProblem(server)
+                     ?? (roster.TakenAt == DateTimeOffset.MinValue
+                         ? "the roster has never been fetched"
+                         : $"the roster is {(DateTimeOffset.UtcNow - roster.TakenAt).TotalMinutes:0} minutes old"),
+            };
 
             return $"{server} skipped ({why})";
         }

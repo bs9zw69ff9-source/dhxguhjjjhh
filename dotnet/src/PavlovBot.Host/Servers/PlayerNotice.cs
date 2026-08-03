@@ -50,8 +50,13 @@ public sealed class PlayerNotice(RconRegistry rcon, ILogger<PlayerNotice> logger
     /// </remarks>
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(3);
 
-    /// <summary>The RCON name for a 1-based server number. <c>RCON_HOST_2</c> is "server2".</summary>
-    public static string RconNameFor(int serverNumber) => $"server{serverNumber}";
+    /// <summary>The RCON name for a 1-based server number. See <see cref="ServiceControl.RconNameFor"/>.</summary>
+    /// <remarks>
+    /// Delegated rather than duplicated: one type owns the whole of "what server N is", and
+    /// a second copy of the rule is how the notice and the action end up disagreeing about
+    /// which server they are talking about.
+    /// </remarks>
+    public static string RconNameFor(int serverNumber) => ServiceControl.RconNameFor(serverNumber);
 
     /// <summary>
     /// Broadcast to one server. Never throws - the caller is about to act regardless.

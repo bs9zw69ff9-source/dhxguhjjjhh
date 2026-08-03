@@ -1,3 +1,4 @@
+using PavlovBot.Host.Discord;
 using Microsoft.Extensions.Logging.Abstractions;
 using PavlovBot.Host.Discord.Commands;
 using PavlovBot.Host.Servers;
@@ -364,5 +365,76 @@ public class PlayerNoticeTests
         Assert.Equal("server1", PlayerNotice.RconNameFor(1));
         Assert.Equal("server2", PlayerNotice.RconNameFor(2));
         Assert.Equal("server3", PlayerNotice.RconNameFor(3));
+    }
+}
+
+/// <summary>
+/// Reading a unit's state, and what the player-count channel does with it.
+/// </summary>
+public class UnitStateTests
+{
+    private static ServiceControl Control() =>
+        new(ServiceControl.DefaultUnits, useSudo: false, NullLogger<ServiceControl>.Instance);
+
+    [Fact]
+    public async Task AUnitSystemdHasNeverHeardOfIsUnknown_NotOffline()
+    {
+        /* UNKNOWN IS ITS OWN ANSWER. Not being able to ask is not the same as the answer
+           being no, and the channel names key off this - collapsing the two would relabel
+           every server "Offline" the moment the check itself broke, which is a far more
+           visible failure than the one it was added to fix. */
+        var state = await Control().StateAsync("pavlov-does-not-exist-" + Guid.NewGuid().ToString("N"));
+
+        Assert.Equal(UnitState.Unknown, state);
+    }
+
+    [Fact]
+    public async Task ARefusedUnitNameIsNeverAsked()
+    {
+        // The same allow-list as the mutating calls. A read-only verb is still a command line.
+        Assert.Equal(UnitState.Unknown, await Control().StateAsync("--all"));
+        Assert.Equal(UnitState.Unknown, await Control().StateAsync("pavlovserver; reboot"));
+    }
+
+    [Theory]
+    [InlineData(UnitState.Inactive, true)]
+    [InlineData(UnitState.Failed, true)]
+    [InlineData(UnitState.Active, false)]
+    [InlineData(UnitState.Starting, false)]
+    [InlineData(UnitState.Unknown, false)]
+    public void OnlyADefinitelyDownUnitBecomesOffline(UnitState state, bool offline)
+    {
+        /* Starting is temporary and Unknown is unknowable, and neither is evidence a server
+           is off - both fall through to the roster logic, which leaves the last good count
+           in place. Publishing "Offline" for either would relabel every channel the moment
+           systemctl could not be reached: a louder failure than the silence this fixes. */
+        Assert.Equal(offline, PlayerCountChannels.IsOffline(state));
+    }
+
+    [Fact]
+    public void TheOfflineNameMatchesTheCountedNameFormat()
+    {
+        /* Both sit in the same sidebar, one above the other, so they have to read as the
+           same family - "Server 2: Offline" beside "Server 1: 3/24". */
+        Assert.Equal("Server 2: Offline", PlayerCountChannels.OfflineName(2));
+        Assert.Equal("Server 1: 3/24", PlayerCountChannels.ServerName(1, 3, 24));
+
+        Assert.StartsWith("Server 3:", PlayerCountChannels.OfflineName(3), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ServerNumbersResolveToBothAUnitAndAnRconNameConsistently()
+    {
+        // One type owns the whole of "what server N is", so the status check, the broadcast
+        // and the systemctl call cannot end up talking about different servers.
+        var control = Control();
+
+        Assert.Equal("pavlovserver", control.UnitFor(1));
+        Assert.Equal("server1", ServiceControl.RconNameFor(1));
+        Assert.Equal("pavlovserver1", control.UnitFor(2));
+        Assert.Equal("server2", ServiceControl.RconNameFor(2));
+
+        // PlayerNotice defers to the same source rather than keeping its own copy.
+        Assert.Equal(ServiceControl.RconNameFor(3), PlayerNotice.RconNameFor(3));
     }
 }
