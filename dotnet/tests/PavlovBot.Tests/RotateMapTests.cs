@@ -438,3 +438,94 @@ public class UnitStateTests
         Assert.Equal(ServiceControl.RconNameFor(3), PlayerNotice.RconNameFor(3));
     }
 }
+
+/// <summary>
+/// Reading CPU and memory out of systemd for <c>/stats</c>.
+/// </summary>
+/// <remarks>
+/// The numbers themselves cannot be asserted here - there are no Pavlov units on a build
+/// box - so what is covered is the SHAPE of the answer and the reasoning that is easy to get
+/// wrong: which fields mean what, and which of systemd's several ways of saying "no" have to
+/// survive as null rather than becoming an absurd number.
+/// </remarks>
+public class UnitStatsTests
+{
+    private static ServiceControl Control(params string[] units) =>
+        new(units.Length > 0 ? units : ServiceControl.DefaultUnits, useSudo: false,
+            NullLogger<ServiceControl>.Instance);
+
+    [Fact]
+    public async Task EveryConfiguredUnitGetsAnAnswer()
+    {
+        /* One entry per unit, in order, even when none of them exist - /stats renders a field
+           per server and a short list would silently drop one. */
+        var stats = await Control().StatsAsync();
+
+        Assert.Equal(ServiceControl.DefaultUnits.Length, stats.Count);
+        Assert.Equal(ServiceControl.DefaultUnits, stats.Select(s => s.Unit));
+    }
+
+    [Fact]
+    public async Task AUnitThatDoesNotExistReportsUnknownAndNoNumbers()
+    {
+        /* NOT ZERO. A stopped or missing unit reporting "CPU 0%, 0 MB" reads as a healthy
+           idle server, which is the one reading somebody must not take from this screen.
+           Null means "no answer" and the command renders it as such. */
+        var stats = await Control("pavlov-absent-" + Guid.NewGuid().ToString("N")).StatsAsync();
+        var only = Assert.Single(stats);
+
+        Assert.Equal(UnitState.Unknown, only.State);
+        Assert.Null(only.MemoryBytes);
+        Assert.Null(only.CpuPercent);
+    }
+
+    [Fact]
+    public async Task ARefusedUnitNameIsNeverQueried()
+    {
+        // The same allow-list as the mutating verbs. A read-only property query is still a
+        // command line.
+        var stats = await Control("--all").StatsAsync();
+
+        Assert.Equal(UnitState.Unknown, Assert.Single(stats).State);
+    }
+
+    [Fact]
+    public async Task TheQueryIsBoundedAndDoesNotThrow()
+    {
+        /* /stats is a command somebody runs when something already feels wrong, so it has to
+           answer even when systemd will not. */
+        var stats = await Control().StatsAsync(CancellationToken.None);
+
+        Assert.All(stats, s => Assert.False(string.IsNullOrEmpty(s.Unit)));
+    }
+
+    [Fact]
+    public void CumulativeCpuTimeIsNotUsage()
+    {
+        /* THE TRAP THIS DESIGN AVOIDS, recorded because the wrong version looks right.
+           systemctl status prints "CPU: 5.640s" and it is tempting to render that as CPU
+           usage - it is CUMULATIVE processor time since the unit started, so it only ever
+           grows and says nothing about current load. A one-hour-old server at 100% and a
+           week-old idle one can print the same figure.
+
+           CpuPercent is therefore a separate field, computed from a delta across a sampling
+           window, and CpuTotal keeps the cumulative figure under a name that says what it
+           is. */
+        var stats = new UnitStats("pavlovserver", UnitState.Active,
+            CpuTotal: TimeSpan.FromSeconds(5.64), CpuPercent: 12.5);
+
+        Assert.Equal(TimeSpan.FromSeconds(5.64), stats.CpuTotal);
+        Assert.Equal(12.5, stats.CpuPercent);
+    }
+
+    [Fact]
+    public void APercentageOverOneHundredIsValid()
+    {
+        // 100% is ONE core, the top and systemd-cgtop convention. A Pavlov server across two
+        // cores really does read 200%, and clamping it would hide exactly the state worth
+        // seeing.
+        var stats = new UnitStats("pavlovserver", UnitState.Active, CpuPercent: 187.4);
+
+        Assert.True(stats.CpuPercent > 100);
+    }
+}

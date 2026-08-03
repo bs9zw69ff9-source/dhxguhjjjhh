@@ -13,18 +13,20 @@ using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Observability;
 using PavlovBot.Host.Plugins;
 using PavlovBot.Host.Rcon;
+using PavlovBot.Host.Servers;
 using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Discord.Commands;
 
 /// <summary><c>/stats</c> - what the process is actually costing.</summary>
-public sealed class StatsCommand(MetricsRegistry metrics, PluginHost plugins, Access access) : ISlashCommand
+public sealed class StatsCommand(
+    MetricsRegistry metrics, PluginHost plugins, ServiceControl services, Access access) : ISlashCommand
 {
     public string Name => "stats";
     public bool Ephemeral => true;
 
     public ApplicationCommandProperties Build() =>
-        new SlashCommandBuilder().WithName(Name).WithDescription("Owner - Memory, CPU and process stats").Build();
+        new SlashCommandBuilder().WithName(Name).WithDescription("Owner - CPU and memory for the bot and each game server").Build();
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
     {
@@ -57,8 +59,88 @@ public sealed class StatsCommand(MetricsRegistry metrics, PluginHost plugins, Ac
         if (loaded.Count > 0)
             embed.AddField("Plugins", string.Join("\n", loaded.Select(p => $"`{p.Name}` v{p.Version} — {p.State}")));
 
+        /* THE GAME SERVERS, which are what the box is actually spending itself on. The bot's
+           own footprint is a rounding error beside three Pavlov processes, and "the server is
+           laggy" is a question about them, not about this process. */
+        foreach (var line in await ServerLines(services, ct).ConfigureAwait(false))
+            embed.AddField(line.Title, line.Body, inline: true);
+
         await Reply(command, embed).ConfigureAwait(false);
     }
+
+    /// <summary>One field per game server: state, CPU, memory.</summary>
+    private static async Task<IReadOnlyList<(string Title, string Body)>> ServerLines(
+        ServiceControl services, CancellationToken ct)
+    {
+        var stats = await services.StatsAsync(ct).ConfigureAwait(false);
+        var lines = new List<(string, string)>();
+
+        for (var i = 0; i < stats.Count; i++)
+        {
+            var s = stats[i];
+
+            /* A DOWN SERVER SAYS SO INSTEAD OF SHOWING ZEROES. "CPU 0%, 0 MB" is what a
+               stopped unit reports and it reads as a healthy idle server. */
+            if (s.State is not (UnitState.Active or UnitState.Starting))
+            {
+                lines.Add(($"Server {i + 1}", $"`{s.Unit}`\n{Theme.Bad} {Describe(s.State)}"));
+                continue;
+            }
+
+            var body = new List<string> { $"`{s.Unit}`" };
+
+            body.Add(s.CpuPercent is { } cpu
+                ? $"CPU **{cpu:0.#}%**"
+                : s.CpuTotal is { } total ? $"CPU {total.TotalMinutes:0.#} min total" : "CPU unknown");
+
+            if (s.MemoryBytes is { } memory)
+            {
+                var used = Bytes(memory);
+                body.Add(s.MemoryLimitBytes is { } limit
+                    ? $"RAM **{used}** / {Bytes(limit)}"
+                    : $"RAM **{used}**");
+            }
+
+            if (s.MemoryPeakBytes is { } peak) body.Add($"peak {Bytes(peak)}");
+            if (s.Tasks is { } tasks) body.Add($"{tasks} tasks");
+            if (s.Uptime is { } up) body.Add($"up {Duration(up)}");
+
+            lines.Add(($"Server {i + 1}", string.Join("\n", body)));
+        }
+
+        /* Said once, at the end, rather than beside every server. Without it "180%" reads as
+           an impossible number instead of "most of two cores". */
+        if (lines.Count > 0 && stats.Any(s => s.CpuPercent is not null))
+        {
+            lines.Add(("CPU scale",
+                $"100% = one core\n{Environment.ProcessorCount} core(s) on this box"));
+        }
+
+        return lines;
+    }
+
+    private static string Describe(UnitState state) => state switch
+    {
+        UnitState.Inactive => "stopped",
+        UnitState.Failed => "failed",
+        _ => "systemd could not be asked",
+    };
+
+    /// <summary>Bytes as the unit a person would use for that magnitude.</summary>
+    private static string Bytes(long bytes) => bytes switch
+    {
+        >= 1073741824 => $"{bytes / 1073741824.0:0.0} GB",
+        >= 1048576 => $"{bytes / 1048576.0:0} MB",
+        >= 1024 => $"{bytes / 1024.0:0} KB",
+        _ => $"{bytes} B",
+    };
+
+    private static string Duration(TimeSpan span) => span switch
+    {
+        { TotalDays: >= 1 } => $"{(int)span.TotalDays}d {span.Hours}h",
+        { TotalHours: >= 1 } => $"{(int)span.TotalHours}h {span.Minutes}m",
+        _ => $"{(int)span.TotalMinutes}m",
+    };
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
         command.ModifyOriginalResponseAsync(m =>

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 
 namespace PavlovBot.Host.Servers;
@@ -20,6 +21,25 @@ public enum UnitAction
     Stop,
     Restart,
 }
+
+/// <param name="MemoryBytes">Resident memory the unit's cgroup is using. Null when unreported.</param>
+/// <param name="MemoryPeakBytes">The most it has used since it started, where systemd tracks it.</param>
+/// <param name="MemoryLimitBytes">The cgroup cap, or null when there is none.</param>
+/// <param name="CpuPercent">
+/// CPU over a short sampling window. 100% is ONE core fully used - a unit across two cores
+/// reads 200%, the same convention as <c>top</c> and <c>systemd-cgtop</c>.
+/// </param>
+/// <param name="CpuTotal">Cumulative processor time since the unit started.</param>
+public sealed record UnitStats(
+    string Unit,
+    UnitState State,
+    long? MemoryBytes = null,
+    long? MemoryPeakBytes = null,
+    long? MemoryLimitBytes = null,
+    double? CpuPercent = null,
+    TimeSpan? CpuTotal = null,
+    int? Tasks = null,
+    TimeSpan? Uptime = null);
 
 /// <summary>What systemd says a unit is doing right now.</summary>
 /// <remarks>
@@ -222,6 +242,168 @@ public sealed class ServiceControl(
                run must not relabel every server as down. */
             logger.LogDebug(ex, "Could not read the state of {Unit}", unit);
             return UnitState.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// Memory and CPU for every unit, sampled together.
+    /// </summary>
+    /// <remarks>
+    /// <c>systemctl show</c>, not <c>systemctl status</c>. Status renders these same numbers
+    /// for a human to read - it wraps, truncates to the terminal width and is translated,
+    /// and the sample the operator pasted was cut off mid-line twice. <c>show</c> emits the
+    /// same data as <c>Key=Value</c> and is what systemd documents for scripting.
+    ///
+    /// CPU IS SAMPLED TWICE, and that is the whole reason this method takes every unit at
+    /// once rather than one at a time. <c>CPUUsageNSec</c> - the field behind status's
+    /// "CPU: 5.640s" - is CUMULATIVE processor time since the unit started, so printing it as
+    /// "CPU usage" would show a number that only ever grows and says nothing about load. A
+    /// percentage needs a delta over a known interval, so both samples are taken around ONE
+    /// shared sleep: three units cost one wait rather than three.
+    ///
+    /// 100% IS ONE CORE, the convention <c>top</c> and <c>systemd-cgtop</c> use. A server
+    /// spread over two cores reads 200%, which is the number that means "this box is
+    /// working" to somebody who has ever run top.
+    ///
+    /// Not elevated: reading unit properties is allowed to any user, so this must not go
+    /// through sudo even when the mutating verbs do.
+    /// </remarks>
+    public async Task<IReadOnlyList<UnitStats>> StatsAsync(CancellationToken ct = default)
+    {
+        var first = new Dictionary<string, (long Cpu, long At)>(StringComparer.Ordinal);
+        var properties = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
+
+        foreach (var unit in Units)
+        {
+            var shown = await ShowAsync(unit, ct).ConfigureAwait(false);
+            properties[unit] = shown;
+            if (Long(shown, "CPUUsageNSec") is { } cpu) first[unit] = (cpu, Stopwatch.GetTimestamp());
+        }
+
+        /* Long enough that scheduler jitter is not most of the measurement, short enough that
+           nobody notices the command hesitating. Below roughly a quarter of a second the
+           answer is mostly noise. */
+        if (first.Count > 0) await Task.Delay(TimeSpan.FromMilliseconds(600), ct).ConfigureAwait(false);
+
+        var results = new List<UnitStats>();
+        foreach (var unit in Units)
+        {
+            var shown = properties[unit];
+            var state = StateOf(Text(shown, "ActiveState"));
+
+            double? percent = null;
+            if (first.TryGetValue(unit, out var before))
+            {
+                var after = await ShowAsync(unit, ct, "CPUUsageNSec").ConfigureAwait(false);
+                if (Long(after, "CPUUsageNSec") is { } now)
+                {
+                    var elapsed = Stopwatch.GetElapsedTime(before.At).TotalNanoseconds;
+                    // A restart between samples resets the counter, which would read as a
+                    // huge negative. Dropped rather than shown as zero.
+                    if (elapsed > 0 && now >= before.Cpu) percent = (now - before.Cpu) / elapsed * 100.0;
+                }
+            }
+
+            results.Add(new UnitStats(
+                unit,
+                state,
+                MemoryBytes: Long(shown, "MemoryCurrent"),
+                MemoryPeakBytes: Long(shown, "MemoryPeak"),
+                MemoryLimitBytes: Long(shown, "MemoryMax"),
+                CpuPercent: percent,
+                CpuTotal: Long(shown, "CPUUsageNSec") is { } total ? TimeSpan.FromSeconds(total / 1_000_000_000.0) : null,
+                Tasks: Long(shown, "TasksCurrent") is { } tasks ? (int)tasks : null,
+                Uptime: UptimeFrom(Long(shown, "ActiveEnterTimestampMonotonic"))));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// How long the unit has been active, from systemd's MONOTONIC timestamp.
+    /// </summary>
+    /// <remarks>
+    /// The monotonic one, in microseconds since boot, rather than the wall-clock
+    /// <c>ActiveEnterTimestamp</c>. That one is formatted for humans - "Mon 2026-08-03
+    /// 07:26:04 EDT" - so parsing it means depending on the host's locale and timezone
+    /// abbreviations, which is the same trap as scraping <c>status</c>.
+    /// </remarks>
+    private static TimeSpan? UptimeFrom(long? activeEnterMonotonicMicroseconds)
+    {
+        if (activeEnterMonotonicMicroseconds is not { } since || since <= 0) return null;
+
+        var uptime = TimeSpan.FromMilliseconds(Environment.TickCount64 - (since / 1000.0));
+        return uptime > TimeSpan.Zero ? uptime : null;
+    }
+
+    private static UnitState StateOf(string? activeState) => activeState switch
+    {
+        "active" => UnitState.Active,
+        "activating" or "reloading" => UnitState.Starting,
+        "inactive" or "deactivating" => UnitState.Inactive,
+        "failed" => UnitState.Failed,
+        _ => UnitState.Unknown,
+    };
+
+    private static string? Text(IReadOnlyDictionary<string, string> properties, string key) =>
+        properties.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
+
+    /// <summary>
+    /// A numeric property, or null for the several ways systemd says "no".
+    /// </summary>
+    /// <remarks>
+    /// <c>infinity</c> for an unset limit, <c>[not set]</c> for an unsupported one, and
+    /// <c>ulong.MaxValue</c> for a counter the kernel is not accounting - all three would
+    /// become absurd numbers if parsed naively, and MemoryMax is normally one of them.
+    /// </remarks>
+    private static long? Long(IReadOnlyDictionary<string, string> properties, string key) =>
+        Text(properties, key) is { } raw &&
+        long.TryParse(raw, CultureInfo.InvariantCulture, out var value) &&
+        value >= 0 && value != long.MaxValue
+            ? value
+            : null;
+
+    private async Task<IReadOnlyDictionary<string, string>> ShowAsync(
+        string unit, CancellationToken ct, string? only = null)
+    {
+        var empty = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!IsPlausibleUnitName(unit)) return empty;
+
+        try
+        {
+            var info = new ProcessStartInfo("systemctl")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            info.ArgumentList.Add("show");
+            info.ArgumentList.Add(unit);
+            info.ArgumentList.Add("--property=" + (only ??
+                "ActiveState,MemoryCurrent,MemoryPeak,MemoryMax,CPUUsageNSec,TasksCurrent,ActiveEnterTimestampMonotonic"));
+
+            using var process = Process.Start(info);
+            if (process is null) return empty;
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
+            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+
+            var parsed = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                // Split on the FIRST '=' only: values contain them.
+                var split = line.IndexOf('=', StringComparison.Ordinal);
+                if (split > 0) parsed[line[..split]] = line[(split + 1)..].Trim();
+            }
+            return parsed;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "Could not read properties of {Unit}", unit);
+            return empty;
         }
     }
 
