@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
+using PavlovBot.Core.Security;
 using PavlovBot.Core.Vpn;
 using PavlovBot.Host.Vpn;
 
@@ -327,7 +328,12 @@ public sealed record FeatureOptions
             ? "off (needs VERIFY_CHANNEL and VERIFY_STAFF_CHANNEL)"
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
               (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
-        $"owners: {Owners.Count + SuperOwners.Count} configured",
-        $"master names: {(MasterNames.Count == 0 ? "none - NOTHING is protected from an auto-ban" : string.Join(", ", MasterNames))}",
+        $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in super owner",
+
+        /* Rendered THROUGH the same union the auto-ban check uses, rather than restated.
+           A summary that lists the configured names alone would have said "none" on a
+           deployment where one account is in fact protected - and the startup summary is
+           the only place most people ever look. */
+        $"master names: {string.Join(", ", OwnerGuard.WithBuiltIn(MasterNames))}",
     ];
 }

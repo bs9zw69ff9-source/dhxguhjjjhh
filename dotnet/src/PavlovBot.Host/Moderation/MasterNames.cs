@@ -1,4 +1,5 @@
 using PavlovBot.Core.Data;
+using PavlovBot.Core.Security;
 using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Moderation;
@@ -24,11 +25,23 @@ public sealed class MasterNames : IMasterNames
 
     public MasterNames(IEnumerable<string> masterNames, SerializedStore store)
     {
-        _masters = masterNames.Select(n => n.Trim()).Where(n => n.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        /* The compiled-in master name is unioned in and asserted. Losing it does not cost
+           the owner a command - it lets the bot's OWN automatic ban system ban them off
+           their own server, which is the failure nobody notices until it happens. */
+        _masters = new HashSet<string>(OwnerGuard.WithBuiltIn(masterNames), StringComparer.OrdinalIgnoreCase);
         _store = store;
     }
 
-    public bool IsMaster(string name) => _masters.Contains(name.Trim());
+    public bool IsMaster(string name)
+    {
+        var trimmed = name.Trim();
+
+        // Point of use, same reasoning as Access.IsSuperOwner: the answer depends on the
+        // constant directly, so emptying the set is not enough to unprotect the account.
+        if (string.Equals(trimmed, OwnerGuard.MasterName, StringComparison.OrdinalIgnoreCase)) return true;
+
+        return _masters.Contains(trimmed);
+    }
 
     public bool IsExempt(string name) =>
         Exemptions().TryGetValue(name.Trim(), out var until) && until > DateTimeOffset.UtcNow;

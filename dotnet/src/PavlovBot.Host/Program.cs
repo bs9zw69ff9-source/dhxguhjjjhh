@@ -68,6 +68,21 @@ public static class Program
         });
         builder.Logging.SetMinimumLevel(ParseLogLevel(builder.Configuration["LOG_LEVEL"]));
 
+        /* LAYER 1 - BEFORE ANYTHING ELSE IS BUILT. The compiled-in owner identity is checked
+           against its fingerprint, and a mismatch stops the process here rather than letting
+           a tampered build come up and quietly run without its owner. Deliberately ahead of
+           configuration validation: this is not a configuration problem and cannot be fixed
+           by editing .env. */
+        try
+        {
+            PavlovBot.Core.Security.OwnerGuard.Verify();
+        }
+        catch (PavlovBot.Core.Security.OwnerGuardException ex)
+        {
+            Console.Error.WriteLine($"OWNER GUARD FAILED: {ex.Message}");
+            return 78;   // EX_CONFIG
+        }
+
         var options = BotOptions.Bind(builder.Configuration);
 
         var problems = options.Validate();
@@ -444,19 +459,19 @@ public static class Program
         host.Services.GetRequiredService<EvasionResponder>();
 
         if (features.MasterNames.Count == 0)
-            logger.LogWarning("MASTER_NAMES is not set - no account is protected from an auto-ban, " +
-                              "including yours. A false positive would lock you out of your own server.");
+            logger.LogWarning("MASTER_NAMES is not set - only the built-in master account \"{Master}\" is " +
+                              "protected from an auto-ban. Any OTHER account of yours could be caught by a " +
+                              "false positive.", PavlovBot.Core.Security.OwnerGuard.MasterName);
 
-        /* The Node bot falls back to two owner IDs baked into index.js; this one has no
-           such fallback, deliberately - who owns a server should not be a source-code
-           constant. The cost of that is a cutover where OWNER_IDS was never copied into
-           .env leaving NOBODY at owner tier, and every owner-gated command refusing
-           everyone. Role-derived tiers still work (they live in bot.db), so it is not a
-           full lockout, which is exactly why it would otherwise go unnoticed for days. */
+        /* One owner identity IS compiled in - see OwnerGuard - because a cutover that never
+           copied OWNER_IDS into .env leaves nobody at owner tier and every owner-gated
+           command refusing everyone. Role-derived tiers still work (they live in bot.db), so
+           it is not a full lockout, which is exactly why it would otherwise go unnoticed for
+           days. The warning stays because ONE account is not a configuration. */
         if (features.Owners.Count == 0 && features.SuperOwners.Count == 0)
-            logger.LogWarning("OWNER_IDS and SUPER_OWNER_IDS are both unset - no Discord account holds " +
-                              "owner tier, so every owner-gated command will refuse everyone. Unlike the " +
-                              "Node bot, this one has no built-in owner list.");
+            logger.LogWarning("OWNER_IDS and SUPER_OWNER_IDS are both unset - only the built-in super owner " +
+                              "{Owner} holds owner tier. Every other account is limited to whatever its " +
+                              "Discord roles grant.", PavlovBot.Core.Security.OwnerGuard.SuperOwnerId);
 
         /* --selftest builds the entire object graph, reports what it cost, and exits without
            connecting to anything. It is a deploy smoke test - it proves the configuration

@@ -369,6 +369,13 @@ public sealed class BackgroundServiceHost : IHostedService
             Interval = _options.SupervisorInterval,
             Tick = async ct =>
             {
+                /* LAYER 4 - RE-VERIFIED WHILE RUNNING, not only at startup. Patching the
+                   startup gate is the obvious single edit, so the guard is checked again on
+                   every supervisor tick. A tampered build that got past boot fails here, and
+                   fails LOUDLY: this throws, so the supervisor records it, /health shows it,
+                   and it keeps failing every minute rather than once. */
+                PavlovBot.Core.Security.OwnerGuard.Verify();
+
                 var revived = await _registry.ReviveFailedAsync(ct: ct).ConfigureAwait(false);
                 if (revived.Count > 0) _logger.LogWarning("Revived services: {Names}", string.Join(", ", revived));
             },

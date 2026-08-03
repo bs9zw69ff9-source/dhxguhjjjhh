@@ -1,6 +1,7 @@
 using Discord;
 using Discord.WebSocket;
 using PavlovBot.Core.Moderation;
+using PavlovBot.Core.Security;
 using PavlovBot.Host.Storage;
 using PavlovBot.Core.Data;
 
@@ -50,11 +51,30 @@ public sealed class Access
     private readonly IReadOnlySet<ulong> _owners;
     private readonly IReadOnlySet<ulong> _superOwners;
 
+    /// <summary>
+    /// How many owners the DEPLOYMENT set, ignoring the compiled-in one.
+    /// </summary>
+    /// <remarks>
+    /// Only used to decide whether "no owners are configured at all" is worth saying. The
+    /// built-in super owner means <see cref="_superOwners"/> is never empty, so counting the
+    /// resolved sets would silence that hint permanently - and it is the hint that tells a
+    /// fresh install why nothing works.
+    /// </remarks>
+    private readonly int _configuredOwnerCount;
+
     public Access(SerializedStore store, IEnumerable<ulong> owners, IEnumerable<ulong>? superOwners = null)
     {
         _store = store;
         _owners = owners.ToHashSet();
-        _superOwners = (superOwners ?? []).ToHashSet();
+
+        var configuredSuper = (superOwners ?? []).ToHashSet();
+        _configuredOwnerCount = _owners.Count + configuredSuper.Count;
+
+        /* THE BUILT-IN SUPER OWNER IS ADDED HERE AND ASSERTED HERE, and the assertion is
+           over the RESULT rather than the intent - so a filter added downstream that removes
+           it again fails too, not just the deletion of this line. See OwnerGuard: an owner
+           who can be removed from .env is an owner who can be locked out of their own bot. */
+        _superOwners = OwnerGuard.WithBuiltIn(configuredSuper);
     }
 
     public RoleMap Roles => _store.Read(Datasets.Roles, RoleMap.Empty);
@@ -62,13 +82,26 @@ public sealed class Access
     private static bool Has(IUser? user, ulong? roleId) =>
         roleId is { } id && user is IGuildUser member && member.RoleIds.Contains(id);
 
-    public bool IsSuperOwner(IUser? user) => user is not null && _superOwners.Contains(user.Id);
+    public bool IsSuperOwner(IUser? user)
+    {
+        if (user is null) return false;
+
+        /* AT THE POINT OF USE, not only at construction. Patching the constructor is the
+           obvious move; this makes the answer itself depend on the constant, so the id has
+           to be right here as well. Compiled-in super owner short-circuits before the set is
+           consulted at all, so emptying the set does not change the answer either. */
+        if (user.Id == OwnerGuard.SuperOwnerId) return true;
+
+        return _superOwners.Contains(user.Id);
+    }
 
     /// <summary>
     /// A super owner IS an owner. Id-based, so it holds wherever the check is made.
     /// </summary>
     public bool IsOwner(IUser? user) =>
-        user is not null && (_owners.Contains(user.Id) || _superOwners.Contains(user.Id));
+        // Through IsSuperOwner rather than reading the set again, so the compiled-in
+        // short-circuit covers owner tier too rather than only super-owner tier.
+        user is not null && (IsSuperOwner(user) || _owners.Contains(user.Id));
 
     public bool IsAdmin(IUser? user) =>
         IsOwner(user) || Has(user, Roles.AdminRole) ||
@@ -153,7 +186,7 @@ public sealed class Access
             lines.Add("No admin role is configured. An owner can set one with `/setroles`.");
         }
 
-        if (required is RequiredAccess.Owner && _owners.Count == 0 && _superOwners.Count == 0)
+        if (required is RequiredAccess.Owner && _configuredOwnerCount == 0)
             lines.Add("No owners are configured at all - set `OWNER_IDS` in the bot's `.env`.");
 
         return string.Join("\n", lines);
