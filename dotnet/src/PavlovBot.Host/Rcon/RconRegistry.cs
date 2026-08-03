@@ -102,6 +102,26 @@ public sealed class RconRegistry : IAsyncDisposable
     /// </summary>
     public RosterSnapshot Roster(string server) => _rosters.GetValueOrDefault(server) ?? RosterSnapshot.Empty(server);
 
+    /// <summary>
+    /// Forget every cached roster, because the servers they describe no longer exist.
+    /// </summary>
+    /// <remarks>
+    /// For a RESTART, not for a kick. After <c>systemctl restart</c> the process is new and
+    /// empty, so the last snapshot does not describe a stale reality - it describes a
+    /// reality that has been replaced. Left in place it would keep <c>/players</c> listing
+    /// people who are provably not there and would hold the player-count channel at its
+    /// pre-restart number until the next sweep.
+    ///
+    /// Cleared rather than zeroed: "no roster yet" is honest and every reader already
+    /// handles it, whereas an invented empty roster would be indistinguishable from a
+    /// successful read of an empty server and would be treated as fresh.
+    /// </remarks>
+    public void InvalidateRosters()
+    {
+        _rosters.Clear();
+        foreach (var client in _clients.Values) client.InvalidateReads();
+    }
+
     /// <summary>Every distinct player name across every server.</summary>
     public IReadOnlyList<string> AllOnlinePlayers() =>
         _rosters.Values

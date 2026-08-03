@@ -25,6 +25,19 @@ public sealed record FeatureOptions
     /// <summary>Where the game keeps its whitelist .txt rosters. Null disables the faction commands.</summary>
     public string? RosterDirectory { get; init; }
 
+    /// <summary>
+    /// systemd units for the game servers, in server order. See <c>ServiceControl</c>.
+    /// </summary>
+    /// <remarks>
+    /// Configuration rather than a constant because unit names are a property of the box,
+    /// not of the bot - and this string ends up as an argument to a privileged command, so
+    /// it is validated on the way in rather than trusted for being in .env.
+    /// </remarks>
+    public IReadOnlyList<string> PavlovUnits { get; init; } = [];
+
+    /// <summary>Prefix systemctl with <c>sudo -n</c>. Needed unless the bot runs as root.</summary>
+    public bool SystemctlSudo { get; init; }
+
     /// <summary>The game's own ban-list file - the message a banned player sees.</summary>
     public string? ModsaveBanlistPath { get; init; }
 
@@ -132,6 +145,8 @@ public sealed record FeatureOptions
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
             PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
+            PavlovUnits = PavlovBot.Host.Servers.ServiceControl.ParseUnits(Text(configuration, "PAVLOV_UNITS")),
+            SystemctlSudo = Flag(configuration, "PAVLOV_SYSTEMCTL_SUDO"),
             /* Resolved the way the Node bot resolves it: an explicit override first, then
                derived from the server install root. It was previously built as
                <MODSAVE_PATH>/ModSave/banlist.txt - but MODSAVE_PATH already points AT the
@@ -197,6 +212,17 @@ public sealed record FeatureOptions
     private static string? Text(IConfiguration configuration, string key) =>
         configuration[key]?.Trim() is { Length: > 0 } value ? value : null;
 
+    /// <summary>
+    /// An opt-in switch. Anything that is not affirmative is off.
+    /// </summary>
+    /// <remarks>
+    /// "1", "yes" and "on" are accepted alongside "true" because a .env is written by hand
+    /// and a switch that silently ignores <c>=1</c> is a switch somebody spends an hour on.
+    /// </remarks>
+    private static bool Flag(IConfiguration configuration, string key) =>
+        Text(configuration, key) is { } value &&
+        value is "1" or "true" or "TRUE" or "True" or "yes" or "YES" or "Yes" or "on" or "ON" or "On";
+
     private static int Int(IConfiguration configuration, string key, int fallback) =>
         int.TryParse(configuration[key], CultureInfo.InvariantCulture, out var value) && value > 0 ? value : fallback;
 
@@ -229,6 +255,7 @@ public sealed record FeatureOptions
     [
         $"economy: {(LedgerDirectory is null ? "off (MODSAVE_PATH not set)" : LedgerDirectory)}",
         $"whitelists: {(RosterDirectory is null ? "off (FACTION_ROLES_PATH not set)" : RosterDirectory)}",
+        $"/rotatemap units: {string.Join(", ", PavlovUnits)}{(SystemctlSudo ? " (via sudo -n)" : " (direct - needs root)")}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
         $"money feed: {(MoneyWebhook is null ? "off" : "on")}",

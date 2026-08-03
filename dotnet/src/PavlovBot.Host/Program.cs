@@ -224,6 +224,13 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, IpLookupCommand>();
         builder.Services.AddSingleton<ISlashCommand, VpnCheckCommand>();
         builder.Services.AddSingleton<ISlashCommand, HealthCommand>();
+        /* Restarting the game server is a PRIVILEGED system action, so the unit names come
+           from configuration and the command selects among them by index - nothing typed in
+           Discord reaches the command line. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Servers.ServiceControl(
+            features.PavlovUnits, features.SystemctlSudo,
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServiceControl>>()));
+        builder.Services.AddSingleton<ISlashCommand, RotateMapCommand>();
         builder.Services.AddSingleton<ISlashCommand, GiveMenuCommand>();
         builder.Services.AddSingleton<ISlashCommand, UnlinkNameCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRolesCommand>();
