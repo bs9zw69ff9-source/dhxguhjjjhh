@@ -32,7 +32,7 @@ public sealed class StatsCommand(MetricsRegistry metrics, PluginHost plugins, Ac
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
@@ -113,7 +113,7 @@ public sealed class ManualCommand(
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
@@ -202,7 +202,7 @@ public sealed partial class FirewallCommand(AuditLog audit, Access access, ILogg
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
@@ -323,7 +323,7 @@ public sealed class InspectCommand(
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 

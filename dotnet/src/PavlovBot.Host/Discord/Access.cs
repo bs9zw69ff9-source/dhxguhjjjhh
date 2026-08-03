@@ -35,6 +35,14 @@ public sealed record RoleMap
 ///
 /// Higher tiers imply lower ones - an admin is a mod - because the alternative is every
 /// owner also holding four other roles just to use the bot.
+///
+/// EVERY PREDICATE TAKES <see cref="IUser"/>, NOT <see cref="IGuildUser"/>, and that is a
+/// fix rather than a preference. They used to take IGuildUser, so every caller wrote
+/// <c>command.User as IGuildUser</c> - and a cast that fails yields NULL, which every
+/// predicate reads as "no permissions". An owner would then be refused a mod command while
+/// still passing the owner-tier ones, because those alone checked the id directly. The role
+/// lookups still need the guild member and still degrade to false without it; ownership
+/// never does, because it is a set of ids and needs nothing from the guild at all.
 /// </remarks>
 public sealed class Access
 {
@@ -51,59 +59,105 @@ public sealed class Access
 
     public RoleMap Roles => _store.Read(Datasets.Roles, RoleMap.Empty);
 
-    private static bool Has(IGuildUser? member, ulong? roleId) =>
-        roleId is { } id && member is not null && member.RoleIds.Contains(id);
+    private static bool Has(IUser? user, ulong? roleId) =>
+        roleId is { } id && user is IGuildUser member && member.RoleIds.Contains(id);
 
     public bool IsSuperOwner(IUser? user) => user is not null && _superOwners.Contains(user.Id);
 
+    /// <summary>
+    /// A super owner IS an owner. Id-based, so it holds wherever the check is made.
+    /// </summary>
     public bool IsOwner(IUser? user) =>
         user is not null && (_owners.Contains(user.Id) || _superOwners.Contains(user.Id));
 
-    public bool IsAdmin(IGuildUser? member) =>
-        IsOwner(member) || Has(member, Roles.AdminRole) ||
+    public bool IsAdmin(IUser? user) =>
+        IsOwner(user) || Has(user, Roles.AdminRole) ||
         // Discord's own Administrator permission counts: somebody who can delete the guild
         // is not meaningfully restricted by a bot role check.
-        (member?.GuildPermissions.Administrator ?? false);
+        ((user as IGuildUser)?.GuildPermissions.Administrator ?? false);
 
-    public bool IsMod(IGuildUser? member) => IsAdmin(member) || Has(member, Roles.ModRole);
+    public bool IsMod(IUser? user) => IsAdmin(user) || Has(user, Roles.ModRole);
 
-    public bool IsFactionLeader(IGuildUser? member) => IsAdmin(member) || Has(member, Roles.FactionLeaderRole);
+    public bool IsFactionLeader(IUser? user) => IsAdmin(user) || Has(user, Roles.FactionLeaderRole);
 
-    public bool IsPolice(IGuildUser? member) => IsMod(member) || Has(member, Roles.PoliceRole);
+    public bool IsPolice(IUser? user) => IsMod(user) || Has(user, Roles.PoliceRole);
 
     /// <summary>
     /// Which faction rosters this member may edit.
     /// </summary>
     /// <remarks>
     /// A faction leader manages EVERY roster; a per-faction role manages only its own. This
-    /// is what stops the Gambino leader quietly adding themselves to the NYPD whitelist.
+    /// is what stops the Gambino leader quietly adding themselves to the NYPD whitelist -
+    /// and an OWNER manages all of them, via <see cref="IsFactionLeader"/>.
     /// </remarks>
-    public IReadOnlyCollection<string> ManageableFactions(IGuildUser? member)
+    public IReadOnlyCollection<string> ManageableFactions(IUser? user)
     {
-        if (IsFactionLeader(member)) return ["Gambino", "Colombo", "NYPD"];
+        if (IsFactionLeader(user)) return ["Gambino", "Colombo", "NYPD"];
 
         var roles = Roles;
         var factions = new List<string>();
-        if (Has(member, roles.GambinoRole)) factions.Add("Gambino");
-        if (Has(member, roles.ColomboRole)) factions.Add("Colombo");
-        if (Has(member, roles.NypdRole)) factions.Add("NYPD");
+        if (Has(user, roles.GambinoRole)) factions.Add("Gambino");
+        if (Has(user, roles.ColomboRole)) factions.Add("Colombo");
+        if (Has(user, roles.NypdRole)) factions.Add("NYPD");
         return factions;
     }
 
-    public bool CanManage(IGuildUser? member, string faction) =>
-        ManageableFactions(member).Contains(faction, StringComparer.OrdinalIgnoreCase);
+    public bool CanManage(IUser? user, string faction) =>
+        ManageableFactions(user).Contains(faction, StringComparer.OrdinalIgnoreCase);
 
-    public StaffTier TierOf(IGuildUser? member) =>
-        StaffHierarchy.TierOf(IsSuperOwner(member), IsOwner(member), IsAdmin(member), IsMod(member));
+    public StaffTier TierOf(IUser? user) =>
+        StaffHierarchy.TierOf(IsSuperOwner(user), IsOwner(user), IsAdmin(user), IsMod(user));
 
     /// <summary>The label shown on the help menu.</summary>
-    public string DescribeAccess(IGuildUser? member) => TierOf(member) switch
+    public string DescribeAccess(IUser? user) => TierOf(user) switch
     {
-        StaffTier.SuperOwner or StaffTier.Owner => "OWNER",
+        StaffTier.SuperOwner => "SUPER OWNER",
+        StaffTier.Owner => "OWNER",
         StaffTier.Admin => "ADMIN",
         StaffTier.Mod => "MODERATOR",
-        _ => IsFactionLeader(member) ? "WHITELIST LEADER" : IsPolice(member) ? "POLICE" : "PUBLIC",
+        _ => IsFactionLeader(user) ? "WHITELIST LEADER" : IsPolice(user) ? "POLICE" : "PUBLIC",
     };
+
+    /// <summary>
+    /// Why a refusal happened, in the words of what to change.
+    /// </summary>
+    /// <remarks>
+    /// "You need Mod access" is true and useless: it does not distinguish an unconfigured
+    /// MOD_ROLE from an id missing out of OWNER_IDS from a role the person simply lacks, and
+    /// those are three different fixes. This is only ever shown to the person refused, and
+    /// it describes THEIR OWN standing - it never lists who does hold a tier, because that
+    /// turns every refusal into a map of who to social-engineer.
+    /// </remarks>
+    public string ExplainRefusal(IUser? user, RequiredAccess required)
+    {
+        var lines = new List<string> { $"You need **{required}** access to use that." };
+
+        var held = DescribeAccess(user);
+        lines.Add($"You currently hold: **{held}**.");
+
+        if (user is not IGuildUser)
+        {
+            /* The cast failing is not the same as lacking a role, and it used to look
+               identical. Owner tiers still work in this state because they are id-based,
+               which is exactly the confusing part. */
+            lines.Add(
+                "The bot could not read your server roles for this interaction, so only " +
+                "owner access - which is by user id - could be checked.");
+        }
+        else if (required is RequiredAccess.Mod && Roles.ModRole is null)
+        {
+            lines.Add("No moderator role is configured. An admin can set one with `/setroles`.");
+        }
+        else if (required is RequiredAccess.Admin && Roles.AdminRole is null)
+        {
+            lines.Add("No admin role is configured. An owner can set one with `/setroles`.");
+        }
+
+        if (required is RequiredAccess.Owner && _owners.Count == 0 && _superOwners.Count == 0)
+            lines.Add("No owners are configured at all - set `OWNER_IDS` in the bot's `.env`.");
+
+        return string.Join("\n", lines);
+    }
 }
 
 /// <summary>The permission a command requires.</summary>
@@ -137,27 +191,66 @@ public static class AccessChecks
     {
         ArgumentNullException.ThrowIfNull(access);
         ArgumentNullException.ThrowIfNull(interaction);
+        return access.Allows(required, interaction.User);
+    }
 
-        var member = interaction.User as IGuildUser;
+    /// <summary>
+    /// The decision itself, over a user rather than an interaction.
+    /// </summary>
+    /// <remarks>
+    /// SEPARATE SO IT CAN BE TESTED. <c>SocketInteraction</c> belongs to Discord.Net's
+    /// gateway and cannot be constructed, so while this logic lived inside the interaction
+    /// overload the only way to cover it was for a test to restate the same switch - a guard
+    /// that passes forever once the two copies drift, which is worse than no guard because it
+    /// reads as covered. The overloads above are now the only thing not directly tested, and
+    /// all they do is reach for <c>.User</c>.
+    /// </remarks>
+    public static bool Allows(this Access access, RequiredAccess required, IUser? user)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+
+        /* OWNERS AND SUPER OWNERS PASS EVERY GATE, checked FIRST and by user id.
+
+           This is the one authority that must not depend on anything the guild can fail to
+           tell us. Every other branch below needs the interaction's user to resolve to an
+           IGuildUser to read roles from; when that does not happen the role checks all
+           answer false, and an owner was refused a Mod command while the Owner-tier
+           commands - the only ones that consulted the id - kept working. A ladder where the
+           top rung fails and the rung above it works is not a ladder.
+
+           It is also just what "owner" is meant to mean. Every tier below is a subset of
+           what an owner may do, so there is no gate an owner should be stopped at. */
+        if (access.IsOwner(user)) return true;
+
         return required switch
         {
             RequiredAccess.Public => true,
-            RequiredAccess.Police => access.IsPolice(member),
-            RequiredAccess.FactionLeader => access.IsFactionLeader(member) || access.ManageableFactions(member).Count > 0,
-            RequiredAccess.Mod => access.IsMod(member),
-            RequiredAccess.Admin => access.IsAdmin(member),
-            RequiredAccess.Owner => access.IsOwner(interaction.User),
+            RequiredAccess.Police => access.IsPolice(user),
+            RequiredAccess.FactionLeader => access.IsFactionLeader(user) || access.ManageableFactions(user).Count > 0,
+            RequiredAccess.Mod => access.IsMod(user),
+            RequiredAccess.Admin => access.IsAdmin(user),
+            RequiredAccess.Owner => access.IsOwner(user),   // false here, and kept for the reader
             _ => false,
         };
     }
 
     /// <summary>
-    /// The refusal message.
+    /// The refusal message, when the person refused is not to hand.
     /// </summary>
     /// <remarks>
     /// Says WHAT is needed, not who has it. Listing the holders turns every refusal into a
-    /// map of who to social-engineer.
+    /// map of who to social-engineer. Prefer <see cref="Access.ExplainRefusal"/>, which adds
+    /// what the person actually holds and why - a bare "you need Mod" cannot tell an
+    /// unconfigured role apart from a missing one.
     /// </remarks>
     public static string Refusal(RequiredAccess required) =>
         $"You need **{required}** access to use that.";
+
+    /// <summary>The refusal for an interaction, explaining the refused person's own standing.</summary>
+    public static string Refusal(this Access access, RequiredAccess required, SocketInteraction interaction)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+        ArgumentNullException.ThrowIfNull(interaction);
+        return access.ExplainRefusal(interaction.User, required);
+    }
 }

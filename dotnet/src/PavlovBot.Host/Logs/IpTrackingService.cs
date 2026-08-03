@@ -92,8 +92,35 @@ public sealed class IpTrackingService
 
     // ---- storage ----
 
-    private Dictionary<string, AccountRecord> LoadAccounts() =>
-        _store.Read(Datasets.KnownPlayers, new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase));
+    /// <summary>
+    /// Every account on record, with unusable rows dropped.
+    /// </summary>
+    /// <remarks>
+    /// <c>{"someid": null}</c> deserializes to a dictionary holding a NULL VALUE - the
+    /// element type being non-nullable stops nobody, because that annotation does not survive
+    /// to runtime. Every consumer here walks <c>.Values</c> and reads a property off each one,
+    /// so a single null row is a NullReferenceException in the log poll, on the ban sweep and
+    /// in the alt lookup alike.
+    ///
+    /// Dropped rather than repaired: a row with no content identifies nobody, and inventing
+    /// an empty account for it would put a phantom id into alt detection.
+    /// </remarks>
+    private Dictionary<string, AccountRecord> LoadAccounts()
+    {
+        var stored = _store.Read(Datasets.KnownPlayers, new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase));
+
+        if (!stored.Values.Any(a => a is null)) return stored;
+
+        var usable = new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in stored.Where(e => e.Value is not null))
+            usable[entry.Key] = entry.Value;
+
+        _logger.LogWarning(
+            "known_players holds {Count} empty row(s) - skipping them. They are most likely from " +
+            "another writer of this database", stored.Count - usable.Count);
+
+        return usable;
+    }
 
     public FlagSet LoadFlags()
     {
@@ -465,6 +492,20 @@ public sealed class IpTrackingService
         IReadOnlyList<string> Ids,
         IReadOnlyList<string> ManualIps)
     {
+        /* Read on EVERY join, by CheckFlagsAsync. A stored ip_flags object written before one
+           of these fields existed - or by the Node bot, which shares this database - comes
+           back with nulls despite the non-nullable declarations, and LoadFlags dereferences
+           all four immediately. See AccountRecord for the full account of this. */
+        private readonly IReadOnlyList<string> _ips = Ips ?? [];
+        private readonly IReadOnlyList<string> _names = Names ?? [];
+        private readonly IReadOnlyList<string> _ids = Ids ?? [];
+        private readonly IReadOnlyList<string> _manualIps = ManualIps ?? [];
+
+        public IReadOnlyList<string> Ips { get => _ips; init => _ips = value ?? []; }
+        public IReadOnlyList<string> Names { get => _names; init => _names = value ?? []; }
+        public IReadOnlyList<string> Ids { get => _ids; init => _ids = value ?? []; }
+        public IReadOnlyList<string> ManualIps { get => _manualIps; init => _manualIps = value ?? []; }
+
         public static StoredFlags Empty { get; } = new([], [], [], []);
     }
 }

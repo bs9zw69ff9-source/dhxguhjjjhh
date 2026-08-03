@@ -72,7 +72,7 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
         // whether they are wanted is the point of a warrant.
         if (sub.Name != "check" && !access.Allows(RequiredAccess.Police, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Police))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Police, command))).ConfigureAwait(false);
             return;
         }
 
@@ -206,7 +206,7 @@ public sealed class ArrestCommand : ISlashCommand
 
         if (!_access.Allows(RequiredAccess.Police, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Police))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", _access.Refusal(RequiredAccess.Police, command))).ConfigureAwait(false);
             return;
         }
 
@@ -424,7 +424,7 @@ public sealed class BailCommand(SerializedStore store, Access access) : ISlashCo
 
         if (!access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 

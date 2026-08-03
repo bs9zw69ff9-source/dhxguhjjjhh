@@ -34,7 +34,7 @@ public sealed class CountsCommand(PlayerCountChannels counts, FeatureOptions fea
 
         if (!access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 

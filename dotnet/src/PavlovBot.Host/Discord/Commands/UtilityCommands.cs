@@ -28,7 +28,7 @@ public sealed class KickCommand(RconRegistry rcon, BanService bans, AuditLog aud
 
         if (!access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 
@@ -85,7 +85,7 @@ public sealed class AnnounceCommand(RconRegistry rcon, Access access, ILogger<An
 
         if (!access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 
@@ -143,7 +143,7 @@ public sealed class HealthCommand(HealthRegistry health, ServiceRegistry service
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
@@ -264,7 +264,7 @@ public sealed class HelpCommand(CommandCatalog catalog, Access access) : ISlashC
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        var level = access.DescribeAccess(command.User as IGuildUser);
+        var level = access.DescribeAccess(command.User);
 
         /* Every command is listed, not only the ones this member may run. Hiding them makes
            the bot look broken to somebody who was told a command exists - and the

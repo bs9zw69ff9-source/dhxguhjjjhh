@@ -122,10 +122,12 @@ public class ServiceRegistryTests
         Assert.Equal(ServiceState.Stopped, status.State);
         Assert.True(status.Failures >= 3);
 
-        /* The TYPE is kept alongside the message now. A bare "Object reference not set to an
-           instance of an object" identifies nothing, and it is exactly what a null deref in
-           a tick produces. */
-        Assert.Equal("InvalidOperationException: nope", status.LastError);
+        /* The TYPE and the ORIGIN are kept alongside the message. A bare "Object reference
+           not set to an instance of an object" identifies nothing, and it is exactly what a
+           null deref in a tick produces - five of those under `log-tail` was a real /health
+           report, and it narrowed the cause to "somewhere in the log pipeline". */
+        Assert.StartsWith("InvalidOperationException: nope", status.LastError, StringComparison.Ordinal);
+        Assert.Contains("ServiceRegistryTests.cs:", status.LastError, StringComparison.Ordinal);
         Assert.NotEmpty(status.Errors);
     }
 

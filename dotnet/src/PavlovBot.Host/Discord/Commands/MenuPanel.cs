@@ -29,6 +29,7 @@ public sealed class MenuPanel(
     SerializedStore store,
     FeatureOptions features,
     AuditLog audit,
+    Access access,
     ILogger<MenuPanel> logger) : IComponentHandler
 {
     public const string Id = "menu";
@@ -89,8 +90,7 @@ public sealed class MenuPanel(
     {
         await modal.DeferAsync(ephemeral: true).ConfigureAwait(false);
 
-        var member = modal.User as IGuildUser;
-        var tier = TierOf(member);
+        var tier = TierOf(modal.User);
 
         if (tier is null)
         {
@@ -158,11 +158,26 @@ public sealed class MenuPanel(
     /// HIGHEST FIRST, and blacklist above everything: somebody holding both the blacklist
     /// role and a staff role has had their access revoked, so the revocation has to win.
     /// </remarks>
-    private string? TierOf(IGuildUser? member)
+    private string? TierOf(IUser? user)
     {
+        var member = user as IGuildUser;
+
+        /* BLACKLIST STILL WINS, EVEN OVER AN OWNER. Everywhere else in the bot an owner
+           passes every gate, and this is the one deliberate exception: the blacklist role is
+           an explicit revocation somebody set on purpose, and an owner who wants it gone can
+           remove the role in two clicks. Silently ignoring a revocation is the surprise
+           that is worse than the inconvenience. */
+        if (features.MenuRoleBlacklist is { } barred && member is not null && member.RoleIds.Contains(barred))
+            return "blacklist";
+
+        /* OWNERS GET THE TOP MENU without needing the staff role, and by user id - so it
+           holds even when the interaction did not resolve to a guild member. An owner who
+           cannot grant themselves a menu from their own panel is the case that sent people
+           looking for /givemenu in the first place. */
+        if (access.IsOwner(user)) return "highstaff";
+
         if (member is null) return null;
 
-        if (features.MenuRoleBlacklist is { } barred && member.RoleIds.Contains(barred)) return "blacklist";
         if (features.MenuRoleHighStaff is { } high && member.RoleIds.Contains(high)) return "highstaff";
         if (features.MenuRoleStaff is { } staff && member.RoleIds.Contains(staff)) return "staff";
         return null;

@@ -37,7 +37,7 @@ public sealed class StaffActivityCommand(AuditLog audit, Access access) : ISlash
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -103,7 +103,7 @@ public sealed class StaffLeaderboardCommand(Boards boards, Access access) : ISla
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -207,7 +207,7 @@ public sealed class FlushCommand(
 
         if (!access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 
@@ -294,7 +294,7 @@ public sealed class SubclassCommand(RosterService rosters, Access access, ILogge
             return;
         }
 
-        if (!access.CanManage(command.User as IGuildUser, membership.Faction.Name))
+        if (!access.CanManage(command.User, membership.Faction.Name))
         {
             await Reply(command, Theme.Denied("Not your roster",
                 $"You do not manage the **{membership.Faction.Name}** whitelist.")).ConfigureAwait(false);
@@ -353,7 +353,7 @@ public sealed class StripMenuCommand(
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 

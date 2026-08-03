@@ -65,7 +65,7 @@ public abstract class BanCommandBase : ISlashCommand
             return Theme.Failure("That name has nothing usable in it", "After sanitising there was no identifier left to ban.");
 
         var account = Tracking.AccountByName(name);
-        var tier = Access.TierOf(command.User as IGuildUser);
+        var tier = Access.TierOf(command.User);
         var now = DateTimeOffset.UtcNow;
         var permanent = duration is null;
 
@@ -172,7 +172,7 @@ public sealed class TempBanCommand(
     {
         if (!Access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", Access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 
@@ -212,7 +212,7 @@ public sealed class PermBanCommand(
     {
         if (!Access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", Access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -240,7 +240,7 @@ public sealed class UnbanCommand(
     {
         if (!Access.Allows(RequiredAccess.Mod, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Mod))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", Access.Refusal(RequiredAccess.Mod, command))).ConfigureAwait(false);
             return;
         }
 
@@ -256,7 +256,7 @@ public sealed class UnbanCommand(
         /* The hierarchy check. Moderation authority is the one thing a moderator can attack
            with permissions they legitimately hold - without this, any mod can quietly unban
            whoever the owner banned and the audit log records it as routine. */
-        var actor = Access.TierOf(command.User as IGuildUser);
+        var actor = Access.TierOf(command.User);
         if (!StaffHierarchy.CanOverride(actor, existing.Tier))
         {
             await Reply(command, Theme.Denied("Above your authority",

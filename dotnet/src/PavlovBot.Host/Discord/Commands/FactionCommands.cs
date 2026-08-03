@@ -86,7 +86,7 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, Board
         /* Per-faction authority. A faction leader manages every roster; a per-faction role
            manages only its own - which is what stops the Gambino leader quietly adding
            themselves to the NYPD whitelist. */
-        if (!access.CanManage(command.User as IGuildUser, faction.Name))
+        if (!access.CanManage(command.User, faction.Name))
         {
             await Reply(command, Theme.Denied("Not your roster",
                 $"You do not manage the **{faction.Name}** whitelist.")).ConfigureAwait(false);
@@ -243,7 +243,7 @@ public sealed class RankChangeCommand : ISlashCommand
             return;
         }
 
-        if (!_access.CanManage(command.User as IGuildUser, membership.Faction.Name))
+        if (!_access.CanManage(command.User, membership.Faction.Name))
         {
             await Reply(command, Theme.Denied("Not your roster",
                 $"You do not manage the **{membership.Faction.Name}** whitelist.")).ConfigureAwait(false);

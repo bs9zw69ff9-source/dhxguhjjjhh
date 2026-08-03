@@ -55,7 +55,7 @@ public sealed class GiveMenuCommand(
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -204,7 +204,7 @@ public sealed class UnlinkNameCommand(SerializedStore store, Access access, ILog
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 

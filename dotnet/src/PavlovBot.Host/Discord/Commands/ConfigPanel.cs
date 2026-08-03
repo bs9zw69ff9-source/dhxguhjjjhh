@@ -136,7 +136,7 @@ public sealed class ConfigPanel(
            - which is precisely when somebody being removed as owner would try to use it. */
         if (!access.Allows(RequiredAccess.Owner, interaction))
         {
-            await Respond(interaction, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Respond(interaction, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, interaction))).ConfigureAwait(false);
             return;
         }
 

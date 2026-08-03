@@ -223,6 +223,15 @@ public sealed class ServiceRegistry : IAsyncDisposable
            in a tick produces. */
         var message = ex.Message.Length > 0 ? $"{ex.GetType().Name}: {ex.Message}" : ex.GetType().Name;
 
+        /* AND WHERE IT CAME FROM. The type and message together still identify nothing when
+           the type is NullReferenceException - five identical "Object reference not set to an
+           instance of an object" lines under `log-tail` is a real report this produced, and it
+           narrowed the cause to "somewhere in the log pipeline", which is most of the bot.
+
+           One frame is enough and is all that fits: the file and line of the throw site turns
+           that report into a place to look. */
+        if (Origin(ex) is { } origin) message += $"  ({origin})";
+
         record.LastError = message;
 
         lock (record.Recent)
@@ -230,6 +239,31 @@ public sealed class ServiceRegistry : IAsyncDisposable
             record.Recent.Enqueue(new ServiceFailure(DateTimeOffset.UtcNow, message));
             while (record.Recent.Count > MaxRecentErrors) record.Recent.Dequeue();
         }
+    }
+
+    /// <summary>
+    /// The deepest frame that belongs to this bot: "IpTrackingService.cs:302".
+    /// </summary>
+    /// <remarks>
+    /// The innermost frame overall is usually inside the framework - a dictionary, a JSON
+    /// converter, LINQ - which is true and no use. The first frame carrying one of OUR file
+    /// names is the line to open. Falls back to the method name when the build carries no
+    /// symbols, and to null rather than guessing.
+    /// </remarks>
+    internal static string? Origin(Exception ex)
+    {
+        ArgumentNullException.ThrowIfNull(ex);
+
+        var trace = new System.Diagnostics.StackTrace(ex.InnerException ?? ex, fNeedFileInfo: true);
+
+        foreach (var frame in trace.GetFrames())
+        {
+            if (frame.GetFileName() is { Length: > 0 } file)
+                return $"{Path.GetFileName(file)}:{frame.GetFileLineNumber()}";
+        }
+
+        var method = trace.GetFrames().FirstOrDefault()?.GetMethod();
+        return method is null ? null : $"{method.DeclaringType?.Name}.{method.Name}";
     }
 
     private const int MaxRecentErrors = 5;

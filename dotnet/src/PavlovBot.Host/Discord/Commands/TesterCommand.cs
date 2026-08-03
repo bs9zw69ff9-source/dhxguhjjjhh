@@ -64,7 +64,7 @@ public sealed class TesterCommand(
            of, which is a trust decision rather than a moderation one. */
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 

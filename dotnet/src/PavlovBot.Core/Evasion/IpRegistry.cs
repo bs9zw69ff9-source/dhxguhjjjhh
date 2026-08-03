@@ -19,6 +19,38 @@ public sealed record AccountRecord(
     DateTimeOffset? FirstSeen = null,
     DateTimeOffset? LastSeen = null)
 {
+    /* EVERY LIST DEFAULTS TO EMPTY, AND THE ?? IS LOAD-BEARING.
+
+       Nullable reference types are a COMPILE-TIME promise. System.Text.Json does not honour
+       them: a stored record missing "names", or carrying an explicit null, deserializes with
+       these properties set to null even though nothing here is declared nullable. The
+       compiler then cheerfully lets every consumer write `record.Names.Count`.
+
+       That is not hypothetical - it is the NullReferenceException that was firing in
+       `log-tail` every few minutes. This dataset is shared with the Node bot, which writes
+       its own shape, and any account row lacking one of these arrays threw on EVERY login and
+       EVERY disconnect for that player, out of RecordAsync. Because the ingest loop had no
+       per-line guard, that one throw also discarded the rest of the batch, which is why joins
+       duplicated, leaves vanished and connection cards never appeared.
+
+       An absent list means "none recorded", never "explode".
+
+       THE COALESCE IS IN THE SETTER, not a property initializer. An initializer alone runs
+       only in the constructor, and `existing with { Names = whatever }` - which is how
+       RecordAsync writes every update - assigns straight through it. The null would come
+       back one layer further down, where it is even harder to trace. */
+    private readonly IReadOnlyList<string> _confirmedIps = ConfirmedIps ?? [];
+    private readonly IReadOnlyList<string> _guessedIps = GuessedIps ?? [];
+    private readonly IReadOnlyList<string> _names = Names ?? [];
+    private readonly string _id = Id ?? "";
+
+    public IReadOnlyList<string> ConfirmedIps { get => _confirmedIps; init => _confirmedIps = value ?? []; }
+    public IReadOnlyList<string> GuessedIps { get => _guessedIps; init => _guessedIps = value ?? []; }
+    public IReadOnlyList<string> Names { get => _names; init => _names = value ?? []; }
+
+    /// <summary>The id a foreign or truncated row omitted, so it is never null downstream.</summary>
+    public string Id { get => _id; init => _id = value ?? ""; }
+
     public string? Name => Names.Count > 0 ? Names[0] : null;
 
     public static AccountRecord Empty(string id) => new(id, [], [], []);
@@ -37,6 +69,19 @@ public sealed record FlagSet(
     IReadOnlySet<string> Ids,
     IReadOnlySet<string> ManualIps)
 {
+    /* Same reason as AccountRecord, and the same setter-not-initializer rule: a null set here
+       is a crash in the flag check that runs on every single join, and nothing in the type
+       system prevents one arriving. Addresses match exactly; names and ids case-insensitively. */
+    private readonly IReadOnlySet<string> _ips = Ips ?? new HashSet<string>(StringComparer.Ordinal);
+    private readonly IReadOnlySet<string> _names = Names ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly IReadOnlySet<string> _ids = Ids ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly IReadOnlySet<string> _manualIps = ManualIps ?? new HashSet<string>(StringComparer.Ordinal);
+
+    public IReadOnlySet<string> Ips { get => _ips; init => _ips = value ?? new HashSet<string>(StringComparer.Ordinal); }
+    public IReadOnlySet<string> Names { get => _names; init => _names = value ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
+    public IReadOnlySet<string> Ids { get => _ids; init => _ids = value ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
+    public IReadOnlySet<string> ManualIps { get => _manualIps; init => _manualIps = value ?? new HashSet<string>(StringComparer.Ordinal); }
+
     public static FlagSet Empty { get; } = new(
         new HashSet<string>(StringComparer.Ordinal),
         new HashSet<string>(StringComparer.OrdinalIgnoreCase),

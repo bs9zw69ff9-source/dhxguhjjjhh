@@ -60,7 +60,7 @@ public sealed partial class SetPinCommand(RconRegistry rcon, Access access, ILog
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -154,7 +154,7 @@ public sealed class RemovePinCommand(RconRegistry rcon, Access access, ILogger<R
 
         if (!access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Admin))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -214,7 +214,7 @@ public sealed class IpLookupCommand(VpnScreeningService vpn, Access access, Stat
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
@@ -319,7 +319,7 @@ public sealed class VpnCheckCommand(VpnScreeningService vpn, Access access) : IS
 
         if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", AccessChecks.Refusal(RequiredAccess.Owner))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
