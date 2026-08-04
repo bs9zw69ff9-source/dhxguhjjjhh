@@ -59,6 +59,23 @@ public sealed class PlayerNotice(RconRegistry rcon, ILogger<PlayerNotice> logger
     public static string RconNameFor(int serverNumber) => ServiceControl.RconNameFor(serverNumber);
 
     /// <summary>
+    /// The <c>Notify</c> target that means "every player on the server".
+    /// </summary>
+    /// <remarks>
+    /// THE VERB TAKES A TARGET: <c>Notify &lt;player|All&gt; &lt;message&gt;</c>. Sent without one,
+    /// the server reads the first word of the message as the player to notify, finds nobody
+    /// by that name and answers <c>"Successful": false</c> - so <c>/serverswitch restart</c>
+    /// warned nobody while reporting that it had, and players were dropped with no notice.
+    ///
+    /// It belongs here rather than in the warning text. The target is part of the wire
+    /// format, and a message that carries its own routing is one an author can silently
+    /// delete: the previous fix put a literal "All" at the front of the rotate-map warning,
+    /// which worked only for that one string and read as part of the sentence everywhere it
+    /// was shown back to an admin.
+    /// </remarks>
+    private const string Everyone = "All";
+
+    /// <summary>
     /// Broadcast to one server. Never throws - the caller is about to act regardless.
     /// </summary>
     public async Task<NoticeResult> WarnAsync(int serverNumber, string message, CancellationToken ct)
@@ -82,7 +99,7 @@ public sealed class PlayerNotice(RconRegistry rcon, ILogger<PlayerNotice> logger
 
             // Sanitize.Message even for a constant: the RCON protocol is line oriented, and
             // every string that reaches it goes through the same door.
-            await rcon.SendAsync(name, $"Notify {Sanitize.Message(message)}", cts.Token).ConfigureAwait(false);
+            await rcon.SendAsync(name, $"Notify {Everyone} {Sanitize.Message(message)}", cts.Token).ConfigureAwait(false);
 
             logger.LogInformation("Warned {Name}: {Message}", name, message);
             return new NoticeResult(true, message);
