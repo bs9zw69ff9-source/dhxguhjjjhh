@@ -49,6 +49,10 @@ public static class Datasets
     /// </remarks>
     public const string IgnoredNames = "ignored_names";
     public const string AutobanExempt = "autoban_exempt";
+
+    /// <summary>Player -> their warnings, newest last. Escalation counts these.</summary>
+    public const string Warnings = "warnings";
+
     public const string BanReconcileState = "ban_reconcile_state";
     public const string VpnChecks = "vpn_checks";
     public const string ServerLock = "server_lock";
@@ -74,7 +78,24 @@ public static class Datasets
     public const string Verifications = "verifications";
     public const string VerifyState = "verify_state";
     public const string DonatorSuspend = "donator_suspend";
+
+    /// <summary>
+    /// Payroll runs, newest last. An ARRAY - the Node bot's shape, and this name is its own.
+    /// </summary>
     public const string Wages = "wages";
+
+    /// <summary>
+    /// Rolling per-player earnings, for anomaly detection. Player -> recent credits.
+    /// </summary>
+    /// <remarks>
+    /// PERSISTED rather than in-memory, because the window that matters is longer than an
+    /// uptime. A detector that forgets everything on restart is one a deploy silently
+    /// disarms, and the money exploit worth catching is the slow one.
+    /// </remarks>
+    public const string MoneyWindow = "money_window";
+
+    /// <summary>Last payroll instant per faction, so a restart cannot re-pay a period.</summary>
+    public const string PayrollState = "payroll_state";
 
     // ---- menus ----
     public const string MenuGrants = "menu_grants";
@@ -100,6 +121,7 @@ public static class Datasets
         [IpFlags] = "{}",
         [IgnoredNames] = "[]",
         [AutobanExempt] = "{}",
+        [Warnings] = "{}",
         [BanReconcileState] = "{}",
         [VpnChecks] = "{}",
         [ServerLock] = "{}",
@@ -123,6 +145,8 @@ public static class Datasets
         [VerifyState] = "{}",
         [DonatorSuspend] = "{}",
         [Wages] = "[]",
+        [MoneyWindow] = "{}",
+        [PayrollState] = "{}",
 
         [MenuGrants] = "{}",
         [MenuPanel] = "{}",

@@ -205,6 +205,63 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
             .Build();
     }
 
+    /// <summary>
+    /// Everyone with an outstanding warrant, oldest first.
+    /// </summary>
+    /// <remarks>
+    /// OLDEST FIRST, which is the opposite of every other board here. The rest rank by size
+    /// because they are leaderboards; this one is a WORK QUEUE, and the warrant nobody has
+    /// served in three days is the one that needs attention, not the one issued a minute ago.
+    ///
+    /// An EMPTY board rather than null, same as the arrest board: "no warrants" is real
+    /// information on a police server and posting nothing would leave whatever was there
+    /// before sitting frozen and wrong.
+    ///
+    /// The reason is included because a warrant board that only lists names makes every
+    /// officer ask in chat what it was for.
+    /// </remarks>
+    public Embed? BuildWarrantBoard()
+    {
+        var warrants = store.Read(Datasets.Warrants, new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase));
+
+        var rows = warrants
+            .Where(kv => kv.Value is { Count: > 0 })
+            .Select(kv => (
+                // The display-case name off the entries, falling back to the map key, which
+                // is lowercased. Same fallback the arrest board uses.
+                Player: kv.Value[^1].Player is { Length: > 0 } named ? named : kv.Key,
+                Count: kv.Value.Count,
+                Oldest: kv.Value.Min(w => w.At),
+                Latest: kv.Value[^1]))
+            .OrderBy(r => r.Oldest)
+            .Take(TopRows)
+            .ToList();
+
+        if (rows.Count == 0)
+        {
+            return Theme.Success($"{Theme.Ok} No active warrants", "Nobody is currently wanted.")
+                .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+                .Build();
+        }
+
+        var lines = rows.Select(r =>
+            $"{Theme.Deny} **{Sanitize.Code(r.Player)}**{(r.Count > 1 ? $" ×{r.Count}" : "")}\n" +
+            $"　{Sanitize.Code(r.Latest.Reason)} — issued {Theme.Relative(r.Oldest)} by {Sanitize.Code(r.Latest.IssuedBy)}");
+
+        var total = warrants.Where(kv => kv.Value is { Count: > 0 }).Sum(kv => kv.Value.Count);
+
+        var embed = Theme.Punishment($"{Theme.Deny} Active warrants", string.Join("\n", lines))
+            .AddField("Wanted", rows.Count.ToString(CultureInfo.InvariantCulture), true)
+            .AddField("Warrants", total.ToString(CultureInfo.InvariantCulture), true);
+
+        if (warrants.Count(kv => kv.Value is { Count: > 0 }) > TopRows)
+            embed.AddField("Not shown", $"{warrants.Count(kv => kv.Value is { Count: > 0 }) - TopRows} more wanted.");
+
+        return embed
+            .Brand($"Oldest first · Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+            .Build();
+    }
+
     /// <summary>Staff ranked by moderation actions taken.</summary>
     public Embed? BuildStaffBoard()
     {

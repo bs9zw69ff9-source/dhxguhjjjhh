@@ -83,6 +83,31 @@ public sealed record FeatureOptions
 
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
+
+    /// <summary>Where the live warrant board lives. Its own channel - it is a work queue, not a leaderboard.</summary>
+    public ulong? WarrantBoardChannel { get; init; }
+
+    // ---- payroll ----
+
+    /// <summary>Paid to each on-duty member per period. Zero disables payroll entirely.</summary>
+    public long PayrollAmount { get; init; }
+
+    /// <summary>How often wages are paid. One period is paid per run, never a backlog.</summary>
+    public TimeSpan PayrollInterval { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>Which faction draws a wage. NYPD by default - they are the ones on duty.</summary>
+    public string PayrollFaction { get; init; } = "NYPD";
+
+    // ---- money anomaly detection ----
+
+    /// <summary>Earnings inside the window above which a player is flagged. Zero disables it.</summary>
+    public long MoneyAlertThreshold { get; init; }
+
+    /// <summary>The window those earnings are summed over.</summary>
+    public TimeSpan MoneyAlertWindow { get; init; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>Whether a crashed server is restarted automatically. Off unless asked for.</summary>
+    public bool CrashRecovery { get; init; }
     /// <summary>
     /// Voice channels renamed to each server's live player count, in server order.
     /// </summary>
@@ -208,6 +233,16 @@ public sealed record FeatureOptions
 
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
+            WarrantBoardChannel = Snowflake(configuration, "WARRANT_BOARD_CHANNEL"),
+
+            PayrollAmount = Money(configuration, "PAYROLL_AMOUNT"),
+            PayrollInterval = Minutes(configuration, "PAYROLL_INTERVAL_MINUTES", TimeSpan.FromMinutes(30)),
+            PayrollFaction = Text(configuration, "PAYROLL_FACTION") ?? "NYPD",
+
+            MoneyAlertThreshold = Money(configuration, "MONEY_ALERT_THRESHOLD"),
+            MoneyAlertWindow = Minutes(configuration, "MONEY_ALERT_WINDOW_MINUTES", TimeSpan.FromMinutes(15)),
+
+            CrashRecovery = Flag(configuration, "CRASH_RECOVERY"),
             PlayerCountChannels = Snowflakes(configuration, "PLAYER_COUNT_CHANNELS"),
             ShackTotalChannel = Snowflake(configuration, "SHACK_TOTAL_CHANNEL"),
             DefaultServerCapacity = Int(configuration, "SERVER_MAX_PLAYERS", 24),
@@ -279,6 +314,16 @@ public sealed record FeatureOptions
     private static int Int(IConfiguration configuration, string key, int fallback) =>
         int.TryParse(configuration[key], CultureInfo.InvariantCulture, out var value) && value > 0 ? value : fallback;
 
+    /// <summary>A money amount. Zero is a MEANINGFUL value here - it is how a feature is left off.</summary>
+    private static long Money(IConfiguration configuration, string key) =>
+        long.TryParse(configuration[key]?.Trim(), CultureInfo.InvariantCulture, out var value) && value > 0 ? value : 0;
+
+    /// <summary>A span given in MINUTES, which is how anybody writing a wage interval thinks about it.</summary>
+    private static TimeSpan Minutes(IConfiguration configuration, string key, TimeSpan fallback) =>
+        double.TryParse(configuration[key], CultureInfo.InvariantCulture, out var minutes) && minutes > 0
+            ? TimeSpan.FromMinutes(minutes)
+            : fallback;
+
     private static ulong? Snowflake(IConfiguration configuration, string key) =>
         ulong.TryParse(configuration[key]?.Trim(), CultureInfo.InvariantCulture, out var id) && id > 0 ? id : null;
 
@@ -314,6 +359,16 @@ public sealed record FeatureOptions
         $"money feed: {(MoneyWebhook is null ? "off" : "on")}",
         $"cash leaderboard: {(LeaderboardChannel is null ? "off (LEADERBOARD_CHANNEL not set)" : $"channel {LeaderboardChannel}, every {LeaderboardInterval.TotalSeconds:0}s")}",
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
+        $"warrant board: {(WarrantBoardChannel is null ? "off (WARRANT_BOARD_CHANNEL not set)" : $"channel {WarrantBoardChannel}")}",
+        $"payroll: {(PayrollAmount <= 0
+            ? "off (PAYROLL_AMOUNT not set)"
+            : $"{PayrollAmount:N0} to on-duty {PayrollFaction} every {PayrollInterval.TotalMinutes:0}m")}",
+        $"money alerts: {(MoneyAlertThreshold <= 0
+            ? "off (MONEY_ALERT_THRESHOLD not set)"
+            : $"over {MoneyAlertThreshold:N0} earned in {MoneyAlertWindow.TotalMinutes:0}m")}",
+        $"crash recovery: {(CrashRecovery
+            ? $"on - a failed unit is restarted, up to {Servers.CrashRecovery.MaxAttempts}x per {Servers.CrashRecovery.AttemptWindow.TotalMinutes:0}m"
+            : "off (CRASH_RECOVERY not set)")}",
         $"player-count channels: {(PlayerCountChannels.Count == 0 ? "off (PLAYER_COUNT_CHANNELS not set)" : $"{PlayerCountChannels.Count} configured")}",
         $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",

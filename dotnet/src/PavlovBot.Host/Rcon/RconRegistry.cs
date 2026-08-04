@@ -26,8 +26,21 @@ public sealed record RosterSnapshot(string Server, IReadOnlyList<PavlovPlayer> P
 /// across the ~60s between sweeps so a command that needs "who is online" does not pay a
 /// round trip on the game thread to find out.
 /// </remarks>
-public sealed class RconRegistry : IAsyncDisposable
+public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
 {
+    /// <summary>The live roster, as <see cref="IOnlineRoster"/>. Same data, narrower contract.</summary>
+    IReadOnlyList<string> IOnlineRoster.Online => AllOnlinePlayers();
+
+    /// <summary>
+    /// True when ANY server's roster is fresh.
+    /// </summary>
+    /// <remarks>
+    /// Any rather than all, deliberately. One server being unreachable does not make the
+    /// players confirmed on the other two imaginary, and requiring every server to answer
+    /// would stop payroll dead for as long as one box is down.
+    /// </remarks>
+    bool IOnlineRoster.IsTrustworthy => Servers.Any(RosterIsFresh);
+
     private readonly Dictionary<string, RconClient> _clients;
     private readonly ConcurrentDictionary<string, RosterSnapshot> _rosters = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string?> _lastError = new(StringComparer.Ordinal);

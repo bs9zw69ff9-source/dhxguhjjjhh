@@ -78,7 +78,7 @@ public enum UnitState
 public sealed class ServiceControl(
     IReadOnlyList<string> units,
     bool? useSudo,
-    ILogger<ServiceControl> logger) : PavlovBot.Host.Rcon.IServerLifecycle
+    ILogger<ServiceControl> logger) : PavlovBot.Host.Rcon.IServerLifecycle, IUnitControl
 {
     /// <summary>
     /// Whether this server was stopped on purpose. See <c>IServerLifecycle</c>.

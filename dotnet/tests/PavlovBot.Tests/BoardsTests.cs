@@ -197,6 +197,80 @@ public class BoardsTests : IDisposable
         Assert.Empty(_boards.Playtime());
     }
 
+
+    // ---- the warrant board ----
+
+    [Fact]
+    public async Task TheWarrantBoardListsTheOldestWarrantFirst()
+    {
+        /* OLDEST FIRST, unlike every other board here, because this one is a WORK QUEUE
+           rather than a leaderboard. The warrant nobody has served in three days is the one
+           that needs an officer, not the one issued a minute ago. */
+        var old = DateTimeOffset.UtcNow.AddDays(-3);
+        var recent = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+        await _store.WriteAsync(Datasets.Warrants, new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["fresh"] = [new Warrant("Fresh", "speeding", "Officer", recent)],
+            ["stale"] = [new Warrant("Stale", "armed robbery", "Officer", old)],
+        });
+
+        var board = _boards.BuildWarrantBoard();
+
+        Assert.NotNull(board);
+        var staleAt = board!.Description.IndexOf("Stale", StringComparison.Ordinal);
+        var freshAt = board.Description.IndexOf("Fresh", StringComparison.Ordinal);
+        Assert.True(staleAt >= 0 && freshAt >= 0);
+        Assert.True(staleAt < freshAt, "the oldest warrant must be listed first");
+    }
+
+    [Fact]
+    public void AnEmptyWarrantBoardIsAnEmbedRatherThanNull()
+    {
+        /* Null means "skip this cycle and leave what is posted". On a police server "nobody
+           is wanted" is real information, and skipping would leave yesterday's wanted list
+           sitting there looking current. */
+        var board = _boards.BuildWarrantBoard();
+
+        Assert.NotNull(board);
+        Assert.Contains("No active warrants", board!.Title, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APlayerWithSeveralWarrantsIsListedOnce()
+    {
+        await _store.WriteAsync(Datasets.Warrants, new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["repeat"] =
+            [
+                new Warrant("Repeat", "first", "Officer", DateTimeOffset.UtcNow.AddHours(-2)),
+                new Warrant("Repeat", "second", "Officer", DateTimeOffset.UtcNow.AddHours(-1)),
+            ],
+        });
+
+        var board = _boards.BuildWarrantBoard();
+
+        Assert.NotNull(board);
+        Assert.Contains("\u00d72", board!.Description, StringComparison.Ordinal);
+        // The MOST RECENT reason is the one shown - it is what they are wanted for now.
+        Assert.Contains("second", board.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APlayerWhoseWarrantsWereClearedIsNotOnTheBoard()
+    {
+        // /warrant remove leaves an empty list rather than removing the key.
+        await _store.WriteAsync(Datasets.Warrants, new Dictionary<string, List<Warrant>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["cleared"] = [],
+        });
+
+        var board = _boards.BuildWarrantBoard();
+
+        Assert.NotNull(board);
+        Assert.Contains("No active warrants", board!.Title, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         GC.SuppressFinalize(this);

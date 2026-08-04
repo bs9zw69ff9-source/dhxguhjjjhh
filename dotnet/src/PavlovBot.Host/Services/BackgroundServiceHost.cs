@@ -54,6 +54,10 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Discord.PlayerCountChannels _counts;
     private readonly PavlovBot.Host.Verification.VerificationService _verification;
     private readonly PavlovBot.Host.Discord.Commands.MenuPanel _menuPanel;
+    private readonly PavlovBot.Host.Economy.Payroll _payroll;
+    private readonly PavlovBot.Host.Economy.MoneyAnomalyDetector _moneyAlerts;
+    private readonly PavlovBot.Host.Servers.CrashRecovery _crashRecovery;
+    private readonly PavlovBot.Host.Moderation.AuditLog _audit;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -78,8 +82,16 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Discord.PlayerCountChannels counts,
         PavlovBot.Host.Verification.VerificationService verification,
         PavlovBot.Host.Discord.Commands.MenuPanel menuPanel,
+        PavlovBot.Host.Economy.Payroll payroll,
+        PavlovBot.Host.Economy.MoneyAnomalyDetector moneyAlerts,
+        PavlovBot.Host.Servers.CrashRecovery crashRecovery,
+        PavlovBot.Host.Moderation.AuditLog audit,
         ILogger<BackgroundServiceHost> logger)
     {
+        _payroll = payroll;
+        _moneyAlerts = moneyAlerts;
+        _crashRecovery = crashRecovery;
+        _audit = audit;
         _registry = registry;
         _rcon = rcon;
         _options = options;
@@ -233,7 +245,44 @@ public sealed class BackgroundServiceHost : IHostedService
             {
                 Name = "money-log",
                 Interval = _features.MoneyLogInterval,
-                Tick = ct => _moneyLog.TickAsync(ct),
+                Tick = async ct =>
+                {
+                    var changes = await _moneyLog.TickAsync(ct).ConfigureAwait(false);
+
+                    /* THE SAME DELTAS, READ TWICE. The money log posts them to a feed; the
+                       detector sums them over a window. Hanging the detector off this tick
+                       rather than giving it its own means it sees exactly what was reported,
+                       with no second pass over the ledgers and no chance of the two
+                       disagreeing about what changed. */
+                    foreach (var alert in await _moneyAlerts.ObserveAsync(changes, ct).ConfigureAwait(false))
+                    {
+                        await _audit.RecordAsync("money-alert", "system", alert.Player,
+                            $"earned {alert.Total:N0} across {alert.Events} credit(s) in " +
+                            $"{alert.Window.TotalMinutes:0} minutes", ct).ConfigureAwait(false);
+                    }
+                },
+            });
+        }
+
+        if (_payroll.Enabled)
+        {
+            /* TICKS FAR MORE OFTEN THAN IT PAYS, and that is the design. Payroll decides for
+               itself whether a period has elapsed, from a PERSISTED timestamp - so a bot
+               restart, a supervisor revival or a slow tick cannot skip a period or pay one
+               twice. A service interval that WAS the pay period would do both. */
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "payroll",
+                Interval = TimeSpan.FromMinutes(1),
+                Tick = async ct =>
+                {
+                    var run = await _payroll.RunAsync(ct).ConfigureAwait(false);
+                    if (run.Paid.Count == 0) return;
+
+                    await _audit.RecordAsync("payroll", "system", $"{run.Paid.Count} {run.Faction}",
+                        $"{_payroll.Amount:N0} each, {run.Total:N0} total", ct).ConfigureAwait(false);
+                },
+                DependsOn = ["player-cache"],   // it pays whoever that service says is online
             });
         }
 
@@ -273,6 +322,17 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
+        if (_features.WarrantBoardChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "warrant-board",
+                Interval = _features.LeaderboardInterval,
+                Tick = ct => _autoPost.PostAsync("warrants", _features.WarrantBoardChannel,
+                    () => Task.FromResult(_boards.BuildWarrantBoard()), ct),
+            });
+        }
+
         if (_features.PlayerCountChannels.Count > 0 || _features.ShackTotalChannel is not null)
         {
             /* FIVE MINUTES, and the interval is load-bearing. Discord allows two channel
@@ -290,6 +350,36 @@ public sealed class BackgroundServiceHost : IHostedService
                     new PavlovBot.Host.Discord.PlayerCountChannels.Targets(
                         _features.PlayerCountChannels, _features.ShackTotalChannel), ct),
                 DependsOn = ["player-cache"],
+            });
+        }
+
+        if (_features.CrashRecovery)
+        {
+            /* ONE MINUTE. Fast enough that a crash at 4am is a two-minute outage rather than
+               a morning one, slow enough that the systemctl calls are nothing. The brake is
+               inside CrashRecovery, not here - a shorter interval cannot turn into a restart
+               storm, because the attempt cap is measured in wall time. */
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "crash-recovery",
+                Interval = TimeSpan.FromMinutes(1),
+                Tick = async ct =>
+                {
+                    var sweep = await _crashRecovery.SweepAsync(ct).ConfigureAwait(false);
+
+                    foreach (var unit in sweep.Restarted)
+                    {
+                        await _audit.RecordAsync("auto-restart", "system", unit,
+                            "the unit was in the failed state and was restarted automatically", ct)
+                            .ConfigureAwait(false);
+                    }
+
+                    foreach (var (unit, reason) in sweep.Suppressed)
+                    {
+                        await _audit.RecordAsync("auto-restart-stopped", "system", unit, reason, ct)
+                            .ConfigureAwait(false);
+                    }
+                },
             });
         }
 

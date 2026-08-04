@@ -251,7 +251,36 @@ public static class Program
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Servers.ServiceControl(
             features.PavlovUnits, features.SystemctlSudo,
             sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServiceControl>>()));
+
+        /* The SAME instance behind its narrow contracts, not a second one. ServiceControl
+           holds the CPU sampling state that /stats reads, and RconRegistry holds the roster
+           cache and every open connection - resolving either of these as a fresh object
+           would quietly give the consumer an empty one. */
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.IUnitControl>(
+            sp => sp.GetRequiredService<PavlovBot.Host.Servers.ServiceControl>());
+        builder.Services.AddSingleton<PavlovBot.Host.Rcon.IOnlineRoster>(
+            sp => sp.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>());
         builder.Services.AddSingleton<PavlovBot.Host.Servers.PlayerNotice>();
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.CrashRecovery>();
+
+        // ---- warnings, payroll and money alerts ----
+        builder.Services.AddSingleton<PavlovBot.Host.Moderation.WarningService>();
+        builder.Services.AddSingleton<ISlashCommand, WarnCommand>();
+        builder.Services.AddSingleton<ISlashCommand, AltsCommand>();
+
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.Payroll(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<Ledger>(),
+            sp.GetRequiredService<RosterService>(),
+            sp.GetRequiredService<PavlovBot.Host.Rcon.IOnlineRoster>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Economy.Payroll>>(),
+            features.PayrollAmount, features.PayrollInterval, features.PayrollFaction));
+
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.MoneyAnomalyDetector(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Economy.MoneyAnomalyDetector>>(),
+            features.MoneyAlertThreshold, features.MoneyAlertWindow));
+
         builder.Services.AddSingleton<ISlashCommand, RotateMapCommand>();
         builder.Services.AddSingleton<ISlashCommand, ServerSwitchCommand>();
         builder.Services.AddSingleton<ISlashCommand, GiveMenuCommand>();
