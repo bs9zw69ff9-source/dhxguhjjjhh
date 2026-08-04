@@ -135,7 +135,16 @@ public sealed class RosterService
             Directory.CreateDirectory(_backupDirectory);
             File.WriteAllText(Path.Combine(_backupDirectory, file + ".bak"), string.Join("\n", contents) + "\n");
         }
-        catch (Exception) { }
+        /* NARROW, and it says so. `catch (Exception) { }` also swallowed cancellation, and
+           more to the point it swallowed the case that matters: a BACKUP_DIRECTORY that does
+           not exist or is not writable fails identically to a transient lock, silently, every
+           write, forever - and nobody finds out until they go looking for a .bak. */
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                      or NotSupportedException or ArgumentException)
+        {
+            _logger.LogWarning(ex, "Could not write the roster backup for {File} to {Directory}",
+                file, _backupDirectory);
+        }
     }
 
     /// <summary>Where a player currently sits, or null when they are on no roster.</summary>

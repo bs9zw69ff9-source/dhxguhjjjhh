@@ -90,13 +90,59 @@ public static partial class EasternTime
         if (!match.Success) return null;
         if (!long.TryParse(match.Groups[1].Value, CultureInfo.InvariantCulture, out var n) || n == 0) return null;
 
-        return match.Groups[2].Value switch
+        // "d" and the bare/"m" default are the overflowing ones: FromDays(long.MaxValue)
+        // throws rather than saturating, and the regex puts no ceiling on the digits.
+        var unit = match.Groups[2].Value;
+        return TryTicks(n, unit.Length > 0 ? unit : "m", out var ticks) ? new TimeSpan(ticks) : null;
+    }
+
+    /// <summary>
+    /// The longest span either parser will produce. Longer input is UNPARSEABLE, not clamped.
+    /// </summary>
+    /// <remarks>
+    /// A hundred years is past every real ban and short of where <see cref="TimeSpan"/>
+    /// overflows, so the ceiling is reached by absurd input rather than by arithmetic.
+    /// REJECTED rather than clamped because the callers already handle "cannot read this":
+    /// the ban importer records it as permanent with the raw text kept in the reason, which is
+    /// both the right answer for "999999999d" and one a human can correct. Silently turning it
+    /// into a hundred-year ban would look deliberate.
+    /// </remarks>
+    public static TimeSpan MaxSpan { get; } = TimeSpan.FromDays(365 * 100);
+
+    /// <summary>
+    /// One quantity and unit as ticks, or false if it does not fit.
+    /// </summary>
+    /// <remarks>
+    /// THE DIVISION IS THE POINT. Every one of these used to be
+    /// <c>TimeSpan.FromDays(365 * n)</c>, which overflows twice over - the multiply wraps
+    /// silently in a long, and FromDays THROWS rather than saturating on what survives.
+    /// Measured, not assumed: "99999999d", "999999999999w" and "9999999999y" each threw
+    /// OverflowException out of the parser, and "99999999999999999999d" threw out of
+    /// long.Parse before that. Every one is reachable - from a moderator's typo in /tempban,
+    /// and from the game's own banlist.txt, where it took out the whole import batch.
+    /// Comparing against the quotient first means nothing is ever multiplied out of range.
+    /// </remarks>
+    private static bool TryTicks(long n, string unit, out long ticks)
+    {
+        ticks = 0;
+        if (n < 0) return false;
+
+        var perUnit = unit switch
         {
-            "s" => TimeSpan.FromSeconds(n),
-            "h" => TimeSpan.FromHours(n),
-            "d" => TimeSpan.FromDays(n),
-            _ => TimeSpan.FromMinutes(n),   // bare number, and "m"
+            "s" => TimeSpan.TicksPerSecond,
+            "m" => TimeSpan.TicksPerMinute,
+            "h" => TimeSpan.TicksPerHour,
+            "d" => TimeSpan.TicksPerDay,
+            "w" => TimeSpan.TicksPerDay * 7,
+            "mo" => TimeSpan.TicksPerDay * 30,
+            "y" => TimeSpan.TicksPerDay * 365,
+            _ => 0L,
         };
+        if (perUnit == 0) return false;
+
+        if (n > MaxSpan.Ticks / perUnit) return false;
+        ticks = n * perUnit;
+        return true;
     }
 
     // "mo" must be matched before the single letters or "1mo" reads as one MINUTE.
@@ -128,24 +174,22 @@ public static partial class EasternTime
         if (parts.Count == 0) return null;
         if (SpanPart.Replace(text, "").Trim().Length > 0) return null;
 
-        var total = TimeSpan.Zero;
+        var total = 0L;
         foreach (Match part in parts)
         {
             var unit = SpanUnit.Match(part.Value);
-            var n = long.Parse(unit.Groups[1].Value, CultureInfo.InvariantCulture);
-            total += unit.Groups[2].Value switch
-            {
-                "s" => TimeSpan.FromSeconds(n),
-                "m" => TimeSpan.FromMinutes(n),
-                "h" => TimeSpan.FromHours(n),
-                "d" => TimeSpan.FromDays(n),
-                "w" => TimeSpan.FromDays(7 * n),
-                "mo" => TimeSpan.FromDays(30 * n),
-                "y" => TimeSpan.FromDays(365 * n),
-                _ => TimeSpan.Zero,
-            };
+
+            /* TryParse, not Parse: the regex is `\d+` with no ceiling, so twenty digits get
+               here intact and long.Parse threw. Unreadable rather than fatal - the importer
+               already treats that as permanent and keeps the raw text in the reason. */
+            if (!long.TryParse(unit.Groups[1].Value, CultureInfo.InvariantCulture, out var n)) return null;
+            if (!TryTicks(n, unit.Groups[2].Value, out var ticks)) return null;
+
+            // "3d 4h 9999999999y" must not wrap back into a plausible-looking span.
+            if (total > MaxSpan.Ticks - ticks) return null;
+            total += ticks;
         }
-        return total == TimeSpan.Zero ? null : total;
+        return total == 0 ? null : new TimeSpan(total);
     }
 
     [GeneratedRegex(@"^(\d{1,2})(?::(\d{2}))?(am|pm)?$")]

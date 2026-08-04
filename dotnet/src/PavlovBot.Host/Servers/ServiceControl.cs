@@ -230,28 +230,17 @@ public sealed class ServiceControl(
 
         try
         {
-            var info = new ProcessStartInfo("systemctl")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            info.ArgumentList.Add("is-active");
-            info.ArgumentList.Add(unit);
+            // A local query; anything slower is broken. ProcessRunner ends the child on the
+            // deadline - this one runs on a timer, so a leak here compounds every tick.
+            var run = await ProcessRunner.RunAsync(
+                "systemctl", ["is-active", unit], TimeSpan.FromSeconds(5), logger, ct).ConfigureAwait(false);
 
-            using var process = Process.Start(info);
-            if (process is null) return UnitState.Unknown;
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(5));   // a local query; anything slower is broken
-
-            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            if (!run.Started || run.TimedOut) return UnitState.Unknown;
 
             /* The EXIT CODE is not the answer - is-active exits non-zero for anything that is
                not running, which is a perfectly good answer and not a failure. The word on
                stdout is the answer. */
-            return stdout.Trim() switch
+            return run.Stdout.Trim() switch
             {
                 "active" => UnitState.Active,
                 "activating" or "reloading" => UnitState.Starting,
@@ -396,28 +385,17 @@ public sealed class ServiceControl(
 
         try
         {
-            var info = new ProcessStartInfo("systemctl")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            info.ArgumentList.Add("show");
-            info.ArgumentList.Add(unit);
-            info.ArgumentList.Add("--property=" + (only ??
-                "ActiveState,MemoryCurrent,MemoryPeak,MemoryMax,CPUUsageNSec,TasksCurrent,ActiveEnterTimestampMonotonic"));
+            var properties = only ??
+                "ActiveState,MemoryCurrent,MemoryPeak,MemoryMax,CPUUsageNSec,TasksCurrent,ActiveEnterTimestampMonotonic";
 
-            using var process = Process.Start(info);
-            if (process is null) return empty;
+            var run = await ProcessRunner.RunAsync(
+                "systemctl", ["show", unit, "--property=" + properties],
+                TimeSpan.FromSeconds(5), logger, ct).ConfigureAwait(false);
 
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(5));
-
-            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            if (!run.Started || run.TimedOut) return empty;
 
             var parsed = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            foreach (var line in run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 // Split on the FIRST '=' only: values contain them.
                 var split = line.IndexOf('=', StringComparison.Ordinal);
@@ -474,41 +452,29 @@ public sealed class ServiceControl(
 
         try
         {
-            var info = new ProcessStartInfo(file)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,   // no shell, nothing to inject into
-            };
-            foreach (var argument in argv) info.ArgumentList.Add(argument);
-
-            using var process = Process.Start(info);
-            if (process is null) return new UnitResult(false, unit, $"could not start {file}");
-
             /* Generously bounded. A Pavlov server can take the better part of a minute to
                stop and come back, and a restart killed halfway leaves it down - which is
                strictly worse than waiting. */
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(90));
+            var run = await ProcessRunner.RunAsync(
+                file, argv, TimeSpan.FromSeconds(90), logger, ct).ConfigureAwait(false);
 
-            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            var stderr = await process.StandardError.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            if (!run.Started) return new UnitResult(false, unit, $"could not start {file}");
 
-            var output = (stdout + stderr).Trim();
-            var ok = process.ExitCode == 0;
+            if (run.TimedOut)
+            {
+                logger.LogError("systemctl {Verb} {Unit} timed out after 90s - it may still be in progress", verb, unit);
+                return new UnitResult(false, unit,
+                    $"`{verb}` timed out after 90s. It may still be in progress - check `systemctl status {unit}`");
+            }
+
+            var output = run.Combined;
+            var ok = run.ExitCode == 0;
 
             if (ok) logger.LogInformation("systemctl {Verb} {Unit} succeeded", verb, unit);
-            else logger.LogError("systemctl {Verb} {Unit} FAILED (exit {Code}): {Output}", verb, unit, process.ExitCode, output);
+            else logger.LogError("systemctl {Verb} {Unit} FAILED (exit {Code}): {Output}", verb, unit, run.ExitCode, output);
 
             return new UnitResult(ok, unit,
-                output.Length > 0 ? output : ok ? $"{verb} ok" : $"exit code {process.ExitCode}");
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            logger.LogError("systemctl {Verb} {Unit} timed out after 90s - it may still be in progress", verb, unit);
-            return new UnitResult(false, unit,
-                $"`{verb}` timed out after 90s. It may still be in progress - check `systemctl status {unit}`");
+                output.Length > 0 ? output : ok ? $"{verb} ok" : $"exit code {run.ExitCode}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

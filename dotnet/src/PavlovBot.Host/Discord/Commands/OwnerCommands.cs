@@ -344,29 +344,23 @@ public sealed partial class FirewallCommand(AuditLog audit, Access access, ILogg
     {
         try
         {
-            var info = new ProcessStartInfo("ufw")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,   // no shell, no interpolation
-            };
-            foreach (var argument in argv) info.ArgumentList.Add(argument);
+            // Bounded: a ufw that hangs must not hold the interaction open past its token,
+            // and must not be left running once we stop waiting for it.
+            var run = await ProcessRunner.RunAsync(
+                "ufw", argv, TimeSpan.FromSeconds(10), logger, ct).ConfigureAwait(false);
 
-            using var process = Process.Start(info);
-            if (process is null) return (false, "could not start ufw");
+            if (!run.Started) return (false, "could not start ufw");
+            if (run.TimedOut) return (false, "`ufw` did not answer within 10s and was stopped.");
 
-            // Bounded: a ufw that hangs must not hold the interaction open past its token.
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(10));
-
-            var stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            var stderr = await process.StandardError.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
-
-            var output = (stdout + stderr).Trim();
-            return (process.ExitCode == 0, output.Length > 0 ? output : "(no output)");
+            var output = run.Combined;
+            return (run.ExitCode == 0, output.Length > 0 ? output : "(no output)");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || ct.IsCancellationRequested)
+        /* The filter used to read `|| ct.IsCancellationRequested`, which is the inverse of
+           what every sibling call site does and of what this needed. It meant the 10s
+           deadline threw straight out of /firewall instead of being reported, while a
+           shutdown was caught and logged as a ufw failure. Both are now the right way round -
+           and the timeout no longer arrives as an exception at all. */
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "ufw invocation failed");
             return (false, ex.Message);
