@@ -8,16 +8,28 @@ using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Economy;
 
-/// <param name="Paid">Player -> amount credited. Empty when nobody qualified.</param>
-/// <param name="Skipped">Why nothing was paid, when nothing was. Null on a normal run.</param>
+/// <param name="Paid">Player -> amount actually SETTLED into their ledger this run.</param>
+/// <param name="Accrued">Player -> amount added to what they are owed for being on duty.</param>
+/// <param name="Skipped">Why nothing was accrued, when nothing was. Null on a normal run.</param>
 public sealed record PayrollRun(
-    DateTimeOffset At, string Faction, IReadOnlyDictionary<string, long> Paid, string? Skipped)
+    DateTimeOffset At,
+    string Faction,
+    IReadOnlyDictionary<string, long> Paid,
+    IReadOnlyDictionary<string, long> Accrued,
+    string? Skipped)
 {
     public long Total => Paid.Values.Sum();
+
+    public bool DidSomething => Paid.Count > 0 || Accrued.Count > 0;
 }
 
-/// <summary>Last payout instant per faction.</summary>
+/// <summary>Last payout instant per faction, and what each officer is still owed.</summary>
 /// <remarks>
+/// <see cref="Owed"/> IS THE WAGE THAT HAS BEEN EARNED BUT NOT YET BANKED. It has to be
+/// persisted rather than held in memory: a shift can outlast the bot process, and losing an
+/// officer's accrued pay to a deploy is exactly the kind of thing nobody reports and everybody
+/// notices.
+///
 /// THE DEFAULT IS A METHOD, NOT A CACHED STATIC, and that distinction is load-bearing.
 /// <c>SerializedStore.UpdateAsync</c> hands the fallback INSTANCE to the mutator when nothing
 /// is stored yet, and the mutator writes into <see cref="LastPaid"/>. A
@@ -30,38 +42,54 @@ public sealed record PayrollRun(
 /// sharing one dictionary. In production the same bug makes payroll pay once and then refuse
 /// forever after any restart that leaves the row unwritten.
 /// </remarks>
-public sealed record PayrollState(Dictionary<string, DateTimeOffset> LastPaid)
+public sealed record PayrollState(
+    Dictionary<string, DateTimeOffset> LastPaid,
+    Dictionary<string, long> Owed)
 {
-    public static PayrollState New() => new(new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase));
+    public static PayrollState New() => new(
+        new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>
-/// Wages for on-duty faction members, paid on a timer.
+/// Wages for on-duty faction members: ACCRUED while they play, BANKED once they log off.
 /// </summary>
 /// <remarks>
-/// ON THE ROSTER AND ONLINE. Paying everybody on the NYPD roster would pay people who are
-/// asleep, which is not a wage - it is a subscription. The intersection of "on the roster"
-/// and "on a server right now" is what makes it a duty payment.
+/// WHY IT IS TWO STEPS. A wage has to be earned by being on duty, and the money lives in a
+/// file the GAME owns and rewrites from memory while a player is connected. Those two facts
+/// pull in opposite directions: the moment somebody is worth paying is the exact moment their
+/// ledger cannot safely be written. Crediting a live player is what previously put balances
+/// out of step with the servers.
+///
+/// So being on duty accrues a debt in the bot's own database, and the debt is settled to the
+/// ledger on the first tick after they leave, when the game no longer holds their balance.
+/// Paying offline players DIRECTLY was the other way to read the same rule and is nonsense -
+/// it pays somebody who has not played in a year, forever.
+///
+/// ON THE ROSTER AND ONLINE, for accrual. Accruing for everybody on the NYPD roster would
+/// pay people who are asleep, which is not a wage, it is a subscription.
 ///
 /// THREE WAYS THIS COULD PAY THE WRONG PEOPLE OR THE WRONG AMOUNT, all guarded:
 ///
-///   A STALE ROSTER. <see cref="RconRegistry.AllOnlinePlayers"/> serves the last successful
-///   refresh. If RCON has been down for an hour that list is an hour old, and paying from it
-///   pays people who logged off and misses everyone who joined. The run is SKIPPED unless at
-///   least one server's roster is genuinely fresh - a missed payment is recoverable and a
-///   wrong one is an argument.
+///   A STALE ROSTER. <see cref="IOnlineRoster.Online"/> serves the last successful refresh.
+///   If RCON has been down for an hour that list is an hour old, so it would accrue for people
+///   who logged off and - worse - settle ledgers for people who are actually still playing.
+///   The run is SKIPPED unless the roster is genuinely fresh.
 ///
-///   A DOUBLE PAY. The service supervisor restarts a failed service, and a restart re-runs
-///   the tick. Two runs a second apart would both pay a full period. The last payout instant
+///   A DOUBLE ACCRUAL. The service supervisor restarts a failed service, and a restart re-runs
+///   the tick. Two runs a second apart would both accrue a full period. The last run instant
 ///   is PERSISTED and a run inside the period is refused, so a restart loop cannot mint money.
 ///
-///   A CATCH-UP PAY. The opposite mistake: after six hours down, paying six periods at once
-///   on the theory that they were "owed". Nobody was on duty for those hours. A run pays ONE
+///   A CATCH-UP ACCRUAL. The opposite mistake: after six hours down, accruing twelve periods
+///   at once because they were "owed". Nobody was on duty for those hours. A run accrues ONE
 ///   period, whatever happened before it.
 ///
-/// CREDITS THROUGH <see cref="Ledger"/>, never the balance store directly, because the game
-/// writes these same files. Read-then-write without the per-player queue is a double-spend:
-/// a payout and a purchase land together and one of them vanishes.
+/// SETTLEMENT IS NOT RATE LIMITED, and that is deliberate - it moves money the officer has
+/// already earned rather than creating any, so it runs on every tick and gets the wage banked
+/// promptly after they leave.
+///
+/// CREDITS THROUGH <see cref="Ledger"/>, never the balance store directly, so a settlement and
+/// a <c>/givecaps</c> landing together cannot double-spend through the per-player queue.
 /// </remarks>
 public sealed class Payroll(
     SerializedStore store,
@@ -103,97 +131,157 @@ public sealed class Payroll(
     public async Task<PayrollRun> RunAsync(CancellationToken ct = default)
     {
         var now = _time.GetUtcNow();
-        var empty = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var none = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
-        if (!Enabled) return new PayrollRun(now, factionName, empty, "payroll is not configured");
+        if (!Enabled) return new PayrollRun(now, factionName, none, none, "payroll is not configured");
 
         if (!FactionRegistry.All.TryGetValue(factionName, out var faction))
-            return new PayrollRun(now, factionName, empty, $"no faction named \"{factionName}\"");
+            return new PayrollRun(now, factionName, none, none, $"no faction named \"{factionName}\"");
 
-        // ---- guard: has a full period actually elapsed ----
-        var state = store.Read(Datasets.PayrollState, PayrollState.New());
-        if (state.LastPaid.TryGetValue(factionName, out var last) && now - last < period)
-        {
-            var wait = period - (now - last);
-            logger.LogDebug("Payroll for {Faction} skipped - {Minutes:0} minute(s) left in the period",
-                factionName, wait.TotalMinutes);
-            return new PayrollRun(now, factionName, empty, $"only {(now - last).TotalMinutes:0} minutes since the last run");
-        }
-
-        // ---- guard: is the roster we are about to pay from actually current ----
+        /* ---- guard: is the roster current ----
+           Checked before ANYTHING, including settlement, because settling needs to know who
+           is offline just as much as accruing needs to know who is on. A stale list would
+           bank a wage for somebody who is in fact still playing, which is the exact write
+           this design exists to avoid. */
         if (!online.IsTrustworthy)
         {
-            /* NOT STAMPED. The period is deliberately left unconsumed here, unlike the
-               "nobody online" case below - this run never happened, so the payment it would
-               have made is still owed the moment RCON comes back. */
             logger.LogWarning(
-                "Payroll for {Faction} SKIPPED - no server has a fresh player list, so the online roster " +
-                "cannot be trusted. Nobody was paid and nobody was charged a period", factionName);
-            return new PayrollRun(now, factionName, empty, "no server has a fresh player list");
+                "Payroll for {Faction} SKIPPED - no server has a fresh player list. Nothing was accrued, " +
+                "nothing was banked, and no period was consumed", factionName);
+            return new PayrollRun(now, factionName, none, none, "no server has a fresh player list");
         }
 
         var present = online.Online.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (present.Count == 0)
-            return await FinishAsync(now, factionName, empty, "nobody is online", ct).ConfigureAwait(false);
-
         var roster = await rosters.RosterAsync(faction, ct).ConfigureAwait(false);
-        var onDuty = roster.Where(m => present.Contains(m.Player)).ToList();
 
-        if (onDuty.Count == 0)
-            return await FinishAsync(now, factionName, empty, $"no {factionName} member is online", ct).ConfigureAwait(false);
+        // ---- 1. bank what the people who have left already earned ----
+        var paid = await SettleAsync(present, ct).ConfigureAwait(false);
 
-        var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        foreach (var member in onDuty)
+        // ---- 2. accrue for this period, if one has elapsed ----
+        var state = store.Read(Datasets.PayrollState, PayrollState.New());
+        if (state.LastPaid.TryGetValue(factionName, out var last) && now - last < period)
         {
-            ct.ThrowIfCancellationRequested();
+            // Settlement still happened above - it moves money already earned rather than
+            // creating any, so it is not rate limited.
+            var settledOnly = new PayrollRun(now, factionName, paid, none,
+                $"only {(now - last).TotalMinutes:0} minutes since the last accrual");
 
-            var change = await ledger.CreditAsync(member.Player, amount, ct).ConfigureAwait(false);
-            if (change.Ok) { paid[member.Player] = amount; continue; }
-
-            /* A failed credit is NOT fatal to the run. One unwritable ledger - the game
-               holding the file, a name with something odd in it - must not cost every other
-               officer their wage. */
-            logger.LogWarning("Payroll could not credit {Player} - their ledger did not accept the write", member.Player);
+            if (paid.Count > 0) await RecordAsync(settledOnly, ct).ConfigureAwait(false);
+            return settledOnly;
         }
 
-        logger.LogInformation("Payroll paid {Count} {Faction} member(s) {Amount:N0} each ({Total:N0} total)",
-            paid.Count, factionName, amount, paid.Count * amount);
+        var onDuty = roster.Where(m => present.Contains(m.Player)).Select(m => m.Player).ToList();
 
-        return await FinishAsync(now, factionName, paid, null, ct).ConfigureAwait(false);
-    }
+        var accrued = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var player in onDuty) accrued[player] = amount;
 
-    /// <summary>
-    /// Stamp the period as paid and append the run to history.
-    /// </summary>
-    /// <remarks>
-    /// THE PERIOD IS STAMPED EVEN WHEN NOBODY QUALIFIED, and that is deliberate. "No officer
-    /// was online" is a period that HAPPENED - leaving it unstamped means the next tick a
-    /// minute later pays a full period the moment one person logs in. It is not stamped for
-    /// the guard refusals above, because those mean the run never took place.
-    /// </remarks>
-    private async Task<PayrollRun> FinishAsync(
-        DateTimeOffset now, string faction, Dictionary<string, long> paid, string? skipped, CancellationToken ct)
-    {
-        var run = new PayrollRun(now, faction, paid, skipped);
+        await StampAsync(now, factionName, accrued, ct).ConfigureAwait(false);
 
-        await store.UpdateAsync(Datasets.PayrollState, PayrollState.New(), state =>
+        if (accrued.Count > 0)
         {
-            state.LastPaid[faction] = now;
-            return state;
-        }, ct).ConfigureAwait(false);
-
-        if (paid.Count > 0)
-        {
-            await store.UpdateAsync<List<PayrollRun>>(Datasets.Wages, [], history =>
-            {
-                history.Add(run);
-                if (history.Count > HistoryLimit) history.RemoveRange(0, history.Count - HistoryLimit);
-                return history;
-            }, ct).ConfigureAwait(false);
+            logger.LogInformation(
+                "Payroll accrued {Amount:N0} for {Count} on-duty {Faction} member(s) - banked when they log off",
+                amount, accrued.Count, factionName);
         }
+
+        var skipped = accrued.Count == 0 ? $"no {factionName} member is online" : null;
+        var run = new PayrollRun(now, factionName, paid, accrued, skipped);
+
+        // History records money that MOVED, not money promised - so it is written from the
+        // settlement, which is the only part that touches a balance.
+        if (paid.Count > 0) await RecordAsync(run, ct).ConfigureAwait(false);
 
         return run;
     }
+
+    private Task RecordAsync(PayrollRun run, CancellationToken ct) =>
+        store.UpdateAsync<List<PayrollRun>>(Datasets.Wages, [], history =>
+        {
+            history.Add(run);
+            if (history.Count > HistoryLimit) history.RemoveRange(0, history.Count - HistoryLimit);
+            return history;
+        }, ct);
+
+    /// <summary>
+    /// Bank the accrued wage of everybody who is no longer in game.
+    /// </summary>
+    /// <remarks>
+    /// The debt is cleared ONLY on a successful credit. A ledger that refuses the write - the
+    /// player has none yet, the file is locked, the directory is wrong - leaves the wage owed
+    /// and it is tried again next tick. Clearing first would silently delete somebody's pay
+    /// the one time the write failed.
+    /// </remarks>
+    private async Task<Dictionary<string, long>> SettleAsync(
+        IReadOnlySet<string> present, CancellationToken ct)
+    {
+        var paid = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        var owed = store.Read(Datasets.PayrollState, PayrollState.New()).Owed
+            .Where(kv => kv.Value > 0 && !present.Contains(kv.Key))
+            .ToList();
+
+        foreach (var (player, wage) in owed)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var change = await ledger.CreditAsync(player, wage, ct).ConfigureAwait(false);
+            if (!change.Ok)
+            {
+                logger.LogDebug("Payroll could not bank {Wage:N0} for {Player} yet - still owed", wage, player);
+                continue;
+            }
+
+            paid[player] = wage;
+
+            await store.UpdateAsync(Datasets.PayrollState, PayrollState.New(), state =>
+            {
+                /* Subtract what was banked rather than removing the key, because a period may
+                   have accrued between the read above and this write. Taking the whole entry
+                   out would swallow it. */
+                if (!state.Owed.TryGetValue(player, out var current)) return null;
+
+                var remaining = current - wage;
+                if (remaining > 0) state.Owed[player] = remaining; else state.Owed.Remove(player);
+                return state;
+            }, ct).ConfigureAwait(false);
+
+            logger.LogInformation("Payroll banked {Wage:N0} for {Player} (balance {Before:N0} -> {After:N0})",
+                wage, player, change.Before, change.After);
+        }
+
+        return paid;
+    }
+
+    /// <summary>
+    /// Consume the period and add this run's accrual to what each officer is owed.
+    /// </summary>
+    /// <remarks>
+    /// THE PERIOD IS CONSUMED EVEN WHEN NOBODY WAS ON DUTY, and that is deliberate. "No
+    /// officer was online" is a period that HAPPENED - leaving it unstamped means the next
+    /// tick a minute later accrues a full period the moment one person logs in. It is not
+    /// stamped when the roster could not be trusted, because that run never took place.
+    /// </remarks>
+    private Task StampAsync(
+        DateTimeOffset now, string faction, Dictionary<string, long> accrued, CancellationToken ct) =>
+        store.UpdateAsync(Datasets.PayrollState, PayrollState.New(), state =>
+        {
+            state.LastPaid[faction] = now;
+            foreach (var (player, wage) in accrued)
+                state.Owed[player] = state.Owed.GetValueOrDefault(player) + wage;
+            return state;
+        }, ct);
+
+    /// <summary>What an officer has earned on duty but not yet had banked.</summary>
+    public long OwedTo(string player) =>
+        store.Read(Datasets.PayrollState, PayrollState.New()).Owed.GetValueOrDefault(player.Trim());
+
+    /// <summary>Everybody currently carrying an unbanked wage, largest first.</summary>
+    public IReadOnlyList<(string Player, long Owed)> Outstanding() =>
+        store.Read(Datasets.PayrollState, PayrollState.New()).Owed
+            .Where(kv => kv.Value > 0)
+            .OrderByDescending(kv => kv.Value)
+            .Select(kv => (kv.Key, kv.Value))
+            .ToList();
 
     /// <summary>Recent runs, newest first.</summary>
     public IReadOnlyList<PayrollRun> History(int take = 10) =>

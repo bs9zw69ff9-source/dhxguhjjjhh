@@ -208,7 +208,11 @@ public static class Program
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
         builder.Services.AddSingleton<AuditLog>();
-        builder.Services.AddSingleton<IBalanceStore>(_ => new LedgerFileStore(features.LedgerDirectory));
+        /* The roster is what decides whether a ledger may be written at all - see
+           LedgerFileStore. Resolved lazily through the provider because RconRegistry is
+           registered further down. */
+        builder.Services.AddSingleton<IBalanceStore>(sp => new LedgerFileStore(
+            features.LedgerDirectory, sp.GetRequiredService<PavlovBot.Host.Rcon.IOnlineRoster>()));
         builder.Services.AddSingleton<Ledger>();
         builder.Services.AddSingleton<AutoPost>();
         builder.Services.AddSingleton(sp => new Boards(
@@ -343,10 +347,12 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
         builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(
             sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
-            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>()));
+            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>(),
+            sp.GetRequiredService<IBalanceStore>()));
         builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Adjust(
             sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
-            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>()));
+            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>(),
+            sp.GetRequiredService<IBalanceStore>()));
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));

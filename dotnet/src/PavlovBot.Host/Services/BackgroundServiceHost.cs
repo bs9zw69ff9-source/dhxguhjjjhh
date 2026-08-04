@@ -277,10 +277,14 @@ public sealed class BackgroundServiceHost : IHostedService
                 Tick = async ct =>
                 {
                     var run = await _payroll.RunAsync(ct).ConfigureAwait(false);
+
+                    /* Only the SETTLEMENT is logged to staff. Accrual happens every period
+                       for everyone on duty and moves no money - auditing it would bury the
+                       entries that did. */
                     if (run.Paid.Count == 0) return;
 
                     await _audit.RecordAsync("payroll", "system", $"{run.Paid.Count} {run.Faction}",
-                        $"{_payroll.Amount:N0} each, {run.Total:N0} total", ct).ConfigureAwait(false);
+                        $"banked {run.Total:N0} in wages earned on duty", ct).ConfigureAwait(false);
                 },
                 DependsOn = ["player-cache"],   // it pays whoever that service says is online
             });

@@ -4,6 +4,7 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Economy;
 using PavlovBot.Core.Text;
+using PavlovBot.Host.Economy;
 using PavlovBot.Host.Moderation;
 
 namespace PavlovBot.Host.Discord.Commands;
@@ -27,7 +28,18 @@ public sealed class CapsCommand : ISlashCommand
     private readonly ILogger _logger;
     private readonly bool _allowNegative;
 
-    private CapsCommand(Ledger ledger, AuditLog audit, Access access, ILogger logger, string name, bool allowNegative)
+    /// <summary>
+    /// The file store, purely so a refusal can SAY WHY. Nothing is written through it.
+    /// </summary>
+    /// <remarks>
+    /// Optional: <see cref="IBalanceStore"/> is the contract, and only the file-backed one
+    /// can explain itself. A test using an in-memory store gets the generic message.
+    /// </remarks>
+    private readonly LedgerFileStore? _balances;
+
+    private CapsCommand(
+        Ledger ledger, AuditLog audit, Access access, ILogger logger, string name, bool allowNegative,
+        IBalanceStore? balances = null)
     {
         _ledger = ledger;
         _audit = audit;
@@ -35,13 +47,14 @@ public sealed class CapsCommand : ISlashCommand
         _logger = logger;
         Name = name;
         _allowNegative = allowNegative;
+        _balances = balances as LedgerFileStore;
     }
 
-    public static CapsCommand Give(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg) =>
-        new(l, a, ac, lg, "givecaps", allowNegative: false);
+    public static CapsCommand Give(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg, IBalanceStore? b = null) =>
+        new(l, a, ac, lg, "givecaps", allowNegative: false, balances: b);
 
-    public static CapsCommand Adjust(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg) =>
-        new(l, a, ac, lg, "adjustcaps", allowNegative: true);
+    public static CapsCommand Adjust(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg, IBalanceStore? b = null) =>
+        new(l, a, ac, lg, "adjustcaps", allowNegative: true, balances: b);
 
     public string Name { get; }
 
@@ -97,11 +110,17 @@ public sealed class CapsCommand : ISlashCommand
         if (!change.Ok)
         {
             /* Reporting the intended balance after a failed write is how a bot tells a
-               player they were paid when they were not. */
+               player they were paid when they were not.
+
+               The REASON matters here, because the most common one is temporary and the
+               moderator only needs to wait: the game holds a connected player's balance in
+               memory and rewrites the file from it, so anything written while they are in
+               game is overwritten on their next save. */
+            var why = _balances?.Refusal(player)
+                ?? "their ledger did not accept the write";
+
             await Reply(command, Theme.Failure("Not applied",
-                "The bot no longer writes player ledger files - those belong to the game server, and "
-                + "writing them is what put balances out of step with what the servers held. "
-                + "Their balance is unchanged; adjust it in game instead.")).ConfigureAwait(false);
+                $"**{Sanitize.Code(player)}**'s balance is unchanged — {why}.")).ConfigureAwait(false);
             return;
         }
 
