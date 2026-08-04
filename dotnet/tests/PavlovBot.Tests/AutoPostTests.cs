@@ -27,7 +27,16 @@ public class AutoPostTests : IDisposable
     {
         public int Sends;
         public int Edits;
+
+        /// <summary>Messages somebody actually removed. The only case that earns a re-post.</summary>
         public HashSet<ulong> Deleted { get; } = [];
+
+        /// <summary>
+        /// The edit cannot be carried out and we CANNOT TELL WHY - the case the bool could
+        /// not express, and the one that was duplicating boards.
+        /// </summary>
+        public bool EditsFail { get; set; }
+
         public TaskCompletionSource? BlockSends { get; set; }
         private ulong _next = 100;
 
@@ -35,13 +44,14 @@ public class AutoPostTests : IDisposable
         public MessageComponent? LastEditComponents { get; private set; }
         public MessageComponent? LastSendComponents { get; private set; }
 
-        public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct)
+        public async Task<AutoPostEdit> EditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct)
         {
             await Task.Yield();
-            if (Deleted.Contains(messageId)) return false;
+            if (EditsFail) return AutoPostEdit.Failed;
+            if (Deleted.Contains(messageId)) return AutoPostEdit.Missing;
             Edits++;
             LastEditComponents = components;
-            return true;
+            return AutoPostEdit.Edited;
         }
 
         public async Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct)
@@ -127,6 +137,59 @@ public class AutoPostTests : IDisposable
 
         await _autopost.PostAsync("leaderboard", 1, Board);
         Assert.Equal(2, _target.Sends);
+    }
+
+    // ---- the duplicate leaderboard ----
+
+    [Fact]
+    public async Task AnEditThatMerelyFailedDoesNotProduceASecondBoard()
+    {
+        /* THE REPORTED BUG: "money leaderboard sends twice".
+
+           TryEditAsync returned a bool, and the gateway implementation returned false for
+           EVERY failure - a 500, a rate limit, a websocket blip, and above all a channel
+           lookup that came back empty because the socket cache had not populated it yet,
+           which is routine for the first seconds after a reconnect. The caller read false as
+           "deleted" and posted a fresh board while the original was still in the channel.
+
+           The board is not gone here. It is unreachable for one cycle. Nothing should be
+           sent, and the stored id must still point at the original. */
+        await _autopost.PostAsync("leaderboard", 1, Board);
+        Assert.Equal(1, _target.Sends);
+
+        _target.EditsFail = true;
+        await _autopost.PostAsync("leaderboard", 1, Board);
+        await _autopost.PostAsync("leaderboard", 1, Board);
+
+        Assert.Equal(1, _target.Sends);
+    }
+
+    [Fact]
+    public async Task TheOriginalBoardIsStillTheOneEditedOnceTheFailurePasses()
+    {
+        // A skipped cycle must not have orphaned anything: the SAME message keeps updating.
+        await _autopost.PostAsync("leaderboard", 1, Board);
+
+        _target.EditsFail = true;
+        await _autopost.PostAsync("leaderboard", 1, Board);
+
+        _target.EditsFail = false;
+        await _autopost.PostAsync("leaderboard", 1, Board);
+
+        Assert.Equal(1, _target.Sends);
+        Assert.Equal(1, _target.Edits);
+    }
+
+    [Fact]
+    public async Task AFirstPostStillHappensWhenThereIsNothingToEdit()
+    {
+        /* The failure path must not deadlock the very first post. With no stored id there is
+           nothing to edit, so the edit outcome is irrelevant and the board must appear. */
+        _target.EditsFail = true;
+
+        await _autopost.PostAsync("leaderboard", 1, Board);
+
+        Assert.Equal(1, _target.Sends);
     }
 
     [Fact]

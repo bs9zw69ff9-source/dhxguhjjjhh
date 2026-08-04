@@ -458,6 +458,16 @@ public static class Program
            detection would keep logging catches and taking no action. */
         host.Services.GetRequiredService<EvasionResponder>();
 
+        /* The OTHER way a leaderboard appears twice, and the one a code fix cannot reach.
+           Each board keeps its own message, so pointing two of them at one channel puts two
+           permanent posts there - which looks exactly like the duplicate-post bug and is not
+           it. Cheap to say once at startup; expensive to work out from the channel. */
+        if (features.LeaderboardChannel is { } cashChannel && cashChannel == features.ArrestBoardChannel)
+            logger.LogWarning("LEADERBOARD_CHANNEL and ARREST_LEADERBOARD_CHANNEL are both {Channel}. " +
+                              "Each board keeps its own message, so that channel will hold TWO posts - " +
+                              "the cash board and the arrest board. Give them separate channels if that " +
+                              "is not what you meant.", cashChannel);
+
         if (features.MasterNames.Count == 0)
             logger.LogWarning("MASTER_NAMES is not set - only the built-in master account \"{Master}\" is " +
                               "protected from an auto-ban. Any OTHER account of yours could be caught by a " +

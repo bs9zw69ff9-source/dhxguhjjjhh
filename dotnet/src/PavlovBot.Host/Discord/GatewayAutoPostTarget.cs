@@ -16,12 +16,40 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<GatewayAutoPostTarget> logger) : IAutoPostTarget
 {
-    public async Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct)
+    /// <summary>
+    /// Edit the board, and say which KIND of failure it was if it did not work.
+    /// </summary>
+    /// <remarks>
+    /// THE DUPLICATE-LEADERBOARD BUG LIVED HERE. This returned a bool, and every failure
+    /// returned false - which the caller read as "deleted, post a fresh one". A channel that
+    /// had not landed in the socket cache yet, a 500, a rate limit and a websocket blip were
+    /// all indistinguishable from a message somebody had actually removed, so the board got
+    /// re-posted while the original was still sitting in the channel. Two boards, the older
+    /// one orphaned and updated by nobody, and no log line anywhere: the catch did not even
+    /// log, so the only evidence was the duplicate itself.
+    ///
+    /// ONLY A RESOLVED CHANNEL CAN REPORT A MISSING MESSAGE. If the channel lookup fails we
+    /// know nothing at all about the message, so that is <see cref="AutoPostEdit.Failed"/> -
+    /// which is the specific case that was firing on every reconnect.
+    ///
+    /// A 403 IS ALSO "Failed", NOT "Missing". Re-posting into a channel the bot cannot write
+    /// to fails too, so treating it as gone would just add a warning per cycle forever.
+    /// </remarks>
+    public async Task<AutoPostEdit> EditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct)
     {
         try
         {
-            if (await gateway.GetChannelAsync(channelId).ConfigureAwait(false) is not IMessageChannel channel) return false;
-            if (await channel.GetMessageAsync(messageId).ConfigureAwait(false) is not IUserMessage message) return false;
+            if (await gateway.GetChannelAsync(channelId).ConfigureAwait(false) is not IMessageChannel channel)
+            {
+                logger.LogWarning(
+                    "Channel {Channel} could not be resolved, so the board there was left as it is. " +
+                    "If this persists, check the id and that the bot can view the channel", channelId);
+                return AutoPostEdit.Failed;
+            }
+
+            // The channel resolved and the message is not in it. THIS is the deletion signal.
+            if (await channel.GetMessageAsync(messageId).ConfigureAwait(false) is not IUserMessage message)
+                return AutoPostEdit.Missing;
 
             await message.ModifyAsync(m =>
             {
@@ -31,13 +59,21 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
                 // verification panel would lose its Verify button on the first refresh.
                 if (components is not null) m.Components = components;
             }).ConfigureAwait(false);
-            return true;
+            return AutoPostEdit.Edited;
+        }
+        catch (HttpException ex) when (
+            ex.HttpCode == System.Net.HttpStatusCode.NotFound ||
+            ex.DiscordCode == DiscordErrorCode.UnknownMessage)
+        {
+            // Discord said the message is not there. The only answer that earns a re-post.
+            return AutoPostEdit.Missing;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Deleted, or the bot lost access. Either way the caller posts a fresh one -
-            // which is the recovery, not a failure.
-            return false;
+            logger.LogWarning(ex,
+                "Could not edit the board message {Message} in channel {Channel} - leaving it in place",
+                messageId, channelId);
+            return AutoPostEdit.Failed;
         }
     }
 

@@ -6,6 +6,35 @@ using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Discord;
 
+/// <summary>
+/// How an attempt to edit a board in place ended.
+/// </summary>
+/// <remarks>
+/// THREE OUTCOMES, NOT TWO, AND THE MISSING ONE WAS A BUG. This used to be a bool, where
+/// false meant "gone - post a fresh one". The gateway implementation returned false for every
+/// failure: a 500 from Discord, a rate limit, a websocket hiccup, and - most often - a
+/// channel lookup that came back empty because the socket cache had not populated it yet,
+/// which is normal for the first seconds after a reconnect.
+///
+/// Every one of those re-posted a board that WAS STILL THERE. The new message's id was
+/// stored, the old one was orphaned, and the channel kept both. That is the duplicate
+/// leaderboard: not two sends racing, one send recovering from a failure that never happened.
+///
+/// "Could not tell" must therefore be its own answer, and it must mean CHANGE NOTHING.
+/// Re-posting is only correct when the message is known to be gone.
+/// </remarks>
+public enum AutoPostEdit
+{
+    /// <summary>Updated in place. Nothing else to do.</summary>
+    Edited,
+
+    /// <summary>The message is definitely gone. A fresh one is the recovery.</summary>
+    Missing,
+
+    /// <summary>Could not tell. Leave the existing post alone and try again next cycle.</summary>
+    Failed,
+}
+
 /// <summary>Fetches a channel and the message this bot previously posted in it.</summary>
 /// <remarks>
 /// An interface so the update-in-place logic - the part that had the bug - tests without a
@@ -13,9 +42,9 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public interface IAutoPostTarget
 {
-    /// <summary>Edit an existing message. False when it is gone.</summary>
+    /// <summary>Edit an existing message.</summary>
     /// <param name="components">Buttons to keep on the message. Null leaves it plain.</param>
-    Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct);
+    Task<AutoPostEdit> EditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct);
 
     /// <summary>Post a new message and return its id, or null when the channel is unusable.</summary>
     Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct);
@@ -90,13 +119,27 @@ public sealed class AutoPost
             if (embed is null) return;
 
             var existing = State().GetValueOrDefault(key);
-            if (existing != 0 &&
-                await _target.TryEditAsync(channel, existing, embed, components, ct).ConfigureAwait(false))
+            if (existing != 0)
             {
-                return;
+                var edit = await _target.EditAsync(channel, existing, embed, components, ct).ConfigureAwait(false);
+
+                if (edit is AutoPostEdit.Edited) return;
+
+                /* NOT GONE, JUST UNREACHABLE - so leave it. Falling through here is what put
+                   a second copy of the board in the channel: the message was still there,
+                   the edit merely failed, and re-posting orphaned the original. Waiting a
+                   cycle costs one stale refresh; guessing costs a duplicate that never goes
+                   away on its own. */
+                if (edit is AutoPostEdit.Failed)
+                {
+                    _logger.LogWarning(
+                        "{Key} board could not be updated this cycle and has been left alone. " +
+                        "Re-posting it without knowing the original is gone would duplicate it", key);
+                    return;
+                }
             }
 
-            // Either there was no message, or it has been deleted. Post a fresh one.
+            // Known gone, or never posted. A fresh one is the recovery.
             var posted = await _target.SendAsync(channel, embed, components, ct).ConfigureAwait(false);
             if (posted is null)
             {

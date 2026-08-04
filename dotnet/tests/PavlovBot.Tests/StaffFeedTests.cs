@@ -135,8 +135,10 @@ internal sealed class RecordingPostTarget : IAutoPostTarget
     public List<(ulong Channel, Embed Embed)> Sent { get; } = [];
     public Exception? Throws { get; init; }
 
-    public Task<bool> TryEditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct) =>
-        Task.FromResult(false);
+    // Missing, not Failed: this fake never has anything to edit, and "could not tell" would
+    // make the send path unreachable rather than exercising it.
+    public Task<AutoPostEdit> EditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct) =>
+        Task.FromResult(AutoPostEdit.Missing);
 
     public Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct)
     {
