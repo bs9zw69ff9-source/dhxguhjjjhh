@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using PavlovBot.Core.Concurrency;
 
 namespace PavlovBot.Core.Economy;
 
@@ -32,14 +32,25 @@ public interface IBalanceStore
 /// Serialising PER PLAYER rather than globally matters at scale - a busy server pays out
 /// constantly, and one global lock would turn every payout into a queue behind every other.
 ///
-/// The queue is dropped once it goes idle. Keeping one per player forever is a slow leak
-/// that only shows up on a server that has seen a lot of players, which is exactly the one
-/// you cannot afford it on.
+/// THE SERIALISATION IS STRIPED, not a lock per player, and that is load-bearing. This class
+/// used to keep a <c>ConcurrentDictionary</c> of one semaphore per player and drop each entry
+/// when it looked idle, to avoid growing forever. The idle test could not see a caller that
+/// had read the semaphore out of the dictionary but had not yet awaited it, so the entry was
+/// removed underneath that caller and the next arrival built a second semaphore for the same
+/// player. Two semaphores, two concurrent writers, one lost payout: precisely the double-spend
+/// described above, reintroduced by the code written to prevent it.
+/// <see cref="KeyedLock"/> has no reclamation step and therefore no such window.
 /// </remarks>
 public sealed class Ledger
 {
     private readonly IBalanceStore _store;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <remarks>
+    /// OrdinalIgnoreCase to match how the rest of the bot compares player ids. On an ordinal
+    /// comparer "Alice" and "alice" would land on different stripes and mutate one ledger
+    /// concurrently, which is the whole failure this serialisation exists to prevent.
+    /// </remarks>
+    private readonly KeyedLock _locks = new(comparer: StringComparer.OrdinalIgnoreCase);
 
     public Ledger(IBalanceStore store) => _store = store ?? throw new ArgumentNullException(nameof(store));
 
@@ -56,31 +67,29 @@ public sealed class Ledger
         ArgumentException.ThrowIfNullOrWhiteSpace(playerId);
         ArgumentNullException.ThrowIfNull(mutate);
 
-        var gate = _gates.GetOrAdd(playerId, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            // An absent ledger reads as zero HERE, at the point of use, rather than in the
-            // store - the store keeps the distinction so a caller that needs to know
-            // whether a player has ever had a balance still can.
-            var before = _store.Read(playerId) ?? 0;
+        using var _ = await _locks.AcquireAsync(playerId, ct).ConfigureAwait(false);
 
-            long? after;
-            try { after = mutate(before); }
-            catch (Exception) { return new BalanceChange(false, before, before); }
+        // An absent ledger reads as zero HERE, at the point of use, rather than in the
+        // store - the store keeps the distinction so a caller that needs to know
+        // whether a player has ever had a balance still can.
+        var before = _store.Read(playerId) ?? 0;
 
-            if (after is null) return new BalanceChange(false, before, before);
+        /* A THROWING MUTATOR IS A BUG IN THE CALLER, AND IT PROPAGATES. This used to be
+           wrapped in `catch (Exception) { return new BalanceChange(false, ...); }`, which
+           made every such bug indistinguishable from "insufficient funds" - the ordinary,
+           expected, entirely uninteresting outcome. No log, no metric, no stack trace, and a
+           veto is common enough that nobody would ever look twice at one.
 
-            var ok = _store.Write(playerId, after.Value);
-            return new BalanceChange(ok, before, ok ? after.Value : before);
-        }
-        finally
-        {
-            gate.Release();
-            // Drop the gate once nobody is waiting on it. Checking CurrentCount avoids
-            // removing one that a queued caller is about to acquire.
-            if (gate.CurrentCount == 1) _gates.TryRemove(new KeyValuePair<string, SemaphoreSlim>(playerId, gate));
-        }
+           Core has no logger by design (it is dependency-free and AOT-safe), so swallowing
+           here cannot be made observable here. The host CAN see it: DiscordGateway counts
+           command_errors_total with the exception, and Payroll logs its own failures. Letting
+           it out is what puts it in front of someone. */
+        var after = mutate(before);
+
+        if (after is null) return new BalanceChange(false, before, before);
+
+        var ok = _store.Write(playerId, after.Value);
+        return new BalanceChange(ok, before, ok ? after.Value : before);
     }
 
     /// <summary>Credit an amount. Negative amounts are a debit and may drive the balance below zero.</summary>
@@ -97,7 +106,4 @@ public sealed class Ledger
     /// </remarks>
     public Task<BalanceChange> DebitAsync(string playerId, long amount, CancellationToken ct = default) =>
         MutateAsync(playerId, before => before >= amount ? before - amount : null, ct);
-
-    /// <summary>Live queue count. Exposed so a leak in the gate map is observable rather than theoretical.</summary>
-    public int ActiveQueues => _gates.Count;
 }
