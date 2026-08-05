@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
@@ -33,6 +34,33 @@ public sealed class MonitoringServer : IHostedService, IDisposable
     private readonly Func<bool> _readiness;
 
     private HttpListener? _listener;
+
+    /// <summary>
+    /// The expected <c>Authorization</c> value, as bytes, built once.
+    /// </summary>
+    /// <remarks>
+    /// PRECOMPUTED so the comparison has nothing to allocate and no length to leak through
+    /// timing beyond what the header itself already reveals. Null when no token is set, which
+    /// is the "endpoint is open" case rather than "every request is unauthorised".
+    /// </remarks>
+    private readonly byte[]? _expectedAuthorization;
+
+    /// <summary>
+    /// How many requests may be in flight at once.
+    /// </summary>
+    /// <remarks>
+    /// UNBOUNDED BEFORE. Every accepted connection went straight to Task.Run, so a scrape
+    /// flood spawned one task per request with nothing to push back - and /health fans out to
+    /// an RCON probe per server, so each of those tasks costs real work on the game servers
+    /// rather than just a slot in the thread pool. A monitoring endpoint that can be used to
+    /// take down what it monitors has the relationship backwards.
+    ///
+    /// Saturation answers 503 immediately instead of queueing: a scraper that is told to back
+    /// off recovers, whereas one whose requests pile up unanswered times out and retries,
+    /// which is the same load again.
+    /// </remarks>
+    private const int MaxConcurrentRequests = 16;
+    private readonly SemaphoreSlim _inFlight = new(MaxConcurrentRequests, MaxConcurrentRequests);
     private Task? _loop;
     private CancellationTokenSource? _stopping;
 
@@ -48,6 +76,9 @@ public sealed class MonitoringServer : IHostedService, IDisposable
         _health = health;
         _logger = logger;
         _readiness = readiness ?? (static () => true);
+        _expectedAuthorization = options.Token is null
+            ? null
+            : Encoding.UTF8.GetBytes($"Bearer {options.Token}");
     }
 
     public bool Listening => _listener?.IsListening ?? false;
@@ -104,14 +135,54 @@ public sealed class MonitoringServer : IHostedService, IDisposable
                 continue;
             }
 
+            // Refuse rather than queue when saturated. Doing this on the ACCEPT thread and
+            // not inside the task is the point: a queued task is still a task, so admission
+            // has to be decided before one is created.
+            if (!_inFlight.Wait(0))
+            {
+                _logger.LogWarning("Monitoring at capacity ({Max} in flight), refused a request", MaxConcurrentRequests);
+                try
+                {
+                    context.Response.StatusCode = 503;
+                    context.Response.Close();
+                }
+                catch (Exception ex) { _logger.LogDebug(ex, "Could not refuse a monitoring request cleanly"); }
+                continue;
+            }
+
             // One slow /health must not queue behind it every other scrape.
             _ = Task.Run(async () =>
             {
                 try { await HandleAsync(context, ct).ConfigureAwait(false); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Monitoring request failed"); }
-                finally { try { context.Response.Close(); } catch (Exception) { } }
+                finally
+                {
+                    try { context.Response.Close(); }
+                    catch (Exception ex) { _logger.LogDebug(ex, "Could not close a monitoring response"); }
+                    _inFlight.Release();
+                }
             }, CancellationToken.None);
         }
+    }
+
+    /// <summary>Whether the supplied header is the configured bearer token.</summary>
+    /// <remarks>
+    /// FIXED TIME, because <see cref="string.Equals(string, string, StringComparison)"/>
+    /// returns as soon as two characters differ. That turns the token into something an
+    /// attacker can recover a character at a time by measuring responses, rather than
+    /// something they have to guess whole. The endpoint binds to loopback by default, which
+    /// contains it - but METRICS_HOST exists to widen that, and the token is the only thing
+    /// standing between a widened endpoint and a full readout of internal state.
+    ///
+    /// The length check ahead of it is not a leak worth avoiding: the header length is
+    /// already observable from the request itself.
+    /// </remarks>
+    private bool AuthorizationMatches(string? authorization)
+    {
+        if (_expectedAuthorization is null || authorization is null) return false;
+
+        var supplied = Encoding.UTF8.GetBytes(authorization);
+        return CryptographicOperations.FixedTimeEquals(supplied, _expectedAuthorization);
     }
 
     /// <summary>Routing and authorisation, split out so tests exercise it without a socket.</summary>
@@ -122,11 +193,11 @@ public sealed class MonitoringServer : IHostedService, IDisposable
 
         var path = rawUrl.Split('?')[0];
 
-        if (_options.Token is not null)
+        if (_expectedAuthorization is not null)
         {
             // Liveness stays OPEN. An orchestrator has to be able to restart a bot whose
             // configuration is broken, and that includes a wrong metrics token.
-            if (path != "/healthz" && !string.Equals(authorization, $"Bearer {_options.Token}", StringComparison.Ordinal))
+            if (path != "/healthz" && !AuthorizationMatches(authorization))
                 return new MonitoringResponse(401, "unauthorized", "text/plain; charset=utf-8");
         }
 

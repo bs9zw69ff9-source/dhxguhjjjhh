@@ -1,7 +1,11 @@
 using PavlovBot.Host.Discord;
 using Microsoft.Extensions.Logging.Abstractions;
+using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord.Commands;
+using PavlovBot.Host.Observability;
+using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Servers;
+using PavlovBot.Rcon;
 using Xunit;
 
 namespace PavlovBot.Tests;
@@ -253,7 +257,28 @@ public class RotateMapTests
     [Fact]
     public void TheBroadcastIsTheExactLineAsked()
     {
-        Assert.Equal("All Server Rotating...", RotateMapCommand.Warning);
+        /* The MESSAGE only. It used to read "All Server Rotating..." because the literal
+           target was hidden in the text - the one place that happened to make the wire
+           format right, while /serverswitch and /announce sent no target at all. */
+        Assert.Equal("Server Rotating...", RotateMapCommand.Warning);
+    }
+
+    [Fact]
+    public void NoWarningCarriesItsOwnTarget()
+    {
+        /* Over the whole set, so a warning added later cannot quietly reintroduce the
+           workaround this replaced. PlayerNotice addresses every broadcast; a message that
+           begins with "All" would go out as `Notify All All …` and read as a stutter. */
+        foreach (var warning in Warnings())
+            Assert.False(warning.StartsWith("All ", StringComparison.Ordinal),
+                $"\"{warning}\" carries a target that PlayerNotice already supplies");
+    }
+
+    private static IEnumerable<string> Warnings()
+    {
+        yield return RotateMapCommand.Warning;
+        foreach (var action in Enum.GetValues<UnitAction>())
+            if (ServerSwitchCommand.WarningFor(action) is { } w) yield return w;
     }
 
     [Fact]
@@ -264,6 +289,63 @@ public class RotateMapTests
            it, players would see something other than what this command promises. */
         Assert.Equal(RotateMapCommand.Warning,
             PavlovBot.Core.Text.Sanitize.Message(RotateMapCommand.Warning));
+    }
+
+    // ---- what actually reaches the server ----
+
+    /// <summary>A PlayerNotice wired to a fake listener, so the sent line can be read back.</summary>
+    private static PlayerNotice Notice(FakeRconServer server)
+    {
+        var options = new BotOptions
+        {
+            DiscordToken = "t",
+            Servers = [new RconOptions
+            {
+                Name = PlayerNotice.RconNameFor(1),
+                Host = "127.0.0.1",
+                Port = server.Port,
+                Password = server.Password,
+            }],
+            Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+            DataDirectory = Path.GetTempPath(),
+        };
+
+        return new PlayerNotice(
+            new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance),
+            NullLogger<PlayerNotice>.Instance);
+    }
+
+    private static string SentNotify(FakeRconServer server) =>
+        server.Commands.Single(c => c.StartsWith("Notify", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task TheBroadcastSaysWhoItIsFor()
+    {
+        /* THE BUG, ON THE WIRE. The verb is `Notify <player|All> <message>`. Sent as
+           `Notify Server restarting...` the game took "Server" for a player name, matched
+           nobody, and replied "Successful": false - so every /serverswitch restart dropped
+           its players with no warning at all, while the bot reported a delivered broadcast.
+
+           Asserted against the real socket rather than the format string, because the whole
+           failure was the difference between what the code says and what the server reads. */
+        await using var server = new FakeRconServer();
+
+        var result = await Notice(server).WarnAsync(1, "Server restarting...", CancellationToken.None);
+
+        Assert.True(result.Delivered);
+        Assert.Equal("Notify All Server restarting...", SentNotify(server));
+    }
+
+    [Fact]
+    public async Task TheRotateBroadcastDoesNotAddressItselfTwice()
+    {
+        // The other half of the same fix: the target moved out of the message, so the line
+        // that already worked has to keep working rather than turn into `Notify All All …`.
+        await using var server = new FakeRconServer();
+
+        await Notice(server).WarnAsync(1, RotateMapCommand.Warning, CancellationToken.None);
+
+        Assert.Equal("Notify All Server Rotating...", SentNotify(server));
     }
 
     // ---- the failure that will actually happen ----

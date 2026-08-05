@@ -121,7 +121,9 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
         if (!_clients.TryGetValue(server, out var client))
             throw new InvalidOperationException($"unknown server \"{server}\"");
 
-        var verb = command.Split(' ', 2)[0];
+        /* Bounded label. /manual sends arbitrary text, and an unbounded label exhausts the
+           metric series budget - see RconClient.MetricVerb. */
+        var verb = RconClient.MetricVerb(command);
         return _metrics.TimeAsync(
             "rcon_command_duration_ms",
             MetricLabels.Of("server", server, "command", verb),
@@ -260,7 +262,17 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     /// <summary>Probe every server, recording reachability.</summary>
     public async Task ProbeAllAsync(CancellationToken ct)
     {
-        foreach (var server in _clients.Keys)
+        /* IN PARALLEL, because this was the wall on server count. Each probe costs a full
+           RCON round trip and an unreachable server burns the whole command timeout before
+           admitting it, so sequentially the probe took servers x timeout: fine at three,
+           minutes at fifty, and the health interval would be missed long before that. Servers
+           are independent here - each writes only its own slot - so there is nothing to
+           serialise for.
+
+           Every server still gets its own try/catch: one unreachable server must record its
+           own failure and leave the rest to report theirs, which Task.WhenAll would not do if
+           the exceptions escaped. */
+        await Task.WhenAll(_clients.Keys.Select(async server =>
         {
             try
             {
@@ -274,7 +286,7 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
                 _metrics.Gauge("rcon_up", 0, MetricLabels.Of("server", server));
                 _logger.LogWarning("RCON probe failed for {Server}: {Message}", server, ex.Message);
             }
-        }
+        })).ConfigureAwait(false);
     }
 
     /// <summary>

@@ -38,7 +38,12 @@ public sealed class RotateMapCommand(
     public string Name => "rotatemap";
 
     /// <summary>The exact line broadcast before a restart.</summary>
-    public const string Warning = "All Server Rotating...";
+    /// <remarks>
+    /// The message only. <see cref="PlayerNotice"/> addresses it to every player, so the
+    /// leading "All" this used to carry is gone - kept here it would go out twice, and it
+    /// was never part of the sentence in the first place.
+    /// </remarks>
+    public const string Warning = "Server Rotating...";
 
     public ApplicationCommandProperties Build()
     {

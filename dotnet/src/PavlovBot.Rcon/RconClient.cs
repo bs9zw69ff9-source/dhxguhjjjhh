@@ -36,6 +36,29 @@ public sealed class RconClient : IAsyncDisposable
             "ModeratorList", "InspectAll", "UGCModList",
         };
 
+    /// <summary>
+    /// Every verb the bot is known to send, reads and mutations alike.
+    /// </summary>
+    /// <remarks>
+    /// EXISTS FOR METRIC LABELS, not for validation - nothing here rejects a command. The
+    /// verb was being used verbatim as a Prometheus label, and /manual sends whatever an
+    /// owner types, so every typo minted a new time series. MetricsRegistry caps the total at
+    /// MaxSeries and then silently drops NEW series for the life of the process, which means
+    /// a few minutes of fat-fingering at the console could permanently blind the metrics that
+    /// matter, with nothing anywhere saying why.
+    /// </remarks>
+    private static readonly HashSet<string> KnownVerbs =
+        new(ReadOnlyCommands, StringComparer.OrdinalIgnoreCase)
+        {
+            "Ban", "Unban", "Kick", "Notify", "SetPin", "RemovePin", "RotateMap",
+            "SwitchMap", "GiveItem", "GiveCash", "GiveVehicle", "SetPlayerSkin", "Slap",
+        };
+
+    /// <summary>The verb of a command, or "other" when it is not one the bot issues.</summary>
+    /// <remarks>Bounded by construction, so it is safe to use as a metric label.</remarks>
+    public static string MetricVerb(string command) =>
+        KnownVerbs.Contains(Verb(command)) ? Verb(command) : "other";
+
     private readonly RconOptions _options;
     private readonly RconConnection _connection;
     private readonly ConcurrentDictionary<string, CacheEntry> _readCache = new(StringComparer.OrdinalIgnoreCase);
@@ -44,6 +67,12 @@ public sealed class RconClient : IAsyncDisposable
     /// <summary>Commands this client issued recently, so log-derived audit can tell its own traffic apart.</summary>
     private readonly ConcurrentDictionary<string, DateTimeOffset> _issued = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan IssuedRetention = TimeSpan.FromMinutes(2);
+
+    /// <summary>Size above which the map is worth sweeping at all.</summary>
+    private const int IssuedSoftCap = 200;
+
+    /// <summary>UTC ticks of the last sweep. Interlocked, so it is a long rather than a DateTimeOffset.</summary>
+    private long _lastSweepTicks;
 
     private sealed record CacheEntry(string Value, DateTimeOffset At);
 
@@ -55,7 +84,7 @@ public sealed class RconClient : IAsyncDisposable
 
     public string Name => _options.Name;
 
-    private static string Verb(string command)
+    internal static string Verb(string command)
     {
         var span = command.AsSpan().Trim();
         var i = span.IndexOf(' ');
@@ -169,13 +198,28 @@ public sealed class RconClient : IAsyncDisposable
     /// <summary>Drop cached reads. Exposed so a caller that knows state changed can force a refresh.</summary>
     public void InvalidateReads() => _readCache.Clear();
 
+    /// <remarks>
+    /// THE SWEEP IS RATE LIMITED, not run per send. It used to fire on every call once the
+    /// map passed 200 entries, so a busy server paid a full O(n) scan on the RCON hot path
+    /// for every command - and the entries a scan removes are exactly the ones the next scan
+    /// a minute later would have removed, so the extra passes bought nothing.
+    ///
+    /// The CompareExchange is what keeps it to one sweeper: several threads can pass the
+    /// elapsed check together, and only the one that wins the exchange does the work.
+    /// </remarks>
     private void NoteIssued(string command)
     {
         var now = DateTimeOffset.UtcNow;
         _issued[command.Trim()] = now;
-        if (_issued.Count > 200)
-            foreach (var (k, at) in _issued)
-                if (now - at > IssuedRetention) _issued.TryRemove(k, out _);
+
+        if (_issued.Count <= IssuedSoftCap) return;
+
+        var last = Interlocked.Read(ref _lastSweepTicks);
+        if (now.UtcTicks - last < IssuedRetention.Ticks) return;
+        if (Interlocked.CompareExchange(ref _lastSweepTicks, now.UtcTicks, last) != last) return;
+
+        foreach (var (k, at) in _issued)
+            if (now - at > IssuedRetention) _issued.TryRemove(k, out _);
     }
 
     /// <summary>
