@@ -48,6 +48,15 @@ internal sealed class FakeRconServer : IAsyncDisposable
     /// <summary>Reply without a Command field, which some Pavlov replies genuinely do.</summary>
     public bool OmitCommandField { get; set; }
 
+    /// <summary>Answer every command with "Successful": false, as a refusal does.</summary>
+    public bool RefuseEverything { get; set; }
+
+    /// <summary>Reply without a Successful field at all - unknown, not failed.</summary>
+    public bool OmitSuccessfulField { get; set; }
+
+    /// <summary>Answer with bare text rather than JSON, which some builds do on failure.</summary>
+    public string? PlainTextReply { get; set; }
+
     /// <summary>
     /// Verbs the server ACCEPTS AND NEVER ANSWERS.
     /// </summary>
@@ -115,9 +124,12 @@ internal sealed class FakeRconServer : IAsyncDisposable
                     if (Swallow.Contains(command.Split(' ')[0])) continue;
 
                     var answering = AnswerEverythingAs ?? command.Split(' ')[0];
-                    var reply = OmitCommandField
-                        ? "{\"Successful\":true,\"PlayerList\":[]}\r\n"
-                        : $"{{\"Command\":\"{answering}\",\"Successful\":true,\"PlayerList\":[]}}\r\n";
+                    var outcome = RefuseEverything ? "false" : "true";
+                    string reply;
+                    if (PlainTextReply is { } plain) reply = plain + "\r\n";
+                    else if (OmitCommandField) reply = $"{{\"Successful\":{outcome},\"PlayerList\":[]}}\r\n";
+                    else if (OmitSuccessfulField) reply = $"{{\"Command\":\"{answering}\",\"PlayerList\":[]}}\r\n";
+                    else reply = $"{{\"Command\":\"{answering}\",\"Successful\":{outcome},\"PlayerList\":[]}}\r\n";
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(reply), _cts.Token);
 
                     if (DropAfterNextCommand) { DropAfterNextCommand = false; return; }

@@ -132,6 +132,33 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     }
 
     /// <summary>
+    /// Send a command and refuse to call it done when the server said it was not.
+    /// </summary>
+    /// <remarks>
+    /// FOR MUTATIONS. Every mutating call site discarded the reply: Ban, Unban, SetPin and
+    /// the broadcasts all sent, ignored the answer, and reported success. Production caught
+    /// one - {"Command":"Ban","Ban":false,"UniqueID":"Holosight1","Successful":false} - a ban
+    /// the server refused, which the bot counted as applied and logged as reconciled. A
+    /// moderator was told somebody was banned who was not.
+    ///
+    /// TRI-STATE, and only false is a refusal. Plenty of Pavlov replies omit Successful
+    /// entirely and some are not JSON at all; treating unknown as failure would turn most of
+    /// the command surface into errors to catch a fault those replies cannot express.
+    /// </remarks>
+    public async Task<string> SendVerifiedAsync(string server, string command, CancellationToken ct = default)
+    {
+        var reply = await SendAsync(server, command, ct).ConfigureAwait(false);
+
+        if (!RconReply.TryParse(reply, out var document) || document is null) return reply;
+        using (document)
+        {
+            if (RconReply.Successful(document.RootElement) == false)
+                throw new RconRejectedException(command, reply.Trim());
+        }
+        return reply;
+    }
+
+    /// <summary>
     /// The roster this server last reported. Never throws and never blocks - a caller that
     /// needs the truth right now should ask for it; a caller rendering a list wants the
     /// cheap answer plus the timestamp so it can say how old it is.
