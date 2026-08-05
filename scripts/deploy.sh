@@ -29,17 +29,17 @@ cd "$(dirname "$0")/.."
 # Overridable without editing the script, so a branch rename does not mean editing
 # a file on the box: DEPLOY_BRANCH=main bash scripts/deploy.sh
 #
-# POINTED AT THE WORKING BRANCH, NOT THE TRUNK, and that is a temporary state worth
-# being loud about. The fixes that matter right now - the RCON Notify target, the
-# ledger locking, the monitoring hardening, and this script's own rollback fix - are
-# all on claude/debug-optimize-code-vla002 and none of them are in
-# claude/debug-optimize-code-dva08i yet. Deploying the trunk today ships none of it.
+# BACK ON THE TRUNK. This briefly pointed at a working branch, because the fixes that
+# mattered were sitting on one and unmerged - deploying the trunk then would have
+# built and shipped a tree containing none of them, successfully and silently. They
+# merged in #4, so there is one answer again to "what does production run".
 #
-# WHEN THE PULL REQUEST MERGES, PUT THIS BACK. Two branches that both claim to be
-# what production runs is the same confusion this repo already has between `main`,
-# `Main` and the two claude/* branches, and a deploy script is the worst place to
-# leave it unresolved.
-BRANCH="${DEPLOY_BRANCH:-claude/debug-optimize-code-vla002}"
+# Keep it that way. Two refs that both claim to be what production runs is the
+# confusion this repo already carries between `main`, `Main` and the claude/*
+# branches, and a deploy script is the worst place to leave it unresolved. If a
+# working branch needs deploying, pass it for that one run rather than editing this:
+#   bash scripts/deploy.sh some/branch      (or DEPLOY_BRANCH=some/branch)
+BRANCH="${DEPLOY_BRANCH:-claude/debug-optimize-code-dva08i}"
 MODE="csharp"
 START=true
 CS_ARGS=()
