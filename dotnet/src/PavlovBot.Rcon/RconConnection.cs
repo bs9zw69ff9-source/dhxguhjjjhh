@@ -111,6 +111,26 @@ internal sealed class RconConnection : IAsyncDisposable
     }
 
     /// <summary>
+    /// Tear down the session so the next command starts a fresh one.
+    /// </summary>
+    /// <remarks>
+    /// For a fault the TRANSPORT cannot see. A reply that names another command arrives as a
+    /// complete, well-formed, successful exchange - nothing here can tell it is wrong, so
+    /// nothing here drops the socket. The client can tell, and if the server's replies are
+    /// offset then every later command on this session is wrong too. Reconnecting is the only
+    /// way to resynchronise, and it costs one handshake against reading wrong data
+    /// indefinitely.
+    ///
+    /// Takes the gate, so it cannot dispose the stream under an exchange in flight.
+    /// </remarks>
+    internal async Task ResetAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try { await DisposeSocketAsync().ConfigureAwait(false); }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
     /// Send one command and return the raw reply. Serialised: callers queue behind each
     /// other rather than corrupting the stream.
     /// </summary>
@@ -285,6 +305,24 @@ public class RconException : Exception
 {
     public RconException(string message) : base(message) { }
     public RconException(string message, Exception inner) : base(message, inner) { }
+}
+
+/// <summary>
+/// The server answered a different command than the one that was sent.
+/// </summary>
+/// <remarks>
+/// Its own type so the retry loop can tell it from an ordinary transport error, and so the
+/// message names both verbs: "asked X, got Y" is the whole diagnosis, and burying it in a
+/// generic failure is how this went unnoticed while moderators read the wrong data.
+/// </remarks>
+public sealed class MismatchedReplyException : RconException
+{
+    public MismatchedReplyException(string asked, string answered)
+        : base($"sent \"{asked}\" but the server answered \"{answered}\" - the reply belongs to another command") =>
+        (Asked, Answered) = (asked, answered);
+
+    public string Asked { get; }
+    public string Answered { get; }
 }
 
 /// <summary>The server rejected the password. Never worth retrying.</summary>

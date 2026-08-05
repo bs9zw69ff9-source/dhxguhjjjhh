@@ -36,6 +36,19 @@ internal sealed class FakeRconServer : IAsyncDisposable
     public TimeSpan ReplyDelay { get; set; } = TimeSpan.Zero;
 
     /// <summary>
+    /// Answer every command as if it were this verb, modelling a server that misattributes.
+    /// </summary>
+    /// <remarks>
+    /// Not hypothetical: production returned a ServerInfo document to a BanList and a
+    /// RefreshList document to the same BanList half an hour later. Whatever produces that,
+    /// the bot has to survive it, so it has to be reproducible here.
+    /// </remarks>
+    public string? AnswerEverythingAs { get; set; }
+
+    /// <summary>Reply without a Command field, which some Pavlov replies genuinely do.</summary>
+    public bool OmitCommandField { get; set; }
+
+    /// <summary>
     /// Verbs the server ACCEPTS AND NEVER ANSWERS.
     /// </summary>
     /// <remarks>
@@ -101,7 +114,10 @@ internal sealed class FakeRconServer : IAsyncDisposable
                     if (ReplyDelay > TimeSpan.Zero) await Task.Delay(ReplyDelay, _cts.Token);
                     if (Swallow.Contains(command.Split(' ')[0])) continue;
 
-                    var reply = $"{{\"Command\":\"{command.Split(' ')[0]}\",\"Successful\":true,\"PlayerList\":[]}}\r\n";
+                    var answering = AnswerEverythingAs ?? command.Split(' ')[0];
+                    var reply = OmitCommandField
+                        ? "{\"Successful\":true,\"PlayerList\":[]}\r\n"
+                        : $"{{\"Command\":\"{answering}\",\"Successful\":true,\"PlayerList\":[]}}\r\n";
                     await stream.WriteAsync(Encoding.UTF8.GetBytes(reply), _cts.Token);
 
                     if (DropAfterNextCommand) { DropAfterNextCommand = false; return; }
