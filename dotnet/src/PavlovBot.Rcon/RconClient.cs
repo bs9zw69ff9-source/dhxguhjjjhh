@@ -1,3 +1,4 @@
+using PavlovBot.Rcon.Protocol;
 using System.Collections.Concurrent;
 
 namespace PavlovBot.Rcon;
@@ -171,6 +172,27 @@ public sealed class RconClient : IAsyncDisposable
                 cts.CancelAfter(_options.CommandTimeout);
                 var result = await _connection.SendAsync(command, cts.Token).ConfigureAwait(false);
 
+                /* THE REPLY HAS TO BE THE ONE WE ASKED FOR. Seen in production: `BanList`
+                   answered with a ServerInfo document, and the same command answered with a
+                   RefreshList document half an hour later - both "Successful": true, and both
+                   the reply to background traffic on the shared connection.
+
+                   The gate serialises the socket and an unsettled exchange drops it, so this
+                   should be unreachable from our side. It fires anyway because "our transport
+                   is correct" is not the same claim as "the answer is ours", and the second is
+                   the only one a caller cares about. A moderator reading a roster and
+                   believing it is a ban list is a worse failure than a refused command.
+
+                   The exchange itself looked perfect - complete, well formed, successful - so
+                   the connection layer had no reason to drop the socket and did not. If the
+                   server's replies are offset then every later command on this session is
+                   wrong too, so the session is reset here before the retry. */
+                if (Mismatch(command, result) is { } mismatch)
+                {
+                    await _connection.ResetAsync(ct).ConfigureAwait(false);
+                    throw mismatch;
+                }
+
                 /* Anything that is not a pure read may change who is on the server, so drop
                    the cached reads once it lands. Otherwise a kick could be followed by a
                    roster that still lists the player. */
@@ -192,7 +214,37 @@ public sealed class RconClient : IAsyncDisposable
                 await Task.Delay(Backoff.Delay(attempt), ct).ConfigureAwait(false);
             }
         }
-        throw new RconException($"{_options.Name}: \"{Verb(command)}\" failed after {_options.MaxAttempts} attempts", last!);
+        /* The REASON, not just the count. "failed after 3 attempts" is the shape of every
+           RCON failure and tells nobody which one happened; the last exception's message is
+           the part that distinguishes a refused password from a closed port from a reply that
+           belonged to another command. */
+        throw new RconException(
+            $"{_options.Name}: \"{Verb(command)}\" failed after {_options.MaxAttempts} attempt(s): {last?.Message}",
+            last!);
+    }
+
+    /// <summary>
+    /// The reply's own account of which command it answers, or null when it does not say.
+    /// </summary>
+    /// <remarks>
+    /// ABSENT IS NOT A MISMATCH. Plenty of Pavlov replies carry no Command field, and some are
+    /// not JSON at all - failures come back as bare text. Refusing those would refuse most of
+    /// the command surface to catch a fault that, by definition, cannot be detected in them.
+    /// Only a reply that names a DIFFERENT command is rejected.
+    /// </remarks>
+    private static MismatchedReplyException? Mismatch(string command, string reply)
+    {
+        if (!RconReply.TryParse(reply, out var document) || document is null) return null;
+
+        using (document)
+        {
+            if (RconReply.Text(document.RootElement, "Command") is not { } answered) return null;
+
+            var asked = Verb(command);
+            return string.Equals(asked, answered, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : new MismatchedReplyException(asked, answered);
+        }
     }
 
     /// <summary>Drop cached reads. Exposed so a caller that knows state changed can force a refresh.</summary>
