@@ -28,7 +28,18 @@ cd "$(dirname "$0")/.."
 
 # Overridable without editing the script, so a branch rename does not mean editing
 # a file on the box: DEPLOY_BRANCH=main bash scripts/deploy.sh
-BRANCH="${DEPLOY_BRANCH:-claude/debug-optimize-code-dva08i}"
+#
+# POINTED AT THE WORKING BRANCH, NOT THE TRUNK, and that is a temporary state worth
+# being loud about. The fixes that matter right now - the RCON Notify target, the
+# ledger locking, the monitoring hardening, and this script's own rollback fix - are
+# all on claude/debug-optimize-code-vla002 and none of them are in
+# claude/debug-optimize-code-dva08i yet. Deploying the trunk today ships none of it.
+#
+# WHEN THE PULL REQUEST MERGES, PUT THIS BACK. Two branches that both claim to be
+# what production runs is the same confusion this repo already has between `main`,
+# `Main` and the two claude/* branches, and a deploy script is the worst place to
+# leave it unresolved.
+BRANCH="${DEPLOY_BRANCH:-claude/debug-optimize-code-vla002}"
 MODE="csharp"
 START=true
 CS_ARGS=()
