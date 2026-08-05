@@ -93,7 +93,10 @@ public sealed partial class SetPinCommand(RconRegistry rcon, Access access, ILog
         {
             try
             {
-                await rcon.SendAsync(server, $"SetPin {pin}", ct).ConfigureAwait(false);
+                /* Verified, so "Locked" means locked. Discarding the reply here reported a
+                   PIN as applied on a server that refused it, which is the failure mode you
+                   discover when somebody joins without one. */
+                await rcon.SendVerifiedAsync(server, $"SetPin {pin}", ct).ConfigureAwait(false);
                 applied.Add(server);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

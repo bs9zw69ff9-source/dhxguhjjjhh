@@ -65,6 +65,25 @@ public class VpnConsensusTests
     }
 
     [Fact]
+    public void ADisputedConfirmationReportsHowManyActuallyFlaggedIt()
+    {
+        /* THE COUNT WAS HARDCODED TO ZERO. "Disputed" only means the confirmer hits fell
+           short of ConfirmMin, and that threshold is configurable through VPN_CONFIRM_MIN:
+           set to 2, a confirmer that DID flag the address read as "disputed it (0/2)".
+
+           This string is the justification a moderator reads behind an automatic ban, and
+           understating the evidence is the wrong direction to be wrong in - it makes a
+           defensible ban look arbitrary. */
+        var decision = VpnConsensus.Decide(
+            Tier(3, 4), Tier(1, 2), configuredConfirmers: 2,
+            thresholds: new VpnThresholds(ScreenMin: 1, ConfirmMin: 2, BanMin: 2));
+
+        Assert.False(decision.Confirmed);
+        Assert.Contains("1/2", decision.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("(0/2", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ADisputedSingleHitStillDoesNotBan()
     {
         // One screener for, the confirmer against. That is one vote, not two.
