@@ -108,7 +108,7 @@ public sealed class AnnounceCommand(RconRegistry rcon, Access access, ILogger<An
                 /* `Notify <player|All> <message>`. Without the target the server takes the
                    first word of the message as a player name, matches nobody and answers
                    "Successful": false - and `delivered` counted that as a broadcast. */
-                await rcon.SendAsync(server, $"Notify All {message}", ct).ConfigureAwait(false);
+                await rcon.SendVerifiedAsync(server, $"Notify All {message}", ct).ConfigureAwait(false);
                 delivered++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

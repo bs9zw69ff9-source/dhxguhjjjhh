@@ -325,6 +325,24 @@ public sealed class MismatchedReplyException : RconException
     public string Answered { get; }
 }
 
+/// <summary>
+/// The server understood the command and refused it.
+/// </summary>
+/// <remarks>
+/// NOT A TRANSPORT FAILURE, and the distinction is the point. A refused Ban and an
+/// unreachable server both leave the player unbanned, but one needs a different argument and
+/// the other needs the server looked at. Both used to be invisible: the reply was discarded,
+/// so "Successful": false was counted as success and logged as applied.
+/// </remarks>
+public sealed class RconRejectedException : RconException
+{
+    public RconRejectedException(string command, string reply)
+        : base($"the server refused \"{command}\": {reply}") => (Command, Reply) = (command, reply);
+
+    public string Command { get; }
+    public string Reply { get; }
+}
+
 /// <summary>The server rejected the password. Never worth retrying.</summary>
 public sealed class RconAuthException : RconException
 {

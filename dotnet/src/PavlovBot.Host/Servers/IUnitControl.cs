@@ -28,6 +28,15 @@ public interface IUnitControl
     /// </remarks>
     Task<UnitState> StateAsync(string unit, CancellationToken ct = default);
 
+    /// <summary>The unit for a 1-based server number, or null when there is no such server.</summary>
+    /// <remarks>
+    /// A DEFAULT MEMBER, derived from <see cref="Units"/>, so no implementer has to restate
+    /// the off-by-one and no two of them can disagree about it. ServiceControl's own method
+    /// matches this signature and so implements it, unchanged.
+    /// </remarks>
+    string? UnitFor(int serverNumber) =>
+        serverNumber >= 1 && serverNumber <= Units.Count ? Units[serverNumber - 1] : null;
+
     /// <summary>Start, stop or restart a unit. Blocks until systemd says it is done.</summary>
     Task<UnitResult> RunAsync(string unit, UnitAction action, CancellationToken ct = default);
 }

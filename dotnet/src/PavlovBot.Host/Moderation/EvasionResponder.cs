@@ -148,6 +148,8 @@ public sealed class EvasionResponder
                only by an address they can change. Permanent ban, so the id flag is correct
                here - it is exactly what a manual /permban does. */
             await _tracking.RequestFlagAsync(join.AccountId, flagAccountId: true, ct).ConfigureAwait(false);
+
+            await FlagAttachedAccountsAsync(join, ct).ConfigureAwait(false);
         }
 
         var enforcement = await _bans.HardEnforceAsync(name, join.AccountId, ct: ct).ConfigureAwait(false);
@@ -164,6 +166,69 @@ public sealed class EvasionResponder
         await PostAsync(name, join, already).ConfigureAwait(false);
 
         return already ? AutoBanOutcome.EnforcedExisting : AutoBanOutcome.Banned;
+    }
+
+    /// <summary>
+    /// Flag the accounts attached to this one, so they are caught the moment they connect.
+    /// </summary>
+    /// <remarks>
+    /// FLAGGED, NOT BANNED OUTRIGHT, and the distinction is the whole design.
+    ///
+    /// The attachment comes from <see cref="IpTrackingService.AltsOf"/>, which links accounts
+    /// by CONFIRMED shared address - and that method's own remarks are the reason this stops
+    /// short of a ban: "households, phone tethering and student halls all put unrelated people
+    /// on one address". Banning every account ever seen on an evader's address would, on a
+    /// shared connection or a recycled ISP lease, ban people whose only connection to them is
+    /// an ISP. The registry has no expiry, so it would reach back over the whole history of
+    /// the server.
+    ///
+    /// A flag closes the same hole without that cost. An attached account that never returns
+    /// is never touched; one that connects is auto-banned on sight by the very path that just
+    /// ran, with the same master and exempt protections applied and the same audit line
+    /// written. The evader gains nothing - every account they own is caught the moment they
+    /// use it - and somebody who merely shares a router is not banned in absentia for a game
+    /// they were not playing.
+    ///
+    /// Failures here are logged and swallowed: the ban that triggered this has already landed,
+    /// and losing it because a secondary flag could not be written would be the wrong trade.
+    /// </remarks>
+    private async Task FlagAttachedAccountsAsync(FlaggedJoin join, CancellationToken ct)
+    {
+        IReadOnlyList<PavlovBot.Core.Evasion.AccountRecord> attached;
+        try
+        {
+            attached = _tracking.AltsOf(join.AccountId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not read the accounts attached to {Account}", join.AccountId);
+            return;
+        }
+
+        var flagged = 0;
+        foreach (var alt in attached)
+        {
+            /* The same protections as the primary ban. An attached account belonging to a
+               master is not evidence of anything except that staff share a house with a
+               player, and flagging it would auto-ban them on their next connection. */
+            var altName = alt.Names.FirstOrDefault();
+            if (altName is not null && (_masters.IsMaster(altName) || _masters.IsExempt(altName))) continue;
+
+            try
+            {
+                await _tracking.RequestFlagAsync(alt.Id, flagAccountId: true, ct).ConfigureAwait(false);
+                flagged++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Could not flag the attached account {Account}", alt.Id);
+            }
+        }
+
+        if (flagged > 0)
+            _logger.LogWarning(
+                "Flagged {Count} account(s) attached to {Account} - they will be banned on their next connection",
+                flagged, join.AccountId);
     }
 
     private async Task PostAsync(string name, FlaggedJoin join, bool already)

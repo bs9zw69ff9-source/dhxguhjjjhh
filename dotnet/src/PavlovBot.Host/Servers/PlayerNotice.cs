@@ -99,7 +99,11 @@ public sealed class PlayerNotice(RconRegistry rcon, ILogger<PlayerNotice> logger
 
             // Sanitize.Message even for a constant: the RCON protocol is line oriented, and
             // every string that reaches it goes through the same door.
-            await rcon.SendAsync(name, $"Notify {Everyone} {Sanitize.Message(message)}", cts.Token).ConfigureAwait(false);
+            /* VERIFIED, because Delivered is shown to the admin running the command and was
+               true whenever the socket accepted the bytes. The whole reason this broadcast was
+               broken - a missing target - surfaced as "Successful": false in the reply, and
+               the bot reported the warning as delivered anyway. */
+            await rcon.SendVerifiedAsync(name, $"Notify {Everyone} {Sanitize.Message(message)}", cts.Token).ConfigureAwait(false);
 
             logger.LogInformation("Warned {Name}: {Message}", name, message);
             return new NoticeResult(true, message);

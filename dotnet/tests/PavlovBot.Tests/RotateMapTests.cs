@@ -459,15 +459,47 @@ public class UnitStateTests
         new(ServiceControl.DefaultUnits, useSudo: false, NullLogger<ServiceControl>.Instance);
 
     [Fact]
-    public async Task AUnitSystemdHasNeverHeardOfIsUnknown_NotOffline()
+    public async Task AUnitSystemdHasNeverHeardOfIsNeverReportedActive()
     {
         /* UNKNOWN IS ITS OWN ANSWER. Not being able to ask is not the same as the answer
            being no, and the channel names key off this - collapsing the two would relabel
            every server "Offline" the moment the check itself broke, which is a far more
-           visible failure than the one it was added to fix. */
+           visible failure than the one it was added to fix.
+
+           THE ASSERTION USED TO BE `Equal(Unknown)`, AND THAT WAS AN ASSERTION ABOUT THE
+           TEST MACHINE. Where systemd is running, `systemctl is-active <missing-unit>` prints
+           "inactive" and ServiceControl maps that to Inactive, correctly - it asked and got an
+           answer. Where systemd is NOT the init system, the call errors and the answer is
+           Unknown. Both are right, and the old test only passed on the second kind of box:
+           green on a container, red on CI, for a difference that is not a defect.
+
+           What must hold everywhere is that a unit systemd has never heard of is never
+           reported ACTIVE, because Active is the reading that would show a dead server as
+           healthy. The distinction between Unknown and Inactive is pinned separately, below,
+           without a process. */
         var state = await Control().StateAsync("pavlov-does-not-exist-" + Guid.NewGuid().ToString("N"));
 
-        Assert.Equal(UnitState.Unknown, state);
+        Assert.True(state is UnitState.Unknown or UnitState.Inactive,
+            $"a unit that does not exist reported {state}");
+        Assert.NotEqual(UnitState.Active, state);
+    }
+
+    [Theory]
+    [InlineData("active", UnitState.Active)]
+    [InlineData("activating", UnitState.Starting)]
+    [InlineData("reloading", UnitState.Starting)]
+    [InlineData("inactive", UnitState.Inactive)]
+    [InlineData("deactivating", UnitState.Inactive)]
+    [InlineData("failed", UnitState.Failed)]
+    [InlineData("", UnitState.Unknown)]
+    [InlineData("something-systemd-invented-later", UnitState.Unknown)]
+    public void TheWordSystemdPrintsMapsToTheRightState(string word, UnitState expected)
+    {
+        /* The mapping, WITHOUT a process. This is the part that used to be tested by running
+           systemctl against a unit that does not exist, which tested the host as much as the
+           code. An unrecognised word maps to Unknown rather than to a guess, so a future
+           systemd state cannot silently read as Active. */
+        Assert.Equal(expected, ServiceControl.StateFrom(word));
     }
 
     [Fact]
@@ -556,7 +588,11 @@ public class UnitStatsTests
         var stats = await Control("pavlov-absent-" + Guid.NewGuid().ToString("N")).StatsAsync();
         var only = Assert.Single(stats);
 
-        Assert.Equal(UnitState.Unknown, only.State);
+        /* NOT `Equal(Unknown)`: on a host running systemd the unit is honestly reported
+           Inactive, and on one without it the query errors and the answer is Unknown. The
+           invariant that matters here is the NUMBERS - a missing unit must never present as
+           "CPU 0%, 0 MB", which reads as a healthy idle server. */
+        Assert.NotEqual(UnitState.Active, only.State);
         Assert.Null(only.MemoryBytes);
         Assert.Null(only.CpuPercent);
     }

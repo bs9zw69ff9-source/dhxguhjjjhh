@@ -228,12 +228,18 @@ public class PlayerCountChannelTests
         var rcon = new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
         var master = new MasterServerList(new HttpClient(), NullLogger<MasterServerList>.Instance);
 
-        /* A unit list with the same shape as the channel list, so the number-to-server
-           mapping resolves. The units do not exist on this box, so StateAsync answers
-           Unknown - which is the point: an unanswerable status check must fall through to
-           the roster logic rather than relabelling every server offline. */
-        var services = new ServiceControl(ServiceControl.DefaultUnits, useSudo: false,
-            NullLogger<ServiceControl>.Instance);
+        /* A STUB, NOT A REAL ServiceControl. A unit list with the same shape as the channel
+           list, so the number-to-server mapping resolves, and a status answer that does not
+           depend on the machine the tests run on.
+
+           It used to build a real ServiceControl and rely on "the units do not exist on this
+           box, so StateAsync answers Unknown". That is only true where systemd is NOT the
+           init system. Where it is, `systemctl is-active <missing>` prints "inactive", the
+           status check IS answerable, the fall-through never happens and every channel is
+           renamed "Offline" - so these tests passed in a container and failed on CI for a
+           difference that is not a defect. Unknown is the case they are about, so they now
+           state it instead of hoping for it. */
+        var services = new StubUnitControl(ServiceControl.DefaultUnits, UnitState.Unknown);
 
         return new PlayerCountChannels(channels, rcon, master, services, NullLogger<PlayerCountChannels>.Instance);
     }

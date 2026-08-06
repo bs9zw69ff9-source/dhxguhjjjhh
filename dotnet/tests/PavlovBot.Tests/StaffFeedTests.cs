@@ -157,7 +157,7 @@ public class ChannelStaffLogTests
     private const ulong Ban = 999;
 
     private static ChannelStaffLog Log(RecordingPostTarget target, ulong? mod = Mod, ulong? ban = Ban) =>
-        new(target, mod, ban, NullLogger<ChannelStaffLog>.Instance);
+        new(target, new StaffLogChannels(mod, ban), NullLogger<ChannelStaffLog>.Instance);
 
     // ---- routing ----
 
@@ -172,7 +172,7 @@ public class ChannelStaffLogTests
         /* By substring rather than a fixed list, so a ban variant added later routes
            correctly without anybody remembering to extend the rule. These five are every
            ban-ish action the bot records today. */
-        Assert.Equal(Ban, ChannelStaffLog.ChannelFor(action, Mod, Ban));
+        Assert.Equal(Ban, ChannelStaffLog.ChannelFor(action, new StaffLogChannels(Mod, Ban)));
     }
 
     [Theory]
@@ -188,7 +188,7 @@ public class ChannelStaffLogTests
     {
         // "firewall-unblock" is in here deliberately: it is the closest any non-ban action
         // comes to containing the word, and it does not.
-        Assert.Equal(Mod, ChannelStaffLog.ChannelFor(action, Mod, Ban));
+        Assert.Equal(Mod, ChannelStaffLog.ChannelFor(action, new StaffLogChannels(Mod, Ban)));
     }
 
     [Fact]
@@ -197,23 +197,23 @@ public class ChannelStaffLogTests
         /* Setting only MOD_LOG_CHANNEL is a reasonable way to say "all of it in one place",
            and a ban silently going nowhere because the ban channel was left unset is the
            opposite of what that operator asked for. */
-        Assert.Equal(Mod, ChannelStaffLog.ChannelFor("permban", Mod, banLog: null));
-        Assert.Equal(Ban, ChannelStaffLog.ChannelFor("kick", modLog: null, banLog: Ban));
+        Assert.Equal(Mod, ChannelStaffLog.ChannelFor("permban", new StaffLogChannels(Mod, null)));
+        Assert.Equal(Ban, ChannelStaffLog.ChannelFor("kick", new StaffLogChannels(null, Ban)));
     }
 
     [Fact]
     public void NeitherChannelConfiguredPostsNothing()
     {
-        Assert.Null(ChannelStaffLog.ChannelFor("permban", null, null));
-        Assert.Null(ChannelStaffLog.ChannelFor("kick", null, null));
+        Assert.Null(ChannelStaffLog.ChannelFor("permban", new StaffLogChannels(null, null)));
+        Assert.Null(ChannelStaffLog.ChannelFor("kick", new StaffLogChannels(null, null)));
     }
 
     [Fact]
     public void BothPointingAtTheSameChannelIsFine()
     {
         // The configuration this was asked for: one channel, two keys.
-        Assert.Equal(Mod, ChannelStaffLog.ChannelFor("permban", Mod, Mod));
-        Assert.Equal(Mod, ChannelStaffLog.ChannelFor("serverswitch", Mod, Mod));
+        Assert.Equal(Mod, ChannelStaffLog.ChannelFor("permban", new StaffLogChannels(Mod, Mod)));
+        Assert.Equal(Mod, ChannelStaffLog.ChannelFor("serverswitch", new StaffLogChannels(Mod, Mod)));
     }
 
     // ---- posting ----

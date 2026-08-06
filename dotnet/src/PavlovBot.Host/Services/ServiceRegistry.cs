@@ -109,6 +109,17 @@ public sealed class ServiceRegistry : IAsyncDisposable
         public long Overruns;
         public string? LastError;
 
+        /// <summary>When this service was restarted by the supervisor, newest last.</summary>
+        /// <remarks>
+        /// Bounded by pruning to the window on every check, so it cannot grow: a service
+        /// restarted forever would otherwise accumulate one timestamp per restart for the
+        /// life of the process.
+        /// </remarks>
+        public readonly List<DateTimeOffset> RestartsAt = [];
+
+        /// <summary>Set once when the supervisor stops trying, so it is said once and shown in health.</summary>
+        public bool RestartsExhausted;
+
         /// <summary>
         /// The last few failures, newest last. Bounded, and bounded deliberately small.
         /// </summary>
@@ -359,7 +370,13 @@ public sealed class ServiceRegistry : IAsyncDisposable
                     $"tick exceeded its {budget.TotalSeconds:0.#}s budget and was abandoned");
             }
 
+            /* A SUCCESSFUL TICK CLEARS THE BRAKE. Without this, three restarts inside any
+               half hour would disable supervision of that service for the life of the
+               process, so a service that recovered and later broke again would never be
+               revived. */
             record.ConsecutiveFailures = 0;
+            record.RestartsAt.Clear();
+            record.RestartsExhausted = false;
             _metrics.Increment("service_ticks_total", MetricLabels.Of("service", name, "outcome", "success"),
                 help: "Service ticks by outcome");
         }
@@ -433,18 +450,65 @@ public sealed class ServiceRegistry : IAsyncDisposable
         await StartOneAsync(name, ct).ConfigureAwait(false);
     }
 
+    /// <summary>How many supervisor restarts one service may have inside <see cref="RestartWindow"/>.</summary>
+    /// <remarks>
+    /// THE SUPERVISOR HAD NO BRAKE. A service whose dependency is simply down - RCON
+    /// unreachable, a game server off, a disk full - fails every tick, and a restart does not
+    /// fix any of those. StartOneAsync clears ConsecutiveFailures, so the counter climbs back
+    /// to the threshold and the service is restarted again, and again, for as long as the
+    /// outage lasts. Nothing escalated, nothing gave up, and each restart awaits the running
+    /// loop, which can sit for a whole tick budget (up to ten minutes) before it lets go.
+    ///
+    /// CrashRecovery reached this conclusion first, for Pavlov servers, and says so in its own
+    /// remarks: past the cap "it stops and says so once, because a server that will not start
+    /// needs a person rather than another restart". The same is true of our own services, and
+    /// the supervisor for them was the one place without the rule.
+    /// </remarks>
+    public const int MaxRestartsPerWindow = 3;
+
+    /// <summary>The window the restart cap is measured over.</summary>
+    public static readonly TimeSpan RestartWindow = TimeSpan.FromMinutes(30);
+
     /// <summary>Restart anything that has failed outright, or failed repeatedly in a row.</summary>
+    /// <remarks>
+    /// Bounded: see <see cref="MaxRestartsPerWindow"/>. A service past the cap is left in
+    /// Failed so it shows red in /health rather than being quietly abandoned - the point is to
+    /// stop pretending a restart will help, not to stop reporting the problem.
+    /// </remarks>
     public async Task<IReadOnlyList<string>> ReviveFailedAsync(int threshold = 5, CancellationToken ct = default)
     {
         var revived = new List<string>();
+        var now = DateTimeOffset.UtcNow;
+
         foreach (var record in _services.Values)
         {
             var stuck = record.State == ServiceState.Failed ||
                         (record.State == ServiceState.Running && record.ConsecutiveFailures >= threshold);
             if (!stuck) continue;
 
+            // Pruned here rather than on a timer, so the list cannot outgrow the window.
+            record.RestartsAt.RemoveAll(at => now - at > RestartWindow);
+
+            if (record.RestartsAt.Count >= MaxRestartsPerWindow)
+            {
+                /* SAID ONCE. Repeating it every sweep would bury the original failure under
+                   the report that we have stopped acting on it. */
+                if (!record.RestartsExhausted)
+                {
+                    record.RestartsExhausted = true;
+                    _logger.LogError(
+                        "Service {Name} restarted {Count} times in {Minutes:0} minutes and still fails - " +
+                        "giving up until it recovers or the bot restarts. Last error: {Error}",
+                        record.Definition.Name, record.RestartsAt.Count, RestartWindow.TotalMinutes,
+                        record.LastError ?? "(none recorded)");
+                }
+                continue;
+            }
+
             _logger.LogWarning("Restarting {Name} after {Failures} consecutive failures",
                 record.Definition.Name, record.ConsecutiveFailures);
+
+            record.RestartsAt.Add(now);
             await RestartAsync(record.Definition.Name, ct).ConfigureAwait(false);
             revived.Add(record.Definition.Name);
         }

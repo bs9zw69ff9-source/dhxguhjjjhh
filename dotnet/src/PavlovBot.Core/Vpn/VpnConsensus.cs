@@ -73,9 +73,15 @@ public static class VpnConsensus
                 Flagged: true,
                 Confirmed: confirmed,
                 Actionable: actionable,
+                /* confirm.Hits, NOT a literal 0. "Disputed" only means the hits fell short of
+                   ConfirmMin, and that threshold is configurable (VPN_CONFIRM_MIN): at 2, one
+                   confirmer flagging the address reads as "disputed it (0/2)" when it was
+                   1 of 2. This string is the justification a moderator reads behind an
+                   automatic ban, so understating the evidence is the wrong way to be wrong. */
                 Reason: (confirmed
                     ? $"confirmation agreed ({confirm.Hits}/{confirm.Answered})"
-                    : $"confirmation disputed it (0/{confirm.Answered})") + $"; {count}");
+                    : $"confirmation disputed it ({confirm.Hits}/{confirm.Answered}, {limits.ConfirmMin} required)")
+                    + $"; {count}");
         }
 
         // Nothing could confirm, which changes nothing about the count - it only removes a

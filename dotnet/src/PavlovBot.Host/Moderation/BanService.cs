@@ -1,3 +1,4 @@
+using PavlovBot.Rcon;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Moderation;
@@ -181,7 +182,7 @@ public sealed class BanService
         {
             try
             {
-                await _rcon.SendAsync(server, $"Unban {target}", ct).ConfigureAwait(false);
+                await _rcon.SendVerifiedAsync(server, $"Unban {target}", ct).ConfigureAwait(false);
                 accepted++;
                 _logger.LogInformation("unban RCON accepted | \"{Target}\" | {Server}", target, server);
             }
@@ -277,6 +278,7 @@ public sealed class BanService
 
         var snapshot = ActiveBans();
         var reconciled = 0;
+        var applied = 0;
 
         foreach (var ban in snapshot)
         {
@@ -291,8 +293,24 @@ public sealed class BanService
 
             foreach (var server in _rcon.Servers)
             {
-                try { await _rcon.SendAsync(server, $"Ban {name}", ct).ConfigureAwait(false); }
-                catch (Exception ex) when (ex is not OperationCanceledException) { /* logged by the client */ }
+                /* THE REPLY IS THE ANSWER. This used to discard it and count the ban either
+                   way, so a refusal - which the server states plainly - reached nobody and
+                   the player stayed unbanned while the log said otherwise. */
+                try
+                {
+                    await _rcon.SendVerifiedAsync(server, $"Ban {name}", ct).ConfigureAwait(false);
+                    applied++;
+                }
+                catch (RconRejectedException ex)
+                {
+                    _logger.LogError("ban RCON REFUSED | \"{Name}\" | {Server} | {Reply} - they are NOT banned there",
+                        name, server, ex.Reply);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError("ban RCON FAILED | \"{Name}\" | {Server} | {Message} - they may NOT be banned there",
+                        name, server, ex.Message);
+                }
             }
             reconciled++;
             await Task.Delay(ReconcilePacing, _time, ct).ConfigureAwait(false);
@@ -300,7 +318,17 @@ public sealed class BanService
 
         await _store.WriteAsync(Datasets.BanReconcileState, new ReconcileState(Now), ct).ConfigureAwait(false);
         if (reconciled > 0)
-            _logger.LogInformation("Reconciled {Count} active ban(s) across {Servers} server(s)", reconciled, _rcon.Servers.Count);
+        {
+            /* BOTH NUMBERS. "Reconciled 12" said nothing about whether any of the twelve
+               landed, which is the only part a moderator cares about. */
+            var attempts = reconciled * _rcon.Servers.Count;
+            _logger.LogInformation(
+                "Reconciled {Count} active ban(s) across {Servers} server(s) - {Applied}/{Attempts} accepted",
+                reconciled, _rcon.Servers.Count, applied, attempts);
+            if (applied < attempts)
+                _logger.LogWarning("{Missed} ban command(s) were refused or failed - those players are NOT banned",
+                    attempts - applied);
+        }
         return reconciled;
     }
 
