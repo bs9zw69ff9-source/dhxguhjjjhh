@@ -30,7 +30,8 @@ public sealed record ModsaveEntry(string Name, string Reason, string Unban);
 /// sync rather than only on change.
 /// </remarks>
 public sealed class ModsaveBanlist(
-    string? path, SerializedStore store, ILogger<ModsaveBanlist> logger, TimeProvider? time = null)
+    string? path, SerializedStore store, ILogger<ModsaveBanlist> logger, TimeProvider? time = null,
+    Func<string, string?>? resolveName = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -84,6 +85,15 @@ public sealed class ModsaveBanlist(
             logger.LogWarning(ex, "Could not write the modsave ban list");
             return 0;
         }
+    }
+
+    /// <summary>The username for an EOS id, or the id unchanged when it is not known.</summary>
+    internal static string ResolveName(string entryName, Func<string, string?>? resolve)
+    {
+        if (resolve is null) return entryName;
+
+        var resolved = resolve(entryName);
+        return string.IsNullOrWhiteSpace(resolved) ? entryName : resolved;
     }
 
     /// <summary>A reason must not contain a newline - the format is line-oriented, and one
@@ -185,7 +195,16 @@ public sealed class ModsaveBanlist(
 
                 bans.Add(new BanRecord
                 {
-                    PlayerId = entry.Name,
+                    /* THE GAME WRITES AN EOS ID HERE, NOT A NAME. Bans made in-game through
+                       the RCON+ menu are written by Pavlov, and the block header it writes is
+                       the UniqueID. Taking it verbatim filed those bans under a 32-character
+                       id, so the ban list showed ids for in-game bans and usernames for the
+                       bot's own - the same player looking like two different entries.
+
+                       Resolved through the account registry, which already maps id to name.
+                       An id nobody has seen keeps the id: a ban you cannot name is still a
+                       ban, and dropping it would be far worse than showing it awkwardly. */
+                    PlayerId = ResolveName(entry.Name, resolveName),
                     Reason = reason,
                     Moderator = "in-game",
                     At = now,

@@ -126,7 +126,12 @@ public static class Program
         builder.Services.AddSingleton<BanService>();
         builder.Services.AddSingleton(sp => new ModsaveBanlist(
             features.ModsaveBanlistPath, sp.GetRequiredService<SerializedStore>(),
-            sp.GetRequiredService<ILogger<ModsaveBanlist>>()));
+            sp.GetRequiredService<ILogger<ModsaveBanlist>>(),
+            time: null,
+            /* Resolved lazily INSIDE the lambda, so this does not depend on IpTrackingService
+               being registered first - the import runs long after startup either way. */
+            resolveName: id => sp.GetRequiredService<PavlovBot.Host.Logs.IpTrackingService>()
+                .Account(id)?.Names.FirstOrDefault()));
         /* Pavlov's own whitelist, across every install. Resolved ONCE at startup and logged:
            a write that reaches two installs out of three is the failure worth seeing early,
            and it is invisible if nothing ever says how many were found. */
