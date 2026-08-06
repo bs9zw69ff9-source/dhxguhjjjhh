@@ -224,6 +224,27 @@ public sealed class ServiceControl(
     /// sudoers entry for start/stop/restart but not for is-active would report every server
     /// offline, which is worse than not checking at all.
     /// </remarks>
+    /// <summary>The state for a word <c>systemctl is-active</c> printed.</summary>
+    /// <remarks>
+    /// SEPARATE FROM THE PROCESS so it can be tested without one. It used to be an inline
+    /// switch, which meant the only way to exercise the mapping was to run systemctl against
+    /// a unit that does not exist - and that answers differently depending on whether the
+    /// test host runs systemd at all ("inactive" where it does, an error where it does not).
+    /// The tests for it were therefore assertions about the machine, green in a container and
+    /// red on CI for no defect.
+    ///
+    /// An unrecognised word is Unknown rather than a guess: a state systemd adds in a future
+    /// release must not fall through to something that reads as healthy.
+    /// </remarks>
+    internal static UnitState StateFrom(string? stdout) => stdout?.Trim() switch
+    {
+        "active" => UnitState.Active,
+        "activating" or "reloading" => UnitState.Starting,
+        "inactive" or "deactivating" => UnitState.Inactive,
+        "failed" => UnitState.Failed,
+        _ => UnitState.Unknown,
+    };
+
     public async Task<UnitState> StateAsync(string unit, CancellationToken ct = default)
     {
         if (!IsPlausibleUnitName(unit)) return UnitState.Unknown;
@@ -240,14 +261,7 @@ public sealed class ServiceControl(
             /* The EXIT CODE is not the answer - is-active exits non-zero for anything that is
                not running, which is a perfectly good answer and not a failure. The word on
                stdout is the answer. */
-            return run.Stdout.Trim() switch
-            {
-                "active" => UnitState.Active,
-                "activating" or "reloading" => UnitState.Starting,
-                "inactive" or "deactivating" => UnitState.Inactive,
-                "failed" => UnitState.Failed,
-                _ => UnitState.Unknown,
-            };
+            return StateFrom(run.Stdout);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
