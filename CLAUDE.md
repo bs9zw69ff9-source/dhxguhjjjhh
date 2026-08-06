@@ -131,19 +131,26 @@ real person, not a corporate assistant.
 
 # Repo facts (verified, not assumed)
 
-## Two bots, one production
+## One bot
 
-The C# bot under `dotnet/` is production. The Node bot at the repo root is the rollback
-target and its suite still runs in CI. A fix that applies to both belongs in both, and the
-two have already drifted (see `Notify` target handling). Check the Node equivalent before
-calling a port bug fixed.
+The C# bot under `dotnet/` is the whole of it. There was a Node bot at the repo root kept as
+a rollback target; it was removed once C# had taken over.
+
+Its history is still worth reading. Several bugs found in this repo were PORT GAPS - things
+the Node bot did that the C# port silently did not, including the `Notify` target and police
+log routing, neither of which announced itself as missing. `git log` before the removal
+commit is the record of what the old bot did, and it is the first place to look when a
+feature "used to work".
+
+`NodeCompatibilityTests` and the dataset names in `Storage/Datasets.cs` are deliberately
+kept: the JSON files the Node bot wrote are still the files the C# bot reads on a live
+server, so that shape is a live contract, not history.
 
 ## Build and test
 
 ```bash
 dotnet build -c Release            # from dotnet/
 dotnet test  -c Release --no-build
-npm ci && npm run check && npm test  # Node suite, from repo root
 ```
 
 No .NET SDK is preinstalled in web sessions. Install with:

@@ -3,7 +3,7 @@
 > **This bot runs on C# / .NET 9.** The source is in [`dotnet/`](dotnet/), and
 > [`dotnet/README.md`](dotnet/README.md) is the reference for it.
 >
-> The Node.js implementation in this directory is the **rollback target** and is
+> The Node.js implementation that used to live in this directory was the rollback target and is
 > no longer the deployment. It still builds, still passes its tests, and still
 > reads and writes the same `bot.db` — that is the point of keeping it. It will
 > be removed once C# has a run of live service behind it.
@@ -25,7 +25,7 @@ It ships **brand-neutral** and skins to any RP: set `BOT_NAME` in `.env` (e.g.
 - One to three Pavlov servers with RCON enabled
 - A Discord application + bot token
 
-For the Node rollback target: Node.js 18+, and `better-sqlite3` compiles a
+(Removed: the Node rollback target needed Node.js 18+, and `better-sqlite3` compiled a
 native binding on install.
 
 ## Setup
@@ -40,7 +40,7 @@ bash scripts/deploy-csharp.sh --start     # start it under pm2
 and exits without connecting: if the configuration is wrong it prints every
 problem at once and changes nothing.
 
-It also **refuses to start while the Node bot is online**. Both bots on one
+It used to **refuse to start while the Node bot was online**. Both bots on one
 Discord application would answer every slash command twice and issue every ban
 twice, and nothing inside either can undo that.
 
@@ -53,7 +53,7 @@ pm2 stop pavlov-bot-cs && pm2 start pavlov-bot
 ```
 
 The C# bot writes camelCase keys and millisecond timestamps — the exact format
-the Node bot reads — so anything written while C# was up is picked up cleanly.
+the Node bot read — the on-disk shape is unchanged, and `NodeCompatibilityTests` keeps it that way.
 That is deliberate and covered by `NodeCompatibilityTests`.
 
 ## Architecture
@@ -220,8 +220,6 @@ logs) is **git-ignored** — it's state, not source.
 ## Development
 
 ```bash
-npm run check   # syntax check (node --check on index.js + ipBans.js)
-npm test        # node:test suites — pure logic, wiring guard, handler tests
 ```
 
 Tests cover the pure/leaf modules (utils, theme, firewall guard,

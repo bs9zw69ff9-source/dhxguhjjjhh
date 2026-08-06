@@ -1,8 +1,8 @@
-# Both suites, on every push.
+# The C# suite, on every push.
 #
-# The C# bot is the production one. The Node bot is kept as the rollback target
-# until C# has run live for a while, and its suite still runs — a rollback target
-# nobody tests is not a rollback target.
+# There was a second job here for the Node bot, which was kept as a rollback
+# target and tested so that it stayed one. The Node bot has been removed now that
+# C# has taken over, so there is one bot and one suite.
 name: tests
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   csharp:
-    name: C# (production)
+    name: C#
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,16 +31,3 @@ jobs:
         run: |
           printf 'DISCORD_TOKEN=ci-not-a-real-token\nRCON_HOST_1=127.0.0.1\nRCON_PORT_1=9100\nRCON_PASSWORD_1=ci\nMASTER_NAMES=ci\n' > .env
           dotnet run --project src/PavlovBot.Host -c Release --no-build -- --selftest
-
-  node:
-    name: Node (rollback target)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
