@@ -422,20 +422,29 @@ public static class Program
            and nearly every command needs AuditLog. A constructor dependency closes that loop
            and the container cannot resolve it - so the sink is attached once everything
            exists. Off entirely when neither channel is set. */
-        if (features.ModLogChannel is not null || features.BanLogChannel is not null)
+        var staffChannels = new PavlovBot.Host.Discord.StaffLogChannels(
+            features.ModLogChannel, features.BanLogChannel,
+            features.PoliceLogChannel, features.ArrestChannel);
+
+        /* ANY of them, not just the first two. Setting only POLICE_LOG_CHANNEL used to leave
+           the sink unattached entirely, so the one channel the operator did configure got
+           nothing. */
+        if (staffChannels.Any)
         {
             var staffLog = new PavlovBot.Host.Discord.ChannelStaffLog(
                 host.Services.GetRequiredService<PavlovBot.Host.Discord.IAutoPostTarget>(),
-                features.ModLogChannel,
-                features.BanLogChannel,
+                staffChannels,
                 host.Services.GetRequiredService<ILogger<PavlovBot.Host.Discord.ChannelStaffLog>>());
 
             host.Services.GetRequiredService<PavlovBot.Host.Moderation.AuditLog>().UseSink(staffLog);
 
+            static string Show(ulong? id) =>
+                id?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unset";
+
             logger.LogInformation(
-                "Staff log channels: mod {Mod}, ban {Ban}",
-                features.ModLogChannel?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unset",
-                features.BanLogChannel?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unset");
+                "Staff log channels: mod {Mod}, ban {Ban}, police {Police}, arrest {Arrest}",
+                Show(features.ModLogChannel), Show(features.BanLogChannel),
+                Show(features.PoliceLogChannel), Show(features.ArrestChannel));
         }
         logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
             systemd.Elevation, string.Join(", ", systemd.Units));

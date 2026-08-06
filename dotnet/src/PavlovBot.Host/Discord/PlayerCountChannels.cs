@@ -43,7 +43,7 @@ public sealed class PlayerCountChannels(
     IChannelRenamer channels,
     RconRegistry rcon,
     MasterServerList master,
-    ServiceControl services,
+    IUnitControl services,
     ILogger<PlayerCountChannels> logger,
     int defaultCapacity = 24)
 {

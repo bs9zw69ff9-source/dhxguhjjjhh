@@ -81,6 +81,12 @@ public sealed record FeatureOptions
     /// <summary>Channel for bans, unbans and automatic bans. Falls back to the mod log.</summary>
     public ulong? BanLogChannel { get; init; }
 
+    /// <summary>Arrests, warrants, sentence releases and rank suspensions.</summary>
+    public ulong? PoliceLogChannel { get; init; }
+
+    /// <summary>Overrides <see cref="PoliceLogChannel"/> for arrest bookings only.</summary>
+    public ulong? ArrestChannel { get; init; }
+
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
 
@@ -227,6 +233,8 @@ public sealed record FeatureOptions
             StaffWebhook = Text(configuration, "STAFF_WEBHOOK_URL"),
             ModLogChannel = Snowflake(configuration, "MOD_LOG_CHANNEL"),
             BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
+            PoliceLogChannel = Snowflake(configuration, "POLICE_LOG_CHANNEL"),
+            ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
             MoneyWebhook = Text(configuration, "MONEY_WEBHOOK_URL"),
