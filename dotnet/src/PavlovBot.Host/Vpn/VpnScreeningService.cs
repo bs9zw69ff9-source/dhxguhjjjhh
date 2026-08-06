@@ -84,8 +84,53 @@ public sealed class VpnScreeningService
     private IReadOnlyList<IVpnDetector> Tier(int tier) => _detectors.Where(d => d.Tier == tier).ToList();
 
     /// <summary>Every stored verdict, keyed by address.</summary>
-    public Dictionary<string, VpnRecord> LoadCache() =>
-        _store.Read<Dictionary<string, VpnRecord>>(Datasets.VpnChecks, new Dictionary<string, VpnRecord>(StringComparer.Ordinal));
+    /// <summary>How long a decoded snapshot of the cache is reused before it is rebuilt.</summary>
+    /// <remarks>
+    /// THE WHOLE CACHE WAS DECODED FOR EVERY SINGLE LOOKUP. Cached(ip) called LoadCache(),
+    /// which deserialised the entire vpn_checks dataset - one entry per distinct address ever
+    /// seen - built a dictionary of all of it, read one key, and threw the rest away. That
+    /// runs on every confirmed connection (FeedBridge screens each joining IP), so the cost of
+    /// admitting one player grew with the number of players the server had EVER seen. Months
+    /// in, on a busy server, that is megabytes of JSON parsed and discarded per join, and a
+    /// map change reconnects everybody at once.
+    ///
+    /// The backend already caches the raw STRING, so this was never a database round trip -
+    /// it was the parse and the allocations, which the string cache does nothing about.
+    ///
+    /// Thirty seconds is generous against what it protects: verdicts are cached for thirty
+    /// DAYS by default, and a freshly written record updates the snapshot immediately below,
+    /// so the window only ever affects writes made by something else - the Node bot sharing
+    /// the dataset, or a hand-edited file.
+    /// </remarks>
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(30);
+
+    private IReadOnlyDictionary<string, VpnRecord>? _snapshot;
+    private long _snapshotAt;
+
+    /// <summary>
+    /// The cache, decoded at most once per <see cref="SnapshotTtl"/>.
+    /// </summary>
+    /// <remarks>
+    /// Read-only by type rather than by convention. The snapshot is SHARED between callers, so
+    /// a mutation would be seen by every other reader and then silently lost on the next
+    /// rebuild - the compiler is a better guard against that than a comment.
+    /// </remarks>
+    public IReadOnlyDictionary<string, VpnRecord> LoadCache()
+    {
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (snapshot is not null &&
+            System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref _snapshotAt)) < SnapshotTtl)
+            return snapshot;
+
+        /* Racing readers may each rebuild once. That is deliberate: the alternative is a lock
+           on the join path, and the loser of the race publishes an equally valid snapshot. */
+        var fresh = _store.Read<Dictionary<string, VpnRecord>>(
+            Datasets.VpnChecks, new Dictionary<string, VpnRecord>(StringComparer.Ordinal));
+
+        Volatile.Write(ref _snapshotAt, System.Diagnostics.Stopwatch.GetTimestamp());
+        Volatile.Write(ref _snapshot, fresh);
+        return fresh;
+    }
 
     public VpnRecord? Cached(string ip) => LoadCache().GetValueOrDefault(ip);
 
@@ -238,12 +283,23 @@ public sealed class VpnScreeningService
         return TierOutcome.From(outcomes.Select(o => o.Reading));
     }
 
-    private Task SaveAsync(VpnRecord record, CancellationToken ct) =>
-        _store.UpdateAsync<Dictionary<string, VpnRecord>>(
+    private async Task SaveAsync(VpnRecord record, CancellationToken ct)
+    {
+        var result = await _store.UpdateAsync<Dictionary<string, VpnRecord>>(
             Datasets.VpnChecks,
             new Dictionary<string, VpnRecord>(StringComparer.Ordinal),
             cache => { cache[record.Ip] = record; return cache; },
-            ct);
+            ct).ConfigureAwait(false);
+
+        /* PUBLISHED IMMEDIATELY, so the snapshot TTL never delays a verdict this process just
+           wrote. Without this, an address screened now could be screened AGAIN within the
+           window - spending a second lookup from a quota measured in tens per day. */
+        if (result.Value is { } written)
+        {
+            Volatile.Write(ref _snapshotAt, System.Diagnostics.Stopwatch.GetTimestamp());
+            Volatile.Write(ref _snapshot, written);
+        }
+    }
 
     /// <summary>
     /// Probe EVERY detector against one address, ignoring the tier gating.
