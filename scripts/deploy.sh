@@ -33,17 +33,16 @@ cd "$(dirname "$0")/.."
 # Overridable without editing the script, so a branch rename does not mean editing
 # a file on the box: DEPLOY_BRANCH=main bash scripts/deploy.sh
 #
-# BACK ON THE TRUNK. This briefly pointed at a working branch, because the fixes that
-# mattered were sitting on one and unmerged - deploying the trunk then would have
-# built and shipped a tree containing none of them, successfully and silently. They
-# merged in #4, so there is one answer again to "what does production run".
+# MAIN IS THE TRUNK AGAIN. The work lived on claude/* branches for a while and
+# this pointed at whichever of them actually held the fixes, because deploying a
+# branch that did not would have built and shipped the wrong tree, successfully
+# and silently. Those branches have been folded into main, so there is one answer
+# to "what does production run" and it has the obvious name.
 #
-# Keep it that way. Two refs that both claim to be what production runs is the
-# confusion this repo already carries between `main`, `Main` and the claude/*
-# branches, and a deploy script is the worst place to leave it unresolved. If a
-# working branch needs deploying, pass it for that one run rather than editing this:
+# Keep it that way. If a working branch needs deploying, pass it for that one run
+# rather than editing this:
 #   bash scripts/deploy.sh some/branch      (or DEPLOY_BRANCH=some/branch)
-BRANCH="${DEPLOY_BRANCH:-claude/debug-optimize-code-dva08i}"
+BRANCH="${DEPLOY_BRANCH:-main}"
 START=true
 CS_ARGS=()
 
