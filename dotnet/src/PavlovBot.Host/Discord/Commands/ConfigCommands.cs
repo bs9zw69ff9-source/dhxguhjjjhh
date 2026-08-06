@@ -30,8 +30,6 @@ public sealed class SetRolesCommand(SerializedStore store, Access access, ILogge
             .AddOption("admin_role", ApplicationCommandOptionType.Role, "Admin", isRequired: false)
             .AddOption("whitelist_leader_role", ApplicationCommandOptionType.Role, "Manages every whitelist", isRequired: false)
             .AddOption("police_role", ApplicationCommandOptionType.Role, "Police officer", isRequired: false)
-            .AddOption("gambino_role", ApplicationCommandOptionType.Role, "Manages the Gambino whitelist", isRequired: false)
-            .AddOption("colombo_role", ApplicationCommandOptionType.Role, "Manages the Colombo whitelist", isRequired: false)
             .AddOption("nypd_role", ApplicationCommandOptionType.Role, "Manages the NYPD whitelist", isRequired: false)
             .Build();
 
@@ -56,8 +54,6 @@ public sealed class SetRolesCommand(SerializedStore store, Access access, ILogge
             AdminRole = Role("admin_role") ?? current.AdminRole,
             FactionLeaderRole = Role("whitelist_leader_role") ?? current.FactionLeaderRole,
             PoliceRole = Role("police_role") ?? current.PoliceRole,
-            GambinoRole = Role("gambino_role") ?? current.GambinoRole,
-            ColomboRole = Role("colombo_role") ?? current.ColomboRole,
             NypdRole = Role("nypd_role") ?? current.NypdRole,
         }, ct).ConfigureAwait(false);
 
@@ -68,7 +64,7 @@ public sealed class SetRolesCommand(SerializedStore store, Access access, ILogge
         {
             ("Moderator", map.ModRole), ("Admin", map.AdminRole),
             ("Whitelist leader", map.FactionLeaderRole), ("Police", map.PoliceRole),
-            ("Gambino", map.GambinoRole), ("Colombo", map.ColomboRole), ("NYPD", map.NypdRole),
+            ("NYPD", map.NypdRole),
         }.Select(r => $"**{r.Label}** — {(r.Id is { } id ? $"<@&{id}>" : "*not set*")}");
 
         await Reply(command, Theme.Success("Roles updated", string.Join("\n", lines))

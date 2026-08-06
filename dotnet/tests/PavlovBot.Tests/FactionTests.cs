@@ -4,6 +4,38 @@ using Xunit;
 namespace PavlovBot.Tests;
 
 /// <summary>
+/// A second faction that does not exist in the registry.
+/// </summary>
+/// <remarks>
+/// These tests are about the RULES - rank caps, one-faction-per-player, subclasses - not
+/// about which factions the server happens to run. They used to reach for Gambino, so
+/// removing it broke seven of them for no reason connected to what they assert. A local
+/// definition keeps them testing the rule and stops the next roster change from breaking
+/// them again.
+/// </remarks>
+internal static class TestFactions
+{
+    public static readonly FactionDefinition Other = new()
+    {
+        Name = "Other",
+        Order = ["Associate", "Soldier", "Capo", "Consigliere", "Underboss", "Boss"],
+        Default = "Associate",
+        RankFiles = new Dictionary<string, string>
+        {
+            ["Associate"] = "otherassociate.txt", ["Soldier"] = "othersoldier.txt",
+            ["Capo"] = "othercapo.txt", ["Consigliere"] = "otherconsigliere.txt",
+            ["Underboss"] = "otherunderboss.txt", ["Boss"] = "otherboss.txt",
+        },
+        // Consigliere is deliberately absent: it is the one uncapped rank here.
+        RankCaps = new Dictionary<string, int>
+        {
+            ["Associate"] = 18, ["Soldier"] = 12, ["Capo"] = 3, ["Underboss"] = 1, ["Boss"] = 1,
+        },
+    };
+}
+
+
+/// <summary>
 /// Ported from test/ranks.test.js and test/rank-flow.test.js.
 ///
 /// These rules exist because the storage cannot express them: the roster files are plain
@@ -59,7 +91,7 @@ public class FactionRegistryTests
         Assert.Equal(4, nypd.CapFor("Captain"));
         Assert.Equal(50, nypd.CapFor("Cadet"));
 
-        var gambino = FactionRegistry.Get("Gambino")!;
+        var gambino = TestFactions.Other;
         Assert.Equal(1, gambino.CapFor("Boss"));
         Assert.Equal(3, gambino.CapFor("Capo"));
         // Consigliere is deliberately uncapped.
@@ -70,7 +102,7 @@ public class FactionRegistryTests
     public void FactionLookupIsCaseInsensitive()
     {
         Assert.NotNull(FactionRegistry.Get("nypd"));
-        Assert.NotNull(FactionRegistry.Get("GAMBINO"));
+        Assert.NotNull(FactionRegistry.Get("NYPD"));
         Assert.Null(FactionRegistry.Get("Yakuza"));
         Assert.Null(FactionRegistry.Get(null));
     }
@@ -79,14 +111,14 @@ public class FactionRegistryTests
     public void OnlyNypdHasSubclasses()
     {
         Assert.True(FactionRegistry.Get("NYPD")!.HasSubclass("Tactical Response Unit"));
-        Assert.Empty(FactionRegistry.Get("Gambino")!.Subclasses);
+        Assert.Empty(TestFactions.Other.Subclasses);
     }
 }
 
 public class MembershipRulesTests
 {
     private static readonly FactionDefinition Nypd = FactionRegistry.Get("NYPD")!;
-    private static readonly FactionDefinition Gambino = FactionRegistry.Get("Gambino")!;
+    private static readonly FactionDefinition Gambino = TestFactions.Other;
     private static Func<string, int> Empty => _ => 0;
     private static Func<string, int> Full(string rank, int n) => r => r == rank ? n : 0;
 
@@ -170,10 +202,10 @@ public class MembershipRulesTests
     [Fact]
     public void APlayerCannotBeInTwoFactions()
     {
-        // NYPD, Gambino and Colombo are mutually exclusive by design.
-        var d = MembershipRules.Join(Nypd, ["Gambino"], Empty);
+        // Factions are mutually exclusive by design.
+        var d = MembershipRules.Join(Nypd, ["Other"], Empty);
         Assert.Equal(MembershipOutcome.AlreadyInAnotherFaction, d.Outcome);
-        Assert.Equal("Gambino", d.Conflict);
+        Assert.Equal("Other", d.Conflict);
     }
 
     [Fact]

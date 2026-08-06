@@ -52,44 +52,9 @@ public sealed record FactionDefinition
 /// <summary>The factions this server runs. Ported verbatim from factions/ranks.js.</summary>
 public static class FactionRegistry
 {
-    private static readonly string[] MafiaOrder =
-        ["Associate", "Soldier", "Capo", "Consigliere", "Underboss", "Boss"];
-
-    // Consigliere is deliberately absent from the caps: it is the one uncapped mafia rank.
-    private static Dictionary<string, int> MafiaCaps() => new()
-    {
-        ["Associate"] = 18, ["Soldier"] = 12, ["Capo"] = 3, ["Underboss"] = 1, ["Boss"] = 1,
-    };
-
-    private static Dictionary<string, string> MafiaFiles(string prefix) => new()
-    {
-        ["Associate"] = $"{prefix}associate.txt",
-        ["Soldier"] = $"{prefix}soldier.txt",
-        ["Capo"] = $"{prefix}capo.txt",
-        ["Consigliere"] = $"{prefix}consigliere.txt",
-        ["Underboss"] = $"{prefix}underboss.txt",
-        ["Boss"] = $"{prefix}boss.txt",
-    };
-
     public static readonly FrozenDictionary<string, FactionDefinition> All =
         new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase)
         {
-            ["Gambino"] = new()
-            {
-                Name = "Gambino",
-                Order = MafiaOrder,
-                Default = "Associate",
-                RankFiles = MafiaFiles("gambino"),
-                RankCaps = MafiaCaps(),
-            },
-            ["Colombo"] = new()
-            {
-                Name = "Colombo",
-                Order = MafiaOrder,
-                Default = "Associate",
-                RankFiles = MafiaFiles("colombo"),
-                RankCaps = MafiaCaps(),
-            },
             ["NYPD"] = new()
             {
                 Name = "NYPD",

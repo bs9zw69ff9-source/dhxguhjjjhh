@@ -27,7 +27,7 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, Board
             new SlashCommandOptionBuilder()
                 .WithName("faction").WithDescription("Which faction")
                 .WithType(ApplicationCommandOptionType.String).WithRequired(true)
-                .AddChoice("Gambino", "Gambino").AddChoice("Colombo", "Colombo").AddChoice("NYPD", "NYPD");
+                .AddChoice("NYPD", "NYPD");
 
         static SlashCommandOptionBuilder Player() =>
             new SlashCommandOptionBuilder()
@@ -84,7 +84,7 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, Board
         }
 
         /* Per-faction authority. A faction leader manages every roster; a per-faction role
-           manages only its own - which is what stops the Gambino leader quietly adding
+           manages only its own - which is what stopped one faction's leader adding
            themselves to the NYPD whitelist. */
         if (!access.CanManage(command.User, faction.Name))
         {

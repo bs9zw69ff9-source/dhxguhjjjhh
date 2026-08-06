@@ -16,7 +16,7 @@ public class RosterServiceTests : IDisposable
     private readonly RosterService _rosters;
 
     private static readonly FactionDefinition Nypd = FactionRegistry.Get("NYPD")!;
-    private static readonly FactionDefinition Gambino = FactionRegistry.Get("Gambino")!;
+    private static readonly FactionDefinition Gambino = TestFactions.Other;
 
     public RosterServiceTests()
     {
@@ -40,17 +40,18 @@ public class RosterServiceTests : IDisposable
         Assert.Contains("Alice", Contents("policecadet.txt"));
     }
 
-    [Fact]
-    public async Task APlayerCannotBeInTwoFactions()
-    {
-        await _rosters.JoinAsync(Gambino, "Alice");
-        var decision = await _rosters.JoinAsync(Nypd, "Alice");
+    /* ONE FACTION PER PLAYER IS STILL THE RULE, and it is still tested - just not here.
 
-        Assert.Equal(MembershipOutcome.AlreadyInAnotherFaction, decision.Outcome);
-        Assert.Equal("Gambino", decision.Conflict);
-        Assert.DoesNotContain("Alice", Contents("policecadet.txt"));
-    }
+       This drove it through RosterService, which resolves a conflicting membership by
+       looking the other faction up in the registry. With Gambino and Colombo removed there
+       is only NYPD, so "already in another faction" cannot be reached through this door at
+       all: any stand-in faction is absent from the registry and therefore invisible to the
+       conflict check.
 
+       The rule itself is covered where it lives, in FactionTests against
+       MembershipRules.Join, which takes the existing factions as an argument and does not
+       need them to exist on this server. Restore a RosterService-level version of this the
+       day a second faction is added. */
     [Fact]
     public async Task AFullEntryRankRefusesTheJoin()
     {

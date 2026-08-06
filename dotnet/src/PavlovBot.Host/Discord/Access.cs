@@ -14,8 +14,6 @@ public sealed record RoleMap
     public ulong? AdminRole { get; init; }
     public ulong? FactionLeaderRole { get; init; }
     public ulong? PoliceRole { get; init; }
-    public ulong? GambinoRole { get; init; }
-    public ulong? ColomboRole { get; init; }
     public ulong? NypdRole { get; init; }
 
     public static RoleMap Empty { get; } = new();
@@ -119,18 +117,21 @@ public sealed class Access
     /// Which faction rosters this member may edit.
     /// </summary>
     /// <remarks>
-    /// A faction leader manages EVERY roster; a per-faction role manages only its own. This
-    /// is what stops the Gambino leader quietly adding themselves to the NYPD whitelist -
-    /// and an OWNER manages all of them, via <see cref="IsFactionLeader"/>.
+    /// A faction leader manages EVERY roster; a per-faction role manages only its own, which
+    /// is what stopped one faction's leader adding themselves to another's whitelist. An
+    /// OWNER manages all of them, via <see cref="IsFactionLeader"/>.
+    ///
+    /// NYPD is the only faction now - the Gambino and Colombo ladders were removed - so the
+    /// distinction currently has one member. It is kept rather than collapsed because the
+    /// rule is about SEPARATION, and flattening it would have to be reasoned out again the
+    /// moment a second faction is added.
     /// </remarks>
     public IReadOnlyCollection<string> ManageableFactions(IUser? user)
     {
-        if (IsFactionLeader(user)) return ["Gambino", "Colombo", "NYPD"];
+        if (IsFactionLeader(user)) return ["NYPD"];
 
         var roles = Roles;
         var factions = new List<string>();
-        if (Has(user, roles.GambinoRole)) factions.Add("Gambino");
-        if (Has(user, roles.ColomboRole)) factions.Add("Colombo");
         if (Has(user, roles.NypdRole)) factions.Add("NYPD");
         return factions;
     }

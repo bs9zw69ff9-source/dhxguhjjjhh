@@ -108,7 +108,7 @@ public static class MembershipRules
         ArgumentNullException.ThrowIfNull(countAtRank);
         if (faction is null) return new MembershipDecision(MembershipOutcome.UnknownFaction);
 
-        // One faction per player. NYPD, Gambino and Colombo are mutually exclusive.
+        // One faction per player. Factions are mutually exclusive.
         var existing = currentFactions.FirstOrDefault(f =>
             !string.Equals(f, faction.Name, StringComparison.OrdinalIgnoreCase));
         if (existing is not null)

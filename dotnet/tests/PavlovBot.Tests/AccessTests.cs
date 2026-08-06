@@ -5,6 +5,8 @@ using PavlovBot.Host.Discord;
 using PavlovBot.Host.Storage;
 using Xunit;
 
+using PavlovBot.Core.Factions;
+
 namespace PavlovBot.Tests;
 
 /// <summary>
@@ -144,7 +146,9 @@ public class AccessTests
     {
         var access = Build(out _);
 
-        Assert.Equal(3, access.ManageableFactions(new FakeMember(OwnerId)).Count);
+        // One faction now: the Gambino and Colombo ladders were removed. Asserted against
+        // the registry rather than a literal, so adding a faction does not fail this.
+        Assert.Equal(FactionRegistry.All.Count, access.ManageableFactions(new FakeMember(OwnerId)).Count);
         Assert.True(access.CanManage(new FakeUser(SuperOwnerId), "NYPD"));
         Assert.Empty(access.ManageableFactions(new FakeMember(StrangerId)));
     }
