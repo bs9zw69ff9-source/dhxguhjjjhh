@@ -2,8 +2,7 @@
 # Build, verify and start the C# bot under pm2.
 #
 #   bash scripts/deploy-csharp.sh              # build + selftest only, do not start
-#   bash scripts/deploy-csharp.sh --start      # ... and start it (stops the Node bot first)
-#   bash scripts/deploy-csharp.sh --start --keep-node   # override the safety check
+#   bash scripts/deploy-csharp.sh --start      # ... and start it
 #   bash scripts/deploy-csharp.sh --install-sdk         # fetch the .NET SDK if absent
 #
 # The default is deliberately "build and check, change nothing". Deploying a bot
@@ -12,12 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 START=false
-KEEP_NODE=false
 INSTALL_SDK=false
 for arg in "$@"; do
   case "$arg" in
     --start)        START=true ;;
-    --keep-node)    KEEP_NODE=true ;;
     --install-sdk)  INSTALL_SDK=true ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
@@ -25,7 +22,6 @@ done
 
 OUT="./dotnet-out"
 APP="pavlov-bot-cs"
-NODE_APP="pavlov-bot"
 SDK_MAJOR=9        # dotnet/Directory.Build.props targets net9.0
 
 # ---- 0. find the SDK ---------------------------------------------------------
@@ -94,7 +90,7 @@ if ! resolve_dotnet; then
 
 No .NET SDK $SDK_MAJOR+ on this host, and none in the usual install locations
 (\$HOME/.dotnet, /usr/share/dotnet, /usr/lib/dotnet, /usr/local/share/dotnet,
-/opt/dotnet). Nothing was built and nothing was changed — the Node bot is
+/opt/dotnet). Nothing was built and nothing was changed — the running bot is
 untouched and still running.
 
 Three ways forward:
@@ -175,53 +171,12 @@ if [ "$START" != true ]; then
 fi
 
 # ---- 3. the safety check -----------------------------------------------------
-# Two bots on one Discord application answer every command twice and issue every
-# ban twice. There is no way to undo that from inside the bot, so this is a hard
-# stop rather than a warning.
-# Parsed, not pattern-matched. `pm2 jlist` emits every app as ONE line of JSON, so
-# `grep "name":"X".*"status":"online"` spans app boundaries: it matched a STOPPED
-# pavlov-bot purely because pavlov-bot-cs appeared later in the same line and was
-# online. Exit codes: 0 online, 1 not online, 2 could not tell.
-node_status() {
-  pm2 jlist 2>/dev/null | node -e '
-    let raw = "";
-    process.stdin.on("data", d => raw += d).on("end", () => {
-      let apps;
-      try { apps = JSON.parse(raw); } catch { process.exit(2); }
-      if (!Array.isArray(apps)) process.exit(2);
-      const app = apps.find(a => a && a.name === process.argv[1]);
-      process.exit(app && app.pm2_env && app.pm2_env.status === "online" ? 0 : 1);
-    });
-  ' "$NODE_APP"
-}
-
-node_status
-case $? in
-  1) NODE_IS_UP=false ;;
-  0) NODE_IS_UP=true ;;
-  # Cannot tell - pm2 missing, or output this script does not understand. Treat that
-  # as "it might be running", because the failure being guarded against is double
-  # bans, and there is no undo for those.
-  *) NODE_IS_UP=true
-     echo "WARNING: could not read pm2's app list; assuming '$NODE_APP' may be running." >&2 ;;
-esac
-
-if [ "$NODE_IS_UP" = true ]; then
-  if [ "$KEEP_NODE" != true ]; then
-    echo
-    echo "REFUSING TO START: '$NODE_APP' is online." >&2
-    echo >&2
-    echo "Both bots would answer every slash command, issue every ban twice, and" >&2
-    echo "post every feed line twice." >&2
-    echo >&2
-    echo "  stop it first:   pm2 stop $NODE_APP" >&2
-    echo "  or, if this C# bot uses a DIFFERENT Discord token and different" >&2
-    echo "  channels, override with:  --keep-node" >&2
-    exit 1
-  fi
-  echo "WARNING: '$NODE_APP' left running at your request (--keep-node)."
-  echo "         Only safe if the two use different Discord applications."
-fi
+# THE DOUBLE-RUN GUARD IS GONE, WITH THE BOT IT GUARDED AGAINST. This refused to
+# start while `pavlov-bot` was online, because two bots on one Discord application
+# answer every command twice and issue every ban twice, and there is no undo for
+# that. The Node bot has been removed, so there is no second app to collide with
+# and nothing to check. If a second bot is ever added on the same token, this is
+# the check to bring back - see the history of this file.
 
 # ---- 4. start ----------------------------------------------------------------
 mkdir -p logs
@@ -277,4 +232,4 @@ echo "Started. Watch it come up:"
 echo "  pm2 logs $APP"
 echo
 echo "Roll back at any time — the C# bot writes the same format the Node bot reads:"
-echo "  pm2 stop $APP && pm2 start $NODE_APP"
+echo "  pm2 stop $APP"

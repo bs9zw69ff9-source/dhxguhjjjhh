@@ -50,21 +50,17 @@ STAMP="$(date -u +%Y%m%d-%H%M%S)"
 SNAP="$WORK/botdb-$STAMP.db"
 
 # ── Consistent SQLite snapshot ──────────────────────────────────────────────
-# Prefer the bot's better-sqlite3 online backup (WAL-safe, no extra packages).
-# Fall back to the sqlite3 CLI's .backup, then a plain copy as a last resort.
-if node -e '
-    const path = require("path");
-    const dir  = process.argv[1], db = process.argv[2], out = process.argv[3];
-    const Database = require(path.join(dir, "node_modules", "better-sqlite3"));
-    const d = new Database(db, { readonly: true, fileMustExist: true });
-    d.backup(out).then(() => { d.close(); process.exit(0); })
-                 .catch((e) => { console.error(e.message); process.exit(1); });
-  ' "$BOT_DIR" "$DB" "$SNAP" 2>/dev/null; then
-  log "snapshot via better-sqlite3 online backup"
-elif command -v sqlite3 >/dev/null 2>&1; then
+# The first choice used to be the Node bot's better-sqlite3 online backup. That bot
+# and its node_modules are gone, so the branch could only ever fail - silently, into
+# a plain cp, which is the one option that is NOT WAL-safe.
+#
+# sqlite3's .backup is the WAL-safe route now. The plain copy stays as a last resort
+# because a slightly risky backup beats no backup, and it says so in the log rather
+# than pretending it was clean.
+if command -v sqlite3 >/dev/null 2>&1; then
   sqlite3 "$DB" ".backup '$SNAP'" && log "snapshot via sqlite3 .backup"
 else
-  cp "$DB" "$SNAP" && log "snapshot via plain cp (install sqlite3 or keep node deps for a WAL-safe copy)"
+  cp "$DB" "$SNAP" && log "snapshot via plain cp - NOT WAL-safe, install sqlite3 for a consistent copy"
 fi
 [ -s "$SNAP" ] || fail "snapshot is empty"
 
