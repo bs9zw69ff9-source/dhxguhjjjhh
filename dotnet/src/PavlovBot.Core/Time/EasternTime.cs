@@ -71,7 +71,13 @@ public static partial class EasternTime
 
         if (remaining.Days > 0) return $"{remaining.Days}d {remaining.Hours}h";
         if (remaining.Hours > 0) return $"{remaining.Hours}h {remaining.Minutes}m";
-        return $"{remaining.Minutes}m";
+
+        /* ROUNDED UP, NEVER "0m". A ban with fifty seconds left is still a ban, and
+           remaining.Minutes truncates it to 0. That string is not cosmetic: the ban file
+           written from it is read back by the importer, and ParseBanSpan rejects a zero
+           quantity - so a temp ban in its final minute came back as PERMANENT. A live ban
+           must not describe itself as having no time left. */
+        return $"{Math.Max(1, remaining.Minutes)}m";
     }
 
     [GeneratedRegex(@"^(\d+)\s*(s|m|h|d)?$")]

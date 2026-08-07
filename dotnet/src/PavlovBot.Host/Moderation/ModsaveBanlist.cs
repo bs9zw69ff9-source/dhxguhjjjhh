@@ -96,6 +96,23 @@ public sealed class ModsaveBanlist(
         return string.IsNullOrWhiteSpace(resolved) ? entryName : resolved;
     }
 
+    /// <summary>Whether an <c>Unban:</c> value says the ban has no time left.</summary>
+    /// <remarks>
+    /// Covers both spellings the writer can produce: "expired" for a ban already past its
+    /// time, and a zero quantity ("0m", "0", "00h") for one whose remaining minutes truncated
+    /// to nothing. Neither is corrupt input and neither means permanent, which is what the
+    /// importer used to make of them.
+    /// </remarks>
+    internal static bool DenotesElapsed(string? unban)
+    {
+        var text = unban?.Trim();
+        if (string.IsNullOrEmpty(text)) return false;
+        if (text.Equals("expired", StringComparison.OrdinalIgnoreCase)) return true;
+
+        var digits = text.TrimEnd('s', 'm', 'h', 'd', 'S', 'M', 'H', 'D', ' ');
+        return digits.Length > 0 && digits.All(char.IsAsciiDigit) && digits.All(c => c == '0');
+    }
+
     /// <summary>A reason must not contain a newline - the format is line-oriented, and one
     /// would turn the rest of the reason into a bogus field.</summary>
     private static string Flatten(string text) =>
@@ -181,6 +198,23 @@ public sealed class ModsaveBanlist(
             foreach (var entry in parsed)
             {
                 if (!known.Add(entry.Name)) continue;
+
+                /* NO TIME LEFT MEANS EXPIRED, NOT FOREVER. This is the half that turned temp
+                   bans permanent. "0m" and "expired" are both unparseable to ParseBanSpan,
+                   which rejects a zero quantity, and unparseable fell through to the
+                   permanent branch below - so a temp ban whose file entry had run down was
+                   re-imported as a permanent one, with the elapsed value printed in the
+                   reason as if it were corrupt input.
+
+                   Skipped rather than imported: the ban has served its time, and the sweep
+                   that would have lifted it cannot lift what it has already re-added. */
+                if (DenotesElapsed(entry.Unban))
+                {
+                    logger.LogInformation(
+                        "Skipping in-game ban for {Name} - its unban value \"{Unban}\" has already elapsed",
+                        entry.Name, entry.Unban);
+                    continue;
+                }
 
                 /* An "Unban" value the parser cannot read becomes a PERMANENT ban with the
                    unreadable value recorded in the reason. Guessing a duration would either
