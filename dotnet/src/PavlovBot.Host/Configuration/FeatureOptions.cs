@@ -360,7 +360,15 @@ public sealed record FeatureOptions
     public IReadOnlyList<string> Describe() =>
     [
         $"economy: {(LedgerDirectory is null ? "off (MODSAVE_PATH not set)" : LedgerDirectory)}",
-        $"whitelists: {(RosterDirectory is null ? "off (FACTION_ROLES_PATH not set)" : RosterDirectory)}",
+        /* A PATH THAT DOES NOT EXIST IS REPORTED AS OFF. RosterService treats a missing
+           directory exactly like an unset one, so printing the path here as though whitelists
+           were on described a state the bot was not in - and every /whitelist add then failed
+           for a reason the startup line said could not be the problem. */
+        $"whitelists: {(RosterDirectory is null
+            ? "off (FACTION_ROLES_PATH not set)"
+            : Directory.Exists(RosterDirectory)
+                ? RosterDirectory
+                : $"off (FACTION_ROLES_PATH is {RosterDirectory}, which does not exist)")}",
         $"systemd units: {string.Join(", ", PavlovUnits)}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",

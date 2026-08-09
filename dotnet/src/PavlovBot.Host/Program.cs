@@ -291,6 +291,8 @@ public static class Program
             sp.GetRequiredService<ILogger<PavlovBot.Host.Economy.Payroll>>(),
             features.PayrollAmount, features.PayrollInterval, features.PayrollFaction));
 
+        builder.Services.AddSingleton<ISlashCommand, WagesCommand>();
+
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.MoneyAnomalyDetector(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<ILogger<PavlovBot.Host.Economy.MoneyAnomalyDetector>>(),

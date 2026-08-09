@@ -146,3 +146,82 @@ public sealed class CapsCommand : ISlashCommand
             m.AllowedMentions = AllowedMentions.None;
         });
 }
+
+/// <summary>
+/// <c>/wages</c> - what an officer has earned on duty, banked and unbanked.
+/// </summary>
+/// <remarks>
+/// EXISTS BECAUSE THE PAY RULE IS NOT SELF-EVIDENT. Wages are paid in WHOLE periods of
+/// observed on-duty time, with the remainder carried: forty-two minutes at 500 per thirty
+/// pays 500 now and the second 500 eighteen minutes later. From the inside that is
+/// indistinguishable from being underpaid, and the only answer staff could give was "trust
+/// it". This shows the carry, so the question answers itself.
+///
+/// The state was already there - Owed, Earned and the run history - with nothing reading it.
+/// Numbers a bot keeps and never shows are numbers nobody can check.
+/// </remarks>
+public sealed class WagesCommand(Payroll payroll) : ISlashCommand
+{
+    public string Name => "wages";
+
+    public bool Ephemeral => true;
+
+    public ApplicationCommandProperties Build() =>
+        new SlashCommandBuilder()
+            .WithName(Name)
+            .WithDescription("What an on-duty officer has earned, banked and unbanked")
+            .AddOption("player", ApplicationCommandOptionType.String, "Their in-game name",
+                isRequired: true, isAutocomplete: true)
+            .Build();
+
+    public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        if (!payroll.Enabled)
+        {
+            await Reply(command, Theme.Warning("Payroll is off",
+                "`PAYROLL_AMOUNT` is unset or the faction rosters are unreachable, so nothing " +
+                "is being earned.")).ConfigureAwait(false);
+            return;
+        }
+
+        var player = Sanitize.Id(command.Data.Options.FirstOrDefault()?.Value?.ToString() ?? "");
+        if (player.Length == 0)
+        {
+            await Reply(command, Theme.Failure("That name has nothing usable in it")).ConfigureAwait(false);
+            return;
+        }
+
+        var owed = payroll.OwedTo(player);
+        var carried = payroll.EarnedTowardNextPeriod(player);
+        var lifetime = payroll.TotalPaidTo(player);
+
+        var embed = Theme.Notice($"{Theme.Money} Wages — {Sanitize.Code(player)}")
+            .AddField("Earned, not yet banked", Money(owed), true)
+            .AddField("Banked to date", Money(lifetime), true)
+            .AddField("Toward the next payment",
+                $"{carried.TotalMinutes:0} of {payroll.Period.TotalMinutes:0} minutes", true);
+
+        /* SAYING WHY, not just how much. "Unbanked" reads like money that has gone missing
+           unless it comes with the reason it is being held. */
+        embed.AddField("How this works",
+            $"On duty pays **{Money(payroll.Amount)}** per **{payroll.Period.TotalMinutes:0}** minutes " +
+            "of observed time. Part periods are not rounded up or thrown away — they carry " +
+            "forward and pay out once they complete.\n\n" +
+            "Earned pay is banked to the in-game balance on the first check **after they log " +
+            "off**. It cannot be written while they are connected: the server holds that " +
+            "balance in memory and overwrites the file from it.");
+
+        await Reply(command, embed).ConfigureAwait(false);
+    }
+
+    private static string Money(long value) => $"${value.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}";
+
+    private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
+        command.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = embed.Brand().Build();
+            m.AllowedMentions = AllowedMentions.None;
+        });
+}

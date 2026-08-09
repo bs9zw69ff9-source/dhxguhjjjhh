@@ -270,7 +270,7 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
         MembershipOutcome.NotWhitelisted =>
             Theme.Failure("Not whitelisted", $"**{Sanitize.Code(player)}** is not on this roster."),
 
-        _ => Theme.Failure("Refused", decision.Outcome.ToString()),
+        _ => MembershipReply.Fallback(decision),
     };
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
@@ -393,7 +393,7 @@ public sealed class RankChangeCommand : ISlashCommand
             MembershipOutcome.RankFull => Theme.Denied("That rank is full",
                 $"**{decision.Rank}** is capped at **{decision.Cap}** and is already at its limit."),
 
-            _ => Theme.Failure("Refused", decision.Outcome.ToString()),
+            _ => MembershipReply.Fallback(decision),
         };
 
         await Reply(command, embed).ConfigureAwait(false);

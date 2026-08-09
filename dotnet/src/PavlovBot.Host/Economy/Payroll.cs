@@ -42,13 +42,42 @@ public sealed record PayrollRun(
 /// sharing one dictionary. In production the same bug makes payroll pay once and then refuse
 /// forever after any restart that leaves the row unwritten.
 /// </remarks>
+/// <param name="LastPaid">Faction -> when its last tick ran. Used to measure elapsed time.</param>
+/// <param name="Owed">Player -> earned but not yet banked.</param>
+/// <param name="OnDutySeconds">
+/// Player -> on-duty time carried toward their next whole period.
+/// </param>
+/// <param name="LastOnDuty">Faction -> who was on duty at the previous tick.</param>
+/// <remarks>
+/// THE LAST TWO ARE NULLABLE WITH DEFAULTS so a payroll_state written before they existed
+/// still deserialises. A live server has one of those files, and a missing property that
+/// threw would take payroll down on the deploy that introduced it.
+/// </remarks>
 public sealed record PayrollState(
     Dictionary<string, DateTimeOffset> LastPaid,
-    Dictionary<string, long> Owed)
+    Dictionary<string, long> Owed,
+    Dictionary<string, long>? OnDutySeconds = null,
+    Dictionary<string, List<string>>? LastOnDuty = null)
 {
+    /* NOT `??=`. The positional properties are init-only, so they cannot be assigned after
+       construction - and a lazily-created dictionary that is thrown away on every read would
+       silently lose every write. Materialised once here instead, which also means the record
+       stays a plain data shape rather than one with hidden mutation. */
+    private readonly Dictionary<string, long> _earned =
+        OnDutySeconds ?? new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+    private readonly Dictionary<string, List<string>> _previous =
+        LastOnDuty ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, long> Earned => _earned;
+
+    public Dictionary<string, List<string>> Previous => _previous;
+
     public static PayrollState New() => new(
         new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),
-        new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase));
+        new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>
@@ -157,34 +186,68 @@ public sealed class Payroll(
         // ---- 1. bank what the people who have left already earned ----
         var paid = await SettleAsync(present, ct).ConfigureAwait(false);
 
-        // ---- 2. accrue for this period, if one has elapsed ----
-        var state = store.Read(Datasets.PayrollState, PayrollState.New());
-        if (state.LastPaid.TryGetValue(factionName, out var last) && now - last < period)
-        {
-            // Settlement still happened above - it moves money already earned rather than
-            // creating any, so it is not rate limited.
-            var settledOnly = new PayrollRun(now, factionName, paid, none,
-                $"only {(now - last).TotalMinutes:0} minutes since the last accrual");
+        /* ---- 2. credit the time they actually played ----
 
-            if (paid.Count > 0) await RecordAsync(settledOnly, ct).ConfigureAwait(false);
-            return settledOnly;
-        }
+           PAID FOR TIME ON DUTY, IN WHOLE PERIODS, WITH THE REMAINDER CARRIED. This used to
+           be a faction-wide wall clock: every member online at a period boundary got a full
+           period's pay, and anybody who logged off a minute before it got nothing for the
+           twenty-nine minutes they had played. Two officers doing the same hour could be paid
+           differently by half, decided by when they happened to log in.
+
+           Now each member banks their own seconds. Every whole period in that total converts
+           to one period's wage and is subtracted; what is left over stays and counts toward
+           the next one. An hour at 30 per 30 minutes is 60. Forty-two minutes is 30, with
+           twelve minutes carried - and eighteen minutes later, the second 30. */
+        var state = store.Read(Datasets.PayrollState, PayrollState.New());
+
+        var previous = state.Previous.GetValueOrDefault(factionName) ?? [];
+        var wasOnDuty = previous.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        /* CAPPED AT ONE PERIOD. If the bot was down for six hours, the members online when it
+           comes back were not necessarily on duty for those hours - nobody was watching. The
+           existing rule was "a run accrues ONE period, whatever happened before it", and this
+           keeps it: an outage can never mint more than a single period per member. */
+        var sinceLast = state.LastPaid.TryGetValue(factionName, out var last)
+            ? now - last
+            : TimeSpan.Zero;
+        var credited = sinceLast > period ? period : sinceLast;
 
         var onDuty = roster.Where(m => present.Contains(m.Player)).Select(m => m.Player).ToList();
 
         var accrued = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        foreach (var player in onDuty) accrued[player] = amount;
+        var carried = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
-        await StampAsync(now, factionName, accrued, ct).ConfigureAwait(false);
+        foreach (var player in onDuty)
+        {
+            /* ONLY TIME BETWEEN TWO SIGHTINGS COUNTS. Somebody seen for the first time this
+               tick has been on duty for an unknown part of the gap, so they are credited from
+               now rather than from the last tick. That under-credits by at most one tick, and
+               the alternative pays people for time nobody observed. */
+            var seconds = state.Earned.GetValueOrDefault(player);
+            if (wasOnDuty.Contains(player)) seconds += (long)credited.TotalSeconds;
+
+            var periods = seconds / (long)period.TotalSeconds;
+            if (periods > 0)
+            {
+                accrued[player] = periods * amount;
+                seconds -= periods * (long)period.TotalSeconds;
+            }
+
+            carried[player] = seconds;
+        }
+
+        await StampAsync(now, factionName, accrued, carried, onDuty, ct).ConfigureAwait(false);
 
         if (accrued.Count > 0)
         {
             logger.LogInformation(
-                "Payroll accrued {Amount:N0} for {Count} on-duty {Faction} member(s) - banked when they log off",
-                amount, accrued.Count, factionName);
+                "Payroll accrued {Total:N0} across {Count} {Faction} member(s) who completed a full period - banked when they log off",
+                accrued.Values.Sum(), accrued.Count, factionName);
         }
 
-        var skipped = accrued.Count == 0 ? $"no {factionName} member is online" : null;
+        var skipped = onDuty.Count == 0
+            ? $"no {factionName} member is online"
+            : accrued.Count == 0 ? "nobody has completed a full period yet" : null;
         var run = new PayrollRun(now, factionName, paid, accrued, skipped);
 
         // History records money that MOVED, not money promised - so it is written from the
@@ -262,14 +325,37 @@ public sealed class Payroll(
     /// stamped when the roster could not be trusted, because that run never took place.
     /// </remarks>
     private Task StampAsync(
-        DateTimeOffset now, string faction, Dictionary<string, long> accrued, CancellationToken ct) =>
+        DateTimeOffset now, string faction, Dictionary<string, long> accrued,
+        Dictionary<string, long> carried, IReadOnlyList<string> onDuty, CancellationToken ct) =>
         store.UpdateAsync(Datasets.PayrollState, PayrollState.New(), state =>
         {
             state.LastPaid[faction] = now;
             foreach (var (player, wage) in accrued)
                 state.Owed[player] = state.Owed.GetValueOrDefault(player) + wage;
+
+            /* The remainder is the whole point: it is what makes 42 minutes pay once now and
+               once eighteen minutes later, rather than rounding somebody's time away. It is
+               kept for members who are OFFLINE too - StampAsync only writes the players seen
+               this tick, so logging off banks the partial period rather than forfeiting it.
+
+               A ZERO IS REMOVED rather than stored. Every member who ever completes a period
+               lands on exactly zero, and keeping those rows would grow the state file with
+               entries that mean "nothing carried" - which is what an absent key already
+               means. */
+            foreach (var (player, seconds) in carried)
+            {
+                if (seconds > 0) state.Earned[player] = seconds;
+                else state.Earned.Remove(player);
+            }
+
+            state.Previous[faction] = [.. onDuty];
             return state;
         }, ct);
+
+    /// <summary>On-duty time a member has banked toward their next whole period.</summary>
+    public TimeSpan EarnedTowardNextPeriod(string player) =>
+        TimeSpan.FromSeconds(store.Read(Datasets.PayrollState, PayrollState.New())
+            .Earned.GetValueOrDefault(player.Trim()));
 
     /// <summary>What an officer has earned on duty but not yet had banked.</summary>
     public long OwedTo(string player) =>
