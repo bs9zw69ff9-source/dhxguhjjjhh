@@ -142,6 +142,10 @@ public sealed class VpnResponder(
             list.Add(new BanRecord
             {
                 PlayerId = player,
+                /* Null here is honest: this path is driven by an ADDRESS, and the account id
+                   is not one of its inputs. BanService resolves it by name at enforce time
+                   and again at lift time, so both still name the same thing. */
+                UniqueId = null,
                 Reason = Sanitize.Message(reason),
                 Moderator = "auto",
                 At = now,

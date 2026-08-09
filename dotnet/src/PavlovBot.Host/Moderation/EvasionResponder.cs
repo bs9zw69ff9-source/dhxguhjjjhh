@@ -124,6 +124,8 @@ public sealed class EvasionResponder
             var record = new BanRecord
             {
                 PlayerId = name,
+                // The id this is enforced against below, so a later lift names the same thing.
+                UniqueId = join.AccountId,
                 Reason = Sanitize.Message(reason),
                 Moderator = "auto",
                 At = now,

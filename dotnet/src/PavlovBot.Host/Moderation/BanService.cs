@@ -35,8 +35,24 @@ public sealed class BanService
     private readonly RconRegistry _rcon;
     private readonly SerializedStore _store;
     private readonly IMasterNames _masterNames;
+    private readonly IBanEvidence? _evidence;
     private readonly ILogger<BanService> _logger;
     private readonly TimeProvider _time;
+
+    /// <summary>
+    /// How long a lifted player is protected from being auto-banned again.
+    /// </summary>
+    /// <remarks>
+    /// A BELT-AND-BRACES WINDOW, not the actual mechanism. <see cref="LiftAsync"/> clears the
+    /// flags, so nothing should catch them at all; this covers what clearing cannot reach - a
+    /// pending flag that a disconnect resolves moments later, or a flag on a different account
+    /// that shares their address.
+    ///
+    /// It used to be the ONLY protection, sized at an hour against a "clean-up sweep" that
+    /// was referenced in three files and implemented in none. When it lapsed, the flags were
+    /// still there.
+    /// </remarks>
+    public static readonly TimeSpan LiftExemption = TimeSpan.FromHours(1);
 
     /// <summary>
     /// A full reconcile opens a connection per active ban, so it is rate-limited hard.
@@ -57,13 +73,15 @@ public sealed class BanService
         SerializedStore store,
         IMasterNames masterNames,
         ILogger<BanService> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IBanEvidence? evidence = null)
     {
         _rcon = rcon;
         _store = store;
         _masterNames = masterNames;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _evidence = evidence;
     }
 
     private DateTimeOffset Now => _time.GetUtcNow();
@@ -97,7 +115,15 @@ public sealed class BanService
     public async Task<EnforcementResult> HardEnforceAsync(
         string name, string? uniqueId = null, bool ban = true, bool kick = true, CancellationToken ct = default)
     {
-        var source = uniqueId ?? name;
+        /* LOOK THE ID UP when the caller has none, rather than falling straight to the display
+           name. VpnResponder called this with the name alone, so a VPN auto-ban was issued as
+           "Ban SomeName" - accepted, answered, and enforcing nothing until the sweep happened
+           to catch them online and re-issue it against a real id.
+
+           The same resolution as UnbanEverywhereAsync, deliberately: a ban and its lift have
+           to name the same thing, and the cheapest way to guarantee that is for both to
+           resolve it the same way in one place. */
+        var source = uniqueId ?? _evidence?.AccountIdFor(name) ?? name;
         var target = Sanitize.Id(source);
 
         if (target.Length == 0)
@@ -170,11 +196,25 @@ public sealed class BanService
     /// </remarks>
     public async Task<EnforcementResult> UnbanEverywhereAsync(string name, string? uniqueId = null, CancellationToken ct = default)
     {
-        var target = Sanitize.Id(uniqueId ?? name);
+        /* THE ID FIRST, ALWAYS, and fall back to looking it up rather than to the display
+           name. Pavlov's Unban takes a UniqueId; a display name is accepted, answers
+           normally, and lifts nothing. Every ban this bot issues against a known player is
+           enforced by id, so unbanning by name could only ever have been a no-op. */
+        var resolved = uniqueId ?? _evidence?.AccountIdFor(name);
+        var target = Sanitize.Id(resolved ?? name);
+
         if (target.Length == 0)
         {
             _logger.LogError("unban for \"{Name}\" has NO usable RCON target - the native server ban was NOT lifted", name);
             return new EnforcementResult(0, null);
+        }
+
+        if (resolved is null)
+        {
+            _logger.LogWarning(
+                "unban for \"{Name}\" is being sent BY DISPLAY NAME - no account id is recorded for them. " +
+                "Pavlov unbans by UniqueId, so this may lift nothing. Check the ban record and the tracked accounts",
+                name);
         }
 
         var accepted = 0;
@@ -333,25 +373,82 @@ public sealed class BanService
     }
 
     /// <summary>
+    /// Lift a ban completely: drop the record, clear the evidence, exempt, and unban natively.
+    /// </summary>
+    /// <remarks>
+    /// ONE OPERATION, because it was two and they disagreed. A ban leaves four things behind
+    /// and lifting it has to undo all of them:
+    ///
+    ///   THE RECORD, or the sweep and the reconcile put the ban straight back.
+    ///   THE FLAGS, or the evasion responder issues a fresh PERMANENT ban the next time they
+    ///     connect - which is how a served temp ban turned permanent by reconnecting.
+    ///   THE NATIVE BAN on each server, by UniqueId.
+    ///   And an EXEMPTION covering what clearing cannot reach: a pending flag, or a flag on
+    ///     another account sharing their address.
+    ///
+    /// /unban did the first three and no exemption. The expiry sweep did the record, an
+    /// exemption, and an Unban BY DISPLAY NAME that lifted nothing - and never touched the
+    /// flags at all. Neither path was complete, and the gaps were different, so the symptom
+    /// changed depending on how the ban ended.
+    /// </remarks>
+    /// <param name="name">The display name the ban is filed under.</param>
+    /// <param name="uniqueId">The recorded account id. Looked up when null.</param>
+    public async Task<EnforcementResult> LiftAsync(string name, string? uniqueId = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        await _store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
+        {
+            // Removes EVERY record for them. Two records for one player means the lift takes
+            // one and the other re-catches them on the next sweep.
+            return bans.RemoveAll(b => BanRules.SamePlayer(b.PlayerId, name)) > 0 ? bans : null;
+        }, ct).ConfigureAwait(false);
+
+        var account = uniqueId ?? _evidence?.AccountIdFor(name);
+        if (account is not null && _evidence is not null)
+        {
+            try
+            {
+                await _evidence.ClearFlagsAsync(account, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                /* LOUD, and it does not abort the lift. The native unban below is what the
+                   player is waiting on; leaving them banned because the bookkeeping failed
+                   would be the wrong trade. But a lift whose flags survived WILL re-ban them,
+                   so this line is the only warning anybody gets. */
+                _logger.LogError(ex,
+                    "Could not clear the evasion flags for \"{Name}\" [{Account}] - they may be " +
+                    "auto-banned again on their next connection. Clear them by hand with /configure",
+                    name, account);
+            }
+        }
+
+        await _masterNames.ExemptAsync(name, LiftExemption, ct).ConfigureAwait(false);
+
+        return await UnbanEverywhereAsync(name, account, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Lift bans whose time has been served.
     /// </summary>
     /// <returns>The players released.</returns>
     public async Task<IReadOnlyList<BanRecord>> ProcessExpiredAsync(CancellationToken ct = default)
     {
         var now = Now;
-        var expired = new List<BanRecord>();
 
-        await _store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
-        {
-            expired = bans.Where(b => b.IsValid && !b.Permanent && b.Expires is { } e && e <= now).ToList();
-            if (expired.Count == 0) return null;   // veto: nothing to write
-            return bans.Where(b => !expired.Contains(b)).ToList();
-        }, ct).ConfigureAwait(false);
+        /* READ, then lift each one through the shared path. This used to remove them all in
+           one store update and then send an Unban per name, which is why the expiry path was
+           the one missing the flag clearing - the removal did not go anywhere near it. */
+        var expired = LoadBans()
+            .Where(b => !b.Permanent && b.Expires is { } e && e <= now)
+            .ToList();
 
         foreach (var ban in expired)
         {
-            await UnbanEverywhereAsync(ban.PlayerId, ct: ct).ConfigureAwait(false);
-            _logger.LogInformation("Expired ban lifted: {Player}", ban.PlayerId);
+            var result = await LiftAsync(ban.PlayerId, ban.UniqueId, ct).ConfigureAwait(false);
+            _logger.LogInformation("Expired ban lifted: {Player} (unban accepted by {Servers} server(s))",
+                ban.PlayerId, result.Servers);
         }
         return expired;
     }
@@ -377,4 +474,36 @@ public interface IMasterNames
 {
     bool IsMaster(string name);
     bool IsExempt(string name);
+
+    /// <summary>Protect a player from auto-ban re-catching for a while.</summary>
+    /// <remarks>
+    /// ON THE INTERFACE because lifting a ban is where an exemption is granted, and that
+    /// lives in <see cref="BanService"/>. It was reachable only through the concrete
+    /// MasterNames, so the caller that remembered to grant one was whichever background
+    /// service happened to hold that type - which is how the expiry path got an exemption
+    /// and /unban did not.
+    /// </remarks>
+    Task ExemptAsync(string name, TimeSpan? duration = null, CancellationToken ct = default);
+}
+
+/// <summary>
+/// The evasion evidence a ban leaves behind, behind the narrowest surface that can undo it.
+/// </summary>
+/// <remarks>
+/// AN INTERFACE RATHER THAN IpTrackingService ITSELF, because this is the only part of that
+/// class a lift has any business touching, and because the failure it exists to stop needs a
+/// test that does not involve a log tailer.
+///
+/// The failure: lifting a ban removed the record and sent the Unban, and left the address and
+/// account-id flags the ban had created. The flags outlive the ban, so the next time that
+/// player connected the evasion responder saw a flagged join with no covering ban and issued
+/// a fresh PERMANENT one. A served two-day ban became permanent by reconnecting.
+/// </remarks>
+public interface IBanEvidence
+{
+    /// <summary>The account id a display name belongs to, or null if never seen.</summary>
+    string? AccountIdFor(string name);
+
+    /// <summary>Drop the address, name and id flags a ban created for one account.</summary>
+    Task ClearFlagsAsync(string accountId, CancellationToken ct = default);
 }

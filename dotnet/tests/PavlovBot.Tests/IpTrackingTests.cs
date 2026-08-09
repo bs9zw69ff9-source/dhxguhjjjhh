@@ -140,6 +140,10 @@ public class IpTrackingServiceTests : IDisposable
     {
         public bool IsMaster(string who) => string.Equals(who, name, StringComparison.OrdinalIgnoreCase);
         public bool IsExempt(string who) => IsMaster(who);
+
+        // Nothing here lifts a ban, so an exemption is not part of what this stub answers.
+        public Task ExemptAsync(string who, TimeSpan? duration = null, CancellationToken ct = default) =>
+            Task.CompletedTask;
     }
 
     [Fact]

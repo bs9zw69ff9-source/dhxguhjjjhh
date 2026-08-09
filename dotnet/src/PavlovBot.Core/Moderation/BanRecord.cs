@@ -4,6 +4,9 @@ namespace PavlovBot.Core.Moderation;
 
 /// <summary>One ban, as stored.</summary>
 /// <param name="PlayerId">The display name the ban is filed under.</param>
+/// <param name="UniqueId">
+/// The account id the ban was ENFORCED against, captured at ban time.
+/// </param>
 /// <param name="Permanent">
 /// True for a ban with no expiry. Mutually exclusive with <see cref="Expires"/> in
 /// practice, but both are read so a malformed record cannot become permanent by accident.
@@ -21,6 +24,24 @@ namespace PavlovBot.Core.Moderation;
 public sealed record BanRecord
 {
     public required string PlayerId { get; init; }
+
+    /// <summary>
+    /// The account id the ban was enforced against. Null on records written before this
+    /// existed, and on bans issued for a player the bot has never seen connect.
+    /// </summary>
+    /// <remarks>
+    /// THE BAN AND THE UNBAN HAVE TO NAME THE SAME THING. Pavlov's Ban and Unban take a
+    /// UniqueId; a display name is accepted and does nothing. Enforcement already preferred
+    /// the id, but the record only ever remembered the display name - so a ban landed
+    /// against an EOS id and every lift sent that name instead. The server took the command,
+    /// answered normally, and left the player banned.
+    ///
+    /// Captured at BAN time rather than looked up at lift time on purpose. A player who
+    /// changes their display name after being banned cannot be found by the old name at all,
+    /// and that is exactly the player most likely to be arguing about a ban.
+    /// </remarks>
+    public string? UniqueId { get; init; }
+
     public string? Reason { get; init; }
     public string? Moderator { get; init; }
     public DateTimeOffset? At { get; init; }
