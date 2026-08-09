@@ -5,6 +5,8 @@ using PavlovBot.Core.Security;
 using PavlovBot.Host.Storage;
 using PavlovBot.Core.Data;
 
+using PavlovBot.Core.Factions;
+
 namespace PavlovBot.Host.Discord;
 
 /// <summary>Which Discord roles map to which powers. Set at runtime by <c>/setroles</c>.</summary>
@@ -14,6 +16,9 @@ public sealed record RoleMap
     public ulong? AdminRole { get; init; }
     public ulong? FactionLeaderRole { get; init; }
     public ulong? PoliceRole { get; init; }
+    /// <summary>Manages BOTH mafia whitelists. They are spawn-only and near-identical.</summary>
+    public ulong? MafiaRole { get; init; }
+
     public ulong? NypdRole { get; init; }
 
     public static RoleMap Empty { get; } = new();
@@ -128,10 +133,16 @@ public sealed class Access
     /// </remarks>
     public IReadOnlyCollection<string> ManageableFactions(IUser? user)
     {
-        if (IsFactionLeader(user)) return ["NYPD"];
+        if (IsFactionLeader(user)) return [.. FactionRegistry.All.Keys];
 
         var roles = Roles;
         var factions = new List<string>();
+
+        /* ONE ROLE FOR BOTH MAFIAS. They are spawn access with no ladder, so there is nothing
+           for a Gambino manager to do inside Colombo that is worth a second role to prevent.
+           Police stays separate: that separation is between organised crime and the police,
+           which is the one that matters. */
+        if (Has(user, roles.MafiaRole)) { factions.Add("Gambino"); factions.Add("Colombo"); }
         if (Has(user, roles.NypdRole)) factions.Add("NYPD");
         return factions;
     }

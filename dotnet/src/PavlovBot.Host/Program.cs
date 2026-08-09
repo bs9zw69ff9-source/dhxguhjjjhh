@@ -239,11 +239,17 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, KickCommand>();
         builder.Services.AddSingleton<ISlashCommand, AnnounceCommand>();
         builder.Services.AddSingleton<ISlashCommand, WhitelistCommand>();
+        builder.Services.AddSingleton<PavlovBot.Host.Factions.FactionMembers>();
+
         builder.Services.AddSingleton<ISlashCommand>(sp => RankChangeCommand.Promotion(
-            sp.GetRequiredService<RosterService>(), sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<RosterService>(),
+            sp.GetRequiredService<PavlovBot.Host.Factions.FactionMembers>(),
+            sp.GetRequiredService<Access>(),
             sp.GetRequiredService<ILogger<RankChangeCommand>>()));
         builder.Services.AddSingleton<ISlashCommand>(sp => RankChangeCommand.Demotion(
-            sp.GetRequiredService<RosterService>(), sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<RosterService>(),
+            sp.GetRequiredService<PavlovBot.Host.Factions.FactionMembers>(),
+            sp.GetRequiredService<Access>(),
             sp.GetRequiredService<ILogger<RankChangeCommand>>()));
         builder.Services.AddSingleton<ISlashCommand, WarrantCommand>();
         builder.Services.AddSingleton<ISlashCommand, ArrestCommand>();

@@ -76,6 +76,13 @@ public static class Datasets
     public const string KnownPlayers = "known_players";
     public const string DiscordLinks = "discord_links";
     public const string Verifications = "verifications";
+
+    /// <summary>Discord id -> the faction and in-game name they were whitelisted under.</summary>
+    /// <remarks>
+    /// New in the C# bot; the Node bot had no equivalent, so there is no file shape to match.
+    /// An INDEX over the roster files rather than a second source of truth - see FactionMembers.
+    /// </remarks>
+    public const string FactionMembers = "faction_members";
     public const string VerifyState = "verify_state";
     public const string DonatorSuspend = "donator_suspend";
 
@@ -142,6 +149,7 @@ public static class Datasets
         [KnownPlayers] = "{}",
         [DiscordLinks] = "{}",
         [Verifications] = "{}",
+        [FactionMembers] = "{}",
         [VerifyState] = "{}",
         [DonatorSuspend] = "{}",
         [Wages] = "[]",

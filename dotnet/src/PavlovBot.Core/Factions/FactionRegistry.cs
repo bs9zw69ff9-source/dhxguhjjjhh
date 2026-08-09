@@ -38,6 +38,20 @@ public sealed record FactionDefinition
     public string Lowest => Order[0];
     public string Highest => Order[^1];
 
+    /// <summary>
+    /// Whether this faction has a ladder at all.
+    /// </summary>
+    /// <remarks>
+    /// DERIVED FROM THE DATA, not a separate flag that could disagree with it. A faction with
+    /// one entry in <see cref="Order"/> has nowhere to be promoted TO, so promotion and
+    /// demotion are meaningless rather than merely unavailable - the mafias are spawn access
+    /// and nothing else.
+    ///
+    /// A flag would let somebody set HasRanks = true on a one-rank faction and get a
+    /// promotion command that silently does nothing.
+    /// </remarks>
+    public bool HasRanks => Order.Count > 1;
+
     /// <summary>Position in the ladder, or -1 when the rank is not part of this faction.</summary>
     public int IndexOf(string? rank) =>
         rank is null ? -1 : Order.ToList().FindIndex(r => string.Equals(r, rank, StringComparison.OrdinalIgnoreCase));
@@ -52,9 +66,33 @@ public sealed record FactionDefinition
 /// <summary>The factions this server runs. Ported verbatim from factions/ranks.js.</summary>
 public static class FactionRegistry
 {
+    /// <summary>The single nominal rank a spawn-only faction uses. Never shown to a user.</summary>
+    public const string SpawnOnly = "Member";
+
     public static readonly FrozenDictionary<string, FactionDefinition> All =
         new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase)
         {
+            /* SPAWN ACCESS, NO LADDER. The mafias used to carry a six-rank ladder with caps
+               (Associate through Boss). They are whitelist-only now: one file each, one
+               nominal rank, nothing to promote to.
+
+               "Member" is not shown to anybody - it exists because Order and Default are
+               required and the roster writer needs a key for the file. HasRanks reports false
+               off the back of it, and the promotion commands refuse on that. */
+            ["Gambino"] = new()
+            {
+                Name = "Gambino",
+                Order = [SpawnOnly],
+                Default = SpawnOnly,
+                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "gambino.txt" },
+            },
+            ["Colombo"] = new()
+            {
+                Name = "Colombo",
+                Order = [SpawnOnly],
+                Default = SpawnOnly,
+                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "colombo.txt" },
+            },
             ["NYPD"] = new()
             {
                 Name = "NYPD",

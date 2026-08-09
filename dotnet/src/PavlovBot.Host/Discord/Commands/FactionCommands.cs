@@ -17,36 +17,51 @@ namespace PavlovBot.Host.Discord.Commands;
 /// per-rank caps. The roster files are plain text the game reads live and nothing stops a
 /// name appearing in six of them at once, so the boundary is the only enforcement point.
 /// </remarks>
-public sealed class WhitelistCommand(RosterService rosters, Access access, Boards boards, ILogger<WhitelistCommand> logger) : ISlashCommand
+public sealed class WhitelistCommand(RosterService rosters, FactionMembers members, Access access, Boards boards, ILogger<WhitelistCommand> logger) : ISlashCommand
 {
     public string Name => "whitelist";
 
     public ApplicationCommandProperties Build()
     {
-        static SlashCommandOptionBuilder Faction() =>
-            new SlashCommandOptionBuilder()
+        static SlashCommandOptionBuilder Faction()
+        {
+            var option = new SlashCommandOptionBuilder()
                 .WithName("faction").WithDescription("Which faction")
-                .WithType(ApplicationCommandOptionType.String).WithRequired(true)
-                .AddChoice("NYPD", "NYPD");
+                .WithType(ApplicationCommandOptionType.String).WithRequired(true);
 
-        static SlashCommandOptionBuilder Player() =>
+            // From the registry, so adding a faction does not mean remembering to edit this.
+            foreach (var name in FactionRegistry.All.Keys) option.AddChoice(name, name);
+            return option;
+        }
+
+        /* THE DISCORD USER IS THE HANDLE EVERYWHERE EXCEPT HERE. Adding somebody is the one
+           moment the in-game name is genuinely unknown to the bot, so it is asked for once,
+           recorded against the account, and never typed again - removal, promotion and
+           demotion all take the user. A moderator should not have to look up and spell a
+           Pavlov name to demote somebody they can see in the member list. */
+        static SlashCommandOptionBuilder Member() =>
             new SlashCommandOptionBuilder()
-                .WithName("playerid").WithDescription("Player ID or username")
+                .WithName("member").WithDescription("The Discord account")
+                .WithType(ApplicationCommandOptionType.User).WithRequired(true);
+
+        static SlashCommandOptionBuilder InGameName() =>
+            new SlashCommandOptionBuilder()
+                .WithName("ingame_name").WithDescription("Their exact in-game name")
                 .WithType(ApplicationCommandOptionType.String).WithRequired(true).WithAutocomplete(true);
 
         return new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription("Manage a faction whitelist")
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("add").WithDescription("Whitelist Leader - Add a player to a faction")
+                .WithName("add").WithDescription("Whitelist Leader - Add a member to a faction")
                 .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption(Player()).AddOption(Faction()))
+                .AddOption(Faction()).AddOption(Member()).AddOption(InGameName()))
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("remove").WithDescription("Whitelist Leader - Remove a player from a faction")
+                .WithName("remove").WithDescription("Whitelist Leader - Remove a member from their faction")
                 .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption(Player()).AddOption(Faction()))
+                .AddOption(Member()))
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("list").WithDescription("Show a faction's roster with ranks")
+                .WithName("list").WithDescription("Show a faction's roster")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(Faction()))
             .AddOption(new SlashCommandOptionBuilder()
@@ -61,25 +76,37 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, Board
         ArgumentNullException.ThrowIfNull(command);
 
         var sub = command.Data.Options.First();
-        var options = sub.Options.ToDictionary(o => o.Name, o => o.Value?.ToString() ?? "", StringComparer.Ordinal);
-        var factionName = options.GetValueOrDefault("faction") ?? "";
-        var faction = FactionRegistry.Get(factionName);
+        var options = sub.Options.ToDictionary(o => o.Name, o => o.Value, StringComparer.Ordinal);
 
-        if (faction is null)
+        if (sub.Name is "list" or "playtime")
         {
-            await Reply(command, Theme.Failure("Unknown faction", $"`{Sanitize.Code(factionName)}` is not a faction.")).ConfigureAwait(false);
+            if (Resolve(options) is not { } readOnly)
+            {
+                await Reply(command, Theme.Failure("Unknown faction")).ConfigureAwait(false);
+                return;
+            }
+
+            await Reply(command, sub.Name == "list"
+                ? await BuildRosterAsync(readOnly, ct).ConfigureAwait(false)
+                : await BuildPlaytimeAsync(readOnly, ct).ConfigureAwait(false)).ConfigureAwait(false);
             return;
         }
 
-        if (sub.Name == "list")
+        if (options.GetValueOrDefault("member") is not IUser member)
         {
-            await Reply(command, await BuildRosterAsync(faction, ct).ConfigureAwait(false)).ConfigureAwait(false);
+            await Reply(command, Theme.Failure("No member given")).ConfigureAwait(false);
             return;
         }
 
-        if (sub.Name == "playtime")
+        if (sub.Name == "remove")
         {
-            await Reply(command, await BuildPlaytimeAsync(faction, ct).ConfigureAwait(false)).ConfigureAwait(false);
+            await RemoveAsync(command, member, ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (Resolve(options) is not { } faction)
+        {
+            await Reply(command, Theme.Failure("Unknown faction")).ConfigureAwait(false);
             return;
         }
 
@@ -93,22 +120,76 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, Board
             return;
         }
 
-        var player = Sanitize.Id(options.GetValueOrDefault("playerid") ?? "");
+        var player = Sanitize.Id(options.GetValueOrDefault("ingame_name")?.ToString() ?? "");
         if (player.Length == 0)
         {
             await Reply(command, Theme.Failure("That name has nothing usable in it")).ConfigureAwait(false);
             return;
         }
 
-        var result = sub.Name == "add"
-            ? await rosters.JoinAsync(faction, player, ct).ConfigureAwait(false)
-            : await rosters.LeaveAsync(faction, player, ct).ConfigureAwait(false);
+        var result = await rosters.JoinAsync(faction, player, ct).ConfigureAwait(false);
 
-        logger.LogInformation("whitelist {Action} | player=\"{Player}\" | faction={Faction} | by={By} | {Outcome}",
-            sub.Name, player, faction.Name, command.User.Username, result.Outcome);
+        /* THE INDEX FOLLOWS THE FILE. Recorded only once the roster write succeeded, so a
+           failed add does not leave a membership on record that the game has never heard of -
+           /promotion would then act on somebody who is not whitelisted. */
+        if (result.Outcome == MembershipOutcome.Allowed)
+            await members.RememberAsync(member.Id,
+                new FactionMember(faction.Name, player, DateTimeOffset.UtcNow, command.User.Username), ct)
+                .ConfigureAwait(false);
+
+        logger.LogInformation("whitelist add | member={Member} | player=\"{Player}\" | faction={Faction} | by={By} | {Outcome}",
+            member.Id, player, faction.Name, command.User.Username, result.Outcome);
 
         await Reply(command, Describe(result, player, faction)).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Remove somebody by Discord account, using the faction recorded when they were added.
+    /// </summary>
+    /// <remarks>
+    /// A member with no recorded faction was whitelisted by hand or before the index existed.
+    /// They are still whitelisted in the game, and saying so is more useful than a bare
+    /// failure - the fix is to re-add them through the command, which records the link.
+    /// </remarks>
+    private async Task RemoveAsync(SocketSlashCommand command, IUser member, CancellationToken ct)
+    {
+        if (members.Of(member.Id) is not { } recorded)
+        {
+            await Reply(command, Theme.Failure("No membership on record",
+                $"{member.Mention} has no faction recorded against their account. They may still be " +
+                "whitelisted in game under a name the bot does not know - re-add them with " +
+                "`/whitelist add` to link the two, then remove.")).ConfigureAwait(false);
+            return;
+        }
+
+        if (FactionRegistry.Get(recorded.Faction) is not { } faction)
+        {
+            await Reply(command, Theme.Failure("That faction is gone",
+                $"{member.Mention} is recorded in **{Sanitize.Code(recorded.Faction)}**, which no longer exists.")).ConfigureAwait(false);
+            return;
+        }
+
+        if (!access.CanManage(command.User, faction.Name))
+        {
+            await Reply(command, Theme.Denied("Not your roster",
+                $"You do not manage the **{faction.Name}** whitelist.")).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await rosters.LeaveAsync(faction, recorded.Name, ct).ConfigureAwait(false);
+
+        // Forgotten whatever the roster said. An entry pointing at a name that is not on a
+        // list any more is the stale state ForgetMissingAsync exists to clear.
+        await members.ForgetAsync(member.Id, ct).ConfigureAwait(false);
+
+        logger.LogInformation("whitelist remove | member={Member} | player=\"{Player}\" | faction={Faction} | by={By} | {Outcome}",
+            member.Id, recorded.Name, faction.Name, command.User.Username, result.Outcome);
+
+        await Reply(command, Describe(result, recorded.Name, faction)).ConfigureAwait(false);
+    }
+
+    private static FactionDefinition? Resolve(IReadOnlyDictionary<string, object> options) =>
+        FactionRegistry.Get(options.GetValueOrDefault("faction")?.ToString());
 
     /// <summary>
     /// This faction's members ranked by time on the server.
@@ -204,21 +285,23 @@ public sealed class WhitelistCommand(RosterService rosters, Access access, Board
 public sealed class RankChangeCommand : ISlashCommand
 {
     private readonly RosterService _rosters;
+    private readonly FactionMembers _members;
     private readonly Access _access;
     private readonly ILogger _logger;
     private readonly int _direction;
 
-    private RankChangeCommand(RosterService rosters, Access access, ILogger logger, string name, int direction)
+    private RankChangeCommand(RosterService rosters, FactionMembers members, Access access, ILogger logger, string name, int direction)
     {
         _rosters = rosters;
+        _members = members;
         _access = access;
         _logger = logger;
         Name = name;
         _direction = direction;
     }
 
-    public static RankChangeCommand Promotion(RosterService r, Access a, ILogger<RankChangeCommand> l) => new(r, a, l, "promotion", +1);
-    public static RankChangeCommand Demotion(RosterService r, Access a, ILogger<RankChangeCommand> l) => new(r, a, l, "demotion", -1);
+    public static RankChangeCommand Promotion(RosterService r, FactionMembers m, Access a, ILogger<RankChangeCommand> l) => new(r, m, a, l, "promotion", +1);
+    public static RankChangeCommand Demotion(RosterService r, FactionMembers m, Access a, ILogger<RankChangeCommand> l) => new(r, m, a, l, "demotion", -1);
 
     public string Name { get; }
 
@@ -226,20 +309,45 @@ public sealed class RankChangeCommand : ISlashCommand
         new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription($"Whitelist Leader - Move a member one rank {(_direction > 0 ? "up" : "down")}")
-            .AddOption("playerid", ApplicationCommandOptionType.String, "Player ID or username", isRequired: true, isAutocomplete: true)
+            .AddOption("member", ApplicationCommandOptionType.User, "The Discord account", isRequired: true)
             .Build();
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        var player = Sanitize.Id(command.Data.Options.FirstOrDefault()?.Value as string ?? "");
+        if (command.Data.Options.FirstOrDefault()?.Value is not IUser member)
+        {
+            await Reply(command, Theme.Failure("No member given")).ConfigureAwait(false);
+            return;
+        }
+
+        /* BY ACCOUNT, NOT BY NAME. The index records which in-game name belongs to which
+           Discord user at the moment they are whitelisted, so nobody has to look up and spell
+           a Pavlov name to move somebody one rank. */
+        if (_members.Of(member.Id) is not { } recorded)
+        {
+            await Reply(command, Theme.Failure("No membership on record",
+                $"{member.Mention} has no faction recorded against their account. Re-add them " +
+                "with `/whitelist add` to link their in-game name, then try again.")).ConfigureAwait(false);
+            return;
+        }
+
+        var player = recorded.Name;
         var membership = await _rosters.FindAsync(player, ct).ConfigureAwait(false);
 
+        /* THE ROSTER FILE IS THE AUTHORITY, NOT THE INDEX. An entry can outlive the roster
+           it describes - somebody edits a file by hand, or the removal wrote the file and
+           then failed. Trusting the index here would promote somebody who is not in the
+           faction at all, so the index is treated as a lookup for the name and the file is
+           still what says whether they are a member. The stale entry is dropped on the way
+           past, which is the only way it ever gets cleaned up. */
         if (membership is null)
         {
+            await _members.ForgetAsync(member.Id, ct).ConfigureAwait(false);
             await Reply(command, Theme.Failure("Not whitelisted",
-                $"**{Sanitize.Code(player)}** is not on any roster.")).ConfigureAwait(false);
+                $"{member.Mention} is recorded as **{Sanitize.Code(player)}**, who is not on any roster. " +
+                "The stale record has been cleared.")).ConfigureAwait(false);
             return;
         }
 
@@ -247,6 +355,19 @@ public sealed class RankChangeCommand : ISlashCommand
         {
             await Reply(command, Theme.Denied("Not your roster",
                 $"You do not manage the **{membership.Faction.Name}** whitelist.")).ConfigureAwait(false);
+            return;
+        }
+
+        /* A FACTION WITH NO LADDER HAS NOWHERE TO MOVE SOMEBODY. The mafias are spawn access:
+           one file, one nominal rank. Refused with the reason rather than reported as a
+           no-op, because "nothing happened" reads like a bug and sends somebody to check
+           whether the command is broken. */
+        if (!membership.Faction.HasRanks)
+        {
+            await Reply(command, Theme.Failure($"{membership.Faction.Name} has no ranks",
+                $"**{membership.Faction.Name}** is spawn access only - there is nothing to " +
+                $"{(_direction > 0 ? "promote" : "demote")} {member.Mention} to. Use " +
+                "`/whitelist remove` to take their access away.")).ConfigureAwait(false);
             return;
         }
 
