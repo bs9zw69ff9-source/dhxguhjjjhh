@@ -358,6 +358,7 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand>(sp => new TesterCommand(
             sp.GetRequiredService<WhitelistFile>(),
             sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<AuditLog>(),
             installs,
             sp.GetRequiredService<ILogger<TesterCommand>>()));
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());

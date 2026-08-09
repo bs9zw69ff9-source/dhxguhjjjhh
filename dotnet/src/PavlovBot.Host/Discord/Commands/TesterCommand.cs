@@ -15,10 +15,17 @@ namespace PavlovBot.Host.Discord.Commands;
 /// removes is doing two of them: a tester whitelisted on servers 1 and 2 and rejected by
 /// server 3 looks, from their side, like the server being broken.
 ///
-/// READ-ONLY. whitelist.txt belongs to the game server, and the bot does not write files the
-/// server owns. So this shows what is on each install's whitelist and gives back the exact
-/// line to paste - which is most of the value, because the two things that actually go wrong
-/// by hand are editing only two installs out of three and mistyping the name.
+/// IT WRITES AGAIN. <c>add</c> and <c>remove</c> were turned into a read-only check under a
+/// blanket "the bot does not write files the game server owns" rule. That rule is real, but
+/// it rests on the server holding a value in memory and rewriting the file from it - which is
+/// true of player ledgers and is not true of whitelist.txt, a config input the server reads
+/// and never writes back. It sits in the same directory as the faction roster .txt files the
+/// bot has always written, in the same format. See <see cref="GameFiles"/>.
+///
+/// What the rule was really protecting against is handled where it belongs, in
+/// <see cref="WhitelistFile"/>: an atomic write, every unrelated line preserved, a pre-write
+/// backup, a guard against a write that deletes implausibly much, and never creating a
+/// directory inside an install.
 ///
 /// ONE USERNAME PER LINE, exactly as it appears in game. An earlier version resolved the
 /// name to the account id the bot had recorded, on the assumption the file was keyed the way
@@ -28,6 +35,7 @@ namespace PavlovBot.Host.Discord.Commands;
 public sealed class TesterCommand(
     WhitelistFile whitelist,
     Access access,
+    AuditLog audit,
     IReadOnlyList<string> installs,
     ILogger<TesterCommand> logger) : ISlashCommand
 {
@@ -45,7 +53,15 @@ public sealed class TesterCommand(
 
         return new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Admin - Check the whitelist and get the line to add")
+            .WithDescription("Admin - Manage Pavlov's own whitelist across every install")
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("add").WithDescription("Whitelist a player on every server")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption(Player()))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("remove").WithDescription("Take a player off every server's whitelist")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption(Player()))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("check").WithDescription("Is this player whitelisted, and what line adds them")
                 .WithType(ApplicationCommandOptionType.SubCommand)
@@ -83,6 +99,12 @@ public sealed class TesterCommand(
             return;
         }
 
+        if (sub!.Name is "add" or "remove")
+        {
+            await EditAsync(command, entry, removing: sub.Name == "remove", ct).ConfigureAwait(false);
+            return;
+        }
+
         /* PER INSTALL, because the failure this exists to catch is a whitelist edited on two
            servers out of three - from the player's side that is indistinguishable from the
            third server being broken. */
@@ -113,6 +135,63 @@ public sealed class TesterCommand(
 
         logger.LogInformation("tester check | \"{Entry}\" | missing on {Missing}/{Total}",
             entry, missing, installs.Count);
+
+        await Reply(command, embed).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Add or remove on EVERY install, and report each one separately.
+    /// </summary>
+    /// <remarks>
+    /// PARTIAL SUCCESS IS THE INTERESTING CASE and it gets its own colour. "Whitelisted" when
+    /// one of three servers rejected the write is the report that has somebody told their
+    /// access works, and then told the server is broken when they land on the third one.
+    /// That is the exact failure this command exists to remove, so it must not reintroduce it
+    /// by summarising.
+    ///
+    /// The installs are edited in SEQUENCE rather than in parallel. There are three of them,
+    /// the writes are milliseconds, and a serial loop means a failure part-way through leaves
+    /// a state somebody can reason about from the log.
+    /// </remarks>
+    private async Task EditAsync(SocketSlashCommand command, string entry, bool removing, CancellationToken ct)
+    {
+        var results = new List<WhitelistResult>();
+        foreach (var install in installs)
+        {
+            results.Add(removing
+                ? await whitelist.RemoveAsync(PavlovInstalls.WhitelistPath(install), entry, ct).ConfigureAwait(false)
+                : await whitelist.AddAsync(PavlovInstalls.WhitelistPath(install), entry, ct).ConfigureAwait(false));
+        }
+
+        var failed = results.Where(r => !r.Ok).ToList();
+        var changed = results.Count(r => r.Changed);
+        var verb = removing ? "removed from" : "whitelisted on";
+
+        var lines = results.Select(r =>
+            $"{(r.Ok ? Theme.Ok : Theme.Bad)} `{r.Install}` — " +
+            (r.Ok ? r.Changed ? "done" : removing ? "was not on it" : "already on it" : $"FAILED: {r.Error}"));
+
+        var embed = failed.Count == 0
+            ? Theme.Success($"{Sanitize.Code(entry)} {verb} {results.Count} server(s)", string.Join("\n", lines))
+            : Theme.Warning($"{Sanitize.Code(entry)} — {failed.Count} of {results.Count} server(s) failed",
+                string.Join("\n", lines));
+
+        if (failed.Count > 0)
+        {
+            /* The line and the path, on the failure, so the fallback is right there. The
+               commonest cause is a path that does not exist or is not writable by the bot
+               user, and neither is fixable from Discord. */
+            embed.AddField("Finish these by hand",
+                $"Append this line to each failed whitelist:\n```\n{Sanitize.Code(entry)}\n```");
+
+            foreach (var r in failed) embed.AddField(r.Install, $"`{r.Path}`");
+        }
+
+        await audit.RecordAsync(removing ? "tester-remove" : "tester-add", command.User.Username, entry,
+            $"{changed} of {results.Count} install(s) changed", ct).ConfigureAwait(false);
+
+        logger.LogInformation("tester {Action} | \"{Entry}\" | changed {Changed}/{Total} | failed {Failed} | by={By}",
+            removing ? "remove" : "add", entry, changed, results.Count, failed.Count, command.User.Username);
 
         await Reply(command, embed).ConfigureAwait(false);
     }

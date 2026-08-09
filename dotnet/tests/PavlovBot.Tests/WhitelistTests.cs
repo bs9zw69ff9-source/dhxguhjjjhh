@@ -32,42 +32,133 @@ public class WhitelistTests : IDisposable
         Assert.Equal(["76561198000000001", "0002abc"], entries);
     }
 
-    // ---- writing: refused ----
+    // ---- writing ----
+
+    /* THESE REPLACE THREE TESTS THAT PINNED A REFUSAL. /tester add was turned into a
+       read-only check under a blanket "the bot does not write files the game server owns"
+       rule, and the tests below encoded that refusal as the intended behaviour.
+
+       The rule is real but it was over-applied. It rests on the server holding a value in
+       MEMORY and rewriting the file from it, which is true of player ledgers and is not true
+       of whitelist.txt - a config input the server reads and never writes back, in the same
+       directory and the same format as the faction roster files the bot has always written.
+
+       So the refusal is gone and what the rule was actually protecting is tested instead:
+       nothing is truncated, nothing unrelated is lost, and no directory is created. */
 
     [Fact]
-    public async Task TheBotDoesNotWriteWhitelistTxt()
+    public async Task AddingAppendsAndLeavesEverythingElseExactlyAsItWas()
     {
-        /* whitelist.txt belongs to the GAME SERVER. The bot writing it is one of the ways it
-           ended up touching files the server owns, so both mutations refuse outright rather
-           than half-succeeding on some installs. */
-        var add = await _whitelist.AddAsync(Path0, "Pkdestroy");
-        var remove = await _whitelist.RemoveAsync(Path0, "Pkdestroy");
+        /* THE FILE IS HAND-MAINTAINED. It has comments in it saying who somebody is and blank
+           lines separating groups. Rebuilding it from Read() - which drops both - would
+           silently delete all of that on the first add. */
+        await File.WriteAllTextAsync(Path0, "# testers\nalice\n\n// retired\nbob\n");
 
-        Assert.False(add.Ok);
-        Assert.False(remove.Ok);
-        Assert.False(File.Exists(Path0), "the bot created whitelist.txt");
+        var result = await _whitelist.AddAsync(Path0, "carol");
+
+        Assert.True(result.Ok);
+        Assert.True(result.Changed);
+        Assert.Equal("# testers\nalice\n\n// retired\nbob\ncarol\n", await File.ReadAllTextAsync(Path0));
     }
 
     [Fact]
-    public async Task TheRefusalSaysWhoOwnsTheFile()
+    public async Task RemovingDropsOnlyThatLine()
     {
-        // The reply an admin sees has to tell them what to do instead, not just "failed".
-        var result = await _whitelist.AddAsync(Path0, "Pkdestroy");
+        await File.WriteAllTextAsync(Path0, "# testers\nalice\nbob\ncarol\n");
 
-        Assert.Contains("game server owns", result.Error!, StringComparison.Ordinal);
-        Assert.Contains("Edit it on the server", result.Error!, StringComparison.Ordinal);
+        var result = await _whitelist.RemoveAsync(Path0, "bob");
+
+        Assert.True(result.Changed);
+        Assert.Equal("# testers\nalice\ncarol\n", await File.ReadAllTextAsync(Path0));
     }
 
     [Fact]
-    public async Task AnExistingWhitelistIsNotTouched()
+    public async Task AnEntryAlreadyThereIsReportedRatherThanRewritten()
     {
-        // The worst outcome would be a refusal that still managed to truncate the file.
-        await File.WriteAllTextAsync(Path0, "# testers\nalice\nbob\n");
+        /* Ok but not Changed. Rewriting a file the game reads live to change nothing is all
+           risk and no benefit, and the reply needs to distinguish "I added them" from "they
+           were already on it" or the admin cannot tell whether their first attempt worked. */
+        await File.WriteAllTextAsync(Path0, "alice\n");
+        var written = File.GetLastWriteTimeUtc(Path0);
 
-        await _whitelist.AddAsync(Path0, "carol");
-        await _whitelist.RemoveAsync(Path0, "alice");
+        var result = await _whitelist.AddAsync(Path0, "alice");
 
-        Assert.Equal("# testers\nalice\nbob\n", await File.ReadAllTextAsync(Path0));
+        Assert.True(result.Ok);
+        Assert.False(result.Changed);
+        Assert.Equal(written, File.GetLastWriteTimeUtc(Path0));
+    }
+
+    [Fact]
+    public async Task RemovingSomebodyWhoIsNotThereChangesNothing()
+    {
+        await File.WriteAllTextAsync(Path0, "alice\n");
+
+        var result = await _whitelist.RemoveAsync(Path0, "nobody");
+
+        Assert.True(result.Ok);
+        Assert.False(result.Changed);
+        Assert.Equal("alice\n", await File.ReadAllTextAsync(Path0));
+    }
+
+    [Fact]
+    public async Task TheBotNeverCreatesADirectoryInsideAnInstall()
+    {
+        /* The half of the old rule that was never an over-application. A missing directory
+           means the configured install path is wrong, and building it produced a second
+           config tree beside the real one - writes that reported success against files the
+           game server never read. */
+        var missing = Path.Combine(_root, "no-such-install", "whitelist.txt");
+
+        var result = await _whitelist.AddAsync(missing, "alice");
+
+        Assert.False(result.Ok);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(missing)));
+        Assert.Contains("does not exist", result.Error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AWriteThatWouldGutTheWhitelistIsRefused()
+    {
+        /* AN EMPTY WHITELIST IS A VALID FILE. The server accepts it without complaint and on
+           a whitelisted server it locks out every single player - so the failure would arrive
+           as "the server is broken", not as an error. The guard is on the SIZE of the change,
+           which is why a bug cannot talk its way past it by producing well-formed output. */
+        // Every entry is the same name, so one "remove" would take all forty out at once.
+        await File.WriteAllTextAsync(Path0, string.Join("\n", Enumerable.Repeat("alice", 40)) + "\n");
+
+        var result = await _whitelist.RemoveAsync(Path0, "alice");
+
+        Assert.False(result.Ok);
+        Assert.Equal(40, _whitelist.Read(Path0).Count);
+    }
+
+    [Fact]
+    public async Task NoTemporaryFileIsLeftBesideTheWhitelist()
+    {
+        // The write is temp-then-rename so the game never reads a half-written file. A
+        // leftover .tmp in the config directory is exactly the kind of stray the bot must
+        // not leave inside an install.
+        await File.WriteAllTextAsync(Path0, "alice\n");
+
+        await _whitelist.AddAsync(Path0, "bob");
+
+        Assert.Empty(Directory.EnumerateFiles(_root, "*.tmp"));
+        Assert.Single(Directory.EnumerateFiles(_root));
+    }
+
+    [Fact]
+    public async Task ConcurrentAddsToOneFileDoNotLoseEntries()
+    {
+        /* A read-modify-write over a file the game reads live. Without the per-file gate both
+           adds read the old contents and the second write drops the first entry - a lost
+           update that leaves a well-formed file, so nothing looks wrong afterwards. */
+        await File.WriteAllTextAsync(Path0, "alice\n");
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(i => _whitelist.AddAsync(Path0, $"player{i}")));
+
+        var entries = _whitelist.Read(Path0);
+        Assert.Equal(9, entries.Count);
+        Assert.Contains("alice", entries, StringComparer.Ordinal);
     }
 
     // ---- reading: unaffected ----
@@ -177,14 +268,15 @@ public class WhitelistTests : IDisposable
     }
 
     [Fact]
-    public void ANameWithASpaceSurvivesAReadBack()
+    public async Task ANameWithASpaceSurvivesTheRoundTrip()
     {
-        // The bot no longer writes the file, but it still has to READ names the game wrote -
-        // and those routinely contain spaces.
-        File.WriteAllText(Path0, "A Player Name\n");
+        // The file is matched against the player's actual in-game name, and those routinely
+        // contain spaces. A name that does not read back is a whitelist entry matching nobody.
+        await File.WriteAllTextAsync(Path0, "# testers\n");
+
+        await _whitelist.AddAsync(Path0, WhitelistFile.Entry("A Player Name"));
 
         Assert.Equal(["A Player Name"], _whitelist.Read(Path0));
-        Assert.Equal("A Player Name", WhitelistFile.Entry("A Player Name"));
     }
 
     public void Dispose()
