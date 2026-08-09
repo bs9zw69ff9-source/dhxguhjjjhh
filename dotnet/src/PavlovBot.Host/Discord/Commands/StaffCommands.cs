@@ -320,7 +320,7 @@ public sealed class SubclassCommand(RosterService rosters, Access access, ILogge
             MembershipOutcome.NoChange => Theme.Notice("Nothing to do",
                 removing ? "They do not hold it." : "They already hold it."),
 
-            _ => Theme.Failure("Refused", decision.Outcome.ToString()),
+            _ => MembershipReply.Fallback(decision),
         };
 
         await Reply(command, embed).ConfigureAwait(false);

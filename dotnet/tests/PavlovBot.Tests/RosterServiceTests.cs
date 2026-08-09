@@ -210,6 +210,52 @@ public class RosterServiceTests : IDisposable
         Assert.Null(disabled.Read("policecadet.txt"));
     }
 
+    /// <summary>
+    /// With no roster directory, every membership change says so - it does not blame the
+    /// faction, and it does not claim the member is not whitelisted.
+    /// </summary>
+    /// <remarks>
+    /// THE BUG THIS PINS. /whitelist add answered "Refused / UnknownFaction" for a faction
+    /// picked from a dropdown, because JoinAsync mapped an unreadable roster onto the same
+    /// outcome as a faction that does not exist. Reported that way it sends somebody looking
+    /// for a spelling mistake instead of at FACTION_ROLES_PATH.
+    ///
+    /// LeaveAsync was worse than useless: it reported "not whitelisted", which reads as
+    /// "already done" for an account whose access is in fact untouched.
+    /// </remarks>
+    [Fact]
+    public async Task WithNoRosterDirectoryEveryChangeReportsTheRosterNotTheFaction()
+    {
+        var disabled = new RosterService(null, NullLogger<RosterService>.Instance);
+
+        Assert.Equal(MembershipOutcome.RosterUnavailable, (await disabled.JoinAsync(Nypd, "Alice")).Outcome);
+        Assert.Equal(MembershipOutcome.RosterUnavailable, (await disabled.LeaveAsync(Nypd, "Alice")).Outcome);
+        Assert.Equal(MembershipOutcome.RosterUnavailable, (await disabled.ChangeRankAsync(Nypd, "Alice", +1)).Outcome);
+        Assert.Equal(MembershipOutcome.RosterUnavailable,
+            (await disabled.ChangeSubclassAsync(Nypd, "Alice", Nypd.Subclasses.Keys.First(), removing: false)).Outcome);
+    }
+
+    /// <summary>A configured path that does not exist is the same as no path at all.</summary>
+    /// <remarks>
+    /// The likelier production shape: FACTION_ROLES_PATH set, pointing somewhere wrong. The
+    /// bot deliberately does not create the directory, so this has to report rather than fix.
+    /// </remarks>
+    [Fact]
+    public async Task AMissingDirectoryIsReportedAsUnavailableRatherThanCreated()
+    {
+        var missing = Path.Combine(_directory, "no-such-directory");
+        var service = new RosterService(missing, NullLogger<RosterService>.Instance, _backups);
+
+        Assert.False(service.Enabled);
+        Assert.Equal(MembershipOutcome.RosterUnavailable, (await service.JoinAsync(Nypd, "Alice")).Outcome);
+        Assert.False(Directory.Exists(missing));
+    }
+
+    /* THE OTHER HALF OF THE SPLIT is already pinned by
+       RemovingSomebodyWhoIsNotThereIsRefusedRatherThanSilentlySucceeding above: with a
+       readable roster, an absent member is still NotWhitelisted. Without it the two tests
+       here would pass against a service that answered RosterUnavailable to everything. */
+
     [Fact]
     public async Task ConcurrentEditsToOneRosterDoNotLoseMembers()
     {

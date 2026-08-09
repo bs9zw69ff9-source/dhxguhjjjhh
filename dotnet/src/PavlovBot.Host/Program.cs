@@ -123,7 +123,16 @@ public static class Program
         // ---- moderation ----
         builder.Services.AddSingleton(sp => new MasterNames(features.MasterNames, sp.GetRequiredService<SerializedStore>()));
         builder.Services.AddSingleton<IMasterNames>(sp => sp.GetRequiredService<MasterNames>());
-        builder.Services.AddSingleton<BanService>();
+        /* IpTrackingService is what knows which account a name belongs to and which flags a
+           ban created. BanService needs both to lift a ban completely, and takes them through
+           IBanEvidence rather than the whole class. */
+        builder.Services.AddSingleton(sp => new BanService(
+            sp.GetRequiredService<RconRegistry>(),
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<IMasterNames>(),
+            sp.GetRequiredService<ILogger<BanService>>(),
+            time: null,
+            evidence: sp.GetRequiredService<IpTrackingService>()));
         builder.Services.AddSingleton(sp => new ModsaveBanlist(
             features.ModsaveBanlistPath, sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<ILogger<ModsaveBanlist>>(),
@@ -290,6 +299,8 @@ public static class Program
             sp.GetRequiredService<PavlovBot.Host.Rcon.IOnlineRoster>(),
             sp.GetRequiredService<ILogger<PavlovBot.Host.Economy.Payroll>>(),
             features.PayrollAmount, features.PayrollInterval, features.PayrollFaction));
+
+        builder.Services.AddSingleton<ISlashCommand, WagesCommand>();
 
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.MoneyAnomalyDetector(
             sp.GetRequiredService<SerializedStore>(),

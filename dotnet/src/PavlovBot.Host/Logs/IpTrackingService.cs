@@ -40,8 +40,22 @@ public sealed record FlaggedJoin(string AccountId, string? Name, string? Ip, Fla
 /// the ban is about to cause. Without the deferral they reconnect from the same address and
 /// nothing catches them.
 /// </remarks>
-public sealed class IpTrackingService
+public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 {
+    /// <summary>The account id a display name belongs to, or null if never seen.</summary>
+    /// <remarks>
+    /// <see cref="IBanEvidence"/>'s half of <see cref="AccountByName"/>. BanService needs the
+    /// id to send an Unban that actually lifts anything, and has no business with the rest of
+    /// this class.
+    /// </remarks>
+    public string? AccountIdFor(string name) => AccountByName(name)?.Id;
+
+    /* EXPLICIT, because the public method answers with a FlagOutcome and the interface must
+       not: FlagOutcome lives here, and putting it on IBanEvidence would drag log-ingestion
+       types into the moderation contract for a value the caller does not read. */
+    Task PavlovBot.Host.Moderation.IBanEvidence.ClearFlagsAsync(string accountId, CancellationToken ct) =>
+        ClearFlagsAsync(accountId, ct);
+
     private readonly SerializedStore _store;
     private readonly JoinCorrelator _correlator;
     private readonly MetricsRegistry _metrics;

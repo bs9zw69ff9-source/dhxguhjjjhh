@@ -72,6 +72,10 @@ public abstract class BanCommandBase : ISlashCommand
         var record = new BanRecord
         {
             PlayerId = name,
+            /* The identifier the ban is actually ENFORCED against, so the lift can name the
+               same thing. Without it, expiry sent an Unban carrying the display name against
+               a ban that landed on an EOS id, and the server lifted nothing. */
+            UniqueId = account?.Id,
             Reason = Sanitize.Message(reason),
             Moderator = command.User.Username,
             At = now,
@@ -265,16 +269,12 @@ public sealed class UnbanCommand(
             return;
         }
 
-        await Store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
-        {
-            bans.RemoveAll(b => BanRules.SamePlayer(b.PlayerId, player));
-            return bans;
-        }, ct).ConfigureAwait(false);
+        /* THE WHOLE LIFT, through the one path that does all of it. This used to remove the
+           record, clear the flags and send the Unban here, and grant no exemption - while the
+           expiry sweep granted an exemption and never cleared the flags. Two half-lifts with
+           different halves missing. */
+        var result = await Bans.LiftAsync(player, existing.UniqueId, ct).ConfigureAwait(false);
 
-        var account = Tracking.AccountByName(player);
-        if (account is not null) await Tracking.ClearFlagsAsync(account.Id, ct).ConfigureAwait(false);
-
-        var result = await Bans.UnbanEverywhereAsync(player, account?.Id, ct).ConfigureAwait(false);
         await Audit.RecordAsync("unban", command.User.Username, player, existing.Reason, ct).ConfigureAwait(false);
 
         var embed = Theme.Success("Ban lifted", $"**{Sanitize.Code(player)}** may reconnect.")

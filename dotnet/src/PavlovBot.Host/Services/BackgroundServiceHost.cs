@@ -211,16 +211,10 @@ public sealed class BackgroundServiceHost : IHostedService
         {
             Name = "ban-expiry",
             Interval = _features.BanExpiryInterval,
-            Tick = async ct =>
-            {
-                foreach (var lifted in await _bans.ProcessExpiredAsync(ct).ConfigureAwait(false))
-                {
-                    /* A served ban's flags linger until the clean-up runs, so without this
-                       exemption the sweep re-catches them the moment they reconnect - and a
-                       served temp ban silently becomes permanent. */
-                    await _masters.ExemptAsync(lifted.PlayerId, ct: ct).ConfigureAwait(false);
-                }
-            },
+            /* The exemption used to be granted HERE, and only here, which is why /unban never
+               got one. BanService.LiftAsync now clears the flags and grants the exemption for
+               every lift, so this tick is just the timer. */
+            Tick = ct => _bans.ProcessExpiredAsync(ct),
         });
 
         _registry.Register(new ServiceDefinition

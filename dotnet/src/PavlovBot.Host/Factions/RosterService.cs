@@ -194,33 +194,48 @@ public sealed class RosterService
 
         var file = faction.RankFiles[decision.Rank!];
         var roster = Read(file);
-        if (roster is null) return new MembershipDecision(MembershipOutcome.UnknownFaction);
+
+        /* THE ROSTER BEING UNREADABLE IS NOT AN UNKNOWN FACTION. Reporting it as one is what
+           sent people hunting for a typo in a name they picked from a dropdown while
+           FACTION_ROLES_PATH sat empty. Read null means unreachable; a failed write means
+           reachable but not writable. They have different fixes, so they are different
+           outcomes. */
+        if (roster is null) return new MembershipDecision(MembershipOutcome.RosterUnavailable, decision.Rank);
 
         return await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false)
             ? decision
-            : new MembershipDecision(MembershipOutcome.UnknownFaction);
+            : new MembershipDecision(MembershipOutcome.WriteFailed, decision.Rank);
     }
 
     /// <summary>Remove a player from every rank and sub-class file of a faction.</summary>
     public async Task<MembershipDecision> LeaveAsync(FactionDefinition faction, string player, CancellationToken ct = default)
     {
+        if (!Enabled) return new MembershipDecision(MembershipOutcome.RosterUnavailable);
+
         var removed = false;
+        var blocked = false;
 
         // Every file, not just their current rank: a member listed in two rank files
         // (which the storage permits) would otherwise be half-removed and reappear.
         foreach (var file in faction.RankFiles.Values.Concat(faction.Subclasses.Values))
         {
             var roster = Read(file);
-            if (roster is null) continue;
+            if (roster is null) { blocked = true; continue; }
 
             var next = roster.Where(p => !string.Equals(p, player, StringComparison.OrdinalIgnoreCase)).ToList();
             if (next.Count == roster.Count) continue;
 
             if (await WriteAsync(file, next, ct: ct).ConfigureAwait(false)) removed = true;
+            else blocked = true;
         }
 
-        return removed
-            ? MembershipDecision.Allow()
+        if (removed) return MembershipDecision.Allow();
+
+        /* "NOT WHITELISTED" ONLY WHEN THE FILES SAID SO. If a file could not be read or a
+           write was refused, the member may well still be listed, and telling a moderator
+           they are already gone would leave live access nobody is looking at any more. */
+        return blocked
+            ? new MembershipDecision(MembershipOutcome.RosterUnavailable)
             : new MembershipDecision(MembershipOutcome.NotWhitelisted);
     }
 
@@ -228,6 +243,11 @@ public sealed class RosterService
     public async Task<MembershipDecision> ChangeRankAsync(
         FactionDefinition faction, string player, int direction, CancellationToken ct = default)
     {
+        /* BEFORE FindAsync, because with no roster directory it finds nothing and the rules
+           would then refuse this as "not whitelisted" - a statement about the member that is
+           not true and is not the problem. */
+        if (!Enabled) return new MembershipDecision(MembershipOutcome.RosterUnavailable);
+
         var membership = await FindAsync(player, ct).ConfigureAwait(false);
 
         var decision = MembershipRules.ChangeRank(faction, membership?.Rank, direction, Counter(faction));
@@ -259,6 +279,8 @@ public sealed class RosterService
     public async Task<MembershipDecision> ChangeSubclassAsync(
         FactionDefinition faction, string player, string subclass, bool removing, CancellationToken ct = default)
     {
+        if (!Enabled) return new MembershipDecision(MembershipOutcome.RosterUnavailable);
+
         var held = faction.Subclasses
             .Where(s => (Read(s.Value) ?? []).Contains(player, StringComparer.OrdinalIgnoreCase))
             .Select(s => s.Key).ToList();
@@ -273,8 +295,10 @@ public sealed class RosterService
             ? roster.Where(p => !string.Equals(p, player, StringComparison.OrdinalIgnoreCase)).ToList()
             : [.. roster, player];
 
+        /* NOT NoSuchSubclass. The rules above already confirmed the faction defines it, so
+           reporting a write failure as "that sub-class does not exist" was flatly false. */
         return await WriteAsync(file, next, ct: ct).ConfigureAwait(false)
             ? decision
-            : new MembershipDecision(MembershipOutcome.NoSuchSubclass);
+            : new MembershipDecision(MembershipOutcome.WriteFailed, Conflict: subclass);
     }
 }

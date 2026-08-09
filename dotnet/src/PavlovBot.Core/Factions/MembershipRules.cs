@@ -31,6 +31,25 @@ public enum MembershipOutcome
 
     /// <summary>No such faction.</summary>
     UnknownFaction,
+
+    /// <summary>
+    /// The roster files could not be reached: the directory is unset, missing, or unreadable.
+    /// </summary>
+    /// <remarks>
+    /// SEPARATE FROM <see cref="UnknownFaction"/> ON PURPOSE. Both used to be reported as
+    /// "UnknownFaction", which sent operators looking for a spelling mistake in a faction name
+    /// picked from a dropdown, while the actual cause was FACTION_ROLES_PATH being unset. A
+    /// refusal that names the wrong cause is worse than one that names none.
+    /// </remarks>
+    RosterUnavailable,
+
+    /// <summary>The rules allowed it, but the roster file could not be written.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="RosterUnavailable"/>: the files were readable, so this is a
+    /// permissions problem, a full disk, or the write guard refusing a destructive rewrite.
+    /// Nothing was changed either way.
+    /// </remarks>
+    WriteFailed,
 }
 
 /// <param name="Outcome">Allowed, or the specific reason it was refused.</param>

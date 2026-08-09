@@ -84,7 +84,19 @@ public class PayrollTests : IDisposable
         new(_store, new Ledger(new LedgerFileStore(_ledgers, online)), _rosterService, online,
             NullLogger<Payroll>.Instance, amount, period ?? TimeSpan.FromMinutes(30), "NYPD", _time);
 
-    // ---- accrue on duty, bank on leaving ----
+    /// <summary>One tick with a fresh roster listing exactly these players as online.</summary>
+    private Task<PayrollRun> Tick(params string[] online) =>
+        Build(Roster(fresh: true, online)).RunAsync();
+
+    private void Wait(int minutes) => _time.Advance(TimeSpan.FromMinutes(minutes));
+
+    /* ---- accrue on duty, bank on leaving ----
+
+       THE FIRST TICK OF A SHIFT ACCRUES NOTHING, and nearly every test here opens with one.
+       Pay is for time the bot OBSERVED somebody on duty, which means the span between two
+       sightings; a member seen for the first time this tick has been on for an unknown part
+       of the preceding gap. Crediting that gap pays for time nobody watched, and at a
+       one-minute service interval the under-credit is at most a minute. */
 
     [Fact]
     public async Task AnOnlineOfficerAccruesButIsNotPaidYet()
@@ -94,7 +106,9 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 1000);
 
-        var run = await Build(Roster(fresh: true, "Alice")).RunAsync();
+        await Tick("Alice");                    // first sighting
+        Wait(30);
+        var run = await Tick("Alice");          // a whole period on duty
 
         Assert.Empty(run.Paid);
         Assert.Equal(500, run.Accrued["Alice"]);
@@ -107,9 +121,11 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 1000);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();       // on duty: accrues
-        _time.Advance(TimeSpan.FromMinutes(31));
-        var run = await Build(Roster(fresh: true)).RunAsync();      // logged off: banks
+        await Tick("Alice");
+        Wait(30);
+        await Tick("Alice");                    // on duty: accrues
+        Wait(1);
+        var run = await Tick();                 // logged off: banks
 
         Assert.Equal(500, run.Paid["Alice"]);
         Assert.Equal(1500, BalanceOf("Alice"));
@@ -122,19 +138,106 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
+        await Tick("Alice");
         for (var i = 0; i < 4; i++)
         {
-            await Build(Roster(fresh: true, "Alice")).RunAsync();
-            _time.Advance(TimeSpan.FromMinutes(31));
+            Wait(30);
+            await Tick("Alice");
         }
 
         Assert.Equal(2000, Build(Roster(fresh: true, "Alice")).OwedTo("Alice"));
         Assert.Equal(0, BalanceOf("Alice"));
 
-        var run = await Build(Roster(fresh: true)).RunAsync();
+        Wait(1);
+        var run = await Tick();
 
         Assert.Equal(2000, run.Paid["Alice"]);
         Assert.Equal(2000, BalanceOf("Alice"));
+    }
+
+    // ---- whole periods only, with the remainder carried ----
+
+    /// <summary>
+    /// Forty-two minutes at 500 per thirty pays 500, then the second 500 eighteen minutes
+    /// later. It never pays 1000 for 42 minutes and never rounds the 12 minutes away.
+    /// </summary>
+    /// <remarks>
+    /// THE RULE THIS WHOLE ACCRUAL SHAPE EXISTS FOR. Payroll used to be a faction-wide wall
+    /// clock: everybody online when the period boundary came round got a full period's wage,
+    /// and anybody who logged off a minute before it got nothing for the twenty-nine minutes
+    /// they had played. Two officers doing the same hour could be paid differently by half,
+    /// decided by when they happened to log in.
+    /// </remarks>
+    [Fact]
+    public async Task APartialPeriodIsCarriedAndPaidOnceItCompletes()
+    {
+        PutOnRoster("Alice");
+        GiveLedger("Alice", 0);
+
+        await Tick("Alice");                                    // sighting
+        var atThirty = await Advance(30, "Alice");              // 30 minutes on duty
+        Assert.Equal(500, atThirty.Accrued["Alice"]);
+
+        var atFortyTwo = await Advance(12, "Alice");            // 42 total: 12 carried
+        Assert.Empty(atFortyTwo.Accrued);
+        Assert.Equal(500, Build(Roster(fresh: true)).OwedTo("Alice"));
+        Assert.Equal(TimeSpan.FromMinutes(12), Build(Roster(fresh: true)).EarnedTowardNextPeriod("Alice"));
+
+        var atSixty = await Advance(18, "Alice");               // the remaining 18 completes it
+        Assert.Equal(500, atSixty.Accrued["Alice"]);
+        Assert.Equal(1000, Build(Roster(fresh: true)).OwedTo("Alice"));
+        Assert.Equal(TimeSpan.Zero, Build(Roster(fresh: true)).EarnedTowardNextPeriod("Alice"));
+    }
+
+    /// <summary>Logging off banks the part-period rather than forfeiting it.</summary>
+    /// <remarks>
+    /// Otherwise the rule would be "whole periods, in one sitting", which punishes exactly
+    /// the members who play in short stints - and quietly, since nothing reports a forfeit.
+    /// </remarks>
+    [Fact]
+    public async Task CarriedTimeSurvivesLoggingOffAndBackOn()
+    {
+        PutOnRoster("Alice");
+        GiveLedger("Alice", 0);
+
+        await Tick("Alice");
+        await Advance(20, "Alice");                             // 20 minutes, then leaves
+        await Advance(5);                                       // offline
+        Assert.Equal(TimeSpan.FromMinutes(20), Build(Roster(fresh: true)).EarnedTowardNextPeriod("Alice"));
+
+        await Tick("Alice");                                    // back on: a new first sighting
+        var completes = await Advance(10, "Alice");             // 20 carried + 10 = one period
+
+        Assert.Equal(500, completes.Accrued["Alice"]);
+    }
+
+    /// <summary>Two members on duty for different lengths are paid differently.</summary>
+    /// <remarks>
+    /// The half of the fix that a single-player test cannot see. Under the old wall clock
+    /// both of these were paid the same, because the only thing that mattered was being
+    /// online at the boundary.
+    /// </remarks>
+    [Fact]
+    public async Task EachMemberIsPaidForTheirOwnTimeNotTheFactionsClock()
+    {
+        PutOnRoster("Alice", "Bob");
+        GiveLedger("Alice", 0);
+        GiveLedger("Bob", 0);
+
+        await Tick("Alice");                                    // Alice starts
+        await Advance(20, "Alice", "Bob");                      // Bob joins 20 minutes in
+        var run = await Advance(10, "Alice", "Bob");            // Alice: 30. Bob: 10.
+
+        Assert.Equal(500, run.Accrued["Alice"]);
+        Assert.False(run.Accrued.ContainsKey("Bob"));
+        Assert.Equal(TimeSpan.FromMinutes(10), Build(Roster(fresh: true)).EarnedTowardNextPeriod("Bob"));
+    }
+
+    /// <summary>Advance the clock, then tick with these players online.</summary>
+    private Task<PayrollRun> Advance(int minutes, params string[] online)
+    {
+        Wait(minutes);
+        return Tick(online);
     }
 
     [Fact]
@@ -144,9 +247,9 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Stranger", 100);
 
-        await Build(Roster(fresh: true, "Alice", "Stranger")).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true)).RunAsync();
+        await Tick("Alice", "Stranger");
+        await Advance(30, "Alice", "Stranger");
+        await Advance(1);
 
         Assert.Equal(100, BalanceOf("Stranger"));
     }
@@ -160,9 +263,9 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice", "Dormant");
         GiveLedger("Dormant", 50);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true)).RunAsync();
+        await Tick("Alice");
+        await Advance(30, "Alice");
+        await Advance(1);
 
         Assert.Equal(50, BalanceOf("Dormant"));
     }
@@ -178,8 +281,9 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 1000);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
+        await Tick("Alice");
+        await Advance(30, "Alice");                 // 500 accrued and owed
+        Wait(1);
 
         var stale = await Build(Roster(fresh: false)).RunAsync();
 
@@ -189,20 +293,22 @@ public class PayrollTests : IDisposable
         Assert.Equal(1000, BalanceOf("Alice"));
 
         // The period was not consumed either, so nothing was lost by refusing.
-        var recovered = await Build(Roster(fresh: true)).RunAsync();
+        var recovered = await Tick();
         Assert.Equal(500, recovered.Paid["Alice"]);
     }
 
     [Fact]
     public async Task RunningTwiceInsideOnePeriodAccruesOnce()
     {
-        // The supervisor restarts failed services, and a restart re-runs the tick.
+        // The supervisor restarts failed services, and a restart re-runs the tick. A second
+        // run a moment later credits that moment, which is nowhere near a whole period.
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
+        await Tick("Alice");
+        await Advance(30, "Alice");
         _time.Advance(TimeSpan.FromSeconds(1));
-        var second = await Build(Roster(fresh: true, "Alice")).RunAsync();
+        var second = await Tick("Alice");
 
         Assert.Empty(second.Accrued);
         Assert.Equal(500, Build(Roster(fresh: true)).OwedTo("Alice"));
@@ -211,29 +317,32 @@ public class PayrollTests : IDisposable
     [Fact]
     public async Task ALongOutageDoesNotAccrueABacklog()
     {
+        /* Nobody was watching for those six hours, so nobody can be shown to have been on
+           duty for them. One period is the most a single tick can ever credit. */
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
+        await Tick("Alice");
         _time.Advance(TimeSpan.FromHours(6));
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
+        await Tick("Alice");
 
-        Assert.Equal(1000, Build(Roster(fresh: true)).OwedTo("Alice"));   // two periods, not thirteen
+        Assert.Equal(500, Build(Roster(fresh: true)).OwedTo("Alice"));   // one period, not twelve
     }
 
     [Fact]
     public async Task NobodyOnDutyStillConsumesThePeriod()
     {
         /* "No officer was online" is a period that HAPPENED. Leaving it unstamped means the
-           next tick a minute later accrues a full period the moment one person logs in. */
+           next tick a minute later credits the whole gap since the last real run. */
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
-        await Build(Roster(fresh: true)).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(1));
-        var soonAfter = await Build(Roster(fresh: true, "Alice")).RunAsync();
+        await Tick();                               // nobody online; the period is stamped
+        await Advance(1, "Alice");                  // Alice's first sighting
+        var soonAfter = await Advance(1, "Alice");  // one observed minute
 
         Assert.Empty(soonAfter.Accrued);
+        Assert.Equal(TimeSpan.FromMinutes(1), Build(Roster(fresh: true)).EarnedTowardNextPeriod("Alice"));
     }
 
     // ---- settlement that cannot complete ----
@@ -246,10 +355,11 @@ public class PayrollTests : IDisposable
            owed and lands the moment they have a file. */
         PutOnRoster("Newbie");
 
-        await Build(Roster(fresh: true, "Newbie")).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
+        await Tick("Newbie");
+        await Advance(30, "Newbie");
+        Wait(1);
 
-        var noLedger = await Build(Roster(fresh: true)).RunAsync();
+        var noLedger = await Tick();
 
         Assert.Empty(noLedger.Paid);
         Assert.Equal(500, Build(Roster(fresh: true)).OwedTo("Newbie"));
@@ -257,7 +367,7 @@ public class PayrollTests : IDisposable
 
         // The game creates their ledger; the next tick banks what was owed.
         GiveLedger("Newbie", 25);
-        var afterFirstBank = await Build(Roster(fresh: true)).RunAsync();
+        var afterFirstBank = await Tick();
 
         Assert.Equal(500, afterFirstBank.Paid["Newbie"]);
         Assert.Equal(525, BalanceOf("Newbie"));
@@ -272,16 +382,14 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();      // accrue 500 on duty
-        _time.Advance(TimeSpan.FromMinutes(31));
-
-        await Build(Roster(fresh: true)).RunAsync();               // bank it
+        await Tick("Alice");
+        await Advance(30, "Alice");                 // accrue 500 on duty
+        await Advance(1);                           // bank it
         Assert.Equal(500, BalanceOf("Alice"));
 
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true, "Alice")).RunAsync();      // back on duty
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true)).RunAsync();               // and off again
+        await Tick("Alice");                        // back on duty
+        await Advance(30, "Alice");                 // accrue another 500
+        await Advance(1);                           // and off again
 
         Assert.Equal(1000, BalanceOf("Alice"));
     }
@@ -297,7 +405,9 @@ public class PayrollTests : IDisposable
         GiveLedger("Alice", 1234);
 
         await Build(Roster(fresh: true, "Alice"), amount: 1000).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
+        Wait(30);
+        await Build(Roster(fresh: true, "Alice"), amount: 1000).RunAsync();
+        Wait(1);
         await Build(Roster(fresh: true), amount: 1000).RunAsync();
 
         var raw = File.ReadAllText(Path.Combine(_ledgers, "Alice.txt"));
@@ -313,10 +423,13 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true)).RunAsync();
+        await Tick("Alice");
+        await Advance(30, "Alice");
+        var banked = await Advance(1);
 
+        // Assert the payment happened, or the rest of this passes against a directory
+        // nothing ever wrote to.
+        Assert.Equal(500, banked.Paid["Alice"]);
         Assert.Empty(Directory.EnumerateFiles(_ledgers, "*.tmp"));
         Assert.Single(Directory.EnumerateFiles(_ledgers));
     }
@@ -345,11 +458,11 @@ public class PayrollTests : IDisposable
         PutOnRoster("Alice");
         GiveLedger("Alice", 0);
 
-        await Build(Roster(fresh: true, "Alice")).RunAsync();
+        await Tick("Alice");
+        await Advance(30, "Alice");
         Assert.Empty(Build(Roster(fresh: true)).History());        // accrual alone is not a payment
 
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true)).RunAsync();
+        await Advance(1);
 
         var history = Build(Roster(fresh: true)).History();
         Assert.Single(history);
@@ -364,9 +477,9 @@ public class PayrollTests : IDisposable
         GiveLedger("Alice", 0);
         GiveLedger("Bob", 0);
 
-        await Build(Roster(fresh: true, "Alice", "Bob")).RunAsync();
-        _time.Advance(TimeSpan.FromMinutes(31));
-        await Build(Roster(fresh: true, "Alice", "Bob")).RunAsync();
+        await Tick("Alice", "Bob");
+        await Advance(30, "Alice", "Bob");
+        await Advance(30, "Alice", "Bob");
 
         var outstanding = Build(Roster(fresh: true)).Outstanding();
 
