@@ -58,6 +58,14 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Economy.MoneyAnomalyDetector _moneyAlerts;
     private readonly PavlovBot.Host.Servers.CrashRecovery _crashRecovery;
     private readonly PavlovBot.Host.Moderation.AuditLog _audit;
+    private readonly PavlovBot.Host.Events.IEventStore _events;
+
+    /// <summary>
+    /// Held only so the bridge is CONSTRUCTED, exactly like <see cref="_bridge"/> above. It
+    /// works entirely through the tracker events it subscribes to in its constructor, and a
+    /// singleton nothing resolves is a singleton nothing builds.
+    /// </summary>
+    private readonly PavlovBot.Host.Events.PlayerEventBridge _playerEvents;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -86,12 +94,16 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Economy.MoneyAnomalyDetector moneyAlerts,
         PavlovBot.Host.Servers.CrashRecovery crashRecovery,
         PavlovBot.Host.Moderation.AuditLog audit,
+        PavlovBot.Host.Events.IEventStore events,
+        PavlovBot.Host.Events.PlayerEventBridge playerEvents,
         ILogger<BackgroundServiceHost> logger)
     {
         _payroll = payroll;
         _moneyAlerts = moneyAlerts;
         _crashRecovery = crashRecovery;
         _audit = audit;
+        _events = events;
+        _playerEvents = playerEvents;
         _registry = registry;
         _rcon = rcon;
         _options = options;
@@ -215,6 +227,25 @@ public sealed class BackgroundServiceHost : IHostedService
                got one. BanService.LiftAsync now clears the flags and grants the exemption for
                every lift, so this tick is just the timer. */
             Tick = ct => _bans.ProcessExpiredAsync(ct),
+        });
+
+        /* ---- timeline retention ----
+           HOURLY, not on a tick. Pruning is a DELETE over an indexed range and costs nothing
+           at this cadence, and running it more often would only mean the same delete finding
+           nothing more frequently. Registered unconditionally: with the timeline off the
+           store is a no-op and this prunes zero rows. */
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "timeline-retention",
+            Interval = TimeSpan.FromHours(1),
+            Tick = async ct =>
+            {
+                if (_features.EventRetentionDays <= 0) return;
+
+                await _events.PruneAsync(
+                    DateTimeOffset.UtcNow - TimeSpan.FromDays(_features.EventRetentionDays), ct)
+                    .ConfigureAwait(false);
+            },
         });
 
         _registry.Register(new ServiceDefinition

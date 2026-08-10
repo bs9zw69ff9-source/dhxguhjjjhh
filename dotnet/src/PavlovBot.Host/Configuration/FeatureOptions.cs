@@ -56,6 +56,24 @@ public sealed record FeatureOptions
     /// plugin is disabled without deleting the file.</summary>
     public IReadOnlyList<string> EnabledPlugins { get; init; } = [];
 
+    /// <summary>
+    /// Plugins to refuse, by name. Wins over <see cref="EnabledPlugins"/>.
+    /// </summary>
+    /// <remarks>
+    /// A DENY-LIST AS WELL AS AN ALLOW-LIST, because they answer different questions. The
+    /// allow-list says "run exactly these", which is right for a curated deployment. The
+    /// deny-list says "not that one", which is what an operator reaches for at 3am when one
+    /// plugin is misbehaving - and it must work whether or not they also maintain an
+    /// allow-list, or the answer at that moment is "I disabled it and it kept loading".
+    ///
+    /// PLUGINS ARE ENABLED AND DISABLED THROUGH CONFIGURATION, NOT AT RUNTIME, and that is a
+    /// deliberate limit rather than a missing feature. A plugin is loaded into the host's
+    /// AssemblyLoadContext and .NET cannot unload it, so a /plugin disable command could stop
+    /// a plugin's WORK but could not unload its code, leave its event subscriptions, or free
+    /// what it holds. A button that says disable and half-disables is worse than no button.
+    /// </remarks>
+    public IReadOnlyList<string> DisabledPlugins { get; init; } = [];
+
     public string? JoinWebhook { get; init; }
     public string? KillWebhook { get; init; }
     public string? MoneyWebhook { get; init; }
@@ -100,6 +118,17 @@ public sealed record FeatureOptions
 
     /// <summary>How often wages are paid. One period is paid per run, never a backlog.</summary>
     public TimeSpan PayrollInterval { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// How long timeline events are kept. Zero switches the timeline off entirely.
+    /// </summary>
+    /// <remarks>
+    /// RETENTION IS NOT OPTIONAL at any real scale. A busy server produces tens of thousands
+    /// of joins a month, and a table nothing prunes becomes the largest thing in the database
+    /// and the slowest thing to query. Ninety days covers "what happened last quarter" - the
+    /// longest question anybody actually asks of a timeline - and stays small.
+    /// </remarks>
+    public int EventRetentionDays { get; init; } = 90;
 
     /// <summary>Which faction draws a wage. NYPD by default - they are the ones on duty.</summary>
     public string PayrollFaction { get; init; } = "NYPD";
@@ -245,6 +274,7 @@ public sealed record FeatureOptions
 
             PayrollAmount = Money(configuration, "PAYROLL_AMOUNT"),
             PayrollInterval = Minutes(configuration, "PAYROLL_INTERVAL_MINUTES", TimeSpan.FromMinutes(30)),
+            EventRetentionDays = Int(configuration, "EVENT_RETENTION_DAYS", 90),
             PayrollFaction = Text(configuration, "PAYROLL_FACTION") ?? "NYPD",
 
             MoneyAlertThreshold = Money(configuration, "MONEY_ALERT_THRESHOLD"),
@@ -287,6 +317,7 @@ public sealed record FeatureOptions
             MasterNames = List(configuration, "MASTER_NAMES"),
             PluginDirectory = Text(configuration, "PLUGIN_DIR"),
             EnabledPlugins = List(configuration, "PLUGINS_ENABLED"),
+            DisabledPlugins = List(configuration, "PLUGINS_DISABLED"),
 
             MoneyLogInterval = Milliseconds(configuration, "MONEY_LOG_INTERVAL_MS", TimeSpan.FromSeconds(10)),
             LeaderboardInterval = Milliseconds(configuration, "LEADERBOARD_INTERVAL_MS", TimeSpan.FromMinutes(1)),
@@ -364,6 +395,9 @@ public sealed record FeatureOptions
            directory exactly like an unset one, so printing the path here as though whitelists
            were on described a state the bot was not in - and every /whitelist add then failed
            for a reason the startup line said could not be the problem. */
+        $"timeline: {(EventRetentionDays <= 0
+            ? "off (EVENT_RETENTION_DAYS=0)"
+            : $"keeping {EventRetentionDays} days")}",
         $"whitelists: {(RosterDirectory is null
             ? "off (FACTION_ROLES_PATH not set)"
             : Directory.Exists(RosterDirectory)

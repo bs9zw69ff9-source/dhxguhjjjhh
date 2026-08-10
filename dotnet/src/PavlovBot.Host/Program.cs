@@ -10,6 +10,7 @@ using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Discord.Commands;
 using PavlovBot.Host.Economy;
+using PavlovBot.Host.Events;
 using PavlovBot.Host.Factions;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
@@ -221,7 +222,48 @@ public static class Program
         builder.Services.AddSingleton<VpnResponder>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
-        builder.Services.AddSingleton<AuditLog>();
+        /* ---- timeline ----
+           A REAL TABLE, in the same bot.db, because this is the one dataset the key-value
+           document store cannot hold: it is append-heavy and its queries are all "this
+           player, last six hours" rather than "give me everything". See SqliteEventStore.
+
+           Registered before AuditLog because AuditLog records onto it. */
+        builder.Services.AddSingleton<IEventStore>(sp => features.EventRetentionDays > 0
+            ? new SqliteEventStore(
+                Path.Combine(options.DataDirectory, "bot.db"),
+                sp.GetRequiredService<ILogger<SqliteEventStore>>())
+            : new NullEventStore());
+
+        builder.Services.AddSingleton(sp => new EventRecorder(
+            sp.GetRequiredService<IEventStore>(),
+            sp.GetRequiredService<ILogger<EventRecorder>>()));
+
+        builder.Services.AddSingleton(sp => new AuditLog(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetService<FeedWebhooks>(),
+            sp.GetRequiredService<EventRecorder>()));
+
+        builder.Services.AddSingleton<PlayerEventBridge>();
+        builder.Services.AddSingleton<ISlashCommand, EventLogCommand>();
+
+        /* ---- cases ----
+           In the document store, not the events table: bounded, and queried by id. See
+           CaseService for why that is the right side of the line. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Cases.CaseService(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<AuditLog>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Cases.CaseService>>()));
+
+        builder.Services.AddSingleton<ISlashCommand, CaseCommand>();
+
+        // ---- analytics: aggregates over the event table, computed in SQL ----
+        builder.Services.AddSingleton<AnalyticsService>();
+        builder.Services.AddSingleton<ISlashCommand, ServerStatsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, PluginsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, FactionStatsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, EconomyIntelCommand>();
+        builder.Services.AddSingleton<ISlashCommand, InvestigateCommand>();
+        builder.Services.AddSingleton<ISlashCommand, StaffStatsCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is
            registered further down. */
@@ -291,6 +333,25 @@ public static class Program
         builder.Services.AddSingleton<PavlovBot.Host.Moderation.WarningService>();
         builder.Services.AddSingleton<ISlashCommand, WarnCommand>();
         builder.Services.AddSingleton<ISlashCommand, AltsCommand>();
+
+        /* ---- player intelligence ----
+           An AGGREGATOR over the services above, owning no data of its own. Registered after
+           them because it reads all of them; the optional ones are passed explicitly so a
+           deployment with no rosters, ledger or VPN keys still gets a profile. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Intelligence.PlayerIntelligenceService(
+            sp.GetRequiredService<IpTrackingService>(),
+            sp.GetRequiredService<BanService>(),
+            sp.GetRequiredService<PavlovBot.Host.Moderation.WarningService>(),
+            sp.GetRequiredService<RconRegistry>(),
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Intelligence.PlayerIntelligenceService>>(),
+            sp.GetRequiredService<RosterService>(),
+            sp.GetRequiredService<PavlovBot.Host.Factions.FactionMembers>(),
+            sp.GetService<PavlovBot.Core.Economy.IBalanceStore>(),
+            sp.GetRequiredService<PavlovBot.Host.Economy.Payroll>(),
+            sp.GetService<PavlovBot.Host.Vpn.VpnScreeningService>()));
+
+        builder.Services.AddSingleton<ISlashCommand, PlayerProfileCommand>();
 
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.Payroll(
             sp.GetRequiredService<SerializedStore>(),
