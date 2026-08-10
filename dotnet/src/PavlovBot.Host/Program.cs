@@ -292,6 +292,25 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, WarnCommand>();
         builder.Services.AddSingleton<ISlashCommand, AltsCommand>();
 
+        /* ---- player intelligence ----
+           An AGGREGATOR over the services above, owning no data of its own. Registered after
+           them because it reads all of them; the optional ones are passed explicitly so a
+           deployment with no rosters, ledger or VPN keys still gets a profile. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Intelligence.PlayerIntelligenceService(
+            sp.GetRequiredService<IpTrackingService>(),
+            sp.GetRequiredService<BanService>(),
+            sp.GetRequiredService<PavlovBot.Host.Moderation.WarningService>(),
+            sp.GetRequiredService<RconRegistry>(),
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Intelligence.PlayerIntelligenceService>>(),
+            sp.GetRequiredService<RosterService>(),
+            sp.GetRequiredService<PavlovBot.Host.Factions.FactionMembers>(),
+            sp.GetService<PavlovBot.Core.Economy.IBalanceStore>(),
+            sp.GetRequiredService<PavlovBot.Host.Economy.Payroll>(),
+            sp.GetService<PavlovBot.Host.Vpn.VpnScreeningService>()));
+
+        builder.Services.AddSingleton<ISlashCommand, PlayerProfileCommand>();
+
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.Payroll(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<Ledger>(),
