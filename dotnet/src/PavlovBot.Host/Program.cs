@@ -255,6 +255,12 @@ public static class Program
             sp.GetRequiredService<ILogger<PavlovBot.Host.Cases.CaseService>>()));
 
         builder.Services.AddSingleton<ISlashCommand, CaseCommand>();
+
+        // ---- analytics: aggregates over the event table, computed in SQL ----
+        builder.Services.AddSingleton<AnalyticsService>();
+        builder.Services.AddSingleton<ISlashCommand, ServerStatsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, PluginsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, StaffStatsCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is
            registered further down. */

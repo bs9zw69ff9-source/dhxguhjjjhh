@@ -42,6 +42,10 @@ public class EventRecorderTests
         public IReadOnlyList<ServerEvent> Query(EventQuery query) => Written;
         public long Count() => Written.Count;
         public Task<int> PruneAsync(DateTimeOffset olderThan, CancellationToken ct = default) => Task.FromResult(0);
+
+        // Not exercised here: these tests are about the WRITE path.
+        public IReadOnlyList<(string Key, long Count)> CountBy(EventGrouping grouping, EventQuery query) => [];
+        public long CountDistinct(EventGrouping grouping, EventQuery query) => 0;
     }
 
     private static EventRecorder Build(IEventStore store) =>

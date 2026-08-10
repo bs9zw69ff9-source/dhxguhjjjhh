@@ -15,6 +15,31 @@ public interface IPlugin
     string Version { get; }
     string Description { get; }
 
+    /// <summary>Who wrote it. Shown by /plugins so an operator knows what they installed.</summary>
+    string Author => "unknown";
+
+    /// <summary>
+    /// What this plugin needs to reach. Declared here and ENFORCED at resolve time.
+    /// </summary>
+    /// <remarks>
+    /// DEFAULTS TO NOTHING. A plugin that declares no scopes gets a logger and a clock, which
+    /// is the right default for a permission model: forgetting to declare must fail closed,
+    /// or the declaration is decoration. See <see cref="ScopedPluginServices"/>, including
+    /// what it cannot defend against.
+    /// </remarks>
+    PluginPermission Permissions => PluginPermission.None;
+
+    /// <summary>
+    /// The oldest bot version this plugin works against, or null for "any".
+    /// </summary>
+    /// <remarks>
+    /// A plugin built against an API that has since changed fails at some arbitrary later
+    /// moment - a MissingMethodException the first time a code path runs, which could be
+    /// weeks after the deploy. Refusing it at load is a worse-sounding failure that happens
+    /// at the moment somebody can act on it.
+    /// </remarks>
+    string? MinimumBotVersion => null;
+
     /// <summary>Plugins that must be started first. Ordering is topological over this.</summary>
     IReadOnlyList<string> DependsOn => [];
 
@@ -105,7 +130,11 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
     /// Names to load, or null for all of them. An explicit list is how a plugin that is
     /// crashing gets disabled without deleting the file.
     /// </param>
-    public IReadOnlyList<IPlugin> Discover(string directory, IReadOnlyCollection<string>? enabled = null)
+    public IReadOnlyList<IPlugin> Discover(
+        string directory,
+        IReadOnlyCollection<string>? enabled = null,
+        IReadOnlyCollection<string>? disabled = null,
+        string? botVersion = null)
     {
         if (!Directory.Exists(directory))
         {
@@ -128,15 +157,34 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
                 {
                     if (Activator.CreateInstance(type) is not IPlugin plugin) continue;
 
-                    if (enabled is not null && !enabled.Contains(plugin.Name, StringComparer.OrdinalIgnoreCase))
+                    /* THE DENY-LIST WINS OVER THE ALLOW-LIST. PLUGINS_DISABLED is what an
+                       operator reaches for at 3am when one plugin is misbehaving, and it has to
+                       work whether or not they also maintain an allow-list - "I disabled it and
+                       it kept loading because it was also in the other list" is the worst
+                       possible answer at that moment. */
+                    if (disabled is not null && disabled.Contains(plugin.Name, StringComparer.OrdinalIgnoreCase))
                     {
-                        logger.LogInformation("Plugin {Name} found but not enabled - skipping", plugin.Name);
+                        logger.LogWarning("Plugin {Name} is DISABLED in configuration - not loading it", plugin.Name);
+                        continue;
+                    }
+
+                    if (enabled is { Count: > 0 } && !enabled.Contains(plugin.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        logger.LogInformation("Plugin {Name} found but not in PLUGINS - skipping", plugin.Name);
+                        continue;
+                    }
+
+                    if (Incompatible(plugin, botVersion) is { } problem)
+                    {
+                        logger.LogError("Plugin {Name} refused: {Problem}", plugin.Name, problem);
                         continue;
                     }
 
                     found.Add(plugin);
-                    logger.LogInformation("Discovered plugin {Name} v{Version} - {Description}",
-                        plugin.Name, plugin.Version, plugin.Description);
+                    logger.LogInformation(
+                        "Discovered plugin {Name} v{Version} by {Author} - {Description} | scopes: {Scopes}",
+                        plugin.Name, plugin.Version, plugin.Author, plugin.Description,
+                        ScopedPluginServices.Describe(plugin.Permissions));
                 }
             }
             catch (Exception ex)
@@ -149,6 +197,30 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// Why a plugin cannot run against this bot, or null when it can.
+    /// </summary>
+    /// <remarks>
+    /// PURE AND INTERNAL so the rule is testable without a plugin directory. An unparseable
+    /// version on either side is treated as "no opinion" rather than as a refusal: a bot built
+    /// without version stamping must not become a bot that loads no plugins.
+    /// </remarks>
+    internal static string? Incompatible(IPlugin plugin, string? botVersion)
+    {
+        if (plugin.MinimumBotVersion is not { Length: > 0 } minimum) return null;
+        if (string.IsNullOrWhiteSpace(botVersion)) return null;
+
+        if (!Version.TryParse(Trim(minimum), out var required) || !Version.TryParse(Trim(botVersion), out var actual))
+            return null;
+
+        return actual >= required
+            ? null
+            : $"it needs bot version {required} or newer, and this is {actual}";
+
+        // "1.2.3+abcdef" - the build metadata a CI stamp appends is not part of the comparison.
+        static string Trim(string value) => value.Split('+', '-')[0].Trim();
     }
 
     /// <summary>Initialise and start every plugin, in dependency order.</summary>
@@ -174,7 +246,10 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
 
             try
             {
-                await plugin.InitializeAsync(services, ct).ConfigureAwait(false);
+                /* SCOPED, not the host provider. A plugin gets exactly what its declared
+                       permissions allow and nothing else - see ScopedPluginServices. */
+                    var scoped = new ScopedPluginServices(services, plugin.Name, plugin.Permissions, logger);
+                    await plugin.InitializeAsync(scoped, ct).ConfigureAwait(false);
                 record.State = PluginState.Initialized;
 
                 await plugin.StartAsync(ct).ConfigureAwait(false);
@@ -213,6 +288,19 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
 
     public IReadOnlyList<PluginStatus> Status() =>
         _plugins.Select(p => new PluginStatus(p.Plugin.Name, p.Plugin.Version, p.Record.State, p.Record.Error)).ToList();
+
+    /// <summary>
+    /// The bot's assembly version, for the plugin compatibility check.
+    /// </summary>
+    /// <remarks>
+    /// THE ASSEMBLY VERSION, not the build stamp /health shows. That stamp is a commit sha,
+    /// which is right for "which build is this" and useless for "is this newer than 1.2" -
+    /// a sha does not order. It would parse as no version at all and every compatibility
+    /// check would silently pass, which is the failure where the feature looks present and
+    /// enforces nothing.
+    /// </remarks>
+    internal static string? BotVersion() =>
+        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString();
 }
 
 /// <summary>Runs the plugin system from the host lifetime.</summary>
@@ -223,7 +311,11 @@ public sealed class PluginHostedService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var directory = features.PluginDirectory ?? Path.Combine(Directory.GetCurrentDirectory(), "plugins");
-        var discovered = plugins.Discover(directory, features.EnabledPlugins.Count > 0 ? features.EnabledPlugins : null);
+        var discovered = plugins.Discover(
+            directory,
+            features.EnabledPlugins.Count > 0 ? features.EnabledPlugins : null,
+            features.DisabledPlugins,
+            PluginHost.BotVersion());
 
         if (discovered.Count == 0)
         {

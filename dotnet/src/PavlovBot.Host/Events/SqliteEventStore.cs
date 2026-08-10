@@ -23,6 +23,43 @@ public interface IEventStore
 
     /// <summary>Delete events older than the cutoff. Returns how many went.</summary>
     Task<int> PruneAsync(DateTimeOffset olderThan, CancellationToken ct = default);
+
+    /// <summary>
+    /// Counts grouped by one column, computed IN SQL.
+    /// </summary>
+    /// <remarks>
+    /// THE WHOLE REASON THE TABLE EXISTS. "How many unique players in thirty days" answered by
+    /// fetching thirty days of rows and counting them in memory is the full scan this store was
+    /// built to avoid - it would be a slower version of the document store with extra steps.
+    /// GROUP BY runs against the index and returns tens of rows instead of hundreds of
+    /// thousands.
+    /// </remarks>
+    IReadOnlyList<(string Key, long Count)> CountBy(EventGrouping grouping, EventQuery query);
+
+    /// <summary>How many DISTINCT values of a column match, computed in SQL.</summary>
+    long CountDistinct(EventGrouping grouping, EventQuery query);
+}
+
+/// <summary>Which column an aggregate groups by.</summary>
+/// <remarks>
+/// AN ENUM, NOT A STRING. The column name goes into SQL text that cannot be parameterised -
+/// SQLite does not accept a parameter where an identifier belongs - so the only safe way to
+/// build it is from a closed set the caller cannot extend. A string parameter here would be
+/// an injection point wearing a helpful name.
+/// </remarks>
+public enum EventGrouping
+{
+    Kind,
+    Category,
+    Player,
+    Server,
+    Actor,
+
+    /// <summary>The UTC day, as yyyy-MM-dd. For "players per day" and retention.</summary>
+    Day,
+
+    /// <summary>The UTC hour, as yyyy-MM-dd HH. For "players per hour".</summary>
+    Hour,
 }
 
 /// <summary>
@@ -180,13 +217,20 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         return Task.CompletedTask;
     }
 
-    public IReadOnlyList<ServerEvent> Query(EventQuery query)
+    /// <summary>
+    /// The WHERE clauses and their parameters for a query.
+    /// </summary>
+    /// <remarks>
+    /// SHARED BY THE ROW READ AND THE AGGREGATES, so a filter cannot mean one thing when
+    /// listing and another when counting - which would make a total disagree with the rows
+    /// it supposedly totals.
+    ///
+    /// BUILT FROM PARAMETERS, never concatenated values. Every filter originates in a Discord
+    /// option somebody typed, and a player name is exactly the sort of attacker-influenced
+    /// string that ends up in a WHERE clause.
+    /// </remarks>
+    private static (List<string> Where, List<(string Name, object Value)> Parameters) Filters(EventQuery query)
     {
-        ArgumentNullException.ThrowIfNull(query);
-
-        /* BUILT FROM PARAMETERS, never from concatenated values. Every one of these filters
-           originates in a Discord option somebody typed, and a player name is exactly the
-           sort of attacker-influenced string that ends up in a WHERE clause. */
         var where = new List<string>();
         var parameters = new List<(string Name, object Value)>();
 
@@ -202,6 +246,15 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         if (!string.IsNullOrWhiteSpace(query.Player)) Filter("player = $player COLLATE NOCASE", "$player", query.Player.Trim());
         if (!string.IsNullOrWhiteSpace(query.Server)) Filter("server = $server", "$server", query.Server.Trim());
         if (!string.IsNullOrWhiteSpace(query.Actor)) Filter("actor = $actor COLLATE NOCASE", "$actor", query.Actor.Trim());
+
+        return (where, parameters);
+    }
+
+    public IReadOnlyList<ServerEvent> Query(EventQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var (where, parameters) = Filters(query);
 
         var sql = "SELECT at, category, kind, player, server, actor, detail FROM events" +
                   (where.Count > 0 ? " WHERE " + string.Join(" AND ", where) : "") +
@@ -231,6 +284,78 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             return results;
         }
     }
+
+    /// <summary>The SQL expression for a grouping. Never built from caller input.</summary>
+    /// <remarks>
+    /// A switch over a closed enum, so every value this can produce is written here in the
+    /// source. See <see cref="EventGrouping"/> for why it cannot be a string.
+    /// </remarks>
+    private static string Column(EventGrouping grouping) => grouping switch
+    {
+        EventGrouping.Kind => "kind",
+        EventGrouping.Category => "category",
+        EventGrouping.Player => "player",
+        EventGrouping.Server => "server",
+        EventGrouping.Actor => "actor",
+        // at is milliseconds; SQLite's date functions want seconds.
+        EventGrouping.Day => "strftime('%Y-%m-%d', at / 1000, 'unixepoch')",
+        EventGrouping.Hour => "strftime('%Y-%m-%d %H', at / 1000, 'unixepoch')",
+        _ => throw new ArgumentOutOfRangeException(nameof(grouping)),
+    };
+
+    public IReadOnlyList<(string Key, long Count)> CountBy(EventGrouping grouping, EventQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var column = Column(grouping);
+        var (where, parameters) = Filters(query);
+
+        /* NULLS EXCLUDED. Grouping by player over a set that includes server restarts would
+           report a bucket of nameless events as though it were a player, and it would usually
+           be the largest one. */
+        var sql = $"SELECT {column} AS k, COUNT(*) FROM events" +
+                  Clause(where, $"{column} IS NOT NULL") +
+                  $" GROUP BY k ORDER BY COUNT(*) DESC LIMIT $limit";
+
+        lock (_sync)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = sql;
+            foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value);
+            command.Parameters.AddWithValue("$limit", query.EffectiveLimit);
+
+            using var reader = command.ExecuteReader();
+
+            var results = new List<(string, long)>();
+            while (reader.Read())
+            {
+                var key = reader.IsDBNull(0) ? "" : reader.GetValue(0)?.ToString() ?? "";
+                results.Add((key, reader.GetInt64(1)));
+            }
+            return results;
+        }
+    }
+
+    public long CountDistinct(EventGrouping grouping, EventQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var column = Column(grouping);
+        var (where, parameters) = Filters(query);
+
+        var sql = $"SELECT COUNT(DISTINCT {column}) FROM events" + Clause(where, $"{column} IS NOT NULL");
+
+        lock (_sync)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = sql;
+            foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value);
+            return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    private static string Clause(IReadOnlyList<string> where, params string[] extra) =>
+        " WHERE " + string.Join(" AND ", where.Concat(extra));
 
     public long Count()
     {
@@ -287,4 +412,6 @@ public sealed class NullEventStore : IEventStore
     public IReadOnlyList<ServerEvent> Query(EventQuery query) => [];
     public long Count() => 0;
     public Task<int> PruneAsync(DateTimeOffset olderThan, CancellationToken ct = default) => Task.FromResult(0);
+    public IReadOnlyList<(string Key, long Count)> CountBy(EventGrouping grouping, EventQuery query) => [];
+    public long CountDistinct(EventGrouping grouping, EventQuery query) => 0;
 }
