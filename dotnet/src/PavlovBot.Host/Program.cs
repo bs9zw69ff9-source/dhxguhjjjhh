@@ -10,6 +10,7 @@ using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Discord.Commands;
 using PavlovBot.Host.Economy;
+using PavlovBot.Host.Events;
 using PavlovBot.Host.Factions;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
@@ -221,7 +222,29 @@ public static class Program
         builder.Services.AddSingleton<VpnResponder>();
         builder.Services.AddSingleton(sp => new MoneyLog(
             features.LedgerDirectory, sp.GetRequiredService<FeedWebhooks>(), sp.GetRequiredService<ILogger<MoneyLog>>()));
-        builder.Services.AddSingleton<AuditLog>();
+        /* ---- timeline ----
+           A REAL TABLE, in the same bot.db, because this is the one dataset the key-value
+           document store cannot hold: it is append-heavy and its queries are all "this
+           player, last six hours" rather than "give me everything". See SqliteEventStore.
+
+           Registered before AuditLog because AuditLog records onto it. */
+        builder.Services.AddSingleton<IEventStore>(sp => features.EventRetentionDays > 0
+            ? new SqliteEventStore(
+                Path.Combine(options.DataDirectory, "bot.db"),
+                sp.GetRequiredService<ILogger<SqliteEventStore>>())
+            : new NullEventStore());
+
+        builder.Services.AddSingleton(sp => new EventRecorder(
+            sp.GetRequiredService<IEventStore>(),
+            sp.GetRequiredService<ILogger<EventRecorder>>()));
+
+        builder.Services.AddSingleton(sp => new AuditLog(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetService<FeedWebhooks>(),
+            sp.GetRequiredService<EventRecorder>()));
+
+        builder.Services.AddSingleton<PlayerEventBridge>();
+        builder.Services.AddSingleton<ISlashCommand, EventLogCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is
            registered further down. */

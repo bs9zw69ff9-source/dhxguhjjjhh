@@ -23,7 +23,10 @@ namespace PavlovBot.Host.Moderation;
 /// the right trade against a file that eventually takes a second to parse - and the ones
 /// anybody asks about are recent.
 /// </remarks>
-public sealed class AuditLog(SerializedStore store, FeedWebhooks? feeds = null)
+public sealed class AuditLog(
+    SerializedStore store,
+    FeedWebhooks? feeds = null,
+    PavlovBot.Host.Events.EventRecorder? timeline = null)
 {
     /// <summary>Roughly a year of a busy server, and small enough to parse instantly.</summary>
     public const int MaxEntries = 5000;
@@ -54,6 +57,21 @@ public sealed class AuditLog(SerializedStore store, FeedWebhooks? feeds = null)
             if (log.Count > MaxEntries) log.RemoveRange(0, log.Count - MaxEntries);
             return log;
         }, ct).ConfigureAwait(false);
+
+        /* AND ONTO THE TIMELINE, at the same funnel and for the same reason. Every staff
+           action in the bot records an audit entry, so recording here means the timeline is
+           complete by construction rather than by seventeen call sites each remembering.
+
+           BEFORE the webhook, because this one cannot fail: Record is a queue write that
+           returns immediately and swallows its own errors. Putting it after a network call
+           would make the timeline depend on a webhook being reachable. */
+        timeline?.Record(new PavlovBot.Core.Events.ServerEvent(
+            at,
+            PavlovBot.Core.Events.EventMapping.CategoryOf(action),
+            PavlovBot.Core.Events.EventMapping.KindOf(action),
+            Player: player,
+            Actor: moderator,
+            Detail: reason));
 
         /* AND TO THE STAFF CHANNEL, from here rather than from each command.
 

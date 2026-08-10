@@ -101,6 +101,17 @@ public sealed record FeatureOptions
     /// <summary>How often wages are paid. One period is paid per run, never a backlog.</summary>
     public TimeSpan PayrollInterval { get; init; } = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// How long timeline events are kept. Zero switches the timeline off entirely.
+    /// </summary>
+    /// <remarks>
+    /// RETENTION IS NOT OPTIONAL at any real scale. A busy server produces tens of thousands
+    /// of joins a month, and a table nothing prunes becomes the largest thing in the database
+    /// and the slowest thing to query. Ninety days covers "what happened last quarter" - the
+    /// longest question anybody actually asks of a timeline - and stays small.
+    /// </remarks>
+    public int EventRetentionDays { get; init; } = 90;
+
     /// <summary>Which faction draws a wage. NYPD by default - they are the ones on duty.</summary>
     public string PayrollFaction { get; init; } = "NYPD";
 
@@ -245,6 +256,7 @@ public sealed record FeatureOptions
 
             PayrollAmount = Money(configuration, "PAYROLL_AMOUNT"),
             PayrollInterval = Minutes(configuration, "PAYROLL_INTERVAL_MINUTES", TimeSpan.FromMinutes(30)),
+            EventRetentionDays = Int(configuration, "EVENT_RETENTION_DAYS", 90),
             PayrollFaction = Text(configuration, "PAYROLL_FACTION") ?? "NYPD",
 
             MoneyAlertThreshold = Money(configuration, "MONEY_ALERT_THRESHOLD"),
@@ -364,6 +376,9 @@ public sealed record FeatureOptions
            directory exactly like an unset one, so printing the path here as though whitelists
            were on described a state the bot was not in - and every /whitelist add then failed
            for a reason the startup line said could not be the problem. */
+        $"timeline: {(EventRetentionDays <= 0
+            ? "off (EVENT_RETENTION_DAYS=0)"
+            : $"keeping {EventRetentionDays} days")}",
         $"whitelists: {(RosterDirectory is null
             ? "off (FACTION_ROLES_PATH not set)"
             : Directory.Exists(RosterDirectory)
