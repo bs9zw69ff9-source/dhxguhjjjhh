@@ -53,17 +53,17 @@ public static class StaffAnomaly
         var hours = Math.Max(window.TotalHours, 1);
         var average = total / hours;
 
-        /* A ZERO BASELINE CANNOT PRODUCE A RATIO, and treating it as infinite would flag the
-           first thing anybody ever did. Compared against the floor instead: a burst with no
-           history behind it is unusual only if it is large in absolute terms. */
-        if (average <= 0)
-        {
-            return peakHour >= MinimumBurst * 2
-                ? new StaffAnomalyVerdict(true,
-                    $"{peakHour} actions in one hour, with no earlier activity in this window to compare against.")
-                : StaffAnomalyVerdict.Normal;
-        }
+        /* NO ZERO-BASELINE BRANCH, because there is no zero baseline to handle. peakHour can
+           never exceed total, so a positive peak implies a positive total implies a positive
+           average - and a zero peak has already returned at the floor above. A branch for it
+           was written here first and was dead code; a test asserting its behaviour is what
+           exposed that, which is the argument for testing the boundaries rather than the
+           happy path.
 
+           A CONSEQUENCE WORTH KNOWING: over a one-hour window the peak IS the average, so the
+           ratio is 1 and nothing is ever flagged. That is correct rather than a gap - a burst
+           is only meaningful against a baseline, and a window with no history has none. The
+           command offers 24h and longer for this reason. */
         var ratio = peakHour / average;
         if (ratio < BurstMultiple) return StaffAnomalyVerdict.Normal;
 

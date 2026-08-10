@@ -260,6 +260,9 @@ public static class Program
         builder.Services.AddSingleton<AnalyticsService>();
         builder.Services.AddSingleton<ISlashCommand, ServerStatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, PluginsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, FactionStatsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, EconomyIntelCommand>();
+        builder.Services.AddSingleton<ISlashCommand, InvestigateCommand>();
         builder.Services.AddSingleton<ISlashCommand, StaffStatsCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is
