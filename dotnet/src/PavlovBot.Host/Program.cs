@@ -245,6 +245,16 @@ public static class Program
 
         builder.Services.AddSingleton<PlayerEventBridge>();
         builder.Services.AddSingleton<ISlashCommand, EventLogCommand>();
+
+        /* ---- cases ----
+           In the document store, not the events table: bounded, and queried by id. See
+           CaseService for why that is the right side of the line. */
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Cases.CaseService(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<AuditLog>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Cases.CaseService>>()));
+
+        builder.Services.AddSingleton<ISlashCommand, CaseCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is
            registered further down. */
