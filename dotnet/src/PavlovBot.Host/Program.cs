@@ -133,7 +133,12 @@ public static class Program
             sp.GetRequiredService<IMasterNames>(),
             sp.GetRequiredService<ILogger<BanService>>(),
             time: null,
-            evidence: sp.GetRequiredService<IpTrackingService>()));
+            evidence: sp.GetRequiredService<IpTrackingService>(),
+            /* LIFTING A BAN HAS TO REWRITE THE GAME'S BAN FILE. The server reads that file
+               itself, so a player left listed in it stays banned however many Unban commands
+               RCON accepts - and the importer would re-create the record on its next pass.
+               Resolved lazily inside the lambda: ModsaveBanlist is registered just below. */
+            banFile: sp.GetRequiredService<ModsaveBanlist>()));
         builder.Services.AddSingleton(sp => new ModsaveBanlist(
             features.ModsaveBanlistPath, sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<ILogger<ModsaveBanlist>>(),

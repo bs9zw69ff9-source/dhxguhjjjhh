@@ -31,7 +31,7 @@ public sealed record ModsaveEntry(string Name, string Reason, string Unban);
 /// </remarks>
 public sealed class ModsaveBanlist(
     string? path, SerializedStore store, ILogger<ModsaveBanlist> logger, TimeProvider? time = null,
-    Func<string, string?>? resolveName = null)
+    Func<string, string?>? resolveName = null) : IBanFileExport
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
@@ -39,6 +39,18 @@ public sealed class ModsaveBanlist(
     private bool _pathWarned;
 
     public bool Enabled => !string.IsNullOrWhiteSpace(path);
+
+    /// <summary>
+    /// How long a deliberate unban blocks the importer from re-creating that ban.
+    /// </summary>
+    /// <remarks>
+    /// Long enough to outlast an export failure somebody would notice and fix, short enough
+    /// that re-banning the same player next month is not silently ignored. Seven days.
+    ///
+    /// It does NOT block a fresh ban. Bans are written to the store directly, and the importer
+    /// only ever ADDS names the store does not already know.
+    /// </remarks>
+    public static TimeSpan TombstoneLife { get; } = TimeSpan.FromDays(7);
 
     /// <summary>
     /// Rewrite the file from the bot's ban store, which is the source of truth.
@@ -191,6 +203,20 @@ public sealed class ModsaveBanlist(
         var now = _time.GetUtcNow();
         var added = 0;
 
+        /* NAMES DELIBERATELY UNBANNED ARE NOT RE-IMPORTED. Read once, outside the mutator.
+
+           THE BUG THIS FIXES. An unban removes the store record, but the game's ban FILE still
+           listed them until the next export - so this import, running every five minutes, saw
+           a name it did not recognise and re-created the ban that had just been lifted. The
+           export then wrote it straight back and the sweep enforced it. From the outside, bans
+           came back on their own a few minutes after /unban reported success.
+
+           The lift rewrites the file now, so in the normal case there is nothing here to skip.
+           This is the half that holds when the export failed, when MODSAVE_BLACKLIST_PATH is
+           wrong, or when somebody edits the file by hand. */
+        var lifted = store.Read(Datasets.UnbanTombstones,
+            new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase));
+
         await store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
         {
             var known = bans.Select(b => b.PlayerId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -198,6 +224,15 @@ public sealed class ModsaveBanlist(
             foreach (var entry in parsed)
             {
                 if (!known.Add(entry.Name)) continue;
+
+                if (lifted.TryGetValue(entry.Name, out var when) && now - when < TombstoneLife)
+                {
+                    logger.LogInformation(
+                        "Not re-importing the in-game ban for {Name} - it was deliberately lifted {Ago} ago. " +
+                        "To ban them again, use the ban commands rather than the file",
+                        entry.Name, now - when);
+                    continue;
+                }
 
                 /* NO TIME LEFT MEANS EXPIRED, NOT FOREVER. This is the half that turned temp
                    bans permanent. "0m" and "expired" are both unparseable to ParseBanSpan,
