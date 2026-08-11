@@ -81,16 +81,29 @@ public sealed class EventLogCommand(IEventStore events, Access access) : ISlashC
                 .AddOption(Subject("moderator", "Their Discord username, as the audit log records it", autocomplete: false))
                 .AddOption(Window()));
 
-        /* ONE SUBCOMMAND PER CATEGORY, generated from the enum. Hand-writing them is how a
-           category added later ends up filterable by the store and invisible from Discord. */
-        foreach (var category in Enum.GetValues<EventCategory>())
-        {
-            builder.AddOption(new SlashCommandOptionBuilder()
-                .WithName(category.ToString().ToLowerInvariant())
-                .WithDescription($"Only {category.ToString().ToLowerInvariant()} events")
-                .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption(Window()));
-        }
+        /* ONE "category" SUBCOMMAND WITH A CHOICE, not one subcommand per category.
+           
+           The first version generated a subcommand per EventCategory, which collided:
+           "player" and "staff" already exist above as subject filters, and a command cannot
+           declare the same subcommand name twice. Discord rejects that with a 400 - and
+           because registration is a BULK OVERWRITE, the rejection is atomic: one malformed
+           command means NONE of the bot's ~60 register, the previously registered set stays
+           in place, and nothing in Discord says why. It looks exactly like a deploy that did
+           not happen.
+
+           A choice option cannot collide with anything, and it still comes from the enum, so
+           a category added later is still reachable without editing this. */
+        var category = new SlashCommandOptionBuilder()
+            .WithName("category").WithDescription("Which kind of event")
+            .WithType(ApplicationCommandOptionType.String).WithRequired(true);
+
+        foreach (var value in Enum.GetValues<EventCategory>())
+            category.AddChoice(value.ToString(), value.ToString());
+
+        builder.AddOption(new SlashCommandOptionBuilder()
+            .WithName("category").WithDescription("Only one kind of event")
+            .WithType(ApplicationCommandOptionType.SubCommand)
+            .AddOption(category).AddOption(Window()));
 
         return builder.Build();
     }
@@ -116,8 +129,16 @@ public sealed class EventLogCommand(IEventStore events, Access access) : ISlashC
         {
             "player" => new EventQuery(PageSize + 1, since, Player: Sanitize.Id(options.GetValueOrDefault("playerid")?.ToString() ?? "")),
             "staff" => new EventQuery(PageSize + 1, since, Actor: Sanitize.Id(options.GetValueOrDefault("moderator")?.ToString() ?? "")),
-            "recent" => new EventQuery(PageSize + 1, since),
-            _ => new EventQuery(PageSize + 1, since, Category: Enum.Parse<EventCategory>(section, ignoreCase: true)),
+
+            /* TryParse, not Parse. The value comes from a choice the bot defined, so it should
+               always be valid - but "should" is doing work there, and an unparseable string
+               would throw out of a command handler rather than answer. */
+            "category" => new EventQuery(PageSize + 1, since,
+                Category: Enum.TryParse<EventCategory>(options.GetValueOrDefault("category")?.ToString(), ignoreCase: true, out var parsed)
+                    ? parsed
+                    : null),
+
+            _ => new EventQuery(PageSize + 1, since),
         };
 
         if (section is "player" or "staff" && string.IsNullOrEmpty(query.Player ?? query.Actor))

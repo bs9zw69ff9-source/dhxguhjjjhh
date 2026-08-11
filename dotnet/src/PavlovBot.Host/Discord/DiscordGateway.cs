@@ -192,17 +192,24 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     {
         try
         {
-            var properties = _commands.Values
+            // Validated here too. This payload is small, but atomic rejection does not care
+            // how small it is - one bad command still takes the whitelist bot's whole picker.
+            var (properties, rejected) = SlashCommandValidation.Partition(_commands.Values
                 .Where(c => FactionCommands.Contains(c.Name))
-                .Select(c => c.Build())
-                .ToArray();
+                .Select(c => c.Build()));
+
+            foreach (var problem in rejected)
+            {
+                _logger.LogError("WHITELIST COMMAND /{Command} IS MALFORMED AND WAS NOT REGISTERED: {Problem}",
+                    problem.Command, problem.Problem);
+            }
 
             /* Global, matching the Node bot: this application is invited to each faction's
                guild, and guild-scoped registration would need every guild id listed here. */
-            await _factionClient!.BulkOverwriteGlobalApplicationCommandsAsync(properties).ConfigureAwait(false);
+            await _factionClient!.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
 
             _logger.LogInformation("Whitelist bot logged in as {User} with {Count} command(s)",
-                _factionClient.CurrentUser?.Username ?? "?", properties.Length);
+                _factionClient.CurrentUser?.Username ?? "?", properties.Count);
         }
         catch (Exception ex)
         {
@@ -231,10 +238,28 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         /* When the whitelist bot is on, these register on IT and not here. Registering them
            on both applications puts two identical entries in the picker and whichever one
            the user clicks answers twice. */
-        var properties = _commands.Values
+        var built = _commands.Values
             .Where(c => !_options.FactionBotEnabled || !FactionCommands.Contains(c.Name))
             .Select(c => c.Build())
             .ToArray();
+
+        /* VALIDATED BEFORE SENDING, and this is not belt-and-braces. Registration is a BULK
+           OVERWRITE and Discord's rejection is ATOMIC: one malformed command means none of
+           the sixty register, the previously registered set stays exactly as it was, and
+           nothing visible says why. The symptom is a deploy that looks like it never ran.
+
+           That happened - /eventlog declared the subcommands "player" and "staff" twice each,
+           and it took every command in the bot off the picker until somebody read the builder
+           closely enough to spot it. Dropping the one bad command and registering the other
+           fifty-nine is the difference between a bug and an outage. */
+        var (properties, rejected) = SlashCommandValidation.Partition(built);
+
+        foreach (var problem in rejected)
+        {
+            _logger.LogError(
+                "COMMAND /{Command} IS MALFORMED AND WAS NOT REGISTERED: {Problem}. " +
+                "The other {Count} command(s) registered normally", problem.Command, problem.Problem, properties.Count);
+        }
 
         /* Guild-scoped registration when a guild is configured, because global commands take
            up to an hour to propagate - long enough that you conclude the code is broken.
@@ -247,16 +272,16 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             if (guild is null)
             {
                 _logger.LogWarning("GUILD_ID {GuildId} is not a guild this bot is in - falling back to global commands", guildId);
-                await _client.BulkOverwriteGlobalApplicationCommandsAsync(properties).ConfigureAwait(false);
+                await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
                 return;
             }
-            await guild.BulkOverwriteApplicationCommandAsync(properties).ConfigureAwait(false);
-            _logger.LogInformation("Registered {Count} command(s) in guild {Guild}", properties.Length, guild.Name);
+            await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
+            _logger.LogInformation("Registered {Count} command(s) in guild {Guild}", properties.Count, guild.Name);
             return;
         }
 
-        await _client.BulkOverwriteGlobalApplicationCommandsAsync(properties).ConfigureAwait(false);
-        _logger.LogInformation("Registered {Count} global command(s) - propagation can take up to an hour", properties.Length);
+        await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
+        _logger.LogInformation("Registered {Count} global command(s) - propagation can take up to an hour", properties.Count);
     }
 
     /// <summary>
