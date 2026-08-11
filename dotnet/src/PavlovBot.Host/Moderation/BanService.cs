@@ -36,6 +36,7 @@ public sealed class BanService
     private readonly SerializedStore _store;
     private readonly IMasterNames _masterNames;
     private readonly IBanEvidence? _evidence;
+    private readonly IBanFileExport? _banFile;
     private readonly ILogger<BanService> _logger;
     private readonly TimeProvider _time;
 
@@ -74,7 +75,8 @@ public sealed class BanService
         IMasterNames masterNames,
         ILogger<BanService> logger,
         TimeProvider? time = null,
-        IBanEvidence? evidence = null)
+        IBanEvidence? evidence = null,
+        IBanFileExport? banFile = null)
     {
         _rcon = rcon;
         _store = store;
@@ -82,6 +84,7 @@ public sealed class BanService
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _evidence = evidence;
+        _banFile = banFile;
     }
 
     private DateTimeOffset Now => _time.GetUtcNow();
@@ -426,7 +429,48 @@ public sealed class BanService
 
         await _masterNames.ExemptAsync(name, LiftExemption, ct).ConfigureAwait(false);
 
-        return await UnbanEverywhereAsync(name, account, ct).ConfigureAwait(false);
+        /* ---- stop the lift being undone ----
+
+           THE BUG THIS FIXES. ModsaveBanlist syncs the game's own ban file every five
+           minutes, IMPORTING first: any name in the file that is not in the store is treated
+           as a ban to create. Removing the record above leaves the FILE still listing them,
+           so the next import re-created the ban that had just been lifted, the export wrote
+           it back, and the sweep enforced it. Bans returned on their own, minutes later, and
+           /unban reported success every time.
+
+           Two halves, and both are needed:
+
+             THE TOMBSTONE stops the importer resurrecting them. It is the half that survives
+             an export that fails, a MODSAVE_BLACKLIST_PATH that is wrong, or a file somebody
+             edits by hand - none of which the export below can do anything about.
+
+             THE EXPORT stops the GAME banning them. The server reads that file itself, so a
+             player left listed in it stays banned however many Unban commands RCON accepts. */
+        await _store.UpdateAsync(Datasets.UnbanTombstones,
+            new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),
+            tombstones => { tombstones[name.Trim()] = Now; return tombstones; }, ct).ConfigureAwait(false);
+
+        var result = await UnbanEverywhereAsync(name, account, ct).ConfigureAwait(false);
+
+        if (_banFile is not null)
+        {
+            try
+            {
+                await _banFile.ExportAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                /* NEVER RETHROWN, and the tombstone is why that is safe. The record is gone
+                   and the native unban has been sent; a failed file rewrite means the game
+                   may keep refusing them until the next sync, which the log has to say. */
+                _logger.LogError(ex,
+                    "Lifted the ban on \"{Name}\" but could not rewrite the game's ban file. " +
+                    "They may still be refused by the server itself until the next banlist sync",
+                    name);
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -499,6 +543,19 @@ public interface IMasterNames
 /// player connected the evasion responder saw a flagged join with no covering ban and issued
 /// a fresh PERMANENT one. A served two-day ban became permanent by reconnecting.
 /// </remarks>
+/// <summary>The game's own ban file, rewritten from the store.</summary>
+/// <remarks>
+/// A NARROW SEAM so BanService does not depend on ModsaveBanlist. Lifting a ban has to
+/// rewrite that file: the GAME reads it, so a player who stays listed there stays banned
+/// however many Unban commands RCON accepts - and the importer would re-create the record
+/// on its next pass anyway.
+/// </remarks>
+public interface IBanFileExport
+{
+    /// <summary>Rewrite the game's ban file from the active bans. Returns how many were written.</summary>
+    Task<int> ExportAsync(CancellationToken ct = default);
+}
+
 public interface IBanEvidence
 {
     /// <summary>The account id a display name belongs to, or null if never seen.</summary>

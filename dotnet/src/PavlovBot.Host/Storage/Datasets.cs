@@ -64,6 +64,23 @@ public static class Datasets
     /// every query is "this case" or "the open ones", which is what this store is for.
     /// </remarks>
     public const string Cases = "cases";
+
+    /// <summary>
+    /// Players deliberately unbanned, and when. Name -> lift instant.
+    /// </summary>
+    /// <remarks>
+    /// THE GUARD AGAINST A LIFT BEING UNDONE BY THE NEXT SYNC. ModsaveBanlist imports the
+    /// game's own ban file and treats anything not already in the store as a ban to create.
+    /// An unban removes the store record, but the FILE still lists them until the next export
+    /// - so the import five minutes later saw a name it did not recognise and re-created the
+    /// ban it had just been told to lift. The export then wrote it back, and the sweep
+    /// enforced it. Bans came back on their own, minutes after being lifted.
+    ///
+    /// A tombstone is the backstop rather than the fix - the lift also rewrites the file now -
+    /// but it is the half that survives an export that fails, a path that is misconfigured,
+    /// or a file somebody edits by hand.
+    /// </remarks>
+    public const string UnbanTombstones = "unban_tombstones";
     public const string VpnChecks = "vpn_checks";
     public const string ServerLock = "server_lock";
 
@@ -141,6 +158,7 @@ public static class Datasets
         [Warnings] = "{}",
         [BanReconcileState] = "{}",
         [Cases] = "[]",
+        [UnbanTombstones] = "{}",
         [VpnChecks] = "{}",
         [ServerLock] = "{}",
 

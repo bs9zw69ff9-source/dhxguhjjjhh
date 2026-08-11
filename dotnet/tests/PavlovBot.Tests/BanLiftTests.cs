@@ -81,7 +81,22 @@ public class BanLiftTests : IAsyncDisposable
         }
     }
 
-    private BanService Build(RecordingMasters masters, IBanEvidence? evidence, TimeProvider? time = null)
+    /// <summary>The game's ban file, as ModsaveBanlist would rewrite it.</summary>
+    private sealed class RecordingBanFile : IBanFileExport
+    {
+        public int Exports { get; private set; }
+        public bool Throw { get; set; }
+
+        public Task<int> ExportAsync(CancellationToken ct = default)
+        {
+            if (Throw) throw new IOException("the ban file path is wrong");
+            Exports++;
+            return Task.FromResult(0);
+        }
+    }
+
+    private BanService Build(RecordingMasters masters, IBanEvidence? evidence, TimeProvider? time = null,
+        IBanFileExport? banFile = null)
     {
         var options = new BotOptions
         {
@@ -104,7 +119,7 @@ public class BanLiftTests : IAsyncDisposable
         };
 
         var rcon = new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
-        return new BanService(rcon, _store, masters, NullLogger<BanService>.Instance, time, evidence);
+        return new BanService(rcon, _store, masters, NullLogger<BanService>.Instance, time, evidence, banFile);
     }
 
     private Task Seed(BanRecord record) =>
@@ -286,6 +301,68 @@ public class BanLiftTests : IAsyncDisposable
         await service.HardEnforceAsync("NeverSeen");
 
         Assert.Contains("Ban NeverSeen", _server.Commands, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// LIFTING REWRITES THE GAME'S BAN FILE. Without this, bans came back on their own.
+    /// </summary>
+    /// <remarks>
+    /// The server reads that file itself, so a player left listed in it stays banned however
+    /// many Unban commands RCON accepts - and ModsaveBanlist's importer, which runs every five
+    /// minutes and treats any name in the file that is not in the store as a ban to create,
+    /// re-created the record that had just been lifted. The export then wrote it back and the
+    /// sweep enforced it.
+    /// </remarks>
+    [Fact]
+    public async Task LiftingRewritesTheGamesBanFile()
+    {
+        await Seed(TempBan(DateTimeOffset.UtcNow + TimeSpan.FromDays(1), Account));
+
+        var banFile = new RecordingBanFile();
+        await Build(new RecordingMasters(), new FakeEvidence(), banFile: banFile).LiftAsync(Name, Account);
+
+        Assert.Equal(1, banFile.Exports);
+    }
+
+    /// <summary>
+    /// A lift records a tombstone, so the importer cannot resurrect the ban.
+    /// </summary>
+    /// <remarks>
+    /// THE BACKSTOP, and the half that survives what the export cannot fix: a wrong
+    /// MODSAVE_BLACKLIST_PATH, a failed write, or a file somebody edits by hand. Each of those
+    /// leaves the player listed in a file the importer trusts.
+    /// </remarks>
+    [Fact]
+    public async Task LiftingRecordsATombstoneSoTheImporterCannotResurrectIt()
+    {
+        await Seed(TempBan(DateTimeOffset.UtcNow + TimeSpan.FromDays(1), Account));
+
+        await Build(new RecordingMasters(), new FakeEvidence()).LiftAsync(Name, Account);
+
+        var tombstones = _store.Read(Datasets.UnbanTombstones,
+            new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase));
+
+        Assert.True(tombstones.ContainsKey(Name));
+    }
+
+    /// <summary>
+    /// A ban file that cannot be written does not fail the lift.
+    /// </summary>
+    /// <remarks>
+    /// The record is already gone and the native unban has been sent. Throwing here would
+    /// leave the caller believing the unban failed when the part that matters succeeded - and
+    /// the tombstone means the importer will not undo it either way.
+    /// </remarks>
+    [Fact]
+    public async Task AFailingBanFileExportDoesNotFailTheLift()
+    {
+        await Seed(TempBan(DateTimeOffset.UtcNow + TimeSpan.FromDays(1), Account));
+
+        var banFile = new RecordingBanFile { Throw = true };
+        var result = await Build(new RecordingMasters(), new FakeEvidence(), banFile: banFile).LiftAsync(Name, Account);
+
+        Assert.True(result.Landed);
+        Assert.Empty(Bans());
     }
 
     public async ValueTask DisposeAsync()
