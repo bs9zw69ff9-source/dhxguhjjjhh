@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using PavlovBot.Core.Data;
 using PavlovBot.Core.Factions;
 using PavlovBot.Host.Factions;
 using Xunit;
@@ -336,6 +337,120 @@ public class RosterServiceTests : IDisposable
         await service.JoinAsync(spawnOnly, "Alice");
 
         Assert.Equal(["Alice"], service.Read(spawnOnly.SpawnFile)!);
+    }
+
+    /* ─── WIPING A ROSTER ──────────────────────────────────────────────────────────────
+
+       The one operation whose purpose is mass deletion, and therefore the one place the
+       destruction guard is deliberately bypassed. These pin both halves: that it really does
+       empty the faction, and that it does not reach past it. */
+
+    [Fact]
+    public async Task WipingClearsEveryFileTheFactionOwns()
+    {
+        Seed("policecadet.txt", "Alice");
+        Seed("policecaptain.txt", "Bob");
+        Seed("policevice.txt", "Alice");            // a sub-class, held alongside a rank
+        Seed(Nypd.SpawnFile, "Alice", "Bob");
+
+        var result = await _rosters.WipeAsync(Nypd);
+
+        Assert.Equal(MembershipOutcome.Allowed, result.Outcome);
+        Assert.Empty(Contents("policecadet.txt"));
+        Assert.Empty(Contents("policecaptain.txt"));
+        Assert.Empty(Contents("policevice.txt"));
+        Assert.Empty(Contents(Nypd.SpawnFile));
+    }
+
+    /// <summary>
+    /// The count is people, not lines.
+    /// </summary>
+    /// <remarks>
+    /// Everybody appears at least twice - once in a rank file, once in the spawn file - and a
+    /// sub-class holder three times. Counting rows would report a two-member faction as five
+    /// and make the confirmation prompt lie about the size of what is being destroyed.
+    /// </remarks>
+    [Fact]
+    public async Task TheWipeCountsMembersRatherThanRows()
+    {
+        Seed("policecadet.txt", "Alice");
+        Seed("policecaptain.txt", "Bob");
+        Seed("policevice.txt", "Alice");
+        Seed(Nypd.SpawnFile, "Alice", "Bob");
+
+        Assert.Equal(2, (await _rosters.WipeAsync(Nypd)).Removed);
+    }
+
+    /// <summary>
+    /// A wipe is not stopped by the guard that refuses mass deletion.
+    /// </summary>
+    /// <remarks>
+    /// THE GUARD EXISTS FOR THE OPPOSITE CASE. Everywhere else, a write that drops most of a
+    /// roster is a failed read about to be saved as truth, so it is refused. Here it is the
+    /// entire point, and without the bypass the command would report success on every wipe
+    /// while the guard quietly rejected each write - which is exactly the failure shape this
+    /// codebase keeps producing.
+    /// </remarks>
+    [Fact]
+    public async Task TheWipeIsNotBlockedByTheBulkDeletionGuard()
+    {
+        var many = Enumerable.Range(0, RosterWriteGuard.BulkDropLimit * 4).Select(i => $"Player{i}").ToArray();
+        Seed("policecadet.txt", many);
+        Seed(Nypd.SpawnFile, many);
+
+        var result = await _rosters.WipeAsync(Nypd);
+
+        Assert.Equal(MembershipOutcome.Allowed, result.Outcome);
+        Assert.Equal(many.Length, result.Removed);
+        Assert.Empty(Contents("policecadet.txt"));
+    }
+
+    /// <summary>A wipe keeps the pre-write copy that makes it recoverable by hand.</summary>
+    /// <remarks>
+    /// The confirmation prompt tells an owner the backup exists. If that were not true the
+    /// prompt would be talking somebody into an irreversible action by promising an undo.
+    /// </remarks>
+    [Fact]
+    public async Task WipingBacksUpEachRosterFirst()
+    {
+        Seed("policecadet.txt", "Alice", "Bob");
+
+        await _rosters.WipeAsync(Nypd);
+
+        var backup = await File.ReadAllTextAsync(Path.Combine(_backups, "policecadet.txt.bak"));
+        Assert.Contains("Alice", backup, StringComparison.Ordinal);
+        Assert.Contains("Bob", backup, StringComparison.Ordinal);
+    }
+
+    /// <summary>A wipe does not reach into another faction.</summary>
+    [Fact]
+    public async Task WipingOneFactionLeavesTheOthersAlone()
+    {
+        var other = FactionRegistry.All.Values.First(f => f.Name != Nypd.Name);
+        Seed("policecadet.txt", "Alice");
+        Seed(other.SpawnFile, "Bob");
+
+        await _rosters.WipeAsync(Nypd);
+
+        Assert.Contains("Bob", Contents(other.SpawnFile));
+    }
+
+    /// <summary>
+    /// With no roster directory the wipe reports it rather than reporting success.
+    /// </summary>
+    /// <remarks>
+    /// A destructive command that answers "done" when it did nothing is worse than one that
+    /// fails: staff move on believing the faction is empty and never look again.
+    /// </remarks>
+    [Fact]
+    public async Task WipingWithNoRosterDirectoryIsReportedRatherThanClaimed()
+    {
+        var service = new RosterService(Path.Combine(_directory, "nope"), NullLogger<RosterService>.Instance, _backups);
+
+        var result = await service.WipeAsync(Nypd);
+
+        Assert.Equal(MembershipOutcome.RosterUnavailable, result.Outcome);
+        Assert.Equal(0, result.Removed);
     }
 
     [Fact]

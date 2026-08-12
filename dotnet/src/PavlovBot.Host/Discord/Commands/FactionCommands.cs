@@ -68,6 +68,10 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
                 .WithName("playtime").WithDescription("Whitelisted members' playtime, highest to lowest")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(Faction()))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("wipe").WithDescription("Owner - Clear every member from a faction's whitelist")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption(Faction()))
             .Build();
     }
 
@@ -89,6 +93,12 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
             await Reply(command, sub.Name == "list"
                 ? await BuildRosterAsync(readOnly, ct).ConfigureAwait(false)
                 : await BuildPlaytimeAsync(readOnly, ct).ConfigureAwait(false)).ConfigureAwait(false);
+            return;
+        }
+
+        if (sub.Name == "wipe")
+        {
+            await OfferWipeAsync(command, Resolve(options)).ConfigureAwait(false);
             return;
         }
 
@@ -186,6 +196,58 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
             member.Id, recorded.Name, faction.Name, command.User.Username, result.Outcome);
 
         await Reply(command, Describe(result, recorded.Name, faction)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ask before emptying a roster. Nothing is written until the button is pressed.
+    /// </summary>
+    /// <remarks>
+    /// OWNER, NOT WHITELIST LEADER. Every other subcommand here moves one person, and a
+    /// mistake costs one re-add. This empties a faction, and there is no undo inside the bot:
+    /// the game reads the file live, so the members are out the moment it is written. The
+    /// per-faction managers who run the rosters day to day deliberately cannot reach it.
+    ///
+    /// A CONFIRMATION STEP, because the destructive path is otherwise indistinguishable from
+    /// the harmless one - `/whitelist list` and `/whitelist wipe` are one arrow key apart in
+    /// Discord's picker, take the same single argument, and would both complete instantly.
+    /// The count is read now and shown, so the press is made against the real size of what
+    /// is about to go rather than against a guess.
+    /// </remarks>
+    private async Task OfferWipeAsync(SocketSlashCommand command, FactionDefinition? faction)
+    {
+        if (faction is null)
+        {
+            await Reply(command, Theme.Failure("Unknown faction")).ConfigureAwait(false);
+            return;
+        }
+
+        if (!access.Allows(RequiredAccess.Owner, command))
+        {
+            await Reply(command, Theme.Denied("Not allowed",
+                access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
+            return;
+        }
+
+        var roster = await rosters.RosterAsync(faction).ConfigureAwait(false);
+        if (roster.Count == 0)
+        {
+            await Reply(command, Theme.Notice("Nothing to wipe",
+                $"**{faction.Name}** has no members.")).ConfigureAwait(false);
+            return;
+        }
+
+        var embed = Theme.Denied($"Wipe the {faction.Name} whitelist?",
+            $"This clears **{roster.Count}** member(s) from every **{faction.Name}** roster file, " +
+            "including the spawn file. They lose faction access in game as soon as it is written.\n\n" +
+            "A copy of each file is kept in the backup directory, so this is recoverable by hand " +
+            "on the server - but not from Discord.");
+
+        await command.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = embed.Brand().Build();
+            m.AllowedMentions = AllowedMentions.None;
+            m.Components = WhitelistWipe.Controls(faction.Name, command.User.Id);
+        }).ConfigureAwait(false);
     }
 
     private static FactionDefinition? Resolve(IReadOnlyDictionary<string, object> options) =>

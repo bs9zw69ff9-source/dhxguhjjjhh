@@ -148,6 +148,55 @@ public class SpawnFactionTests : IDisposable
         Assert.Equal(1, await members.ForgetMissingAsync([]));
     }
 
+    /// <summary>
+    /// Wiping a faction forgets that faction's records and nobody else's.
+    /// </summary>
+    /// <remarks>
+    /// The index maps a Discord account to an in-game name, and /promotion, /demotion and
+    /// /whitelist remove all act through it. Left behind after a wipe it points at people who
+    /// are on no roster, and every one of those commands then acts on a membership that does
+    /// not exist.
+    ///
+    /// The other half - not touching the other factions - is the reason this exists rather
+    /// than reusing ForgetMissingAsync, which takes the names still whitelisted ANYWHERE and
+    /// would need every other roster assembled correctly to avoid forgetting live members.
+    /// </remarks>
+    [Fact]
+    public async Task WipingAFactionForgetsOnlyThatFactionsRecords()
+    {
+        var members = Members();
+        await members.RememberAsync(1, new FactionMember("NYPD", "Officer", DateTimeOffset.UtcNow, "owner"));
+        await members.RememberAsync(2, new FactionMember("NYPD", "Sergeant", DateTimeOffset.UtcNow, "owner"));
+        await members.RememberAsync(3, new FactionMember("Gambino", "Wiseguy", DateTimeOffset.UtcNow, "owner"));
+
+        var dropped = await members.ForgetFactionAsync("NYPD");
+
+        Assert.Equal(2, dropped);
+        Assert.Null(members.Of(1));
+        Assert.Null(members.Of(2));
+        Assert.NotNull(members.Of(3));
+    }
+
+    [Fact]
+    public async Task ForgettingAFactionWithNoRecordsChangesNothing()
+    {
+        var members = Members();
+        await members.RememberAsync(1, new FactionMember("NYPD", "Officer", DateTimeOffset.UtcNow, "owner"));
+
+        Assert.Equal(0, await members.ForgetFactionAsync("Colombo"));
+        Assert.NotNull(members.Of(1));
+    }
+
+    /// <summary>The faction name is matched the way Discord hands it back: case-insensitively.</summary>
+    [Fact]
+    public async Task ForgettingAFactionIgnoresCase()
+    {
+        var members = Members();
+        await members.RememberAsync(1, new FactionMember("NYPD", "Officer", DateTimeOffset.UtcNow, "owner"));
+
+        Assert.Equal(1, await members.ForgetFactionAsync("nypd"));
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true); }

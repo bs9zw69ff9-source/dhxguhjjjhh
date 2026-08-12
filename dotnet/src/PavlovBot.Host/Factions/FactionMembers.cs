@@ -82,6 +82,43 @@ public sealed class FactionMembers(SerializedStore store)
             ct);
 
     /// <summary>
+    /// Drop every entry recorded against one faction, and report how many went.
+    /// </summary>
+    /// <remarks>
+    /// For a roster wipe. <see cref="ForgetMissingAsync"/> cannot do this job: it takes the
+    /// names still whitelisted ANYWHERE, so calling it after emptying one faction means
+    /// assembling every other faction's roster first, and getting that wrong silently
+    /// forgets memberships that are still live. This asks the question the caller actually
+    /// has - "this faction is gone" - and touches nothing else.
+    /// </remarks>
+    public async Task<int> ForgetFactionAsync(string faction, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(faction);
+
+        var dropped = 0;
+
+        await store.UpdateAsync<Dictionary<string, FactionMember>>(
+            Datasets.FactionMembers,
+            new Dictionary<string, FactionMember>(StringComparer.Ordinal),
+            index =>
+            {
+                var theirs = index
+                    .Where(kv => string.Equals(kv.Value.Faction, faction, StringComparison.OrdinalIgnoreCase))
+                    .Select(kv => kv.Key).ToList();
+
+                foreach (var key in theirs) index.Remove(key);
+                dropped = theirs.Count;
+
+                // Veto when nothing matched, so a wipe of an empty faction does not rewrite
+                // the file - the same rule ForgetAsync follows.
+                return dropped > 0 ? index : null;
+            },
+            ct).ConfigureAwait(false);
+
+        return dropped;
+    }
+
+    /// <summary>
     /// Drop entries whose name is in no roster file, and report how many went.
     /// </summary>
     /// <remarks>
