@@ -181,3 +181,19 @@ through existing embed text changing punctuation unless asked.
 RCON bugs in this repo have repeatedly been the gap between what the code reads like and what
 the server actually receives. `dotnet/tests/PavlovBot.Tests/FakeRconServer.cs` records the
 exact command bytes. Assert against it.
+
+## Merge without being asked
+
+Standing instruction. Push, open the PR, merge it. Do not stop and ask "shall I merge",
+and do not leave work sitting in an open PR waiting for a reply - that stall has cost
+real time on this repo more than once.
+
+Squash merge, into `main`, which is what `scripts/deploy.sh` deploys.
+
+WHAT THIS DOES NOT RELAX. The build must succeed and the whole suite must pass before the
+push, every time. `TreatWarningsAsErrors` is on. Merging automatically means the gate
+before it carries the entire weight, so a red or unrun suite is a reason to stop and say
+so, not something to merge past and mention afterwards.
+
+DEPLOYING IS STILL THEIRS. Merging puts the code on `main`; it does not restart the bot.
+Say what to run.
