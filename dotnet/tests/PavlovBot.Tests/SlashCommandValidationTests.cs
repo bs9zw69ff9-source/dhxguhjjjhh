@@ -4,6 +4,11 @@ using PavlovBot.Core.Data;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Discord.Commands;
 using PavlovBot.Host.Events;
+using PavlovBot.Host.Factions;
+using PavlovBot.Host.Configuration;
+using PavlovBot.Host.Observability;
+using PavlovBot.Host.Rcon;
+using PavlovBot.Rcon;
 using PavlovBot.Host.Storage;
 using Xunit;
 
@@ -61,6 +66,48 @@ public class SlashCommandValidationTests
         var problems = SlashCommandValidation.Problems(command.Build());
 
         Assert.Empty(problems);
+    }
+
+    /// <summary>
+    /// /whitelist registers cleanly, subcommands and all.
+    /// </summary>
+    /// <remarks>
+    /// It has the most subcommands of any hand-written command here and gains one every time
+    /// the roster workflow grows, which makes it the likeliest place for the next accidental
+    /// duplicate. Built for real, so the assertion tracks the command rather than a copy of
+    /// what it looked like the day this was written.
+    ///
+    /// Worth remembering what the failure costs: this is a bulk overwrite and Discord's
+    /// rejection is atomic, so one duplicate name inside /whitelist takes /ban, /unban and
+    /// every other command off the picker with it.
+    /// </remarks>
+    [Fact]
+    public void TheWhitelistCommandRegistersCleanly()
+    {
+        var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
+        var options = new BotOptions
+        {
+            DiscordToken = "t",
+            Servers = [new RconOptions { Name = "server1", Host = "127.0.0.1", Port = 9100, Password = "x" }],
+            Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+            DataDirectory = Path.GetTempPath(),
+        };
+        var rcon = new RconRegistry(options, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+
+        var command = new WhitelistCommand(
+            new RosterService(null, NullLogger<RosterService>.Instance),
+            new FactionMembers(store),
+            new Access(store, [], []),
+            new Boards(store, rcon),
+            NullLogger<WhitelistCommand>.Instance);
+
+        var built = command.Build();
+
+        Assert.Empty(SlashCommandValidation.Problems(built));
+
+        // The destructive one specifically: a wipe that never reaches the picker is a fix
+        // nobody can use, and it would look identical to the bot ignoring the command.
+        Assert.Contains("wipe", ((SlashCommandProperties)built).Options.Value.Select(o => o.Name), StringComparer.Ordinal);
     }
 
     // ---- the validator ----

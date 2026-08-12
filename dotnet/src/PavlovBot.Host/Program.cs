@@ -296,6 +296,7 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, AnnounceCommand>();
         builder.Services.AddSingleton<ISlashCommand, WhitelistCommand>();
         builder.Services.AddSingleton<PavlovBot.Host.Factions.FactionMembers>();
+        builder.Services.AddSingleton<IComponentHandler, WhitelistWipe>();
 
         builder.Services.AddSingleton<ISlashCommand>(sp => RankChangeCommand.Promotion(
             sp.GetRequiredService<RosterService>(),

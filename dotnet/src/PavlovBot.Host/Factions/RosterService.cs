@@ -7,6 +7,11 @@ namespace PavlovBot.Host.Factions;
 /// <param name="Rank">The highest rank whose roster file contains them.</param>
 public sealed record Membership(FactionDefinition Faction, string Player, string Rank);
 
+/// <summary>The result of emptying a faction's rosters.</summary>
+/// <param name="Removed">Distinct members cleared, not rows deleted.</param>
+/// <param name="Failed">Roster files that could not be read or written, and so still hold members.</param>
+public sealed record RosterWipe(MembershipOutcome Outcome, int Removed, IReadOnlyList<string> Failed);
+
 /// <summary>
 /// Reading and writing the game's roster files, with the membership rules enforced.
 /// </summary>
@@ -202,9 +207,99 @@ public sealed class RosterService
            outcomes. */
         if (roster is null) return new MembershipDecision(MembershipOutcome.RosterUnavailable, decision.Rank);
 
-        return await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false)
+        if (!await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false))
+            return new MembershipDecision(MembershipOutcome.WriteFailed, decision.Rank);
+
+        /* AND THE SPAWN FILE, which is what actually lets them play as the faction. Writing
+           only the rank file is the port gap that made a successful /whitelist add produce a
+           player who still could not spawn. */
+        return await EnsureListedAsync(faction.SpawnFile, player, ct).ConfigureAwait(false)
             ? decision
             : new MembershipDecision(MembershipOutcome.WriteFailed, decision.Rank);
+    }
+
+    /// <summary>
+    /// Add a player to a roster if they are not already on it. True when they are on it after.
+    /// </summary>
+    /// <remarks>
+    /// Idempotent on purpose. A faction with no ladder uses one file for both its rank and its
+    /// spawn access, so the join path calls this with a file it has just written; without the
+    /// containment check that would duplicate the name, and the roster files are read as
+    /// plain lists with no de-duplication anywhere.
+    /// </remarks>
+    private async Task<bool> EnsureListedAsync(string file, string player, CancellationToken ct)
+    {
+        var roster = Read(file);
+        if (roster is null) return false;
+        if (roster.Contains(player, StringComparer.OrdinalIgnoreCase)) return true;
+
+        return await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Every roster file a faction owns: its ranks, its sub-classes and its spawn file.
+    /// </summary>
+    /// <remarks>
+    /// THE SPAWN FILE MUST BE IN ANY REMOVAL. Leaving it behind is the worst outcome of the
+    /// set: the rank files are what the bot reads, so somebody removed from those but left in
+    /// the spawn file reads as "not whitelisted" on every surface the staff can see, while
+    /// the game still lets them play as the faction.
+    ///
+    /// Distinct because a faction with no ladder names the same file as both its only rank
+    /// and its spawn access, and a second pass over it would read the roster that was just
+    /// rewritten and write it back.
+    /// </remarks>
+    private static IEnumerable<string> FilesOf(FactionDefinition faction) =>
+        faction.RankFiles.Values
+            .Concat(faction.Subclasses.Values)
+            .Append(faction.SpawnFile)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Empty every roster file a faction owns.
+    /// </summary>
+    /// <remarks>
+    /// THE ONLY CALLER THAT MAY SET <c>allowBulk</c>. <see cref="RosterWriteGuard"/> refuses a
+    /// write that deletes more than a handful of entries, because in every other path that
+    /// shape is a read failure about to be written back as truth. A wipe is the one operation
+    /// whose whole purpose is mass deletion, so the guard is bypassed here and nowhere else -
+    /// and the pre-write backup <see cref="WriteAsync"/> takes is what makes it recoverable.
+    ///
+    /// File by file rather than all-or-nothing: there is no transaction over plain text the
+    /// game is reading live, so a partial wipe is a state that can happen and pretending
+    /// otherwise would just mean not reporting it. The caller is told which files resisted.
+    /// </remarks>
+    public async Task<RosterWipe> WipeAsync(FactionDefinition faction, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(faction);
+
+        if (!Enabled) return new RosterWipe(MembershipOutcome.RosterUnavailable, 0, []);
+
+        // By name, not by row: a member listed in their rank file and their spawn file is one
+        // person removed, and reporting two would misstate the size of what just happened.
+        var removed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var failed = new List<string>();
+
+        foreach (var file in FilesOf(faction))
+        {
+            var roster = Read(file);
+            if (roster is null) { failed.Add(file); continue; }
+            if (roster.Count == 0) continue;
+
+            if (await WriteAsync(file, [], allowBulk: true, ct).ConfigureAwait(false))
+            {
+                foreach (var name in roster) removed.Add(name);
+            }
+            else
+            {
+                failed.Add(file);
+            }
+        }
+
+        return new RosterWipe(
+            failed.Count == 0 ? MembershipOutcome.Allowed : MembershipOutcome.WriteFailed,
+            removed.Count,
+            failed);
     }
 
     /// <summary>Remove a player from every rank and sub-class file of a faction.</summary>
@@ -215,9 +310,9 @@ public sealed class RosterService
         var removed = false;
         var blocked = false;
 
-        // Every file, not just their current rank: a member listed in two rank files
-        // (which the storage permits) would otherwise be half-removed and reappear.
-        foreach (var file in faction.RankFiles.Values.Concat(faction.Subclasses.Values))
+        // Every file, not just their current rank: a member listed in two rank files (which
+        // the storage permits) would otherwise be half-removed and reappear.
+        foreach (var file in FilesOf(faction))
         {
             var roster = Read(file);
             if (roster is null) { blocked = true; continue; }
@@ -267,10 +362,12 @@ public sealed class RosterService
                 .ConfigureAwait(false);
         }
 
-        var target = faction.RankFiles[decision.Rank!];
-        var targetRoster = Read(target) ?? [];
-        if (!targetRoster.Contains(player, StringComparer.OrdinalIgnoreCase))
-            await WriteAsync(target, [.. targetRoster, player], ct: ct).ConfigureAwait(false);
+        await EnsureListedAsync(faction.RankFiles[decision.Rank!], player, ct).ConfigureAwait(false);
+
+        /* SELF-HEALING. A promotion should not be able to leave somebody holding a rank they
+           cannot spawn into, whether the spawn entry was lost to the port gap this fixes or
+           to somebody editing the files by hand. Already-listed is a read and no write. */
+        await EnsureListedAsync(faction.SpawnFile, player, ct).ConfigureAwait(false);
 
         return decision;
     }

@@ -24,6 +24,25 @@ public sealed record FactionDefinition
     /// <summary>Rank -> the Config/*.txt roster the game reads for it.</summary>
     public required IReadOnlyDictionary<string, string> RankFiles { get; init; }
 
+    /// <summary>
+    /// The file that grants SPAWN ACCESS to the faction, holding every member regardless of
+    /// rank.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS THE FILE THAT DECIDES WHETHER SOMEBODY CAN PLAY AS THE FACTION. The rank files
+    /// decide what they get once they are in; this decides whether they are in at all. A
+    /// member written to <c>policecadet.txt</c> but not to <c>policespawn.txt</c> is on the
+    /// roster as far as the bot is concerned and cannot spawn as far as the game is.
+    ///
+    /// The port dropped it. The Node bot wrote both, which is visible in a live install: the
+    /// spawn file is byte-for-byte the union of the rank files, written moments before them.
+    /// Nothing announced the omission, because every command still reported success.
+    ///
+    /// For a faction with no ladder this is the same file as its single rank file, and the
+    /// writer is idempotent, so that costs a read and no write.
+    /// </remarks>
+    public required string SpawnFile { get; init; }
+
     /// <summary>Rank -> member limit. A rank absent from this map is uncapped.</summary>
     public IReadOnlyDictionary<string, int> RankCaps { get; init; } =
         new Dictionary<string, int>();
@@ -78,26 +97,34 @@ public static class FactionRegistry
 
                "Member" is not shown to anybody - it exists because Order and Default are
                required and the roster writer needs a key for the file. HasRanks reports false
-               off the back of it, and the promotion commands refuse on that. */
+               off the back of it, and the promotion commands refuse on that.
+
+               THE FILE NAME IS THE SPAWN FILE, and this used to say gambino.txt. No such file
+               exists in a live install - the roster directory holds gambinospawn.txt - so
+               every mafia whitelist created a brand new file the game never opens, reported
+               success, and left the player unable to spawn. */
             ["Gambino"] = new()
             {
                 Name = "Gambino",
                 Order = [SpawnOnly],
                 Default = SpawnOnly,
-                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "gambino.txt" },
+                SpawnFile = "gambinospawn.txt",
+                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "gambinospawn.txt" },
             },
             ["Colombo"] = new()
             {
                 Name = "Colombo",
                 Order = [SpawnOnly],
                 Default = SpawnOnly,
-                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "colombo.txt" },
+                SpawnFile = "colombospawn.txt",
+                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "colombospawn.txt" },
             },
             ["NYPD"] = new()
             {
                 Name = "NYPD",
                 Order = ["Cadet", "Patrolman", "Corporal", "Sergeant", "Lieutenant", "Captain", "Deputy Chief", "Chief of Police"],
                 Default = "Cadet",
+                SpawnFile = "policespawn.txt",
                 RankFiles = new Dictionary<string, string>
                 {
                     ["Cadet"] = "policecadet.txt",
