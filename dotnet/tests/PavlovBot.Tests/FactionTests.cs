@@ -20,6 +20,7 @@ internal static class TestFactions
         Name = "Other",
         Order = ["Associate", "Soldier", "Capo", "Consigliere", "Underboss", "Boss"],
         Default = "Associate",
+        SpawnFile = "otherspawn.txt",
         RankFiles = new Dictionary<string, string>
         {
             ["Associate"] = "otherassociate.txt", ["Soldier"] = "othersoldier.txt",
@@ -60,7 +61,43 @@ public class FactionRegistryTests
 
             foreach (var capped in faction.RankCaps.Keys)
                 Assert.Contains(capped, faction.Order);
+
+            Assert.False(string.IsNullOrWhiteSpace(faction.SpawnFile), $"{faction.Name} has no spawn file");
         }
+    }
+
+    /// <summary>
+    /// The roster file names are the ones a live install actually has.
+    /// </summary>
+    /// <remarks>
+    /// THE BUG THIS CATCHES, and it shipped. The mafia rosters were named gambino.txt and
+    /// colombo.txt. The install has gambinospawn.txt and colombospawn.txt, so every mafia
+    /// whitelist created a file the game never opens: the write succeeded, the bot reported
+    /// success, /whitelist list showed the member, and in game they could not spawn.
+    ///
+    /// Nothing else could have caught it. Every other test here uses whatever names the
+    /// registry declares, so the whole suite passed against names that were fiction. This is
+    /// the one assertion that pins them to the server, and the names are spelled out rather
+    /// than derived for exactly that reason - a rule computed from the registry would have
+    /// agreed with the registry.
+    /// </remarks>
+    [Fact]
+    public void RosterFilenamesMatchTheOnesTheGameInstallHas()
+    {
+        Assert.Equal("gambinospawn.txt", FactionRegistry.Get("Gambino")!.SpawnFile);
+        Assert.Equal("colombospawn.txt", FactionRegistry.Get("Colombo")!.SpawnFile);
+        Assert.Equal("policespawn.txt", FactionRegistry.Get("NYPD")!.SpawnFile);
+
+        // A ladderless faction's single roster IS its spawn file: there is no separate
+        // membership list to be a member of.
+        foreach (var faction in FactionRegistry.All.Values.Where(f => !f.HasRanks))
+            Assert.Equal(faction.SpawnFile, faction.RankFiles[faction.Default]);
+
+        // A faction WITH a ladder keeps them separate: the rank files say what you are, the
+        // spawn file says whether you are in at all.
+        var nypd = FactionRegistry.Get("NYPD")!;
+        Assert.DoesNotContain(nypd.SpawnFile, nypd.RankFiles.Values, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(nypd.SpawnFile, nypd.Subclasses.Values, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -202,9 +202,33 @@ public sealed class RosterService
            outcomes. */
         if (roster is null) return new MembershipDecision(MembershipOutcome.RosterUnavailable, decision.Rank);
 
-        return await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false)
+        if (!await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false))
+            return new MembershipDecision(MembershipOutcome.WriteFailed, decision.Rank);
+
+        /* AND THE SPAWN FILE, which is what actually lets them play as the faction. Writing
+           only the rank file is the port gap that made a successful /whitelist add produce a
+           player who still could not spawn. */
+        return await EnsureListedAsync(faction.SpawnFile, player, ct).ConfigureAwait(false)
             ? decision
             : new MembershipDecision(MembershipOutcome.WriteFailed, decision.Rank);
+    }
+
+    /// <summary>
+    /// Add a player to a roster if they are not already on it. True when they are on it after.
+    /// </summary>
+    /// <remarks>
+    /// Idempotent on purpose. A faction with no ladder uses one file for both its rank and its
+    /// spawn access, so the join path calls this with a file it has just written; without the
+    /// containment check that would duplicate the name, and the roster files are read as
+    /// plain lists with no de-duplication anywhere.
+    /// </remarks>
+    private async Task<bool> EnsureListedAsync(string file, string player, CancellationToken ct)
+    {
+        var roster = Read(file);
+        if (roster is null) return false;
+        if (roster.Contains(player, StringComparer.OrdinalIgnoreCase)) return true;
+
+        return await WriteAsync(file, [.. roster, player], ct: ct).ConfigureAwait(false);
     }
 
     /// <summary>Remove a player from every rank and sub-class file of a faction.</summary>
@@ -215,9 +239,20 @@ public sealed class RosterService
         var removed = false;
         var blocked = false;
 
-        // Every file, not just their current rank: a member listed in two rank files
-        // (which the storage permits) would otherwise be half-removed and reappear.
-        foreach (var file in faction.RankFiles.Values.Concat(faction.Subclasses.Values))
+        /* Every file, not just their current rank: a member listed in two rank files (which
+           the storage permits) would otherwise be half-removed and reappear.
+
+           THE SPAWN FILE IS ONE OF THEM, and leaving it behind is the worst of the set: the
+           rank files are what the bot reads, so a player removed from those but left in the
+           spawn file reads as "not whitelisted" everywhere the staff can see, while the game
+           still lets them play as the faction.
+
+           Distinct because a faction with no ladder names the same file twice, and the second
+           pass would read the already-rewritten roster and write it back unchanged. */
+        foreach (var file in faction.RankFiles.Values
+                     .Concat(faction.Subclasses.Values)
+                     .Append(faction.SpawnFile)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var roster = Read(file);
             if (roster is null) { blocked = true; continue; }
@@ -267,10 +302,12 @@ public sealed class RosterService
                 .ConfigureAwait(false);
         }
 
-        var target = faction.RankFiles[decision.Rank!];
-        var targetRoster = Read(target) ?? [];
-        if (!targetRoster.Contains(player, StringComparer.OrdinalIgnoreCase))
-            await WriteAsync(target, [.. targetRoster, player], ct: ct).ConfigureAwait(false);
+        await EnsureListedAsync(faction.RankFiles[decision.Rank!], player, ct).ConfigureAwait(false);
+
+        /* SELF-HEALING. A promotion should not be able to leave somebody holding a rank they
+           cannot spawn into, whether the spawn entry was lost to the port gap this fixes or
+           to somebody editing the files by hand. Already-listed is a read and no write. */
+        await EnsureListedAsync(faction.SpawnFile, player, ct).ConfigureAwait(false);
 
         return decision;
     }

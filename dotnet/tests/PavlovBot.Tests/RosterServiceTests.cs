@@ -256,6 +256,88 @@ public class RosterServiceTests : IDisposable
        readable roster, an absent member is still NotWhitelisted. Without it the two tests
        here would pass against a service that answered RosterUnavailable to everything. */
 
+    /* ─── THE SPAWN FILE ───────────────────────────────────────────────────────────────
+
+       WHAT WENT WRONG. The rank files say what a member is; the SPAWN file says whether they
+       are in the faction at all, and it is the one the game consults before letting somebody
+       play as it. The port wrote the rank files and not the spawn file, so /whitelist add
+       reported success, /whitelist list showed the member, and in game nothing changed.
+
+       It is invisible from inside the bot: every surface the staff can see reads the rank
+       files, which were correct. The only witness is the install, where the Node bot's spawn
+       file is byte-for-byte the union of the rank files. These tests are that witness. */
+
+    [Fact]
+    public async Task JoiningWritesTheSpawnFileAsWellAsTheRankFile()
+    {
+        await _rosters.JoinAsync(Nypd, "Alice");
+
+        Assert.Contains("Alice", Contents("policecadet.txt"));
+        Assert.Contains("Alice", Contents(Nypd.SpawnFile));
+    }
+
+    [Fact]
+    public async Task LeavingClearsTheSpawnFileToo()
+    {
+        await _rosters.JoinAsync(Nypd, "Alice");
+
+        await _rosters.LeaveAsync(Nypd, "Alice");
+
+        /* The dangerous asymmetry, and the reason this is asserted separately from the rank
+           file: a member cleared from the ranks but left in the spawn file reads as removed
+           on every staff-facing surface while the game still lets them play. */
+        Assert.DoesNotContain("Alice", Contents(Nypd.SpawnFile));
+        Assert.DoesNotContain("Alice", Contents("policecadet.txt"));
+    }
+
+    [Fact]
+    public async Task PromotionKeepsTheMemberInTheSpawnFile()
+    {
+        await _rosters.JoinAsync(Nypd, "Alice");
+
+        var decision = await _rosters.ChangeRankAsync(Nypd, "Alice", +1);
+
+        Assert.True(decision.IsAllowed);
+        Assert.Contains("Alice", Contents("policepatrolman.txt"));
+        Assert.Contains("Alice", Contents(Nypd.SpawnFile));
+    }
+
+    /// <summary>
+    /// A promotion repairs a member who is missing from the spawn file.
+    /// </summary>
+    /// <remarks>
+    /// The install already holds members whitelisted while the port was dropping the spawn
+    /// write. Without this they stay unable to spawn until somebody notices and re-adds them
+    /// by hand, which means until a player complains.
+    /// </remarks>
+    [Fact]
+    public async Task PromotionRestoresAMissingSpawnEntry()
+    {
+        Seed("policecadet.txt", "Alice");        // on the ladder, absent from the spawn file
+
+        await _rosters.ChangeRankAsync(Nypd, "Alice", +1);
+
+        Assert.Contains("Alice", Contents(Nypd.SpawnFile));
+    }
+
+    /// <summary>
+    /// A faction with no ladder uses one file for both, and is not listed in it twice.
+    /// </summary>
+    /// <remarks>
+    /// Nothing de-duplicates a roster on read, so a doubled name would show the faction one
+    /// member over its real size and count twice against a cap.
+    /// </remarks>
+    [Fact]
+    public async Task ALadderlessFactionIsWrittenOnceNotTwice()
+    {
+        var spawnOnly = FactionRegistry.All.Values.First(f => !f.HasRanks);
+        var service = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups);
+
+        await service.JoinAsync(spawnOnly, "Alice");
+
+        Assert.Equal(["Alice"], service.Read(spawnOnly.SpawnFile)!);
+    }
+
     [Fact]
     public async Task ConcurrentEditsToOneRosterDoNotLoseMembers()
     {
