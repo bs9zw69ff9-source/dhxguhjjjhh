@@ -296,7 +296,6 @@ public sealed record FeatureOptions
                 IpHub: Text(configuration, "IPHUB_API_KEY"),
                 Ipqs: Text(configuration, "IPQS_API_KEY"),
                 ProxyCheck: Text(configuration, "PROXYCHECK_API_KEY"),
-                VpnApi: Text(configuration, "VPNAPI_KEY"),
                 IpapiIs: Text(configuration, "IPAPIIS_KEY"),
                 Sentinel: Text(configuration, "SENTINEL_API_KEY")),
 

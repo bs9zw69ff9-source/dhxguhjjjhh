@@ -52,12 +52,11 @@ public sealed record VpnKeys(
     string? IpHub = null,
     string? Ipqs = null,
     string? ProxyCheck = null,
-    string? VpnApi = null,
     string? IpapiIs = null,
     string? Sentinel = null)
 {
     public IReadOnlyCollection<string> Secrets =>
-        new[] { IpHub, Ipqs, ProxyCheck, VpnApi, IpapiIs, Sentinel }
+        new[] { IpHub, Ipqs, ProxyCheck, IpapiIs, Sentinel }
             .Where(k => !string.IsNullOrEmpty(k)).Select(k => k!).ToList();
 }
 
@@ -140,53 +139,6 @@ public sealed class IpHubDetector(ResilientJsonClient client, VpnKeys keys) : IV
             Asn = VpnMerge.NormaliseAsn(JsonHelp.Text(root, "asn")),
             Country = JsonHelp.Text(root, "countryName"),
             CountryCode = JsonHelp.Text(root, "countryCode"),
-        });
-    }
-}
-
-/// <summary>vpnapi.io. Reports vpn / proxy / tor / relay directly.</summary>
-public sealed class VpnApiDetector(ResilientJsonClient client, VpnKeys keys) : IVpnDetector
-{
-    public string Name => "vpnapi";
-    public int Tier => 1;
-    public bool Enabled => !string.IsNullOrEmpty(keys.VpnApi);
-
-    public async Task<DetectorOutcome> LookupAsync(string ip, CancellationToken ct)
-    {
-        var fetch = await client.FetchAsync(
-            $"https://vpnapi.io/api/{Uri.EscapeDataString(ip)}?key={keys.VpnApi}", Name,
-            headers: new Dictionary<string, string> { ["Accept"] = "application/json" },
-            secrets: keys.Secrets, ct: ct).ConfigureAwait(false);
-
-        using var document = fetch.Document;
-        if (document is null) return DetectorOutcome.None(fetch.Failure ?? "no verdict");
-
-        var root = document.RootElement;
-        if (JsonHelp.Member(root, "security") is not { } security)
-            return DetectorOutcome.Unusable("the response had no `security` object - usually an invalid or expired key");
-
-        var network = JsonHelp.Member(root, "network") ?? default;
-        var location = JsonHelp.Member(root, "location") ?? default;
-
-        var hits = new[] { "vpn", "proxy", "tor", "relay" }.Where(k => JsonHelp.Bool(security, k) == true).ToList();
-        var organization = JsonHelp.Text(network, "autonomous_system_organization");
-
-        return DetectorOutcome.Answered(new DetectorReading
-        {
-            Name = Name, Tier = Tier,
-            Flagged = hits.Count > 0,
-            Detail = hits.Count > 0 ? string.Join("+", hits) : "clean",
-            Vpn = JsonHelp.Bool(security, "vpn"),
-            Proxy = JsonHelp.Bool(security, "proxy"),
-            Tor = JsonHelp.Bool(security, "tor"),
-            Relay = JsonHelp.Bool(security, "relay"),
-            Asn = VpnMerge.NormaliseAsn(JsonHelp.Text(network, "autonomous_system_number")),
-            Organization = organization,
-            Isp = organization,
-            Country = JsonHelp.Text(location, "country"),
-            CountryCode = JsonHelp.Text(location, "country_code"),
-            Region = JsonHelp.Text(location, "region"),
-            City = JsonHelp.Text(location, "city"),
         });
     }
 }

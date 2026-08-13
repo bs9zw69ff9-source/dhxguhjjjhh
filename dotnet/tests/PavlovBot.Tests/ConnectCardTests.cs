@@ -83,10 +83,10 @@ public class ConnectCardTests
            whether a confirmer was even consulted, is the difference between "ban them" and
            "leave it". */
         var text = Render(Screened(flagged: true, confirmed: null,
-            detectors: [Reading("iphub", 1, true), Reading("vpnapi", 1, false)]));
+            detectors: [Reading("iphub", 1, true), Reading("ipapi.is", 1, false)]));
 
         Assert.Contains("iphub", text, StringComparison.Ordinal);
-        Assert.Contains("vpnapi", text, StringComparison.Ordinal);
+        Assert.Contains("ipapi.is", text, StringComparison.Ordinal);
         Assert.Contains("🔴", text, StringComparison.Ordinal);
         Assert.Contains("🟢", text, StringComparison.Ordinal);
 
@@ -129,7 +129,7 @@ public class ConnectCardTests
            reading "not banned" beside a player who had just been banned would be read as a
            bug in the ban rather than a stale caption. */
         var text = Render(Screened(flagged: true, confirmed: false, actionable: true,
-            detectors: [Reading("iphub", 1, true), Reading("vpnapi", 1, true), Reading("ipqs", 2, false)]));
+            detectors: [Reading("iphub", 1, true), Reading("ipapi.is", 1, true), Reading("ipqs", 2, false)]));
 
         Assert.Contains("VPN / PROXY — DISPUTED", text, StringComparison.Ordinal);
         Assert.Contains("AUTO-BANNED", text, StringComparison.Ordinal);

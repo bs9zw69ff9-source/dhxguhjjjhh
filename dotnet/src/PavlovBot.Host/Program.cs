@@ -162,7 +162,6 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<ResilientJsonClient>()));
         builder.Services.AddSingleton(features.VpnKeys);
         builder.Services.AddSingleton<IVpnDetector, IpHubDetector>();
-        builder.Services.AddSingleton<IVpnDetector, VpnApiDetector>();
         builder.Services.AddSingleton<IVpnDetector, IpapiIsDetector>();
         builder.Services.AddSingleton<IVpnDetector, ProxyCheckDetector>();
         builder.Services.AddSingleton<IVpnDetector, SentinelDetector>();
