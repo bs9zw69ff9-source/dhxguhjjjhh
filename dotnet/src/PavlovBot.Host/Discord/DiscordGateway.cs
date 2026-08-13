@@ -277,11 +277,62 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             }
             await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
             _logger.LogInformation("Registered {Count} command(s) in guild {Guild}", properties.Count, guild.Name);
+
+            await ClearGlobalCommandsAsync().ConfigureAwait(false);
             return;
         }
 
         await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
         _logger.LogInformation("Registered {Count} global command(s) - propagation can take up to an hour", properties.Count);
+    }
+
+    /// <summary>
+    /// Delete any GLOBAL commands left over from before a guild was configured.
+    /// </summary>
+    /// <remarks>
+    /// THE DUPLICATE-COMMAND BUG. The two scopes are independent registrations of the same
+    /// application: a guild bulk-overwrite replaces the guild set and does not touch the
+    /// global one. So a bot that ran once without GUILD_ID - which is the default, and what
+    /// every install does before somebody reads the comment - leaves a full global set behind
+    /// forever. Set GUILD_ID afterwards and Discord shows BOTH, every command twice.
+    ///
+    /// Nothing expires them. They are not stale in Discord's eyes; they are a registration
+    /// this bot made and never withdrew, and they outlive restarts, redeploys and the removal
+    /// of the command from the code.
+    ///
+    /// Reconciled at startup rather than assumed: the list is fetched first, so the normal
+    /// case is one read and no write, and the log line only appears when there was genuinely
+    /// something to remove.
+    ///
+    /// THE WHITELIST BOT IS UNAFFECTED. It is a different application with its own token, and
+    /// registers globally ON PURPOSE because it is invited to each faction's guild. This
+    /// touches _client only.
+    /// </remarks>
+    private async Task ClearGlobalCommandsAsync()
+    {
+        try
+        {
+            var stale = await _client.GetGlobalApplicationCommandsAsync().ConfigureAwait(false);
+            if (stale.Count == 0) return;
+
+            await _client.BulkOverwriteGlobalApplicationCommandsAsync([]).ConfigureAwait(false);
+
+            _logger.LogWarning(
+                "Removed {Count} leftover GLOBAL command(s). They were registered by an earlier run " +
+                "with no GUILD_ID, and Discord was showing them alongside the guild ones - every " +
+                "command twice. This is a one-off cleanup; it will not repeat",
+                stale.Count);
+        }
+        /* NEVER FATAL. The guild commands are already registered and working at this point,
+           and refusing to finish starting over a cleanup would turn cosmetic duplicates into
+           an outage. Discord.Net throws its own exception types for rate limits and
+           permissions, so this cannot be narrowed to something meaningful. */
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Could not clear leftover global commands. Any duplicates in the picker will " +
+                "remain until the next start");
+        }
     }
 
     /// <summary>
