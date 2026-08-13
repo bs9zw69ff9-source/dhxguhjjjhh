@@ -152,6 +152,122 @@ public class BanResurrectionTests : IDisposable
         Assert.Empty(Bans());
     }
 
+    /* ─── IN-GAME BANS ARE FILED UNDER AN EOS ID ───────────────────────────────────────
+
+       THE REPORTED FAILURE: "players are still being banned from unreadable number thing."
+
+       Pavlov writes the UniqueID as the block header for a ban issued from the in-game admin
+       menu, so the file says 0002abc… where the bot's own bans say a username. The importer
+       resolves that id to a name through the account registry, which is what stops the ban
+       list showing the same player as two different entries.
+
+       That resolution is where both bugs live, and neither is visible from the ban list:
+
+         THE STORE IS KEYED ON THE RESOLVED NAME, THE FILE ON THE ID. The de-duplication check
+         compares the file's id against a set of stored names, never matches, and re-imports
+         the same ban every five minutes forever. An /unban removes one record out of however
+         many have piled up and the player stays banned.
+
+         THE TOMBSTONE IS KEYED ON WHAT STAFF TYPED. They unban "Bob"; the importer looks up
+         "0002abc…". The lift is invisible to it and the ban comes straight back.
+
+       Both need the id and the name treated as one identity. */
+
+    private const string AccountId = "0002abcdef0123456789abcdef012345";
+
+    /// <summary>An importer that knows this id belongs to <see cref="Name"/>.</summary>
+    private ModsaveBanlist Resolving() =>
+        new(_banFile, _store, NullLogger<ModsaveBanlist>.Instance,
+            time: null,
+            resolveName: id => string.Equals(id, AccountId, StringComparison.Ordinal) ? Name : null);
+
+    /// <summary>
+    /// THE REGRESSION. A resolved in-game ban is imported once, not once per sync.
+    /// </summary>
+    [Fact]
+    public async Task AnInGameBanIsNotReImportedOnEverySync()
+    {
+        await WriteBanFileAsync(AccountId);
+        var modsave = Resolving();
+
+        await modsave.ImportAsync();
+        await modsave.ImportAsync();
+        await modsave.ImportAsync();
+
+        var ban = Assert.Single(Bans());
+        Assert.Equal(Name, ban.PlayerId);
+    }
+
+    /// <summary>
+    /// THE REGRESSION. Unbanning by name blocks the file entry that names the id.
+    /// </summary>
+    /// <remarks>
+    /// Staff have the name in front of them - it is what the ban list shows and what
+    /// /unban autocompletes. Requiring them to know the EOS id to make an unban stick is
+    /// not a workaround, it is the bug.
+    /// </remarks>
+    [Fact]
+    public async Task ATombstoneUnderTheNameBlocksTheFileEntryUnderTheId()
+    {
+        await WriteBanFileAsync(AccountId);
+        await TombstoneAsync(Name, DateTimeOffset.UtcNow);
+
+        await Resolving().ImportAsync();
+
+        Assert.Empty(Bans());
+    }
+
+    /// <summary>And the other direction: unbanning by id blocks it too.</summary>
+    /// <remarks>
+    /// A ban the registry cannot resolve shows the id, so that is what staff copy into
+    /// /unban. Covering only the name would leave exactly the players whose bans are already
+    /// the hardest to read.
+    /// </remarks>
+    [Fact]
+    public async Task ATombstoneUnderTheIdBlocksItAsWell()
+    {
+        await WriteBanFileAsync(AccountId);
+        await TombstoneAsync(AccountId, DateTimeOffset.UtcNow);
+
+        await Resolving().ImportAsync();
+
+        Assert.Empty(Bans());
+    }
+
+    /// <summary>
+    /// The id is kept on the record, not thrown away once it has been resolved to a name.
+    /// </summary>
+    /// <remarks>
+    /// Pavlov's Ban, Kick and Unban all take a UniqueId. A name is accepted and silently does
+    /// nothing, so a record carrying only the resolved name depends on the account registry
+    /// still knowing that name at lift time. Keeping the id is what makes the lift work
+    /// regardless.
+    /// </remarks>
+    [Fact]
+    public async Task TheResolvedRecordKeepsTheAccountId()
+    {
+        await WriteBanFileAsync(AccountId);
+
+        await Resolving().ImportAsync();
+
+        Assert.Equal(AccountId, Assert.Single(Bans()).UniqueId);
+    }
+
+    /// <summary>An entry that resolves to nothing is still imported, under its id.</summary>
+    /// <remarks>
+    /// The control. A ban nobody can name is still a ban, and dropping it would be far worse
+    /// than showing it awkwardly - which is the whole reason the id survives resolution.
+    /// </remarks>
+    [Fact]
+    public async Task AnUnresolvableIdIsStillImportedUnderTheId()
+    {
+        await WriteBanFileAsync("0002ffffffffffffffffffffffffffff");
+
+        await Resolving().ImportAsync();
+
+        Assert.Equal("0002ffffffffffffffffffffffffffff", Assert.Single(Bans()).PlayerId);
+    }
+
     /// <summary>A ban that is still in force survives the sync untouched.</summary>
     /// <remarks>
     /// The other control. Making the sync drop everything would pass every test above and

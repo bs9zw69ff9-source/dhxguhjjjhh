@@ -108,6 +108,33 @@ public sealed class ModsaveBanlist(
         return string.IsNullOrWhiteSpace(resolved) ? entryName : resolved;
     }
 
+    /// <summary>
+    /// When either identity for one player was deliberately unbanned, or null for neither.
+    /// </summary>
+    /// <remarks>
+    /// A player has two names in this system - the EOS id the game writes and the username
+    /// staff read - and an unban is recorded under whichever one was typed. Checking a single
+    /// identity leaves the other half of the players unprotected, so both are looked up.
+    ///
+    /// The EARLIER of the two when both are present. A stale tombstone under one identity must
+    /// not extend the protection a fresher one under the other would already have expired.
+    /// </remarks>
+    internal static DateTimeOffset? LiftedAt(
+        IReadOnlyDictionary<string, DateTimeOffset> tombstones, string id, string name)
+    {
+        ArgumentNullException.ThrowIfNull(tombstones);
+
+        DateTimeOffset? earliest = null;
+
+        foreach (var key in new[] { id, name })
+        {
+            if (key is null || !tombstones.TryGetValue(key, out var at)) continue;
+            if (earliest is null || at < earliest) earliest = at;
+        }
+
+        return earliest;
+    }
+
     /// <summary>Whether an <c>Unban:</c> value says the ban has no time left.</summary>
     /// <remarks>
     /// Covers both spellings the writer can produce: "expired" for a ban already past its
@@ -223,14 +250,36 @@ public sealed class ModsaveBanlist(
 
             foreach (var entry in parsed)
             {
-                if (!known.Add(entry.Name)) continue;
+                /* RESOLVED BEFORE ANYTHING IS COMPARED, because the id and the name are one
+                   identity and every check below has to see both of them.
 
-                if (lifted.TryGetValue(entry.Name, out var when) && now - when < TombstoneLife)
+                   The de-duplication used to compare the FILE's key against a set of STORED
+                   keys. For an in-game ban those are different strings for the same person -
+                   the file says the EOS id, the store says the name it was resolved to - so
+                   the check never matched and the same ban was re-created on every sync,
+                   every five minutes, forever. An /unban then removed one record out of the
+                   pile and the player stayed banned, which is what "still being banned from
+                   the unreadable number" was. */
+                var player = ResolveName(entry.Name, resolveName);
+                var resolved = !string.Equals(player, entry.Name, StringComparison.Ordinal);
+
+                // Either identity being on record means this ban is already known. Both go in,
+                // so the store's older id-keyed records are recognised as well as new ones.
+                if (known.Contains(player) || known.Contains(entry.Name)) continue;
+                known.Add(player);
+                known.Add(entry.Name);
+
+                /* THE TOMBSTONE IS KEYED ON WHAT STAFF TYPED, which is the name in front of
+                   them - the ban list shows it and /unban autocompletes it. Looking it up by
+                   the file's id alone meant a lift was invisible here and the ban came
+                   straight back. Both identities are checked, so it does not matter which one
+                   they used. */
+                if (LiftedAt(lifted, entry.Name, player) is { } when && now - when < TombstoneLife)
                 {
                     logger.LogInformation(
                         "Not re-importing the in-game ban for {Name} - it was deliberately lifted {Ago} ago. " +
                         "To ban them again, use the ban commands rather than the file",
-                        entry.Name, now - when);
+                        player, now - when);
                     continue;
                 }
 
@@ -273,7 +322,16 @@ public sealed class ModsaveBanlist(
                        Resolved through the account registry, which already maps id to name.
                        An id nobody has seen keeps the id: a ban you cannot name is still a
                        ban, and dropping it would be far worse than showing it awkwardly. */
-                    PlayerId = ResolveName(entry.Name, resolveName),
+                    PlayerId = player,
+
+                    /* THE ID IS KEPT, not spent on producing the name. Pavlov's Ban, Kick and
+                       Unban all take a UniqueId - a name is accepted and silently does nothing
+                       - so a record carrying only the resolved name relies on the account
+                       registry still knowing that name when somebody comes to lift it. This is
+                       the id straight from the file, and it is set only when resolution
+                       actually happened: an unresolved entry could be either an id or a name,
+                       and guessing is what the existing lookup fallback is for. */
+                    UniqueId = resolved ? entry.Name : null,
                     Reason = reason,
                     Moderator = "in-game",
                     At = now,
