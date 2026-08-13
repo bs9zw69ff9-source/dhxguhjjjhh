@@ -110,6 +110,43 @@ public class SlashCommandValidationTests
         Assert.Contains("wipe", ((SlashCommandProperties)built).Options.Value.Select(o => o.Name), StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// /subclass takes a Discord account, not a typed in-game name.
+    /// </summary>
+    /// <remarks>
+    /// THE RULE THIS ENFORCES. The in-game name is asked for once, at /whitelist add, and
+    /// recorded against the account. Every command acting on an existing member takes the
+    /// account, so nobody has to look up and spell a Pavlov name to change somebody they can
+    /// see in the member list. /subclass was the last one still asking for the name.
+    ///
+    /// Asserted on the option TYPE rather than its name, because that is what makes Discord
+    /// render an account picker. A String option called "member" would read correctly here and
+    /// still be a free-text box.
+    /// </remarks>
+    [Fact]
+    public void TheSubclassCommandTakesADiscordAccount()
+    {
+        var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
+        var command = new SubclassCommand(
+            new RosterService(null, NullLogger<RosterService>.Instance),
+            new FactionMembers(store),
+            new Access(store, [], []),
+            NullLogger<SubclassCommand>.Instance);
+
+        var options = ((SlashCommandProperties)command.Build()).Options.Value;
+
+        Assert.Empty(SlashCommandValidation.Problems(command.Build()));
+
+        var member = Assert.Single(options, o => o.Name == "member");
+        Assert.Equal(ApplicationCommandOptionType.User, member.Type);
+        Assert.DoesNotContain(options, o => o.Name == "playerid");
+
+        // The sub-class picker is generated from the registry, so a new sub-class reaches
+        // the command without anybody editing it. Narcotics Bureau is the proof.
+        var choices = Assert.Single(options, o => o.Name == "subclass").Choices;
+        Assert.Contains("Narcotics Bureau", choices!.Select(c => c.Name), StringComparer.Ordinal);
+    }
+
     // ---- the validator ----
 
     /// <summary>

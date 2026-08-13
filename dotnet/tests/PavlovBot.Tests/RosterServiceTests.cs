@@ -182,6 +182,46 @@ public class RosterServiceTests : IDisposable
         Assert.Equal("Detective", decision.Conflict);
     }
 
+    /// <summary>
+    /// Narcotics Bureau behaves like every other sub-class, including the one-at-a-time rule.
+    /// </summary>
+    /// <remarks>
+    /// Driven entirely off the registry data, so this is really asking whether adding a
+    /// sub-class needs anything beyond a line of data. It should not, and if that ever stops
+    /// being true this is what says so.
+    /// </remarks>
+    [Fact]
+    public async Task NarcoticsBureauIsAssignableAndStillOnlyOneSubClass()
+    {
+        await _rosters.JoinAsync(Nypd, "Alice");
+
+        Assert.True((await _rosters.ChangeSubclassAsync(Nypd, "Alice", "Narcotics Bureau", removing: false)).IsAllowed);
+        Assert.Contains("Alice", Contents("policenarcotics.txt"));
+        Assert.Contains("Alice", Contents("policecadet.txt"));       // additive, not a rank move
+
+        var second = await _rosters.ChangeSubclassAsync(Nypd, "Alice", "Detective", removing: false);
+        Assert.Equal(MembershipOutcome.AlreadyHasSubclass, second.Outcome);
+        Assert.Equal("Narcotics Bureau", second.Conflict);
+    }
+
+    /// <summary>Leaving the faction takes the new sub-class with it.</summary>
+    /// <remarks>
+    /// A sub-class file left behind is access nobody can see: the rank files say the player is
+    /// gone, and the game still honours the sub-class whitelist. Worth pinning per sub-class
+    /// rather than trusting the loop, since the loop reads the registry and a sub-class added
+    /// to the wrong dictionary would be silently skipped.
+    /// </remarks>
+    [Fact]
+    public async Task LeavingClearsTheNarcoticsSubClassToo()
+    {
+        await _rosters.JoinAsync(Nypd, "Alice");
+        await _rosters.ChangeSubclassAsync(Nypd, "Alice", "Narcotics Bureau", removing: false);
+
+        await _rosters.LeaveAsync(Nypd, "Alice");
+
+        Assert.DoesNotContain("Alice", Contents("policenarcotics.txt"));
+    }
+
     [Fact]
     public async Task AMemberIsReportedAtTheirHighestRank()
     {

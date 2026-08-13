@@ -255,7 +255,8 @@ public sealed class FlushCommand(
 }
 
 /// <summary><c>/subclass</c> - assign or remove an NYPD sub-class.</summary>
-public sealed class SubclassCommand(RosterService rosters, Access access, ILogger<SubclassCommand> logger) : ISlashCommand
+public sealed class SubclassCommand(
+    RosterService rosters, FactionMembers members, Access access, ILogger<SubclassCommand> logger) : ISlashCommand
 {
     public string Name => "subclass";
 
@@ -269,10 +270,16 @@ public sealed class SubclassCommand(RosterService rosters, Access access, ILogge
         foreach (var name in FactionRegistry.All.Values.SelectMany(f => f.Subclasses.Keys).Distinct(StringComparer.Ordinal))
             subclass.AddChoice(name, name);
 
+        /* BY DISCORD ACCOUNT, like promotion, demotion and removal. The in-game name is asked
+           for exactly once, at /whitelist add, and recorded against the account; every command
+           that acts on an existing member takes the account instead. Typing the Pavlov name
+           again here was the last place that rule was broken, and it is the one that fails
+           worst - a misspelling matches no roster and answers "not whitelisted", which reads
+           as a membership problem rather than a typo. */
         return new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription("Whitelist Leader - Assign or remove a sub-class")
-            .AddOption("playerid", ApplicationCommandOptionType.String, "Player ID or username", isRequired: true, isAutocomplete: true)
+            .AddOption("member", ApplicationCommandOptionType.User, "The Discord account", isRequired: true)
             .AddOption(subclass)
             .AddOption("remove", ApplicationCommandOptionType.Boolean, "Remove it instead of assigning", isRequired: false)
             .Build();
@@ -282,15 +289,36 @@ public sealed class SubclassCommand(RosterService rosters, Access access, ILogge
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        var player = Sanitize.Id(command.Data.Options.First(o => o.Name == "playerid").Value as string ?? "");
         var subclass = command.Data.Options.First(o => o.Name == "subclass").Value as string ?? "";
         var removing = command.Data.Options.FirstOrDefault(o => o.Name == "remove")?.Value as bool? ?? false;
 
+        if (command.Data.Options.FirstOrDefault(o => o.Name == "member")?.Value is not IUser member)
+        {
+            await Reply(command, Theme.Failure("No member given")).ConfigureAwait(false);
+            return;
+        }
+
+        if (members.Of(member.Id) is not { } recorded)
+        {
+            await Reply(command, Theme.Failure("No membership on record",
+                $"{member.Mention} has no faction recorded against their account. Re-add them " +
+                "with `/whitelist add` to link their in-game name, then try again.")).ConfigureAwait(false);
+            return;
+        }
+
+        var player = recorded.Name;
         var membership = await rosters.FindAsync(player, ct).ConfigureAwait(false);
+
+        /* THE ROSTER FILE IS THE AUTHORITY, NOT THE INDEX - the same rule /promotion follows.
+           An entry outlives the roster it describes whenever somebody edits a file by hand, and
+           trusting it here would give a sub-class to a person who is in no faction at all. The
+           stale entry is dropped on the way past, which is the only way it gets cleaned up. */
         if (membership is null)
         {
+            await members.ForgetAsync(member.Id, ct).ConfigureAwait(false);
             await Reply(command, Theme.Failure("Not whitelisted",
-                $"**{Sanitize.Code(player)}** is not on any roster. Sub-classes are additive to a rank.")).ConfigureAwait(false);
+                $"{member.Mention} is recorded as **{Sanitize.Code(player)}**, who is not on any roster. " +
+                "Sub-classes are additive to a rank. The stale record has been cleared.")).ConfigureAwait(false);
             return;
         }
 
