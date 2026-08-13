@@ -21,7 +21,7 @@ public class DetectorFailureTests
     private static ResilientJsonClient Client(CannedHandler handler) =>
         new(new HttpClient(handler), NullLogger.Instance);
 
-    private static VpnKeys Keyed => new(IpHub: "k", Ipqs: "k", ProxyCheck: "k", VpnApi: "k", IpapiIs: "k", Sentinel: "k");
+    private static VpnKeys Keyed => new(IpHub: "k", Ipqs: "k", ProxyCheck: "k", IpapiIs: "k", Sentinel: "k");
 
     // ---- the transport ----
 
@@ -167,7 +167,6 @@ public class DetectorFailureTests
         var handler = new CannedHandler(HttpStatusCode.OK, "{}");
 
         Assert.False(new IpHubDetector(Client(handler), none).Enabled);
-        Assert.False(new VpnApiDetector(Client(handler), none).Enabled);
         Assert.False(new IpqsDetector(Client(handler), none).Enabled);
         Assert.False(new SentinelDetector(Client(handler), none, NullLogger<SentinelDetector>.Instance).Enabled);
 
@@ -196,7 +195,6 @@ public class DetectorFailureTests
         return
         [
             new IpHubDetector(client, Keyed),
-            new VpnApiDetector(client, Keyed),
             new IpapiIsDetector(client, Keyed),
             new ProxyCheckDetector(client, Keyed),
             new IpqsDetector(client, Keyed),

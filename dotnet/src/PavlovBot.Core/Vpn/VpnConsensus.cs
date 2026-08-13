@@ -221,7 +221,7 @@ public static class VpnMerge
     private static readonly string[] ResidentialPreference = ["ipqs", "proxycheck", "ipapi.is", "iphub", "sentinel"];
 
     private static readonly string[] ThreatScorePreference = ["ipqs", "sentinel", "proxycheck"];
-    private static readonly string[] OrganizationPreference = ["ipqs", "vpnapi", "proxycheck", "ipapi.is", "sentinel"];
+    private static readonly string[] OrganizationPreference = ["ipqs", "proxycheck", "ipapi.is", "sentinel"];
 
     /// <param name="geo">Whois geolocation, which is city-level and beats a detector's country.</param>
     public static VpnRecord Merge(
