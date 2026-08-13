@@ -30,6 +30,11 @@ native binding on install.
 
 ## Setup
 
+**Setting up a fresh VPS: see [INSTALL.md](INSTALL.md)** — prerequisites, the
+Discord application, file permissions and the checks that prove it came up.
+
+On a box that is already prepared:
+
 ```bash
 cp .env.example .env                      # then fill in the values
 bash scripts/deploy-csharp.sh             # build + verify, starts nothing
@@ -48,13 +53,17 @@ Slash commands are registered automatically on startup.
 
 ### Rolling back
 
+The Node bot it used to roll back to has been removed, so there is no second app
+to switch to. Rolling back means deploying an earlier commit:
+
 ```bash
-pm2 stop pavlov-bot-cs && pm2 start pavlov-bot
+bash scripts/deploy.sh <older-sha>
 ```
 
-The C# bot writes camelCase keys and millisecond timestamps — the exact format
-the Node bot read — the on-disk shape is unchanged, and `NodeCompatibilityTests` keeps it that way.
-That is deliberate and covered by `NodeCompatibilityTests`.
+The on-disk format is still the one the Node bot wrote — camelCase keys,
+millisecond timestamps — because those files are read on a live server and the
+shape is a contract rather than history. `NodeCompatibilityTests` keeps it that
+way.
 
 ## Architecture
 
