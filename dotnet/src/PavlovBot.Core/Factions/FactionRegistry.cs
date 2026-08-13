@@ -142,11 +142,14 @@ public static class FactionRegistry
                     ["Cadet"] = 50, ["Patrolman"] = 20, ["Corporal"] = 15, ["Sergeant"] = 20,
                     ["Lieutenant"] = 8, ["Captain"] = 4, ["Deputy Chief"] = 1, ["Chief of Police"] = 1,
                 },
+                /* SUB-CLASSES ARE NOT RANKS. A member keeps their rank and may additionally
+                   hold one of these, each with its own whitelist file. */
                 Subclasses = new Dictionary<string, string>
                 {
                     ["Vice Officer"] = "policevice.txt",
                     ["Detective"] = "policedetective.txt",
                     ["Tactical Response Unit"] = "policetacticalresponse.txt",
+                    ["Narcotics Bureau"] = "policenarcotics.txt",
                 },
             },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
