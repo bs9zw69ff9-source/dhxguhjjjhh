@@ -6,13 +6,29 @@ using PavlovBot.Rcon.Protocol;
 
 namespace PavlovBot.Host.Discord;
 
+/// <summary>What happened to a rename attempt.</summary>
+/// <remarks>
+/// A BOOL WAS NOT ENOUGH, and the missing case is the one that matters. Discord allows two
+/// renames per ten minutes per channel, the tick spends both, and a manual /counts is then
+/// the third - so "rate limited, try again shortly" is the single most likely answer this
+/// command can give, and it used to be indistinguishable from a missing permission.
+/// </remarks>
+public enum RenameOutcome
+{
+    Renamed,
+    NotVisible,
+    Forbidden,
+    RateLimited,
+    Failed,
+}
+
 /// <summary>Renames a voice channel. An interface so the naming logic tests without a gateway.</summary>
 public interface IChannelRenamer
 {
     /// <summary>The channel's current name, or null when it is not visible to the bot.</summary>
     Task<string?> NameOfAsync(ulong channelId, CancellationToken ct);
 
-    Task<bool> RenameAsync(ulong channelId, string name, CancellationToken ct);
+    Task<RenameOutcome> RenameAsync(ulong channelId, string name, CancellationToken ct);
 }
 
 /// <summary>
@@ -304,9 +320,19 @@ public sealed class PlayerCountChannels(
            real change waiting. */
         if (string.Equals(current, name, StringComparison.Ordinal)) return "unchanged";
 
-        return await channels.RenameAsync(channelId, name, ct).ConfigureAwait(false)
-            ? "renamed"
-            : "FAILED - rename rejected (needs Manage Channels)";
+        /* EVERY OUTCOME NAMED. This string is the whole diagnostic for a channel that has
+           stopped moving, and "FAILED" covering four different causes sent people to check
+           permissions that were already correct. */
+        return await channels.RenameAsync(channelId, name, ct).ConfigureAwait(false) switch
+        {
+            RenameOutcome.Renamed => "renamed",
+            RenameOutcome.RateLimited =>
+                "RATE LIMITED - Discord allows two renames per ten minutes per channel, and the " +
+                "background tick has already spent them. It will catch up on its own",
+            RenameOutcome.Forbidden => "FAILED - the bot needs Manage Channels on this channel",
+            RenameOutcome.NotVisible => $"FAILED - channel {channelId} is not a server channel",
+            _ => "FAILED - see the log for the reason",
+        };
     }
 
     /// <summary>
