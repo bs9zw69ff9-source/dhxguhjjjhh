@@ -305,6 +305,8 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             _logger.LogInformation(
                 "In DMs only OWNER_IDS and SUPER_OWNER_IDS apply. Mod, admin, faction leader " +
                 "and police are Discord role checks and are always false outside a guild");
+
+            await ClearOtherScopeAsync(registeredGlobally: true).ConfigureAwait(false);
             return;
         }
 
@@ -320,65 +322,103 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             {
                 _logger.LogWarning("GUILD_ID {GuildId} is not a guild this bot is in - falling back to global commands", guildId);
                 await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
+                await ClearOtherScopeAsync(registeredGlobally: true).ConfigureAwait(false);
                 return;
             }
             await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
             _logger.LogInformation("Registered {Count} command(s) in guild {Guild}", properties.Count, guild.Name);
 
-            await ClearGlobalCommandsAsync().ConfigureAwait(false);
+            await ClearOtherScopeAsync(registeredGlobally: false).ConfigureAwait(false);
             return;
         }
 
         await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
         _logger.LogInformation("Registered {Count} global command(s) - propagation can take up to an hour", properties.Count);
+
+        // Removing GUILD_ID is a scope change like any other, and leaves the guild set behind.
+        await ClearOtherScopeAsync(registeredGlobally: true).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Delete any GLOBAL commands left over from before a guild was configured.
+    /// Empty whichever scope this run did NOT register into.
     /// </summary>
+    /// <param name="registeredGlobally">
+    /// True when this run registered global commands, so the GUILD sets are the stale ones.
+    /// False when it registered into a guild, so the GLOBAL set is stale.
+    /// </param>
     /// <remarks>
-    /// THE DUPLICATE-COMMAND BUG. The two scopes are independent registrations of the same
-    /// application: a guild bulk-overwrite replaces the guild set and does not touch the
-    /// global one. So a bot that ran once without GUILD_ID - which is the default, and what
-    /// every install does before somebody reads the comment - leaves a full global set behind
-    /// forever. Set GUILD_ID afterwards and Discord shows BOTH, every command twice.
+    /// THE DUPLICATE-COMMAND BUG, BOTH WAYS ROUND. Guild and global are independent
+    /// registrations of the same application. A bulk-overwrite replaces one and does not
+    /// touch the other, so whenever the bot MOVES between scopes it leaves a complete set
+    /// behind in the scope it left, and Discord shows both - every command twice.
     ///
-    /// Nothing expires them. They are not stale in Discord's eyes; they are a registration
-    /// this bot made and never withdrew, and they outlive restarts, redeploys and the removal
-    /// of the command from the code.
+    /// It happened once in each direction, and the second was caused by fixing the first:
     ///
-    /// Reconciled at startup rather than assumed: the list is fetched first, so the normal
-    /// case is one read and no write, and the log line only appears when there was genuinely
-    /// something to remove.
+    ///   NO GUILD_ID, THEN GUILD_ID. The global set from the first run stayed. Fixed by
+    ///   clearing the global scope after guild registration.
     ///
-    /// THE WHITELIST BOT IS UNAFFECTED. It is a different application with its own token, and
-    /// registers globally ON PURPOSE because it is invited to each faction's guild. This
-    /// touches _client only.
+    ///   GUILD_ID, THEN USER_APP. That fix only ran on the guild branch, and USER_APP
+    ///   registers globally and returns before it - so the GUILD set stayed instead, and the
+    ///   duplicates came straight back in the one guild that mattered.
+    ///
+    /// Hence one method taking the direction, rather than two that can be added to
+    /// separately. A new registration path has to say which scope it used, and gets the
+    /// matching cleanup for free.
+    ///
+    /// Nothing expires these. They are not stale in Discord's eyes - they are a registration
+    /// this bot made and never withdrew, and they outlive restarts, redeploys, and deleting
+    /// the command from the code.
+    ///
+    /// EVERY GUILD, not just GUILD_ID. The setting can have been changed or removed since the
+    /// registration that needs undoing, and a guild whose id is no longer in .env is exactly
+    /// the one nobody will think to look at.
+    ///
+    /// THE WHITELIST BOT IS UNAFFECTED. Different application, own token, and it registers
+    /// globally on purpose because it is invited to each faction's guild. This touches
+    /// _client only.
     /// </remarks>
-    private async Task ClearGlobalCommandsAsync()
+    private async Task ClearOtherScopeAsync(bool registeredGlobally)
     {
         try
         {
-            var stale = await _client.GetGlobalApplicationCommandsAsync().ConfigureAwait(false);
-            if (stale.Count == 0) return;
+            if (!registeredGlobally)
+            {
+                var stale = await _client.GetGlobalApplicationCommandsAsync().ConfigureAwait(false);
+                if (stale.Count == 0) return;
 
-            await _client.BulkOverwriteGlobalApplicationCommandsAsync([]).ConfigureAwait(false);
+                await _client.BulkOverwriteGlobalApplicationCommandsAsync([]).ConfigureAwait(false);
 
-            _logger.LogWarning(
-                "Removed {Count} leftover GLOBAL command(s). They were registered by an earlier run " +
-                "with no GUILD_ID, and Discord was showing them alongside the guild ones - every " +
-                "command twice. This is a one-off cleanup; it will not repeat",
-                stale.Count);
+                _logger.LogWarning(
+                    "Removed {Count} leftover GLOBAL command(s) left by an earlier run that did not " +
+                    "use GUILD_ID. Discord was showing them alongside the guild ones - every command " +
+                    "twice. One-off cleanup; it will not repeat",
+                    stale.Count);
+                return;
+            }
+
+            foreach (var guild in _client.Guilds)
+            {
+                var stale = await guild.GetApplicationCommandsAsync().ConfigureAwait(false);
+                if (stale.Count == 0) continue;
+
+                await guild.BulkOverwriteApplicationCommandAsync([]).ConfigureAwait(false);
+
+                _logger.LogWarning(
+                    "Removed {Count} leftover GUILD command(s) from {Guild}, left by an earlier run " +
+                    "that registered with GUILD_ID. Discord was showing them alongside the global " +
+                    "ones - every command twice. One-off cleanup; it will not repeat",
+                    stale.Count, guild.Name);
+            }
         }
-        /* NEVER FATAL. The guild commands are already registered and working at this point,
-           and refusing to finish starting over a cleanup would turn cosmetic duplicates into
-           an outage. Discord.Net throws its own exception types for rate limits and
-           permissions, so this cannot be narrowed to something meaningful. */
+        /* NEVER FATAL. The commands this run registered are already live by now, and refusing
+           to finish starting over a cleanup would turn cosmetic duplicates into an outage.
+           Discord.Net raises its own types for rate limits and permissions, so there is
+           nothing meaningful to narrow this to. */
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex,
-                "Could not clear leftover global commands. Any duplicates in the picker will " +
-                "remain until the next start");
+                "Could not clear the leftover commands in the other scope. Any duplicates in the " +
+                "picker will remain until the next start");
         }
     }
 
