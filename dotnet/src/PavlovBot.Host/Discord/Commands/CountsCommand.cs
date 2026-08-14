@@ -68,11 +68,59 @@ public sealed class CountsCommand(PlayerCountChannels counts, FeatureOptions fea
                 "**not visible** — the id is wrong, or the bot cannot see that channel.");
         }
 
+        /* HALF-CONFIGURED IS THE CASE THIS MISSES. The guard above only fires when BOTH
+           settings are empty, so setting one and not the other produces a green tick and a
+           report that quietly covers half the feature - and the missing half is invisible,
+           because a channel that was never configured cannot appear in a per-channel report.
+
+           The symptom is somebody watching servers go down and no channel ever saying so. */
+        if (MissingHalf(targets) is { } missing) embed.AddField(missing.Title, missing.Body);
+
         embed.AddField("Note",
             "The timer runs this every 5 minutes. Discord allows two renames per 10 minutes " +
             "*per channel*, so running this by hand spends part of that allowance.");
 
         await Reply(command, embed).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The half of the feature that is not configured, or null when both halves are.
+    /// </summary>
+    /// <remarks>
+    /// A REPORT CANNOT MENTION A CHANNEL THAT WAS NEVER CONFIGURED. Every other diagnostic in
+    /// this command is per-channel, so the one state it could not describe was the state of
+    /// having no channels - and setting one of the two settings and not the other produced a
+    /// green tick over a report covering half the feature.
+    ///
+    /// The way that presents is somebody watching servers go down and no channel ever saying
+    /// so, which reads as the offline detection being broken rather than as a missing line
+    /// in .env.
+    ///
+    /// Stated as a note on a successful run rather than an error: half the feature genuinely
+    /// is working, and the other half is a setting rather than a fault.
+    /// </remarks>
+    internal static (string Title, string Body)? MissingHalf(PlayerCountChannels.Targets targets)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+
+        if (targets.ServerChannels.Count == 0)
+        {
+            return ("Per-server channels are not configured",
+                "`PLAYER_COUNT_CHANNELS` is empty, so nothing above reports a per-server count - " +
+                "including when a server is down. Only the platform total is being updated.\n\n" +
+                "Set it to one voice channel id per server, **in server order** so the first id is " +
+                "the server behind `RCON_HOST_1`, then restart:\n" +
+                "```\nPLAYER_COUNT_CHANNELS=111,222,333\n```");
+        }
+
+        if (targets.TotalChannel is null)
+        {
+            return ("The platform total is not configured",
+                "`SHACK_TOTAL_CHANNEL` is empty, so the Pavlov Shack total is not being updated. " +
+                "The per-server channels above are unaffected.");
+        }
+
+        return null;
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

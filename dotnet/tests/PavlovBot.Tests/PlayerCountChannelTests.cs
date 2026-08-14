@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PavlovBot.Core.Servers;
 using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
+using PavlovBot.Host.Discord.Commands;
 using PavlovBot.Host.Observability;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Servers;
@@ -370,5 +371,43 @@ public class PlayerCountChannelTests
 
         Assert.Contains(report, line => line.Contains("Manage Channels", StringComparison.Ordinal));
         Assert.DoesNotContain(report, line => line.Contains("RATE LIMITED", StringComparison.Ordinal));
+    }
+
+    /* ─── HALF-CONFIGURED IS ITS OWN STATE ──────────────────────────────────────────────
+
+       THE REPORTED CONFUSION: two servers were down and no channel ever said so. The cause
+       was PLAYER_COUNT_CHANNELS being empty while SHACK_TOTAL_CHANNEL was set - so /counts
+       reported one line, for the total, and showed a green tick over it.
+
+       Nothing in the per-channel report could have said this: a channel that was never
+       configured cannot appear in a list of what happened to each channel. */
+
+    [Fact]
+    public void NoPerServerChannelsIsCalledOutByName()
+    {
+        var note = CountsCommand.MissingHalf(new PlayerCountChannels.Targets([], TotalChannel: 999UL));
+
+        Assert.NotNull(note);
+        Assert.Contains("PLAYER_COUNT_CHANNELS", note!.Value.Body, StringComparison.Ordinal);
+
+        // The words that connect it to the symptom somebody actually noticed.
+        Assert.Contains("down", note.Value.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoTotalChannelIsCalledOutToo()
+    {
+        var note = CountsCommand.MissingHalf(new PlayerCountChannels.Targets([100UL], TotalChannel: null));
+
+        Assert.NotNull(note);
+        Assert.Contains("SHACK_TOTAL_CHANNEL", note!.Value.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FullyConfiguredSaysNothing()
+    {
+        // The control. A note on every healthy run is noise, and noise is what stops the
+        // real one being read.
+        Assert.Null(CountsCommand.MissingHalf(new PlayerCountChannels.Targets([100UL], TotalChannel: 999UL)));
     }
 }
