@@ -261,6 +261,53 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 "The other {Count} command(s) registered normally", problem.Command, problem.Problem, properties.Count);
         }
 
+        /* A USER-INSTALLABLE APP MUST BE REGISTERED GLOBALLY, and this is checked before the
+           guild branch because it overrides it. Integration types and contexts exist only on
+           global commands - a guild command is guild-installed by definition - so the two
+           cannot be combined. Registering both would put every command in the picker twice
+           inside that guild, which is the duplicate already fixed once here. */
+        if (_options.UserApp)
+        {
+            foreach (var command in properties.OfType<SlashCommandProperties>())
+            {
+                command.IntegrationTypes = new HashSet<ApplicationIntegrationType>
+                {
+                    ApplicationIntegrationType.GuildInstall,
+                    ApplicationIntegrationType.UserInstall,
+                };
+
+                /* Everywhere the installing account can use it. Left wide rather than
+                   restricted per command: nearly everything here acts on RCON or the store
+                   and needs no guild, and the handful that do read Discord state fail with
+                   their own message. A context list that disagreed with what a command
+                   actually needs would be a second, silent gate on top of the access one. */
+                command.ContextTypes = new HashSet<InteractionContextType>
+                {
+                    InteractionContextType.Guild,
+                    InteractionContextType.BotDm,
+                    InteractionContextType.PrivateChannel,
+                };
+            }
+
+            await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Registered {Count} command(s) as a USER-INSTALLABLE app (USER_APP is on). " +
+                "Global registration, so propagation can take up to an hour, and GUILD_ID is " +
+                "ignored - the two cannot be combined without duplicating every command. " +
+                "User Install must also be enabled in the Discord Developer Portal",
+                properties.Count);
+
+            /* SAID AT EVERY START, not once. Outside a guild there is no member to read roles
+               from, so this is not a warning about a mistake - it is the standing shape of the
+               permission model, and the log is where somebody looks when a moderator reports
+               that every command refuses them in a DM. */
+            _logger.LogInformation(
+                "In DMs only OWNER_IDS and SUPER_OWNER_IDS apply. Mod, admin, faction leader " +
+                "and police are Discord role checks and are always false outside a guild");
+            return;
+        }
+
         /* Guild-scoped registration when a guild is configured, because global commands take
            up to an hour to propagate - long enough that you conclude the code is broken.
            BulkOverwrite rather than per-command creation: it is one request instead of N,
