@@ -51,6 +51,9 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenSource? _stopping;
 
+    /// <summary>The off-the-Ready-path scope reconciliation. Awaited on shutdown.</summary>
+    private Task? _scopeCleanup;
+
     public DiscordGateway(
         BotOptions options,
         IEnumerable<ISlashCommand> commands,
@@ -221,9 +224,30 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     {
         try
         {
-            await RegisterCommandsAsync().ConfigureAwait(false);
+            var registeredGlobally = await RegisterCommandsAsync().ConfigureAwait(false);
             _ready.TrySetResult();
             _logger.LogInformation("Logged in as {User}", _client.CurrentUser?.Username ?? "?");
+
+            /* THE CLEANUP RUNS OFF THIS HANDLER, and that is the whole reason it exists as a
+               separate task.
+
+               THE OUTAGE THIS COMES FROM. The scope reconciliation makes one REST call per
+               guild, and it used to be awaited inside RegisterCommandsAsync - which is
+               awaited HERE, inside the Ready handler. Discord.Net dispatches gateway events
+               through this handler, so a slow Ready blocks everything behind it: interactions
+               queue up, breach the three-second acknowledgement window, and every command in
+               the bot answers "The application did not respond". Long enough and the
+               connection is treated as dead and reconnects, which starts the same work again.
+
+               Registration itself STAYS awaited - commands genuinely do not work until it has
+               finished, and it is one request. The cleanup is per-guild, is not needed for
+               anything to work, and is exactly the part that had no business being on this
+               path.
+
+               Held rather than dropped: StopAsync waits for it, so this is a tracked task and
+               not fire-and-forget. It cannot fault - ClearOtherScopeAsync catches its own
+               failures, because a cosmetic cleanup must never take the bot down. */
+            _scopeCleanup = Task.Run(() => ClearOtherScopeAsync(registeredGlobally));
         }
         catch (Exception ex)
         {
@@ -233,7 +257,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         }
     }
 
-    private async Task RegisterCommandsAsync()
+    private async Task<bool> RegisterCommandsAsync()
     {
         /* When the whitelist bot is on, these register on IT and not here. Registering them
            on both applications puts two identical entries in the picker and whichever one
@@ -306,8 +330,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 "In DMs only OWNER_IDS and SUPER_OWNER_IDS apply. Mod, admin, faction leader " +
                 "and police are Discord role checks and are always false outside a guild");
 
-            await ClearOtherScopeAsync(registeredGlobally: true).ConfigureAwait(false);
-            return;
+            return true;
         }
 
         /* Guild-scoped registration when a guild is configured, because global commands take
@@ -322,21 +345,19 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             {
                 _logger.LogWarning("GUILD_ID {GuildId} is not a guild this bot is in - falling back to global commands", guildId);
                 await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
-                await ClearOtherScopeAsync(registeredGlobally: true).ConfigureAwait(false);
-                return;
+                return true;
             }
             await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
             _logger.LogInformation("Registered {Count} command(s) in guild {Guild}", properties.Count, guild.Name);
 
-            await ClearOtherScopeAsync(registeredGlobally: false).ConfigureAwait(false);
-            return;
+            return false;
         }
 
         await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
         _logger.LogInformation("Registered {Count} global command(s) - propagation can take up to an hour", properties.Count);
 
         // Removing GUILD_ID is a scope change like any other, and leaves the guild set behind.
-        await ClearOtherScopeAsync(registeredGlobally: true).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -647,6 +668,12 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_stopping is not null) await _stopping.CancelAsync().ConfigureAwait(false);
+
+        /* Waited for, so the background cleanup is a TRACKED task rather than fire-and-forget.
+           It cannot fault - it catches its own failures - and it is bounded by the number of
+           guilds, so this does not hold up a shutdown for long. */
+        if (_scopeCleanup is { } cleanup) await cleanup.ConfigureAwait(false);
+
         await _client.StopAsync().ConfigureAwait(false);
         await _client.LogoutAsync().ConfigureAwait(false);
 
