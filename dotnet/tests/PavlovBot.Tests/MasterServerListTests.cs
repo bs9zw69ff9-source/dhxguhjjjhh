@@ -31,6 +31,31 @@ internal sealed class CountingMasterHandler : HttpMessageHandler
     }
 }
 
+/// <summary>Answers with one server, or with an empty list once switched.</summary>
+/// <remarks>
+/// Both responses are HTTP 200. That is the whole point: a version mismatch is a SUCCESSFUL
+/// request returning nothing, which is why it was indistinguishable from an empty platform
+/// and why it was allowed to overwrite a good cache.
+/// </remarks>
+internal sealed class SwitchableHandler : HttpMessageHandler
+{
+    public bool ReturnEmpty { get; set; }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var body = ReturnEmpty
+            ? @"{""servers"":[]}"
+            : @"{""servers"":[{""version"":""1.0.28"",""name"":""one"",""ip"":""1.2.3.4"",""port"":7777," +
+              @"""slots"":3,""maxSlots"":24,""mapLabel"":""datacenter"",""mapId"":""UGC1""," +
+              @"""gameMode"":""SND"",""gameModeLabel"":""SND"",""bPasswordProtected"":false,""bSecured"":true}]}";
+
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        });
+    }
+}
+
 /// <summary>Records the URL it was asked for, and answers with an empty list.</summary>
 internal sealed class UrlRecordingHandler : HttpMessageHandler
 {
@@ -110,6 +135,77 @@ public class MasterServerListTests
 
         Assert.True(snapshot.Failed);
         Assert.Empty(snapshot.Servers);   // nothing was ever cached, so there is nothing to keep
+    }
+
+    /* ─── AN EMPTY ANSWER MUST NOT EVICT A GOOD LIST ───────────────────────────────────
+
+       THE REPORTED FAILURE: searching the server browser for "Little" answered "nothing
+       matched" while "Little Italy [#1]" was visible in the list directly above it.
+
+       A version mismatch is a SUCCESSFUL request returning zero servers, so it replaced a
+       cache holding hundreds. The rendered list came from the session snapshot and kept
+       showing what it had; the search re-read the cache, found it empty, and was right to say
+       nothing matched. Two correct components and an impossible result between them.
+
+       The same eviction publishes "Pavlov Shack: 0" to the voice channel. */
+
+    [Fact]
+    public async Task AnEmptySuccessfulAnswerKeepsTheServersWeAlreadyHad()
+    {
+        var handler = new SwitchableHandler();
+        var master = new MasterServerList(new HttpClient(handler), NullLogger<MasterServerList>.Instance);
+
+        var first = await master.GetAsync(force: true);
+        Assert.Single(first.Servers);
+
+        // The game updates: the URL still answers 200, with nothing in it.
+        handler.ReturnEmpty = true;
+        var second = await master.GetAsync(force: true);
+
+        Assert.Single(second.Servers);                 // the good list survives
+        Assert.Equal("one", second.Servers[0].Name);
+        Assert.True(second.Failed);                    // and is honestly flagged as stale
+    }
+
+    /// <summary>Recovery is automatic once the version is right again.</summary>
+    /// <remarks>
+    /// The control. Keeping the old list forever would be its own bug - a server that really
+    /// did leave the platform must eventually disappear, and a bumped PAVLOV_VERSION has to
+    /// take effect without a restart.
+    /// </remarks>
+    [Fact]
+    public async Task AGoodAnswerAfterAnEmptyOneReplacesTheList()
+    {
+        var handler = new SwitchableHandler();
+        var master = new MasterServerList(new HttpClient(handler), NullLogger<MasterServerList>.Instance);
+
+        await master.GetAsync(force: true);
+        handler.ReturnEmpty = true;
+        await master.GetAsync(force: true);
+
+        handler.ReturnEmpty = false;
+        var recovered = await master.GetAsync(force: true);
+
+        Assert.False(recovered.Failed);
+        Assert.Single(recovered.Servers);
+    }
+
+    /// <summary>With nothing cached, an empty answer is simply an empty list.</summary>
+    /// <remarks>
+    /// There is nothing to protect, so this must not report a failure that did not happen -
+    /// "could not be reached" would send somebody looking at the network when the platform
+    /// genuinely had no servers, or when the version has been wrong since startup.
+    /// </remarks>
+    [Fact]
+    public async Task AnEmptyAnswerWithNothingCachedIsNotReportedAsAFailure()
+    {
+        var handler = new SwitchableHandler { ReturnEmpty = true };
+        var master = new MasterServerList(new HttpClient(handler), NullLogger<MasterServerList>.Instance);
+
+        var snapshot = await master.GetAsync(force: true);
+
+        Assert.Empty(snapshot.Servers);
+        Assert.False(snapshot.Failed);
     }
 
     /* ─── THE VERSION IN THE URL ────────────────────────────────────────────────────────

@@ -83,6 +83,24 @@ public sealed class MasterServerList
             if (fetched is null)
                 return new Snapshot(_cached, _time.GetUtcNow() - _fetchedAt, Failed: true);
 
+            /* AN EMPTY LIST NEVER EVICTS A GOOD ONE, and this is not a nicety.
+
+               A version mismatch is a SUCCESSFUL request returning zero servers, so it used
+               to overwrite a cache holding hundreds. Everything downstream then read an empty
+               platform as fact: the search in /server lookup answered "nothing matched" for a
+               server the user could still see listed above it, and the total channel
+               published "Pavlov Shack: 0".
+
+               Keeping what we had turns that into an old list flagged stale, which is both
+               true and recoverable, and leaves the version warning in the log as the thing
+               that explains it.
+
+               _fetchedAt is deliberately NOT advanced, so the next caller tries again rather
+               than sitting on the old list for the whole TTL. The single-flight gate above is
+               what stops that becoming a burst. */
+            if (fetched.Count == 0 && _cached.Count > 0)
+                return new Snapshot(_cached, _time.GetUtcNow() - _fetchedAt, Failed: true);
+
             _cached = fetched;
             _fetchedAt = _time.GetUtcNow();
             return new Snapshot(_cached, TimeSpan.Zero, Failed: false);
