@@ -11,8 +11,10 @@
 #
 # THE NODE ROLLBACK TARGET IS GONE. It was removed once the C# bot had taken
 # over, so there is no --node mode and no second app to keep out of the way.
-# Rolling back now means deploying an earlier commit:
-#   bash scripts/deploy.sh <older-sha>
+# Rolling back now means deploying an earlier commit. A sha or tag is checked out
+# DETACHED; a branch name is checked out as that branch:
+#   bash scripts/deploy.sh 4577811        # roll back to a commit
+#   bash scripts/deploy.sh main           # and back to the trunk afterwards
 #
 # RESTARTING IS THE DEFAULT, and it did not used to be. The old default pulled,
 # built, verified and then deliberately changed nothing, on the reasoning that
@@ -58,15 +60,42 @@ for arg in "$@"; do
   esac
 done
 
-echo "Deploying origin/$BRANCH ..."
-git fetch origin "$BRANCH"
+# A BRANCH OR A COMMIT, because rolling back is the case you are in when you are
+# least able to debug the deploy script. This documented `deploy.sh <older-sha>`
+# from the day it was written and never supported it: `git fetch origin <sha>`
+# fails with "couldn't find remote ref", because a sha is not a remote ref. The
+# one command you reach for in an outage was the one that did not work.
+echo "Fetching ..."
+if git fetch origin "$BRANCH" 2>/dev/null; then
+  :
+else
+  # Not a branch name. Fetch everything and resolve it locally - a sha, a tag, or
+  # a typo, and the three are told apart below rather than all failing the same way.
+  git fetch origin
+fi
 
-# CHECKOUT, NOT JUST RESET. `git reset --hard origin/$BRANCH` moves whatever branch
-# happens to be checked out to point at $BRANCH's commit, without saying so. Deploy
-# a branch while the box sits on another one and the local ref is silently rewritten,
-# so the next `git status` describes a branch that no longer contains what its name
-# says. -f discards local edits, which is the documented intent of this script.
-git checkout -f -B "$BRANCH" "origin/$BRANCH"
+if git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
+  echo "Deploying branch origin/$BRANCH ..."
+
+  # CHECKOUT, NOT JUST RESET. `git reset --hard origin/$BRANCH` moves whatever branch
+  # happens to be checked out to point at $BRANCH's commit, without saying so. Deploy
+  # a branch while the box sits on another one and the local ref is silently rewritten,
+  # so the next `git status` describes a branch that no longer contains what its name
+  # says. -f discards local edits, which is the documented intent of this script.
+  git checkout -f -B "$BRANCH" "origin/$BRANCH"
+elif git rev-parse --verify --quiet "${BRANCH}^{commit}" >/dev/null; then
+  # DETACHED ON PURPOSE. A rollback is a deliberate visit to an old commit, not a
+  # new branch, and creating one here would leave a local ref that the next deploy
+  # of the same name silently reuses.
+  echo "Deploying commit $BRANCH (detached - this is a rollback) ..."
+  git checkout -f --detach "$BRANCH"
+  echo "NOTE: the working tree is DETACHED. Return to the trunk with:  bash scripts/deploy.sh main"
+else
+  echo "'$BRANCH' is neither a branch on origin nor a commit in this repository." >&2
+  echo "Branches:  git branch -r" >&2
+  echo "Recent commits:  git log --oneline -20" >&2
+  exit 2
+fi
 
 # "Exactly match the branch" has to include files the branch does not have. A source
 # file deleted upstream is still on disk after a reset and is still what `require`
