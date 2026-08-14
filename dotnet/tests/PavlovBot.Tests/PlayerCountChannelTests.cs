@@ -40,11 +40,18 @@ public class PlayerCountChannelTests
             return Task.FromResult(_names.TryGetValue(channelId, out var name) ? name : null);
         }
 
-        public Task<bool> RenameAsync(ulong channelId, string name, CancellationToken ct)
+        /// <summary>What every rename returns. Set it to drive a failure path.</summary>
+        public RenameOutcome Outcome { get; set; } = RenameOutcome.Renamed;
+
+        public Task<RenameOutcome> RenameAsync(ulong channelId, string name, CancellationToken ct)
         {
             Renames.Add((channelId, name));
-            _names[channelId] = name;
-            return Task.FromResult(true);
+
+            // Only a successful rename changes the name, so a refused one leaves the channel
+            // showing what it did - which is what the report is describing.
+            if (Outcome == RenameOutcome.Renamed) _names[channelId] = name;
+
+            return Task.FromResult(Outcome);
         }
     }
 
@@ -215,7 +222,7 @@ public class PlayerCountChannelTests
 
     // ---- the rate limit ----
 
-    private static PlayerCountChannels Build(IChannelRenamer channels)
+    private static PlayerCountChannels Build(IChannelRenamer channels, UnitState state = UnitState.Unknown)
     {
         var options = new BotOptions
         {
@@ -239,7 +246,7 @@ public class PlayerCountChannelTests
            renamed "Offline" - so these tests passed in a container and failed on CI for a
            difference that is not a defect. Unknown is the case they are about, so they now
            state it instead of hoping for it. */
-        var services = new StubUnitControl(ServiceControl.DefaultUnits, UnitState.Unknown);
+        var services = new StubUnitControl(ServiceControl.DefaultUnits, state);
 
         return new PlayerCountChannels(channels, rcon, master, services, NullLogger<PlayerCountChannels>.Instance);
     }
@@ -320,5 +327,48 @@ public class PlayerCountChannelTests
 
         Assert.Contains(report, line => line.Contains("FAILED", StringComparison.Ordinal));
         Assert.Contains(report, line => line.Contains("not visible", StringComparison.Ordinal));
+    }
+
+    /* ─── RATE LIMITING IS NOT A FAILURE ───────────────────────────────────────────────
+
+       THE REPORTED BUG: /counts spun forever and never answered.
+
+       Discord allows two renames per ten minutes per channel, and Discord.Net's default is to
+       WAIT OUT that limit rather than throw. The renamer took a CancellationToken and never
+       passed it on, so the wait ignored cancellation: the command budget fired, nothing was
+       listening, the handler never returned, and the dispatcher's "this took too long" reply
+       never ran either. The interaction sat on a spinner until Discord expired it.
+
+       The fix is in the renamer - the token now reaches Discord.Net and a rate limit fails
+       fast instead of waiting. These pin the half that is testable: the outcome reaches the
+       report, and it does not masquerade as a permission problem. */
+
+    [Fact]
+    public async Task ARateLimitedRenameIsReportedRatherThanHidden()
+    {
+        var channels = new FakeChannels((100UL, "Server 1: 99/24")) { Outcome = RenameOutcome.RateLimited };
+
+        var report = await Build(channels, UnitState.Inactive)
+            .RunAsync(new PlayerCountChannels.Targets([100UL], TotalChannel: null));
+
+        Assert.Contains(report, line => line.Contains("RATE LIMITED", StringComparison.Ordinal));
+
+        /* NOT "FAILED". /counts keys its troubleshooting hint off that word, so reporting a
+           spent rate limit as a failure sends somebody to check a Manage Channels permission
+           that was correct all along - which is exactly what the old bool did. */
+        Assert.DoesNotContain(report, line => line.Contains("FAILED", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AMissingPermissionStillReadsAsAFailure()
+    {
+        // The control: the two must stay distinguishable, in both directions.
+        var channels = new FakeChannels((100UL, "Server 1: 99/24")) { Outcome = RenameOutcome.Forbidden };
+
+        var report = await Build(channels, UnitState.Inactive)
+            .RunAsync(new PlayerCountChannels.Targets([100UL], TotalChannel: null));
+
+        Assert.Contains(report, line => line.Contains("Manage Channels", StringComparison.Ordinal));
+        Assert.DoesNotContain(report, line => line.Contains("RATE LIMITED", StringComparison.Ordinal));
     }
 }
