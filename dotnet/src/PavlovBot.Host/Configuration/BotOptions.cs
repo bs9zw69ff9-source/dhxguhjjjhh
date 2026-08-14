@@ -24,6 +24,28 @@ public sealed record BotOptions
     public ulong? GuildId { get; init; }
 
     /// <summary>
+    /// Register as a USER-INSTALLABLE app, so commands follow the installing account into
+    /// DMs and servers the bot is not in.
+    /// </summary>
+    /// <remarks>
+    /// THIS FORCES GLOBAL REGISTRATION AND IGNORES <see cref="GuildId"/>. Discord does not
+    /// allow the two to be combined: integration types and contexts exist only on global
+    /// commands, and a guild-scoped command is guild-installed by definition. Registering
+    /// both would put every command in the picker twice inside that guild, which is the
+    /// duplicate this codebase has already fixed once.
+    ///
+    /// The cost is propagation: a global command can take up to an hour to appear after a
+    /// deploy, where a guild one is instant. That trade is the whole of this setting.
+    ///
+    /// PERMISSIONS DO NOT TRAVEL WITH IT. Every tier below owner is a Discord ROLE check, and
+    /// outside a guild there is no member to read roles from - so in a DM the mod, admin,
+    /// faction leader and police tiers are all false and only OWNER_IDS and SUPER_OWNER_IDS,
+    /// which are user ids, still apply. That is a property of the permission model, not
+    /// something this setting can grant.
+    /// </remarks>
+    public bool UserApp { get; init; }
+
+    /// <summary>
     /// A SECOND Discord application that owns the whitelist commands. Both null disables it.
     /// </summary>
     /// <remarks>
@@ -80,6 +102,8 @@ public sealed record BotOptions
         {
             DiscordToken = configuration["DISCORD_TOKEN"]?.Trim() ?? "",
             GuildId = ulong.TryParse(configuration["GUILD_ID"], CultureInfo.InvariantCulture, out var guild) ? guild : null,
+            UserApp = configuration["USER_APP"]?.Trim().ToLowerInvariant()
+                is "1" or "true" or "yes" or "on",
             FactionToken = configuration["FACTION_BOT_TOKEN"]?.Trim() is { Length: > 0 } ft ? ft : null,
             FactionClientId = ulong.TryParse(configuration["FACTION_CLIENT_ID"], CultureInfo.InvariantCulture, out var fc) ? fc : null,
             Servers = servers,
