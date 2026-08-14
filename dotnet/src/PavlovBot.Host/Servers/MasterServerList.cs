@@ -27,8 +27,13 @@ public sealed class MasterServerList
     /// return nothing at all rather than something misshapen. That is why an empty list is
     /// reported as a possible version mismatch instead of "no servers online" - the two look
     /// identical from here and have completely different fixes.
+    ///
+    /// SO THIS GOES STALE ON EVERY GAME UPDATE, and the symptom is the Pavlov Shack channel
+    /// reading 0 and the server browser being empty while the game is plainly fine. Bumping
+    /// it here is the fix; PAVLOV_VERSION overrides it without a deploy when the next one
+    /// lands before anybody has time to.
     /// </remarks>
-    public const string DefaultVersion = "1.0.27";
+    public const string DefaultVersion = "1.0.28";
 
     private static string Endpoint(string version) =>
         $"https://prod2-shack-pavlov-ms.vankrupt.net/servers/v2/list/{version}/oculus/0/0/0/all";

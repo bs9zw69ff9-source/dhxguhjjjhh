@@ -31,6 +31,23 @@ internal sealed class CountingMasterHandler : HttpMessageHandler
     }
 }
 
+/// <summary>Records the URL it was asked for, and answers with an empty list.</summary>
+internal sealed class UrlRecordingHandler : HttpMessageHandler
+{
+    public Uri? Requested { get; private set; }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        Requested = request.RequestUri;
+
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(@"{""servers"":[]}", Encoding.UTF8, "application/json"),
+        });
+    }
+}
+
 /// <summary>
 /// The master-server cache, and who is allowed to be served out of it.
 /// </summary>
@@ -93,5 +110,58 @@ public class MasterServerListTests
 
         Assert.True(snapshot.Failed);
         Assert.Empty(snapshot.Servers);   // nothing was ever cached, so there is nothing to keep
+    }
+
+    /* ─── THE VERSION IN THE URL ────────────────────────────────────────────────────────
+
+       Vankrupt version the ENDPOINT, not the payload, so a game update does not return
+       something misshapen - it returns nothing at all. The symptom is the Pavlov Shack
+       channel reading 0 and the server browser being empty while the game is plainly fine,
+       which looks like the bot being broken and is a one-character fix.
+
+       These pin the two things that make that fix work: the version reaches the URL, and
+       PAVLOV_VERSION overrides it without a deploy. Neither was covered, so a version bump
+       could have been made to a constant that nothing read. */
+
+    [Fact]
+    public async Task TheConfiguredVersionIsTheOneRequested()
+    {
+        var handler = new UrlRecordingHandler();
+        var master = new MasterServerList(new HttpClient(handler), NullLogger<MasterServerList>.Instance, "9.9.9");
+
+        await master.GetAsync(force: true);
+
+        Assert.NotNull(handler.Requested);
+        Assert.Contains("/list/9.9.9/", handler.Requested!.AbsoluteUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheDefaultVersionIsUsedWhenNoneIsConfigured()
+    {
+        var handler = new UrlRecordingHandler();
+        var master = new MasterServerList(new HttpClient(handler), NullLogger<MasterServerList>.Instance);
+
+        await master.GetAsync(force: true);
+
+        Assert.Contains($"/list/{MasterServerList.DefaultVersion}/", handler.Requested!.AbsoluteUri, StringComparison.Ordinal);
+    }
+
+    /// <summary>An empty PAVLOV_VERSION falls back rather than building a broken URL.</summary>
+    /// <remarks>
+    /// <c>PAVLOV_VERSION=</c> with nothing after it is how somebody turns the override off,
+    /// and it is what an unset variable looks like once trimmed. Passing it straight through
+    /// would request <c>/list//oculus</c> and get a 404 that reads as the platform being down.
+    /// </remarks>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task AnEmptyOverrideFallsBackToTheDefault(string configured)
+    {
+        var handler = new UrlRecordingHandler();
+        var master = new MasterServerList(new HttpClient(handler), NullLogger<MasterServerList>.Instance, configured);
+
+        await master.GetAsync(force: true);
+
+        Assert.Contains($"/list/{MasterServerList.DefaultVersion}/", handler.Requested!.AbsoluteUri, StringComparison.Ordinal);
     }
 }
