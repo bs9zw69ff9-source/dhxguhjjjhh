@@ -47,6 +47,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly CommandCatalog _catalog;
     private readonly PlayerAutocomplete _autocomplete;
     private readonly IReadOnlyList<IComponentHandler> _components;
+    private readonly RecentErrors _errors;
     private readonly ILogger<DiscordGateway> _logger;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenSource? _stopping;
@@ -62,6 +63,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         HealthRegistry health,
         CommandCatalog catalog,
         PlayerAutocomplete autocomplete,
+        RecentErrors errors,
         ILogger<DiscordGateway> logger)
     {
         ArgumentNullException.ThrowIfNull(commands);
@@ -77,6 +79,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _health = health;
         _catalog = catalog;
         _autocomplete = autocomplete;
+        _errors = errors;
         _logger = logger;
         _commands = commands.ToDictionary(c => c.Name, StringComparer.Ordinal);
 
@@ -528,6 +531,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         {
             _logger.LogError(ex, "/{Name} failed", name);
             _metrics.Increment("command_errors_total", MetricLabels.Of("command", name), help: "Slash commands that threw");
+
+            /* KEPT WHERE THE OWNER CAN REACH IT. The caller is about to be handed a
+               correlation id, and until this existed that id could only be redeemed from a
+               shell on the box - so in practice the id was reported and the trace never was. */
+            _errors.Record(correlationId, $"/{name}", interaction.User.Id, ex);
             try
             {
                 /* The user is looking at a spinner. Something has to replace it, or the
