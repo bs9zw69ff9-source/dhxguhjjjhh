@@ -104,6 +104,7 @@ public static class Program
         builder.Services.AddSingleton(features);
 
         builder.Services.AddSingleton(new MetricsRegistry());
+        builder.Services.AddSingleton<RecentErrors>();
         builder.Services.AddSingleton(new HealthRegistry());
 
         /* SQLite is the source of truth; the JSON files are a current, human-readable
@@ -293,6 +294,7 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, CheckBanCommand>();
         builder.Services.AddSingleton<ISlashCommand, KickCommand>();
         builder.Services.AddSingleton<ISlashCommand, AnnounceCommand>();
+        builder.Services.AddSingleton<ISlashCommand, ErrorsCommand>();
         builder.Services.AddSingleton<ISlashCommand, WhitelistCommand>();
         builder.Services.AddSingleton<PavlovBot.Host.Factions.FactionMembers>();
         builder.Services.AddSingleton<IComponentHandler, WhitelistWipe>();
