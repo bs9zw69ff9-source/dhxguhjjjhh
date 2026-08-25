@@ -259,4 +259,52 @@ public class BotOptionsTests
         Assert.Equal(TimeSpan.FromMilliseconds(2500), options.Servers[0].ReadCacheDuration);
     }
 
+    /* ─── COMMANDS_DISABLED ──────────────────────────────────────────────────────────────
+
+       One binary, two RPs: the Fallout bot has no use for /arrest, /warrant or /bail, and
+       leaving them in the picker for a moderator who can never use them reads as a
+       half-finished bot.
+
+       A LIST OF NAMES, NOT A PROFILE FLAG. This repo tried the flag once - RP_PROFILE - and
+       reverted it in full. The parsing is what these pin; the filtering itself lives in
+       DiscordGateway, which builds a live Discord client in its constructor and cannot be
+       reached from a test. That gap is stated rather than papered over. */
+
+    [Fact]
+    public void NoCommandsAreDisabledByDefault()
+    {
+        // Every existing deployment must keep every command without configuring anything.
+        Assert.Empty(BotOptions.Bind(Config(Minimal)).DisabledCommands);
+    }
+
+    [Fact]
+    public void TheDisabledListIsSplitAndTrimmed()
+    {
+        var options = BotOptions.Bind(Config([.. Minimal, ("COMMANDS_DISABLED", "arrest, warrant ,bail")]));
+
+        Assert.Equal(["arrest", "warrant", "bail"], options.DisabledCommands);
+    }
+
+    /// <summary>A leading slash is how people write a command name.</summary>
+    /// <remarks>
+    /// "/arrest" is what somebody copies out of Discord. A list that silently failed to match
+    /// it would leave the command enabled and look exactly like the setting being ignored -
+    /// which on a Fallout server means an /arrest nobody expects to exist.
+    /// </remarks>
+    [Fact]
+    public void ALeadingSlashIsAccepted()
+    {
+        Assert.Equal(["arrest", "warrant"],
+            BotOptions.Bind(Config([.. Minimal, ("COMMANDS_DISABLED", "/arrest,/warrant")])).DisabledCommands);
+    }
+
+    [Fact]
+    public void EmptyEntriesFromATrailingCommaAreDropped()
+    {
+        // A trailing comma is the commonest .env typo, and an empty name would match nothing
+        // while still counting as an entry.
+        Assert.Equal(["arrest"],
+            BotOptions.Bind(Config([.. Minimal, ("COMMANDS_DISABLED", "arrest,,  ,")])).DisabledCommands);
+    }
+
 }

@@ -55,6 +55,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     /// <summary>The off-the-Ready-path scope reconciliation. Awaited on shutdown.</summary>
     private Task? _scopeCleanup;
 
+    /// <summary>COMMANDS_DISABLED entries matching no command. A typo, and worth saying so.</summary>
+    private readonly IReadOnlyList<string> _unknownDisabled;
+
+    private readonly int _disabledCount;
+
     public DiscordGateway(
         BotOptions options,
         IEnumerable<ISlashCommand> commands,
@@ -81,7 +86,29 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _autocomplete = autocomplete;
         _errors = errors;
         _logger = logger;
-        _commands = commands.ToDictionary(c => c.Name, StringComparer.Ordinal);
+        /* DISABLED COMMANDS ARE DROPPED HERE, at the one place the dictionary is built, so
+           the same filter covers registration, dispatch and the /help catalogue. Filtering at
+           registration alone would leave a disabled command dispatchable from a picker entry
+           Discord had not caught up on yet. */
+        var disabled = options.DisabledCommands.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Materialised once. The container hands back a fresh enumerable, and the three passes
+        // below would otherwise resolve every command three times.
+        var all = commands.ToList();
+
+        _commands = all
+            .Where(c => !disabled.Contains(c.Name))
+            .ToDictionary(c => c.Name, StringComparer.Ordinal);
+
+        /* A NAME THAT MATCHES NOTHING IS REPORTED, because the failure is silent otherwise:
+           COMMANDS_DISABLED=arrests would leave /arrest enabled and look exactly like the
+           setting being ignored. Held rather than logged - the logger is injected but the
+           startup summary is where an operator is already looking. */
+        _unknownDisabled = [.. options.DisabledCommands
+            .Where(name => !all.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)];
+
+        _disabledCount = all.Count - _commands.Count;
 
         /* Populate the catalog HERE rather than letting /help inject the command
            collection: a command that lists every command would otherwise depend on itself,
@@ -124,6 +151,19 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         catch (Exception) { return null; }
     }
 
+    /// <summary>
+    /// The commands this bot will actually register, after COMMANDS_DISABLED.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for the selftest, which used to read the container's ISlashCommand collection
+    /// directly and therefore reported every command as present no matter what was disabled -
+    /// a pre-deploy gate confidently listing /arrest on a bot that would never register it.
+    /// </remarks>
+    public IReadOnlyCollection<string> CommandNames => [.. _commands.Keys];
+
+    /// <summary>COMMANDS_DISABLED entries that match no command in this build.</summary>
+    public IReadOnlyList<string> UnknownDisabledCommands => _unknownDisabled;
+
     /// <summary>True once the gateway has connected and commands are registered.</summary>
     public bool IsReady => _ready.Task.IsCompletedSuccessfully && _client.ConnectionState == ConnectionState.Connected;
 
@@ -154,6 +194,19 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         await _client.LoginAsync(TokenType.Bot, _options.DiscordToken).ConfigureAwait(false);
         await _client.StartAsync().ConfigureAwait(false);
         _logger.LogInformation("Discord gateway starting with {Count} command(s)", _commands.Count);
+
+        if (_disabledCount > 0)
+        {
+            _logger.LogInformation("{Count} command(s) disabled by COMMANDS_DISABLED: {Names}",
+                _disabledCount, string.Join(", ", _options.DisabledCommands));
+        }
+
+        foreach (var unknown in _unknownDisabled)
+        {
+            _logger.LogWarning(
+                "COMMANDS_DISABLED names \"{Name}\", which is not a command in this bot - check the " +
+                "spelling. Nothing was disabled for that entry", unknown);
+        }
 
         if (_factionClient is null) return;
 
