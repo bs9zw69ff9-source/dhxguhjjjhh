@@ -34,8 +34,17 @@ disagree about what exists.
 For a Fallout bot that is the whole police surface:
 
 ```
-COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck,suspendrank
+COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck
 ```
+
+That is the **whole** police surface. All four live in `PoliceCommands.cs`, and the penal
+code is reachable from nowhere else.
+
+**`/suspendrank` and `/case` are deliberately not on that list**, though both read as police.
+Each looks the player's faction up from whatever roster they are on — `/suspendrank` pulls a
+rank and auto-restores it, `/case` is "moderation cases: investigations, evidence and
+findings" — so they work as well for an NCR trooper as for an officer. Disabling them would
+cost a themed bot two useful mod tools over a name.
 
 A leading slash is accepted, so `/arrest` works too. A name that is not a command logs a
 warning naming it and starts anyway — a typo here should not take a bot down.
@@ -43,8 +52,8 @@ warning naming it and starts anyway — a typo here should not take a bot down.
 `--selftest` prints exactly what will register, which is worth a look before deploying:
 
 ```
-selftest: 54 command(s): /adjustcaps, /alts, ... /whitelist
-selftest: 5 command(s) disabled by COMMANDS_DISABLED: /arrest, /warrant, /bail, /backgroundcheck, /suspendrank
+selftest: 55 command(s): /adjustcaps, /alts, ... /whitelist
+selftest: 4 command(s) disabled by COMMANDS_DISABLED: /arrest, /warrant, /bail, /backgroundcheck
 ```
 
 The police BOARDS are separate and switch off by leaving their channels unset:
@@ -297,7 +306,7 @@ DISCORD_TOKEN=            # the SECOND application's token
 CLIENT_ID=
 GUILD_ID=                 # the Fallout Discord server's id
 BOT_NAME=Mojave Authority
-COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck,suspendrank
+COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck
 
 # ── its own factions and state ──
 FACTIONS_PATH=/root/pavlov-bot-fallout/factions.json
