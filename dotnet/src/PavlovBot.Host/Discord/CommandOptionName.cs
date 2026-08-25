@@ -17,7 +17,7 @@ namespace PavlovBot.Host.Discord;
 /// characters of letters, digits, dashes and underscores, and lowercase. One bad name does
 /// not fail one command: the bulk overwrite is rejected whole, and every command disappears
 /// from the picker. So this cannot be a best-effort <c>ToLower().Replace(" ", "_")</c> - a
-/// faction named "Followers of the Apocalypse!" has to come out usable or not at all.
+/// faction named "Mojave Express Couriers!" has to come out usable or not at all.
 /// </remarks>
 internal static class CommandOptionName
 {
@@ -52,7 +52,7 @@ internal static class CommandOptionName
             }
             else if (!underscore && builder.Length > 0)
             {
-                // Collapsed, so "Followers of the Apocalypse" does not become a run of
+                // Collapsed, so "Mojave Express Couriers" does not become a run of
                 // underscores, and never leading - Discord rejects neither, but both read
                 // as a bug in the bot rather than a faction with punctuation in its name.
                 builder.Append('_');

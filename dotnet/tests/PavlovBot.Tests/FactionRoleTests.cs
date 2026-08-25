@@ -209,8 +209,8 @@ public class CommandOptionNameTests
     [Fact]
     public void PunctuationCollapsesRatherThanRepeating()
     {
-        Assert.Equal("followers_of_the_apocalypse_role",
-            CommandOptionName.Slug("Followers of the Apocalypse!", "_role"));
+        Assert.Equal("mojave_express_couriers_role",
+            CommandOptionName.Slug("Mojave Express Couriers!", "_role"));
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public class CommandOptionNameTests
         string[] names =
         [
             "NCR", "Legion", "Brotherhood of Steel", "Enclave",
-            "Followers of the Apocalypse!", "The King's Men", "Vault 21", "Caesar's Legion",
+            "Mojave Express Couriers!", "Crimson Caravan Co.", "Vault 21", "Caesar's Legion",
         ];
 
         foreach (var slug in names.Select(n => CommandOptionName.Slug(n, "_role")))
