@@ -11,7 +11,7 @@
   // files decide what they get once they are in. The bot writes both.
   //
   // FILE NAMES MUST NOT COLLIDE WITH THE OTHER BOT'S. These are deliberately
-  // prefixed ncr/legion/bos/enclave/kings/followers so they cannot touch
+  // prefixed ncr/legion/bos/enclave so they cannot touch
   // gambinospawn.txt, colombospawn.txt or the police*.txt files when both bots
   // share one game server. The bot refuses to start if two factions in THIS
   // file share a file, but it cannot see the other bot's roster - keep the
@@ -79,25 +79,6 @@
         { "name": "Sergeant", "file": "enclavesergeant.txt", "cap": 6 },
         { "name": "Officer",  "file": "enclaveofficer.txt",  "cap": 3 },
         { "name": "Colonel",  "file": "enclavecolonel.txt",  "cap": 1 }
-      ]
-    },
-    {
-      "name": "Kings",
-      "spawnFile": "kingsspawn.txt",
-      "ranks": [
-        { "name": "Member",     "file": "kingsmember.txt",     "cap": 25 },
-        { "name": "Lieutenant", "file": "kingslieutenant.txt", "cap": 5 },
-        { "name": "The King",   "file": "kingsking.txt",       "cap": 1 }
-      ]
-    },
-    {
-      "name": "Followers",
-      "spawnFile": "followersspawn.txt",
-      "ranks": [
-        { "name": "Volunteer", "file": "followersvolunteer.txt", "cap": 25 },
-        { "name": "Scholar",   "file": "followersscholar.txt",   "cap": 12 },
-        { "name": "Physician", "file": "followersphysician.txt", "cap": 6 },
-        { "name": "Director",  "file": "followersdirector.txt",  "cap": 1 }
       ]
     }
   ]
