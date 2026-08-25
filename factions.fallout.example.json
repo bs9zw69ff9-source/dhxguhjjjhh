@@ -1,0 +1,104 @@
+{
+  // ── Fallout faction roster ────────────────────────────────────────────────
+  // Point FACTIONS_PATH at a copy of this file. It REPLACES the built-in set
+  // (Gambino, Colombo, NYPD) entirely, so this bot will not answer for those.
+  //
+  // RANKS ARE LOWEST FIRST. Order is the hierarchy: /promotion moves one entry
+  // down this list to the next, /demotion moves back. "cap" is the maximum
+  // members at that rank; omit it, or use 0, for uncapped.
+  //
+  // "spawnFile" is what actually lets somebody play as the faction. The rank
+  // files decide what they get once they are in. The bot writes both.
+  //
+  // FILE NAMES MUST NOT COLLIDE WITH THE OTHER BOT'S. These are deliberately
+  // prefixed ncr/legion/bos/enclave/kings/followers so they cannot touch
+  // gambinospawn.txt, colombospawn.txt or the police*.txt files when both bots
+  // share one game server. The bot refuses to start if two factions in THIS
+  // file share a file, but it cannot see the other bot's roster - keep the
+  // prefixes and there is nothing to collide with.
+  //
+  // The ladders and caps below are a starting point. Edit them and restart;
+  // this is data, not code, so it needs no deploy.
+
+  "factions": [
+    {
+      "name": "NCR",
+      "spawnFile": "ncrspawn.txt",
+      "ranks": [
+        { "name": "Recruit",    "file": "ncrrecruit.txt",    "cap": 40 },
+        { "name": "Trooper",    "file": "ncrtrooper.txt",    "cap": 25 },
+        { "name": "Corporal",   "file": "ncrcorporal.txt",   "cap": 15 },
+        { "name": "Sergeant",   "file": "ncrsergeant.txt",   "cap": 10 },
+        { "name": "Lieutenant", "file": "ncrlieutenant.txt", "cap": 6 },
+        { "name": "Captain",    "file": "ncrcaptain.txt",    "cap": 3 },
+        { "name": "Colonel",    "file": "ncrcolonel.txt",    "cap": 1 }
+      ],
+      // Sub-classes are NOT ranks. A member keeps their rank and may hold one
+      // of these as well, each with its own whitelist file.
+      "subclasses": [
+        { "name": "Ranger",         "file": "ncrranger.txt" },
+        { "name": "Heavy Trooper",  "file": "ncrheavy.txt" }
+      ]
+    },
+    {
+      "name": "Legion",
+      "spawnFile": "legionspawn.txt",
+      "ranks": [
+        { "name": "Recruit",   "file": "legionrecruit.txt",   "cap": 40 },
+        { "name": "Prime",     "file": "legionprime.txt",     "cap": 25 },
+        { "name": "Veteran",   "file": "legionveteran.txt",   "cap": 15 },
+        { "name": "Decanus",   "file": "legiondecanus.txt",   "cap": 8 },
+        { "name": "Centurion", "file": "legioncenturion.txt", "cap": 3 },
+        { "name": "Legate",    "file": "legionlegate.txt",    "cap": 1 }
+      ],
+      "subclasses": [
+        { "name": "Frumentarius", "file": "legionfrumentarius.txt" }
+      ]
+    },
+    {
+      "name": "Brotherhood of Steel",
+      "spawnFile": "bosspawn.txt",
+      "ranks": [
+        { "name": "Initiate",      "file": "bosinitiate.txt",     "cap": 30 },
+        { "name": "Knight",        "file": "bosknight.txt",       "cap": 20 },
+        { "name": "Senior Knight", "file": "bosseniorknight.txt", "cap": 10 },
+        { "name": "Paladin",       "file": "bospaladin.txt",      "cap": 6 },
+        { "name": "Sentinel",      "file": "bossentinel.txt",     "cap": 2 },
+        { "name": "Elder",         "file": "boselder.txt",        "cap": 1 }
+      ],
+      "subclasses": [
+        { "name": "Scribe", "file": "bosscribe.txt" }
+      ]
+    },
+    {
+      "name": "Enclave",
+      "spawnFile": "enclavespawn.txt",
+      "ranks": [
+        { "name": "Recruit",  "file": "enclaverecruit.txt",  "cap": 20 },
+        { "name": "Soldier",  "file": "enclavesoldier.txt",  "cap": 12 },
+        { "name": "Sergeant", "file": "enclavesergeant.txt", "cap": 6 },
+        { "name": "Officer",  "file": "enclaveofficer.txt",  "cap": 3 },
+        { "name": "Colonel",  "file": "enclavecolonel.txt",  "cap": 1 }
+      ]
+    },
+    {
+      "name": "Kings",
+      "spawnFile": "kingsspawn.txt",
+      "ranks": [
+        { "name": "Member",     "file": "kingsmember.txt",     "cap": 25 },
+        { "name": "Lieutenant", "file": "kingslieutenant.txt", "cap": 5 },
+        { "name": "The King",   "file": "kingsking.txt",       "cap": 1 }
+      ]
+    },
+    {
+      "name": "Followers",
+      "spawnFile": "followersspawn.txt",
+      "ranks": [
+        { "name": "Volunteer", "file": "followersvolunteer.txt", "cap": 25 },
+        { "name": "Scholar",   "file": "followersscholar.txt",   "cap": 12 },
+        { "name": "Physician", "file": "followersphysician.txt", "cap": 6 },
+        { "name": "Director",  "file": "followersdirector.txt",  "cap": 1 }
+      ]
+    }
+  ]
+}

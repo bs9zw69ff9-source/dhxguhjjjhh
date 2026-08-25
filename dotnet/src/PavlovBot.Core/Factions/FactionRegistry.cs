@@ -154,6 +154,16 @@ public static class FactionRegistry
             },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The built-in factions as a set, and the default when nothing is configured.
+    /// </summary>
+    /// <remarks>
+    /// Lazy so it is built once, on first use, rather than in a static initialiser that runs
+    /// before configuration has been read. An existing deployment gets exactly this and needs
+    /// no configuration at all, which is the whole point of it being the default.
+    /// </remarks>
+    public static FactionSet Default { get; } = FactionSet.Of(All.Values);
+
     public static FactionDefinition? Get(string? faction) =>
         faction is not null && All.TryGetValue(faction, out var def) ? def : null;
 

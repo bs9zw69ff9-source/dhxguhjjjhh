@@ -99,6 +99,27 @@ public static class Program
 
         var features = FeatureOptions.Bind(builder.Configuration);
 
+        /* THE FACTION SET, resolved before anything is registered because a bad one is a
+           configuration error and belongs with the others - reported in full, then exit,
+           rather than surfacing as an empty picker three subsystems later.
+
+           UNSET IS THE BUILT-IN SET. The normal bots configure nothing and get exactly what
+           they have today; only a themed clone points this at a file. */
+        var factions = PavlovBot.Core.Factions.FactionRegistry.Default;
+        if (features.FactionsPath is { } factionsPath)
+        {
+            var loaded = PavlovBot.Host.Factions.FactionsFile.Load(factionsPath);
+            if (loaded.Set is null)
+            {
+                await Console.Error.WriteLineAsync($"FACTIONS_PATH is set but unusable ({factionsPath}):").ConfigureAwait(false);
+                foreach (var problem in loaded.Problems)
+                    await Console.Error.WriteLineAsync($"  - {problem}").ConfigureAwait(false);
+                return 78;   // EX_CONFIG
+            }
+            factions = loaded.Set;
+        }
+
+        builder.Services.AddSingleton(factions);
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(options.Monitoring);
         builder.Services.AddSingleton(features);
@@ -201,7 +222,7 @@ public static class Program
 
         // ---- discord surfaces ----
         builder.Services.AddSingleton(sp => new Access(
-            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners));
+            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners, factions));
         /* Singleton, and registered as BOTH: commands inject it to send paged output, and
            the gateway resolves it as a component handler to turn the pages. Two instances
            would mean the handler looking up a session the sender never stored. */
@@ -281,8 +302,13 @@ public static class Program
             sp.GetRequiredService<RconRegistry>(),
             features.LedgerDirectory));
 
+        /* THE CONFIGURED SET, NOT THE DEFAULT. Both of these take it as an optional
+           parameter so tests and existing callers keep working, which means forgetting to
+           pass it here would silently run a themed clone on the built-in roster. The startup
+           summary prints the faction names for exactly that reason. */
         builder.Services.AddSingleton(sp => new RosterService(
-            features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>()));
+            features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>(),
+            backupDirectory: null, factions: factions));
 
         builder.Services.AddSingleton<CommandCatalog>();
         builder.Services.AddSingleton<PlayerAutocomplete>();
@@ -482,6 +508,14 @@ public static class Program
            variable is otherwise indistinguishable from one that is broken, and the two get
            debugged very differently. */
         foreach (var line in features.Describe()) logger.LogInformation("  {Feature}", line);
+
+        /* THE FACTION SET IS NAMED AT EVERY START. Two bots now run this binary against one
+           game server, and the failure that costs a roster is the clone quietly running the
+           built-in factions and writing the other bot's files. Printing the names is the
+           check that takes one glance; nothing else would say which set is loaded. */
+        logger.LogInformation("  factions: {Source} - {Names}",
+            features.FactionsPath ?? "built in (FACTIONS_PATH not set)",
+            string.Join(", ", factions.Names));
         logger.LogInformation("  whitelist bot: {State}", options.FactionBotEnabled
             ? $"on (application {options.FactionClientId}, owns /whitelist /promotion /demotion /subclass)"
             : "off (FACTION_BOT_TOKEN / FACTION_CLIENT_ID not set - those commands stay on the main bot)");

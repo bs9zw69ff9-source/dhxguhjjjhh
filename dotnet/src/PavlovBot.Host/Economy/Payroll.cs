@@ -164,7 +164,7 @@ public sealed class Payroll(
 
         if (!Enabled) return new PayrollRun(now, factionName, none, none, "payroll is not configured");
 
-        if (!FactionRegistry.All.TryGetValue(factionName, out var faction))
+        if (!rosters.Factions.All.TryGetValue(factionName, out var faction))
             return new PayrollRun(now, factionName, none, none, $"no faction named \"{factionName}\"");
 
         /* ---- guard: is the roster current ----

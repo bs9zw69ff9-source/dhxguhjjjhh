@@ -151,6 +151,15 @@ public sealed record FeatureOptions
     /// opening anything, and unlike the board it publishes no player NAMES to everybody who
     /// can see the channel list.
     /// </remarks>
+    /// <summary>
+    /// A JSON file defining the factions this bot runs. Null means the built-in set.
+    /// </summary>
+    /// <remarks>
+    /// The setting that lets one binary serve two RPs. Unset is the normal deployment and
+    /// gets the mafias and the police exactly as before.
+    /// </remarks>
+    public string? FactionsPath { get; init; }
+
     public IReadOnlyList<ulong> PlayerCountChannels { get; init; } = [];
 
     /// <summary>A voice channel for the platform-wide total, from the Pavlov master server.</summary>
@@ -242,6 +251,7 @@ public sealed record FeatureOptions
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
             PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
+            FactionsPath = Text(configuration, "FACTIONS_PATH"),
             PavlovUnits = PavlovBot.Host.Servers.ServiceControl.ParseUnits(Text(configuration, "PAVLOV_UNITS")),
             SystemctlSudo = OptionalFlag(configuration, "PAVLOV_SYSTEMCTL_SUDO"),
             /* Resolved the way the Node bot resolves it: an explicit override first, then

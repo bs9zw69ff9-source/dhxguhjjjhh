@@ -65,8 +65,12 @@ public sealed class Access
     /// </remarks>
     private readonly int _configuredOwnerCount;
 
-    public Access(SerializedStore store, IEnumerable<ulong> owners, IEnumerable<ulong>? superOwners = null)
+    private readonly FactionSet _factions;
+
+    public Access(SerializedStore store, IEnumerable<ulong> owners, IEnumerable<ulong>? superOwners = null,
+        FactionSet? factions = null)
     {
+        _factions = factions ?? FactionRegistry.Default;
         _store = store;
         _owners = owners.ToHashSet();
 
@@ -133,7 +137,7 @@ public sealed class Access
     /// </remarks>
     public IReadOnlyCollection<string> ManageableFactions(IUser? user)
     {
-        if (IsFactionLeader(user)) return [.. FactionRegistry.All.Keys];
+        if (IsFactionLeader(user)) return [.. _factions.Names];
 
         var roles = Roles;
         var factions = new List<string>();
