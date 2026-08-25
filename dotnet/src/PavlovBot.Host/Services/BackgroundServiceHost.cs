@@ -518,7 +518,7 @@ public sealed class BackgroundServiceHost : IHostedService
 
         foreach (var suspension in due)
         {
-            var faction = PavlovBot.Core.Factions.FactionRegistry.Get(suspension.Faction);
+            var faction = _rosters.Factions.Get(suspension.Faction);
             if (faction is null) continue;
 
             /* Re-add at the entry rank, then promote to where they were. Writing straight

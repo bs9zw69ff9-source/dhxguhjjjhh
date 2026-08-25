@@ -40,8 +40,20 @@ public sealed class RosterService
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _gates =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public RosterService(string? rosterDirectory, ILogger<RosterService> logger, string? backupDirectory = null)
+    /// <summary>
+    /// The factions this bot runs. Defaults to the built-in set when nothing is configured.
+    /// </summary>
+    /// <remarks>
+    /// Exposed rather than kept private because <see cref="PavlovBot.Host.Economy.Payroll"/>
+    /// needs the same answer and already depends on this service. A second injection of the
+    /// same object into the same object graph would be two places to get wrong.
+    /// </remarks>
+    public FactionSet Factions { get; }
+
+    public RosterService(string? rosterDirectory, ILogger<RosterService> logger, string? backupDirectory = null,
+        FactionSet? factions = null)
     {
+        Factions = factions ?? FactionRegistry.Default;
         _directory = rosterDirectory;
         _backupDirectory = backupDirectory ?? Path.Combine(Directory.GetCurrentDirectory(), "faction_file_bak");
         _logger = logger;
@@ -155,7 +167,7 @@ public sealed class RosterService
     /// <summary>Where a player currently sits, or null when they are on no roster.</summary>
     public Task<Membership?> FindAsync(string player, CancellationToken ct = default)
     {
-        foreach (var faction in FactionRegistry.All.Values)
+        foreach (var faction in Factions.All.Values)
         {
             // Highest first: a member listed in several rank files is reported at their
             // TOP rank, which is the one that actually governs what they can do in game.

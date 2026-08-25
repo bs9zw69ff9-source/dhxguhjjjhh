@@ -30,6 +30,10 @@ native binding on install.
 
 ## Setup
 
+**Running a themed second bot beside the normal one: see [SECOND-BOT.md](SECOND-BOT.md)** —
+one binary, two faction rosters, and what must not be shared when both point at one game
+server.
+
 **Setting up a fresh VPS: see [INSTALL.md](INSTALL.md)** — prerequisites, the
 Discord application, file permissions and the checks that prove it came up.
 

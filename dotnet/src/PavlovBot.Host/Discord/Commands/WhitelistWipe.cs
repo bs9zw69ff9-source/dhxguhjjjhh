@@ -64,7 +64,7 @@ public sealed class WhitelistWipe(
         if (interaction is not SocketMessageComponent component) return;
 
         var action = id.Argument(0);
-        var faction = FactionRegistry.Get(id.Argument(1));
+        var faction = rosters.Factions.Get(id.Argument(1));
         var owner = ulong.TryParse(id.Argument(2), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : 0;

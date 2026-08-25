@@ -267,7 +267,7 @@ public sealed class SubclassCommand(
             .WithType(ApplicationCommandOptionType.String).WithRequired(true);
 
         // Driven off the registry, so adding a sub-class to the data adds it to the picker.
-        foreach (var name in FactionRegistry.All.Values.SelectMany(f => f.Subclasses.Keys).Distinct(StringComparer.Ordinal))
+        foreach (var name in rosters.Factions.All.Values.SelectMany(f => f.Subclasses.Keys).Distinct(StringComparer.Ordinal))
             subclass.AddChoice(name, name);
 
         /* BY DISCORD ACCOUNT, like promotion, demotion and removal. The in-game name is asked

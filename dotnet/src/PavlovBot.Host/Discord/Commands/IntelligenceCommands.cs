@@ -35,7 +35,7 @@ public sealed class FactionStatsCommand(
             .WithName("faction").WithDescription("Which faction")
             .WithType(ApplicationCommandOptionType.String).WithRequired(true);
 
-        foreach (var name in FactionRegistry.All.Keys) faction.AddChoice(name, name);
+        foreach (var name in rosters.Factions.Names) faction.AddChoice(name, name);
 
         return new SlashCommandBuilder()
             .WithName(Name)
@@ -64,7 +64,7 @@ public sealed class FactionStatsCommand(
         var sub = command.Data.Options.FirstOrDefault();
         var name = sub?.Options.FirstOrDefault(o => o.Name == "faction")?.Value?.ToString();
 
-        if (FactionRegistry.Get(name) is not { } faction)
+        if (rosters.Factions.Get(name) is not { } faction)
         {
             await Reply(command, Theme.Failure("Unknown faction")).ConfigureAwait(false);
             return;

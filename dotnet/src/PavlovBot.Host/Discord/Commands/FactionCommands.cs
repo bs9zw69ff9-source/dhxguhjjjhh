@@ -23,14 +23,14 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
 
     public ApplicationCommandProperties Build()
     {
-        static SlashCommandOptionBuilder Faction()
+        SlashCommandOptionBuilder Faction()
         {
             var option = new SlashCommandOptionBuilder()
                 .WithName("faction").WithDescription("Which faction")
                 .WithType(ApplicationCommandOptionType.String).WithRequired(true);
 
             // From the registry, so adding a faction does not mean remembering to edit this.
-            foreach (var name in FactionRegistry.All.Keys) option.AddChoice(name, name);
+            foreach (var name in rosters.Factions.Names) option.AddChoice(name, name);
             return option;
         }
 
@@ -172,7 +172,7 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
             return;
         }
 
-        if (FactionRegistry.Get(recorded.Faction) is not { } faction)
+        if (rosters.Factions.Get(recorded.Faction) is not { } faction)
         {
             await Reply(command, Theme.Failure("That faction is gone",
                 $"{member.Mention} is recorded in **{Sanitize.Code(recorded.Faction)}**, which no longer exists.")).ConfigureAwait(false);
@@ -250,8 +250,8 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
         }).ConfigureAwait(false);
     }
 
-    private static FactionDefinition? Resolve(IReadOnlyDictionary<string, object> options) =>
-        FactionRegistry.Get(options.GetValueOrDefault("faction")?.ToString());
+    private FactionDefinition? Resolve(IReadOnlyDictionary<string, object> options) =>
+        rosters.Factions.Get(options.GetValueOrDefault("faction")?.ToString());
 
     /// <summary>
     /// This faction's members ranked by time on the server.
