@@ -54,6 +54,76 @@ running with every whitelist write silently failing:
 FACTION_ROLES_PATH (...) is inside IGNORE_PATHS, so this bot could never write a roster
 ```
 
+### Splitting three installs between two bots
+
+With `pavlovserver`, `pavlovserver1` and `pavlovserver2`, give the normal bot two and the
+clone one. **Each bot numbers its own servers from 1** — the clone's only server is
+`RCON_*_1` even though you think of it as server 2, and its channel reads `Server 1: 3/24`.
+
+**The normal bot** (`pavlovserver` + `pavlovserver1`):
+
+```bash
+RCON_HOST_1=127.0.0.1
+RCON_PORT_1=9100
+RCON_PASSWORD_1=...
+RCON_HOST_2=127.0.0.1
+RCON_PORT_2=9101
+RCON_PASSWORD_2=...
+
+# SAME ORDER as the RCON slots - unit N is the unit for server N, by position.
+PAVLOV_UNITS=pavlovserver,pavlovserver1
+
+PAVLOV_BASE_1=/home/steam/pavlovserver
+PAVLOV_BASES=/home/steam/pavlovserver,/home/steam/pavlovserver1
+FACTION_ROLES_PATH=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/FactionRoles
+
+IGNORE_PATHS=/home/steam/pavlovserver2
+PLAYER_COUNT_CHANNELS=<server 1 channel>,<server 2 channel>
+```
+
+**The Fallout bot** (`pavlovserver2`):
+
+```bash
+RCON_HOST_1=127.0.0.1
+RCON_PORT_1=9102
+RCON_PASSWORD_1=...
+
+PAVLOV_UNITS=pavlovserver2
+PAVLOV_BASE_1=/home/steam/pavlovserver2
+PAVLOV_BASES=/home/steam/pavlovserver2
+FACTION_ROLES_PATH=/home/steam/pavlovserver2/Pavlov/Saved/Config/ModSave/FactionRoles
+
+# BOTH, listed separately - see below.
+IGNORE_PATHS=/home/steam/pavlovserver,/home/steam/pavlovserver1
+PLAYER_COUNT_CHANNELS=<its one channel>
+```
+
+#### `PAVLOV_BASES` is not optional here
+
+Leave it unset and the bot **scans for siblings** of `PAVLOV_BASE_1` matching
+`pavlovserver*` and claims every one it finds:
+
+```
+Pavlov installs: pavlovserver, pavlovserver1, pavlovserver2      <- unset
+Pavlov installs: pavlovserver, pavlovserver1                      <- PAVLOV_BASES set
+```
+
+Whitelist writes go to **every** install in that list, so without it both bots write
+`whitelist.txt` into all three. Set it explicitly on both.
+
+#### List each install separately in `IGNORE_PATHS`
+
+Matching is separator-bounded, so `/home/steam/pavlovserver` does **not** cover
+`pavlovserver1` or `pavlovserver2`. That is what stops a bot refusing writes to its own
+install — and it means the clone must name both of the others, not just the shortest one.
+
+#### Everything below stops applying
+
+Separate installs means separate files. The clone can have its own
+`MODSAVE_BLACKLIST_PATH`, `PAYROLL_AMOUNT` and `MODSAVE_PATH`, all pointed inside
+`pavlovserver2`. The collision rules below only matter if two bots really do share one
+install.
+
 ---
 
 ## Sharing one game server: what must not collide
