@@ -155,7 +155,10 @@ public sealed class MoneyLog
 /// The write itself is temp-file-plus-rename, because the game READS these files too and
 /// <see cref="MoneyLog.TryReadBalance"/> already has to cope with half-written ones.
 /// </remarks>
-public sealed class LedgerFileStore(string? directory, PavlovBot.Host.Rcon.IOnlineRoster? online = null) : IBalanceStore
+public sealed class LedgerFileStore(
+    string? directory,
+    PavlovBot.Host.Rcon.IOnlineRoster? online = null,
+    PavlovBot.Host.Storage.GameFileGuard? guard = null) : IBalanceStore
 {
     private string? PathFor(string playerId)
     {
@@ -229,6 +232,12 @@ public sealed class LedgerFileStore(string? directory, PavlovBot.Host.Rcon.IOnli
     {
         if (Refusal(playerId) is not null) return false;
         if (PathFor(playerId) is not { } path) return false;
+
+        /* THE ONLY WRITE HERE THAT DID NOT GO THROUGH THE GUARD, and the highest-stakes one
+           on a shared server: this is somebody's money. Two bots against one install both
+           rewriting modsave/<player>.txt lose updates - the per-player lock serialises
+           writes INSIDE a process, and there is no lock between processes. */
+        if ((guard ?? PavlovBot.Host.Storage.GameFileGuard.None).Problem(path) is not null) return false;
 
         try
         {

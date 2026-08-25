@@ -160,6 +160,19 @@ public sealed record FeatureOptions
     /// </remarks>
     public string? FactionsPath { get; init; }
 
+    /// <summary>
+    /// Paths this bot must never WRITE to, however else it is configured.
+    /// </summary>
+    /// <remarks>
+    /// For a second bot sharing one game server. Several subsystems rewrite a whole file from
+    /// their own database - the ban list, the whitelist, a player's balance - so two bots
+    /// pointed at one file erase each other's work on a timer.
+    ///
+    /// Reads are unaffected: a read cannot corrupt somebody else's file, and the second bot
+    /// still needs to read the rosters to enforce one faction per player.
+    /// </remarks>
+    public IReadOnlyList<string> IgnoredPaths { get; init; } = [];
+
     public IReadOnlyList<ulong> PlayerCountChannels { get; init; } = [];
 
     /// <summary>A voice channel for the platform-wide total, from the Pavlov master server.</summary>
@@ -252,6 +265,7 @@ public sealed record FeatureOptions
             PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
             FactionsPath = Text(configuration, "FACTIONS_PATH"),
+            IgnoredPaths = List(configuration, "IGNORE_PATHS"),
             PavlovUnits = PavlovBot.Host.Servers.ServiceControl.ParseUnits(Text(configuration, "PAVLOV_UNITS")),
             SystemctlSudo = OptionalFlag(configuration, "PAVLOV_SYSTEMCTL_SUDO"),
             /* Resolved the way the Node bot resolves it: an explicit override first, then
@@ -412,6 +426,9 @@ public sealed record FeatureOptions
             : Directory.Exists(RosterDirectory)
                 ? RosterDirectory
                 : $"off (FACTION_ROLES_PATH is {RosterDirectory}, which does not exist)")}",
+        $"ignored paths: {(IgnoredPaths.Count == 0
+            ? "none (IGNORE_PATHS not set) - this bot may write every file it is given"
+            : string.Join(", ", IgnoredPaths))}",
         $"systemd units: {string.Join(", ", PavlovUnits)}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
