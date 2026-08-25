@@ -156,6 +156,33 @@ public class GameFileGuardTests : IDisposable
         Assert.NotNull(byFile.Problem(Path.Combine(modsave, "blacklist.txt")));
     }
 
+    /// <summary>
+    /// Two installs: each bot ignores the other's whole tree, and neither swallows the other.
+    /// </summary>
+    /// <remarks>
+    /// THE SETUP THIS IS FOR, and the reason the separator-bounded rule is not a detail.
+    /// "pavlovserver" is a literal prefix of "pavlovserver2", so a naive match would have the
+    /// normal bot refuse every write to its OWN install the moment it was told to leave the
+    /// clone's alone - and the symptom would be whitelists silently not saving.
+    ///
+    /// Named with these exact directories because they are the ones actually deployed.
+    /// </remarks>
+    [Fact]
+    public void PavlovserverAndPavlovserver2AreSeparateTrees()
+    {
+        var first = TempDirectory("pavlovserver");
+        var second = TempDirectory("pavlovserver2");
+
+        var normalBot = Guarding(second);      // owns the first install
+        var clone = Guarding(first);           // owns the second
+
+        Assert.Null(normalBot.Problem(Path.Combine(first, "roster.txt")));
+        Assert.NotNull(normalBot.Problem(Path.Combine(second, "roster.txt")));
+
+        Assert.Null(clone.Problem(Path.Combine(second, "roster.txt")));
+        Assert.NotNull(clone.Problem(Path.Combine(first, "roster.txt")));
+    }
+
     public void Dispose()
     {
         GC.SuppressFinalize(this);
