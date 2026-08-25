@@ -404,7 +404,7 @@ pm2 logs pavlov-bot-fallout --nostream --lines 60 | grep -E "factions|whitelists
 The faction line is printed at every start and names the set that is loaded:
 
 ```
-factions: /root/pavlov-bot-fallout/factions.json - NCR, Legion, Brotherhood of Steel, Enclave, Kings, Followers
+factions: /root/pavlov-bot-fallout/factions.json - NCR, Legion, Brotherhood of Steel, Enclave
 ```
 
 If it says `built in (FACTIONS_PATH not set)`, the clone is running the police roster and
