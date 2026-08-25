@@ -126,6 +126,36 @@ public class GameFileGuardTests : IDisposable
         Assert.NotNull(Guarding(TempDirectory("pavlovserver")).Problem(null));
     }
 
+    /// <summary>
+    /// Ignoring a PARENT directory takes everything under it, including the rosters.
+    /// </summary>
+    /// <remarks>
+    /// THE TRAP THIS DOCUMENTS, and the one the shipped example originally fell into.
+    /// FactionRoles lives INSIDE ModSave, so ignoring the ModSave tree to protect the ban list
+    /// and the ledgers silently takes the second bot's own whitelists with it.
+    ///
+    /// The behaviour here is correct and deliberate - a directory covers what is under it.
+    /// What was wrong was the advice. Startup now refuses the combination of
+    /// FACTION_ROLES_PATH inside IGNORE_PATHS outright, because the bot would otherwise come
+    /// up reporting the whitelists as enabled and refuse every single write.
+    /// </remarks>
+    [Fact]
+    public void IgnoringAParentDirectoryAlsoCoversTheRostersInsideIt()
+    {
+        var modsave = TempDirectory("ModSave");
+        var rosters = TempDirectory("ModSave", "FactionRoles");
+
+        var guard = Guarding(modsave);
+
+        Assert.NotNull(guard.Problem(Path.Combine(rosters, "policecadet.txt")));
+
+        // Naming the files instead leaves the rosters writable, which is the documented fix.
+        var byFile = Guarding(Path.Combine(modsave, "blacklist.txt"));
+
+        Assert.Null(byFile.Problem(Path.Combine(rosters, "policecadet.txt")));
+        Assert.NotNull(byFile.Problem(Path.Combine(modsave, "blacklist.txt")));
+    }
+
     public void Dispose()
     {
         GC.SuppressFinalize(this);

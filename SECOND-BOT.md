@@ -61,12 +61,29 @@ because the clone's `.env` is a copy of the original — so every shared path is
 correct, and pointing at files it must not touch.
 
 ```bash
-IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave
+IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/blacklist.txt,/home/steam/pavlovserver/Pavlov/Saved/Config/whitelist.txt
 ```
 
 Any **write** at or under a listed path is refused and logged once. Reads are unaffected, so
 the clone can still read the rosters to enforce one faction per player. Matching is
 separator-bounded: `/home/steam/pavlovserver` does not cover `pavlovserver-backup`.
+
+### Name FILES here, not the ModSave tree
+
+`FactionRoles` lives **inside** `ModSave`, so ignoring the whole tree to protect the ban list
+and the ledgers takes the clone's own rosters with it — and the failure is silent in the worst
+way: the bot starts, reports `whitelists: <path>` as though the feature were on, and then
+refuses every write. `/whitelist add` answers "the roster could not be written" forever.
+
+The bot now **refuses to start** on that combination rather than letting you find it later:
+
+```
+FACTION_ROLES_PATH (...) is inside IGNORE_PATHS, so this bot could never write a roster
+```
+
+The ledgers are the one thing `IGNORE_PATHS` cannot express neatly, because they sit directly
+in `ModSave` alongside `FactionRoles`. Leave `MODSAVE_PATH` blank on the clone instead — which
+is the primary control anyway.
 
 The startup summary lists what is ignored, so a clone that is not protected says so.
 
@@ -115,8 +132,10 @@ MODSAVE_BLACKLIST_PATH=
 PAYROLL_AMOUNT=
 MODSAVE_PATH=
 
-# Backstop: refuse every write under the shared ModSave tree, whatever else is set.
-IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave
+# Backstop: refuse writes to the files the normal bot owns, whatever else is set.
+# FILES, not the ModSave tree - FactionRoles lives inside it and this bot needs to
+# write its own rosters there.
+IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/blacklist.txt,/home/steam/pavlovserver/Pavlov/Saved/Config/whitelist.txt
 
 # ── its own channels ──
 MOD_LOG_CHANNEL=
