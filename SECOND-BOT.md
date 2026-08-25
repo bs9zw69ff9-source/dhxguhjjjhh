@@ -208,35 +208,69 @@ state rather than just duplicating work.
 
 ## Setting it up
 
+Assumes the clone owns `pavlovserver2`. Adjust the paths if yours differ.
+
+### 1. Its own working directory
+
 ```bash
-mkdir -p /root/pavlov-bot-fallout
+mkdir -p /root/pavlov-bot-fallout/data
 cd /root/pavlov-bot
 cp .env /root/pavlov-bot-fallout/.env
 cp factions.fallout.example.json /root/pavlov-bot-fallout/factions.json
 ```
 
-Then edit `/root/pavlov-bot-fallout/.env`:
+### 2. The roster directory must already exist
+
+The bot writes roster FILES but never creates a DIRECTORY inside a game install — a missing
+one means the path is wrong, and building it produces a tree the game never reads. On a fresh
+install `FactionRoles` may not be there yet:
+
+```bash
+sudo -u steam mkdir -p /home/steam/pavlovserver2/Pavlov/Saved/Config/ModSave/FactionRoles
+ls -la /home/steam/pavlovserver2/Pavlov/Saved/Config/ModSave/FactionRoles
+```
+
+Owned by `steam`, so the bot must run as root or be in the `steam` group.
+
+### 3. A second Discord application
+
+At <https://discord.com/developers/applications>: New Application → Bot → Reset Token. Invite
+it with scopes `bot` and `applications.commands`. It is a separate app with its own token —
+reusing the first bot's token would run two gateways on one identity and answer every command
+twice.
+
+### 4. Its `.env`
 
 ```bash
 # ── its own identity ──
-DISCORD_TOKEN=            # a SECOND Discord application, not the same token
+DISCORD_TOKEN=            # the SECOND application's token
 CLIENT_ID=
-GUILD_ID=                 # the Fallout server's id
+GUILD_ID=                 # the Fallout Discord server's id
 BOT_NAME=Mojave Authority
 
 # ── its own factions and state ──
 FACTIONS_PATH=/root/pavlov-bot-fallout/factions.json
 DATA_DIR=/root/pavlov-bot-fallout/data
 
-# ── the shared-file subsystems stay with the normal bot ──
-MODSAVE_BLACKLIST_PATH=
-PAYROLL_AMOUNT=
-MODSAVE_PATH=
+# ── its own game server ──
+RCON_HOST_1=127.0.0.1
+RCON_PORT_1=9102                      # pavlovserver2's RCON port
+RCON_PASSWORD_1=...
+RCON_HOST_2=                          # blank - it has ONE server
+RCON_PORT_2=
+RCON_PASSWORD_2=
 
-# Backstop: refuse writes to the files the normal bot owns, whatever else is set.
-# FILES, not the ModSave tree - FactionRoles lives inside it and this bot needs to
-# write its own rosters there.
-IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/blacklist.txt,/home/steam/pavlovserver/Pavlov/Saved/Config/whitelist.txt
+PAVLOV_UNITS=pavlovserver2
+PAVLOV_BASE_1=/home/steam/pavlovserver2
+PAVLOV_BASES=/home/steam/pavlovserver2
+PAVLOV_LOGS=/home/steam/pavlovserver2/Pavlov/Saved/Logs/Pavlov.log
+
+FACTION_ROLES_PATH=/home/steam/pavlovserver2/Pavlov/Saved/Config/ModSave/FactionRoles
+MODSAVE_PATH=/home/steam/pavlovserver2/Pavlov/Saved/Config/ModSave
+MODSAVE_BLACKLIST_PATH=/home/steam/pavlovserver2/Pavlov/Saved/Config/ModSave/blacklist.txt
+
+# ── never touch the other bot's installs ──
+IGNORE_PATHS=/home/steam/pavlovserver,/home/steam/pavlovserver1
 
 # ── its own channels ──
 MOD_LOG_CHANNEL=
@@ -248,10 +282,10 @@ KILL_WEBHOOK_URL=
 CONNECT_WEBHOOK_URL=
 ```
 
-Same RCON settings, same `FACTION_ROLES_PATH`, same `PAVLOV_LOGS`, same `PAVLOV_UNITS` —
-it is the same game server.
+Copy `OWNER_IDS`, `SUPER_OWNER_IDS`, `MASTER_NAMES` and any API keys across unchanged — those
+are about people, not about which server this is.
 
-Run it from the same build:
+### 5. Start it from the same build
 
 ```bash
 cd /root/pavlov-bot
@@ -268,7 +302,11 @@ restart the clone after a deploy:
 pm2 restart pavlov-bot-fallout --update-env
 ```
 
----
+### Sharing one install instead
+
+If the clone has no install of its own, blank `MODSAVE_PATH`, `MODSAVE_BLACKLIST_PATH` and
+`PAYROLL_AMOUNT`, share `FACTION_ROLES_PATH` with the first bot, and read the collision rules
+above. Everything else is the same.
 
 ## Confirming it came up as the right bot
 
