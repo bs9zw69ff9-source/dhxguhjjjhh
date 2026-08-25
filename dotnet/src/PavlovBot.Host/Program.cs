@@ -127,6 +127,29 @@ public static class Program
         builder.Services.AddSingleton(sp => new GameFileGuard(
             features.IgnoredPaths, sp.GetRequiredService<ILogger<GameFileGuard>>()));
 
+        /* A CONTRADICTION, NOT A PREFERENCE. "Manage the rosters here" and "never write here"
+           cannot both be honoured, and the shape it takes is the worst kind: the bot starts,
+           reports `whitelists: <path>` as though the feature were on, and then refuses every
+           single write. /whitelist add answers "the roster could not be written" forever.
+
+           It is an easy configuration to arrive at by accident, because FactionRoles lives
+           INSIDE ModSave - so ignoring the ModSave tree to protect the ban list and the
+           ledgers takes the rosters with it. Refused here rather than discovered later. */
+        if (features.RosterDirectory is { } rosterDirectory &&
+            features.IgnoredPaths.Count > 0 &&
+            GameFiles.InsideInstall(rosterDirectory, features.IgnoredPaths))
+        {
+            await Console.Error.WriteLineAsync(
+                $"FACTION_ROLES_PATH ({rosterDirectory}) is inside IGNORE_PATHS, so this bot could " +
+                "never write a roster - every /whitelist add would fail.").ConfigureAwait(false);
+            await Console.Error.WriteLineAsync(
+                "  - Ignore the specific files another bot owns (the ban list, the whitelist) rather " +
+                "than a directory the rosters live under.").ConfigureAwait(false);
+            await Console.Error.WriteLineAsync(
+                "  - Or leave FACTION_ROLES_PATH unset if this bot is not meant to manage rosters.").ConfigureAwait(false);
+            return 78;   // EX_CONFIG
+        }
+
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(options.Monitoring);
         builder.Services.AddSingleton(features);
