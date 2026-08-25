@@ -73,14 +73,14 @@ public class FactionSetTests : IDisposable
         // no benefit, and forgetting it produces a faction nobody can spawn as.
         var path = Write("""
             { "factions": [
-                { "name": "Kings", "ranks": [ { "name": "Member", "file": "kingsspawn.txt" } ] }
+                { "name": "Traders", "ranks": [ { "name": "Member", "file": "tradersspawn.txt" } ] }
             ] }
             """);
 
-        var kings = FactionsFile.Load(path).Set!.Get("Kings")!;
+        var traders = FactionsFile.Load(path).Set!.Get("Traders")!;
 
-        Assert.Equal("kingsspawn.txt", kings.SpawnFile);
-        Assert.False(kings.HasRanks);
+        Assert.Equal("tradersspawn.txt", traders.SpawnFile);
+        Assert.False(traders.HasRanks);
     }
 
     [Fact]

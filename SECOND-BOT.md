@@ -254,7 +254,7 @@ state rather than just duplicating work.
 ### Safe to share
 
 - **`FACTION_ROLES_PATH`** — same directory is fine, because the file names differ. The
-  shipped template is prefixed `ncr*`, `legion*`, `bos*`, `enclave*`, `kings*`, `followers*`
+  shipped template is prefixed `ncr*`, `legion*`, `bos*`, `enclave*`
   precisely so nothing can touch `gambinospawn.txt` or the `police*.txt` files. Keep the
   prefixes. The bot refuses to start if two factions inside one file collide, but it cannot
   see the other bot's roster.
