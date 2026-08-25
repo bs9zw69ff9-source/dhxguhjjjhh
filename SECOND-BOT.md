@@ -342,20 +342,43 @@ are about people, not about which server this is.
 
 ### 5. Start it from the same build
 
+**Check its `.env` before starting it.** The published binary is self-contained, and
+`--selftest` builds the whole object graph and exits without connecting to Discord — so it
+tells you the token, the factions and the paths are right while nothing is running:
+
 ```bash
-cd /root/pavlov-bot
-pm2 start ./dotnet-out/PavlovBot --name pavlov-bot-fallout \
-  --cwd /root/pavlov-bot-fallout --interpreter none
+mkdir -p /root/pavlov-bot-fallout/logs
+cd /root/pavlov-bot-fallout
+/root/pavlov-bot/dotnet-out/PavlovBot --selftest
+```
+
+Read the `factions:` line. If it says `built in (FACTIONS_PATH not set)`, stop — the config
+did not take and starting it would write the other bot's roster files.
+
+Then start it from the ecosystem file:
+
+```bash
+pm2 start /root/pavlov-bot/ecosystem.fallout.config.js
 pm2 save
 ```
 
-`--cwd` is what makes it read the other `.env`; the binary reads `.env` from its working
-directory. Both apps run the same published output, so `scripts/deploy.sh` updates both —
-restart the clone after a deploy:
+**Name the ecosystem file, not the app.** `pm2 start ./dotnet-out/PavlovBot --name ...` works
+and silently drops every tuning value: the one that matters is `kill_timeout`, where pm2's
+default of 1600ms SIGKILLs a bot whose shutdown is still finishing a roster write. That
+truncates a whitelist the game is reading. The same rule applies to restarts — `pm2 restart
+<name>` does not re-read the config, so a change to it would deploy and never apply:
 
 ```bash
-pm2 restart pavlov-bot-fallout --update-env
+pm2 restart /root/pavlov-bot/ecosystem.fallout.config.js --update-env
 ```
+
+`cwd` is what makes it a second bot: the binary reads `.env`, `factions.json` and `data/`
+from its working directory, and the ecosystem file points that at
+`/root/pavlov-bot-fallout`. Set `FALLOUT_HOME` if it lives somewhere else.
+
+Both apps run the same published output, so `scripts/deploy.sh` rebuilds for both — but it
+only restarts `pavlov-bot-cs`. **The clone keeps serving the old binary until you restart it**
+with the command above. That is the step that gets forgotten.
 
 ### Sharing one install instead
 
