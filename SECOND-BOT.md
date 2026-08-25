@@ -26,10 +26,41 @@ Ranks and caps live in that file. Editing it needs a restart, not a deploy.
 
 ---
 
+## Give each bot its own install, if you can
+
+This is by far the simpler answer, and it makes everything below unnecessary. If the clone
+runs against a second Pavlov install — `/home/steam/pavlovserver2` beside
+`/home/steam/pavlovserver` — then each bot simply ignores the other's whole tree:
+
+```bash
+# the normal bot
+IGNORE_PATHS=/home/steam/pavlovserver2
+
+# the Fallout bot
+IGNORE_PATHS=/home/steam/pavlovserver
+```
+
+Nothing is shared, so a whole-directory ignore has nothing to collide with, and the
+file-by-file advice further down does not apply.
+
+Matching is separator-bounded, which matters here: **`/home/steam/pavlovserver` does not
+cover `/home/steam/pavlovserver2`**. The two names look like a prefix of each other and are
+treated as completely separate trees.
+
+If you get it backwards and a bot ignores its *own* install, it refuses to start rather than
+running with every whitelist write silently failing:
+
+```
+FACTION_ROLES_PATH (...) is inside IGNORE_PATHS, so this bot could never write a roster
+```
+
+---
+
 ## Sharing one game server: what must not collide
 
-This is the part that costs you data if it is wrong. Two bots against one server share the
-game's files, and several subsystems **rewrite a whole file from their own database**.
+Only if both bots really do point at one install. This is the part that costs you data if it
+is wrong: two bots against one server share the game's files, and several subsystems
+**rewrite a whole file from their own database**.
 
 ### The ban list — only ONE bot may own it
 
