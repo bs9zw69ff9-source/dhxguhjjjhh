@@ -241,6 +241,24 @@ twice.
 
 ### 4. Its `.env`
 
+The copy in step 1 **inherits everything from the first bot**, including its token, its
+channels and the other install's paths. Left as-is it would log in as the same bot — two
+gateways on one identity, answering every command twice.
+
+Rather than hand-editing thirty lines and hoping none were missed, **append overrides at the
+end**. A repeated key wins, and an appended blank value clears an inherited one:
+
+```bash
+cat >> /root/pavlov-bot-fallout/.env <<'EOF'
+
+# ─── everything below overrides what was inherited from the first bot ───
+EOF
+```
+
+Then fill in the block below under that line. Nothing above it needs touching, and the first
+bot's `.env` is a separate file that this never affects.
+
+
 ```bash
 # ── its own identity ──
 DISCORD_TOKEN=            # the SECOND application's token

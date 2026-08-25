@@ -98,6 +98,53 @@ public class DotEnvParsingTests
         Assert.Equal("1", data["A"]);
         Assert.Equal("2", data["B"]);
     }
+
+    /// <summary>
+    /// A key repeated later in the file wins.
+    /// </summary>
+    /// <remarks>
+    /// RELIED ON WHEN SETTING UP A SECOND BOT. Its .env starts as a COPY of the first bot's,
+    /// so it inherits the token, the channels and the other install's paths - and the safe way
+    /// to correct that is to APPEND overrides at the end rather than hand-edit thirty lines
+    /// and hope none were missed.
+    ///
+    /// dotenv behaves this way and so does this parser, but it was never pinned, so a change
+    /// to first-wins would silently leave a second bot running on the first bot's token -
+    /// two gateways on one identity, answering every command twice.
+    /// </remarks>
+    [Fact]
+    public void ALaterValueOverridesAnEarlierOneForTheSameKey()
+    {
+        var parsed = DotEnvConfigurationProvider.Parse(
+            """
+            DISCORD_TOKEN=the-first-bots-token
+            GUILD_ID=111
+
+            # appended overrides
+            DISCORD_TOKEN=the-second-bots-token
+            GUILD_ID=222
+            """);
+
+        Assert.Equal("the-second-bots-token", parsed["DISCORD_TOKEN"]);
+        Assert.Equal("222", parsed["GUILD_ID"]);
+    }
+
+    /// <summary>An appended EMPTY value blanks an inherited one.</summary>
+    /// <remarks>
+    /// How a copied .env turns a feature OFF for the clone - "PAYROLL_AMOUNT=" appended has to
+    /// beat the inherited figure, or the second bot pays wages on the first bot's schedule.
+    /// </remarks>
+    [Fact]
+    public void AnAppendedBlankValueClearsAnInheritedSetting()
+    {
+        var parsed = DotEnvConfigurationProvider.Parse(
+            """
+            PAYROLL_AMOUNT=500
+            PAYROLL_AMOUNT=
+            """);
+
+        Assert.Equal("", parsed["PAYROLL_AMOUNT"]);
+    }
 }
 
 public class BotOptionsTests
@@ -211,4 +258,5 @@ public class BotOptionsTests
         var options = BotOptions.Bind(Config([.. Minimal, ("RCON_READ_CACHE_MS", "soon")]));
         Assert.Equal(TimeSpan.FromMilliseconds(2500), options.Servers[0].ReadCacheDuration);
     }
+
 }
