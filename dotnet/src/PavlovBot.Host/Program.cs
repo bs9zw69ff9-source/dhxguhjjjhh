@@ -120,6 +120,13 @@ public static class Program
         }
 
         builder.Services.AddSingleton(factions);
+
+        /* PATHS THIS BOT MUST NOT WRITE. Every game-file write goes through this, so a second
+           bot sharing one install can be handed the same .env and still be unable to clobber
+           the first bot's ban list, whitelist or player balances. */
+        builder.Services.AddSingleton(sp => new GameFileGuard(
+            features.IgnoredPaths, sp.GetRequiredService<ILogger<GameFileGuard>>()));
+
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(options.Monitoring);
         builder.Services.AddSingleton(features);
@@ -168,7 +175,8 @@ public static class Program
             /* Resolved lazily INSIDE the lambda, so this does not depend on IpTrackingService
                being registered first - the import runs long after startup either way. */
             resolveName: id => sp.GetRequiredService<PavlovBot.Host.Logs.IpTrackingService>()
-                .Account(id)?.Names.FirstOrDefault()));
+                .Account(id)?.Names.FirstOrDefault(),
+            guard: sp.GetRequiredService<GameFileGuard>()));
         /* Pavlov's own whitelist, across every install. Resolved ONCE at startup and logged:
            a write that reaches two installs out of three is the failure worth seeing early,
            and it is invisible if nothing ever says how many were found. */
@@ -294,7 +302,8 @@ public static class Program
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is
            registered further down. */
         builder.Services.AddSingleton<IBalanceStore>(sp => new LedgerFileStore(
-            features.LedgerDirectory, sp.GetRequiredService<PavlovBot.Host.Rcon.IOnlineRoster>()));
+            features.LedgerDirectory, sp.GetRequiredService<PavlovBot.Host.Rcon.IOnlineRoster>(),
+            sp.GetRequiredService<GameFileGuard>()));
         builder.Services.AddSingleton<Ledger>();
         builder.Services.AddSingleton<AutoPost>();
         builder.Services.AddSingleton(sp => new Boards(
@@ -308,7 +317,7 @@ public static class Program
            summary prints the faction names for exactly that reason. */
         builder.Services.AddSingleton(sp => new RosterService(
             features.RosterDirectory, sp.GetRequiredService<ILogger<RosterService>>(),
-            backupDirectory: null, factions: factions));
+            backupDirectory: null, factions: factions, guard: sp.GetRequiredService<GameFileGuard>()));
 
         builder.Services.AddSingleton<CommandCatalog>();
         builder.Services.AddSingleton<PlayerAutocomplete>();

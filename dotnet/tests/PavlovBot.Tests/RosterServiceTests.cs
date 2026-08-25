@@ -493,6 +493,46 @@ public class RosterServiceTests : IDisposable
         Assert.Equal(0, result.Removed);
     }
 
+    /// <summary>
+    /// An ignored path stops a real roster write, not just the guard in isolation.
+    /// </summary>
+    /// <remarks>
+    /// THE WIRING IS THE PART THAT BREAKS. GameFileGuard is injected as an OPTIONAL parameter
+    /// so existing callers keep working, which means forgetting to pass it produces a bot that
+    /// happily writes files another bot owns - and nothing about that looks wrong until two
+    /// rosters start erasing each other.
+    ///
+    /// Asserting the file is untouched rather than just the return value: "refused" and
+    /// "wrote it anyway and returned false" are the same thing to a caller and opposite things
+    /// to the server.
+    /// </remarks>
+    [Fact]
+    public async Task AnIgnoredPathIsNotWrittenEvenThoughTheRosterIsOtherwiseUsable()
+    {
+        Seed("policecadet.txt", "Alice");
+
+        var guarded = new RosterService(
+            _directory, NullLogger<RosterService>.Instance, _backups,
+            guard: new PavlovBot.Host.Storage.GameFileGuard(
+                [_directory], NullLogger<PavlovBot.Host.Storage.GameFileGuard>.Instance));
+
+        Assert.False(await guarded.WriteAsync("policecadet.txt", ["Alice", "Bob"]));
+
+        // The file still says what it did. Reads are deliberately unaffected.
+        Assert.Equal(["Alice"], guarded.Read("policecadet.txt")!);
+    }
+
+    [Fact]
+    public async Task AnUnguardedRosterServiceStillWrites()
+    {
+        // The control. A guard that refused everything would satisfy the test above and break
+        // every single-bot deployment there is.
+        Seed("policecadet.txt", "Alice");
+
+        Assert.True(await _rosters.WriteAsync("policecadet.txt", ["Alice", "Bob"]));
+        Assert.Contains("Bob", Contents("policecadet.txt"));
+    }
+
     [Fact]
     public async Task ConcurrentEditsToOneRosterDoNotLoseMembers()
     {

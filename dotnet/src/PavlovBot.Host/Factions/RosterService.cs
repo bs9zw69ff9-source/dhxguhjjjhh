@@ -50,9 +50,12 @@ public sealed class RosterService
     /// </remarks>
     public FactionSet Factions { get; }
 
+    private readonly Storage.GameFileGuard _guard;
+
     public RosterService(string? rosterDirectory, ILogger<RosterService> logger, string? backupDirectory = null,
-        FactionSet? factions = null)
+        FactionSet? factions = null, Storage.GameFileGuard? guard = null)
     {
+        _guard = guard ?? Storage.GameFileGuard.None;
         Factions = factions ?? FactionRegistry.Default;
         _directory = rosterDirectory;
         _backupDirectory = backupDirectory ?? Path.Combine(Directory.GetCurrentDirectory(), "faction_file_bak");
@@ -116,7 +119,7 @@ public sealed class RosterService
             /* Only into a directory that already exists. The bot never creates one inside a
                game install - a missing one means the configured roster path is wrong, and
                building it produces a tree the game never reads. */
-            if (Storage.GameFiles.Problem(path) is { } problem)
+            if (_guard.Problem(path) is { } problem)
             {
                 _logger.LogWarning("Not writing {Path}: {Problem}", path, problem);
                 return false;

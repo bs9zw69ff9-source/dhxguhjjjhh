@@ -31,9 +31,11 @@ public sealed record ModsaveEntry(string Name, string Reason, string Unban);
 /// </remarks>
 public sealed class ModsaveBanlist(
     string? path, SerializedStore store, ILogger<ModsaveBanlist> logger, TimeProvider? time = null,
-    Func<string, string?>? resolveName = null) : IBanFileExport
+    Func<string, string?>? resolveName = null,
+    Storage.GameFileGuard? guard = null) : IBanFileExport
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
+    private readonly Storage.GameFileGuard _guard = guard ?? Storage.GameFileGuard.None;
 
     /// <summary>Said once. This runs on a timer, and a wrong path is wrong every tick.</summary>
     private bool _pathWarned;
@@ -75,7 +77,7 @@ public sealed class ModsaveBanlist(
         /* NOT CreateDirectory. This lives in a directory the game owns and already made, so
            a missing one means the path is wrong - and building it produces a second ModSave
            tree beside the real one that the game never reads. */
-        if (Storage.GameFiles.Problem(path) is { } problem)
+        if (_guard.Problem(path) is { } problem)
         {
             if (!_pathWarned)
             {

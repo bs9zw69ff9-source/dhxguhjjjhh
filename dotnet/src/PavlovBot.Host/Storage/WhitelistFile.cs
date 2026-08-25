@@ -37,7 +37,7 @@ public sealed record WhitelistResult(string Path, bool Ok, bool Changed, string?
 ///   EACH INSTALL IS REPORTED SEPARATELY. "Added" when one of three servers rejected the
 ///   write is the report that gets somebody told their access works when it does not.
 /// </remarks>
-public sealed class WhitelistFile(ILogger<WhitelistFile> logger)
+public sealed class WhitelistFile(ILogger<WhitelistFile> logger, GameFileGuard? guard = null)
 {
     /// <summary>Read the entries, ignoring blanks and comments.</summary>
     public IReadOnlyList<string> Read(string path)
@@ -126,7 +126,7 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger)
         /* Only into a directory that already exists, and never into one the bot would have
            to create. A missing one means the configured install path is wrong, and building
            it produces a tree the game server never reads. */
-        if (GameFiles.Problem(path) is { } problem)
+        if ((guard ?? GameFileGuard.None).Problem(path) is { } problem)
         {
             logger.LogWarning("Not writing {Path}: {Problem}", path, problem);
             return new WhitelistResult(path, Ok: false, Changed: false, problem);

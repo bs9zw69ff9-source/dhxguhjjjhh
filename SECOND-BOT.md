@@ -54,6 +54,22 @@ Ledger writes are serialised *within* a process, not across two. Two bots writin
 **Leave `MODSAVE_PATH` blank on the clone** unless you specifically want its economy
 commands, and accept the risk if you set it.
 
+### Or name them once with `IGNORE_PATHS`
+
+Blanking each setting is the primary control. `IGNORE_PATHS` is the backstop, and it exists
+because the clone's `.env` is a copy of the original — so every shared path is already in it,
+correct, and pointing at files it must not touch.
+
+```bash
+IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave
+```
+
+Any **write** at or under a listed path is refused and logged once. Reads are unaffected, so
+the clone can still read the rosters to enforce one faction per player. Matching is
+separator-bounded: `/home/steam/pavlovserver` does not cover `pavlovserver-backup`.
+
+The startup summary lists what is ignored, so a clone that is not protected says so.
+
 ### Its own database
 
 `DATA_DIR` **must** differ. Two processes on one `bot.db` is the one mistake that corrupts
@@ -98,6 +114,9 @@ DATA_DIR=/root/pavlov-bot-fallout/data
 MODSAVE_BLACKLIST_PATH=
 PAYROLL_AMOUNT=
 MODSAVE_PATH=
+
+# Backstop: refuse every write under the shared ModSave tree, whatever else is set.
+IGNORE_PATHS=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave
 
 # ── its own channels ──
 MOD_LOG_CHANNEL=
