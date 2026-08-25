@@ -46,6 +46,25 @@ public sealed record BotOptions
     public bool UserApp { get; init; }
 
     /// <summary>
+    /// Commands this bot does not run, by name. Empty means every command.
+    /// </summary>
+    /// <remarks>
+    /// THE POINT IS ONE BINARY SERVING TWO RPs. A Fallout server has no use for /arrest,
+    /// /warrant or /bail, and leaving them in the picker for a moderator who can never use
+    /// them is clutter that reads as a half-finished bot.
+    ///
+    /// A LIST OF NAMES, NOT A PROFILE FLAG. This repo tried the flag once - RP_PROFILE, which
+    /// branched the whole command surface on an enum - and reverted it in full. A name list is
+    /// data: it needs no code change to cover a command nobody has written yet, and it cannot
+    /// grow a second meaning the way a profile does.
+    ///
+    /// Filtered where the command dictionary is BUILT, so one filter covers registration,
+    /// dispatch and /help. A command disabled here is not registered with Discord at all, and
+    /// the bulk overwrite removes it from the picker on the next start.
+    /// </remarks>
+    public IReadOnlyList<string> DisabledCommands { get; init; } = [];
+
+    /// <summary>
     /// A SECOND Discord application that owns the whitelist commands. Both null disables it.
     /// </summary>
     /// <remarks>
@@ -104,6 +123,14 @@ public sealed record BotOptions
             GuildId = ulong.TryParse(configuration["GUILD_ID"], CultureInfo.InvariantCulture, out var guild) ? guild : null,
             UserApp = configuration["USER_APP"]?.Trim().ToLowerInvariant()
                 is "1" or "true" or "yes" or "on",
+
+            /* Leading slashes trimmed, because that is how people write a command name and a
+               list that silently failed on "/arrest" would be worse than one that rejected it. */
+            DisabledCommands = (configuration["COMMANDS_DISABLED"] ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(c => c.TrimStart('/').Trim())
+                .Where(c => c.Length > 0)
+                .ToList(),
             FactionToken = configuration["FACTION_BOT_TOKEN"]?.Trim() is { Length: > 0 } ft ? ft : null,
             FactionClientId = ulong.TryParse(configuration["FACTION_CLIENT_ID"], CultureInfo.InvariantCulture, out var fc) ? fc : null,
             Servers = servers,

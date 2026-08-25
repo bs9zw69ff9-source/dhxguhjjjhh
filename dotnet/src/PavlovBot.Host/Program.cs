@@ -708,13 +708,34 @@ public static class Program
         _ = host.Services.GetRequiredService<RconRegistry>();
         _ = host.Services.GetRequiredService<SerializedStore>();
         _ = host.Services.GetRequiredService<MonitoringServer>();
-        var commands = host.Services.GetServices<ISlashCommand>().ToList();
+        /* FROM THE GATEWAY, not from the container. The container's collection is every
+           command that EXISTS; the gateway's is every command that will be REGISTERED, and
+           COMMANDS_DISABLED is the difference. Reading the wrong one made this gate list
+           /arrest on a bot that would never register it. */
+        var registered = gateway.CommandNames.Order(StringComparer.Ordinal).ToList();
+        var available = host.Services.GetServices<ISlashCommand>().Count();
 
         var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
         using var process = System.Diagnostics.Process.GetCurrentProcess();
 
         Console.WriteLine($"selftest: graph built in {elapsed.TotalMilliseconds:0}ms");
-        Console.WriteLine($"selftest: {options.Servers.Count} RCON server(s), {commands.Count} command(s): {string.Join(", ", commands.Select(c => "/" + c.Name))}");
+        Console.WriteLine($"selftest: {options.Servers.Count} RCON server(s), {registered.Count} command(s): {string.Join(", ", registered.Select(c => "/" + c))}");
+
+        if (available > registered.Count)
+        {
+            /* The names ACTUALLY removed, not the configured list - printing the latter said
+               "5 disabled" above six names whenever one of them was a typo, which undercuts
+               the warning immediately below it. */
+            var removed = options.DisabledCommands
+                .Except(gateway.UnknownDisabledCommands, StringComparer.OrdinalIgnoreCase);
+
+            Console.WriteLine(
+                $"selftest: {available - registered.Count} command(s) disabled by COMMANDS_DISABLED: " +
+                string.Join(", ", removed.Select(c => "/" + c)));
+        }
+
+        foreach (var unknown in gateway.UnknownDisabledCommands)
+            Console.WriteLine($"selftest: WARNING - COMMANDS_DISABLED names \"{unknown}\", which is not a command here");
         Console.WriteLine($"selftest: resident {process.WorkingSet64 / 1024.0 / 1024:0.0} MB, managed heap {GC.GetTotalMemory(false) / 1024.0 / 1024:0.0} MB");
         Console.WriteLine($"selftest: gateway ready={gateway.IsReady} (not connected - this is construction only)");
     }

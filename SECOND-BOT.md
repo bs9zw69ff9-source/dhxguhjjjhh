@@ -11,8 +11,8 @@ copy quietly rots. The clone is the same build with a different `.env`.
 
 ## What actually differs
 
-Only the **faction roster**. Everything else — bans, RCON, economy, the intelligence
-commands, the police commands — is the same code behaving the same way.
+Two things: the **faction roster** and **which commands exist**. Everything else — bans,
+RCON, economy, the intelligence commands — is the same code behaving the same way.
 
 `FACTIONS_PATH` points at a JSON file that **replaces** the built-in set. Unset, you get
 Gambino / Colombo / NYPD exactly as before, which is why the normal bots need no change at
@@ -23,6 +23,38 @@ cp factions.fallout.example.json /root/pavlov-bot-fallout/factions.json
 ```
 
 Ranks and caps live in that file. Editing it needs a restart, not a deploy.
+
+### Dropping the police stack
+
+`COMMANDS_DISABLED` names commands this bot does not run. They are never registered with
+Discord, so they leave the picker on the next start, and they drop out of `/help` too — one
+filter, applied where the command list is built, so registration, dispatch and help cannot
+disagree about what exists.
+
+For a Fallout bot that is the whole police surface:
+
+```
+COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck,suspendrank
+```
+
+A leading slash is accepted, so `/arrest` works too. A name that is not a command logs a
+warning naming it and starts anyway — a typo here should not take a bot down.
+
+`--selftest` prints exactly what will register, which is worth a look before deploying:
+
+```
+selftest: 54 command(s): /adjustcaps, /alts, ... /whitelist
+selftest: 5 command(s) disabled by COMMANDS_DISABLED: /arrest, /warrant, /bail, /backgroundcheck, /suspendrank
+```
+
+The police BOARDS are separate and switch off by leaving their channels unset:
+`POLICE_LOG_CHANNEL`, `ARREST_CHANNEL`, `ARREST_LEADERBOARD_CHANNEL`, `WARRANT_BOARD_CHANNEL`.
+Blanking those four in the override block is what stops the bot posting to the other Discord.
+
+**Why a name list and not a profile flag.** This repo tried the flag — `RP_PROFILE`, branching
+the whole command surface on an enum — and reverted it in full. A list of names is data: it
+covers a command nobody has written yet without a code change, and it cannot grow a second
+meaning the way a profile does.
 
 ---
 
@@ -265,6 +297,7 @@ DISCORD_TOKEN=            # the SECOND application's token
 CLIENT_ID=
 GUILD_ID=                 # the Fallout Discord server's id
 BOT_NAME=Mojave Authority
+COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck,suspendrank
 
 # ── its own factions and state ──
 FACTIONS_PATH=/root/pavlov-bot-fallout/factions.json
@@ -293,6 +326,10 @@ IGNORE_PATHS=/home/steam/pavlovserver,/home/steam/pavlovserver1
 # ── its own channels ──
 MOD_LOG_CHANNEL=
 BAN_LOG_CHANNEL=
+POLICE_LOG_CHANNEL=
+ARREST_CHANNEL=
+ARREST_LEADERBOARD_CHANNEL=
+WARRANT_BOARD_CHANNEL=
 PLAYER_COUNT_CHANNELS=
 SHACK_TOTAL_CHANNEL=
 JOIN_WEBHOOK_URL=
