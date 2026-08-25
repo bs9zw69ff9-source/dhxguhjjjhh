@@ -24,6 +24,23 @@ cp factions.fallout.example.json /root/pavlov-bot-fallout/factions.json
 
 Ranks and caps live in that file. Editing it needs a restart, not a deploy.
 
+### Roles name your factions, not somebody else's
+
+`/setroles` builds its per-faction options from the loaded set, so on a Fallout bot the
+options are `ncr_role`, `legion_role`, `brotherhood_of_steel_role` and `enclave_role` — not
+`mafia_role` and `nypd_role`. Each manages only its own roster; `whitelist_leader_role`
+still manages every one. Give the same role to several options if one person runs several
+factions.
+
+`police_role` disappears too once every police command is disabled, because nothing else
+checks that tier and an option that grants nothing is an option that lies.
+
+A faction whose name has no letters or digits in it, or that collides with another after
+slugging, gets no option — the bot logs which and says so in the `/setroles` reply, and
+those rosters stay manageable by the whitelist leader. Discord rejects a bulk overwrite
+whole for one bad option name, so a faction is dropped rather than allowed to empty the
+entire command picker.
+
 ### Dropping the police stack
 
 `COMMANDS_DISABLED` names commands this bot does not run. They are never registered with

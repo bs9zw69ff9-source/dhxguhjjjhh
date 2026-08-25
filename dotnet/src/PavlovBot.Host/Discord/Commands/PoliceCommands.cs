@@ -11,6 +11,24 @@ using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Discord.Commands;
 
+/// <summary>
+/// The commands that check <see cref="RequiredAccess.Police"/>, by name.
+/// </summary>
+/// <remarks>
+/// LIVES NEXT TO THE COMMANDS IT NAMES. Police access is checked nowhere but this file, so
+/// with all of these disabled the police role grants nothing and /setroles must not offer a
+/// slot for it. That question is asked from ConfigCommands, and a list of command names kept
+/// over there would be a second place to remember when a police command is added or removed.
+///
+/// /bail is here despite being Mod-gated: it prices bail and caps sentences, which are
+/// arrest concepts. A bot with no arrests has nothing for it to configure.
+/// </remarks>
+internal static class PoliceCommandNames
+{
+    public static IReadOnlyList<string> All { get; } =
+        ["warrant", "arrest", "backgroundcheck", "bail"];
+}
+
 /// <param name="Reason">Why the warrant was issued. Shown to whoever runs the check.</param>
 public sealed record Warrant(string Player, string Reason, string IssuedBy, DateTimeOffset At);
 

@@ -2,6 +2,8 @@ using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
+using PavlovBot.Core.Factions;
+using PavlovBot.Host.Configuration;
 using PavlovBot.Core.Text;
 using PavlovBot.Core.Time;
 using PavlovBot.Host.Factions;
@@ -18,29 +20,115 @@ namespace PavlovBot.Host.Discord.Commands;
 /// owner granted by a role could be granted by anyone with Manage Roles, which is a
 /// privilege escalation with extra steps. See <see cref="Access"/>.
 /// </remarks>
-public sealed class SetRolesCommand(SerializedStore store, Access access, ILogger<SetRolesCommand> logger) : ISlashCommand
+public sealed class SetRolesCommand : ISlashCommand
 {
+    /// <summary>Discord's cap on options for one command.</summary>
+    private const int MaxOptions = 25;
+
+    /// <summary>The three tiers that exist whatever the RP is.</summary>
+    private const int FixedOptions = 3;
+
+    private readonly SerializedStore _store;
+    private readonly Access _access;
+    private readonly ILogger<SetRolesCommand> _logger;
+
+    /// <summary>Option name -> faction name, built once from the loaded set.</summary>
+    private readonly IReadOnlyList<(string Option, string Faction)> _factionOptions;
+
+    /// <summary>Factions that could not be given an option, so the reply can say which.</summary>
+    private readonly IReadOnlyList<string> _unnameable;
+
+    /// <summary>False when no enabled command checks police access, so the slot is dead.</summary>
+    private readonly bool _police;
+
+    public SetRolesCommand(SerializedStore store, Access access, FactionSet factions,
+        BotOptions options, ILogger<SetRolesCommand> logger)
+    {
+        ArgumentNullException.ThrowIfNull(factions);
+        ArgumentNullException.ThrowIfNull(options);
+
+        _store = store;
+        _access = access;
+        _logger = logger;
+
+        /* THE POLICE SLOT IS SHOWN ONLY WHEN IT DOES SOMETHING. RequiredAccess.Police is
+           checked nowhere but PoliceCommands, so with those disabled the role grants nothing
+           and offering it on a Fallout bot is an option that lies. */
+        var disabled = options.DisabledCommands.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _police = PoliceCommandNames.All.Any(name => !disabled.Contains(name));
+
+        var named = new List<(string, string)>();
+        var unnameable = new List<string>();
+
+        foreach (var faction in factions.Names.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var option = CommandOptionName.Slug(faction, "_role");
+
+            // A collision would make the second option unreachable, and Discord rejects the
+            // whole registration for a duplicate name - taking every command with it.
+            if (option is null || named.Any(o => string.Equals(o.Item1, option, StringComparison.OrdinalIgnoreCase)))
+            {
+                unnameable.Add(faction);
+                continue;
+            }
+
+            named.Add((option, faction));
+        }
+
+        /* DISCORD REJECTS THE BULK OVERWRITE WHOLE. Twenty-six options would not shorten this
+           command, it would empty the picker - so the cap is enforced here, where the excess
+           can be named, rather than discovered as every command vanishing after a deploy. */
+        var room = MaxOptions - FixedOptions - (_police ? 1 : 0);
+        if (named.Count > room)
+        {
+            foreach (var (_, faction) in named.Skip(room)) unnameable.Add(faction);
+            named = [.. named.Take(room)];
+        }
+
+        _factionOptions = named;
+        _unnameable = unnameable;
+
+        if (_unnameable.Count > 0)
+        {
+            _logger.LogWarning(
+                "setroles cannot offer a role option for {Count} faction(s): {Factions}. " +
+                "Their rosters are manageable only by the whitelist leader role.",
+                _unnameable.Count, string.Join(", ", _unnameable));
+        }
+    }
+
     public string Name => "setroles";
 
-    public ApplicationCommandProperties Build() =>
-        new SlashCommandBuilder()
+    public ApplicationCommandProperties Build()
+    {
+        var builder = new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription("Admin - Map Discord roles to the bot's permission tiers")
             .AddOption("mod_role", ApplicationCommandOptionType.Role, "Moderator", isRequired: false)
             .AddOption("admin_role", ApplicationCommandOptionType.Role, "Admin", isRequired: false)
-            .AddOption("whitelist_leader_role", ApplicationCommandOptionType.Role, "Manages every whitelist", isRequired: false)
-            .AddOption("police_role", ApplicationCommandOptionType.Role, "Police officer", isRequired: false)
-            .AddOption("mafia_role", ApplicationCommandOptionType.Role, "Manages BOTH mafia whitelists", isRequired: false)
-            .AddOption("nypd_role", ApplicationCommandOptionType.Role, "Manages the NYPD whitelist", isRequired: false)
-            .Build();
+            .AddOption("whitelist_leader_role", ApplicationCommandOptionType.Role, "Manages every whitelist", isRequired: false);
+
+        if (_police)
+            builder.AddOption("police_role", ApplicationCommandOptionType.Role, "Police officer", isRequired: false);
+
+        foreach (var (option, faction) in _factionOptions)
+        {
+            // Description carries the REAL name, which is what the operator recognises -
+            // the option name is a slug and "brotherhood_of_steel_role" is not it.
+            builder.AddOption(option, ApplicationCommandOptionType.Role,
+                $"Manages the {faction} whitelist", isRequired: false);
+        }
+
+        return builder.Build();
+    }
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (!access.Allows(RequiredAccess.Admin, command))
+        if (!_access.Allows(RequiredAccess.Admin, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", _access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
             return;
         }
 
@@ -49,28 +137,54 @@ public sealed class SetRolesCommand(SerializedStore store, Access access, ILogge
         /* Only the options actually SUPPLIED are changed. Rebuilding the whole map from
            this one invocation would silently clear every role the caller did not mention -
            so setting the mod role would unset the admin role. */
-        var updated = await store.UpdateAsync(Datasets.Roles, RoleMap.Empty, current => current with
+        var updated = await _store.UpdateAsync(Datasets.Roles, RoleMap.Empty, current =>
         {
-            ModRole = Role("mod_role") ?? current.ModRole,
-            AdminRole = Role("admin_role") ?? current.AdminRole,
-            FactionLeaderRole = Role("whitelist_leader_role") ?? current.FactionLeaderRole,
-            PoliceRole = Role("police_role") ?? current.PoliceRole,
-            MafiaRole = Role("mafia_role") ?? current.MafiaRole,
-            NypdRole = Role("nypd_role") ?? current.NypdRole,
+            // Same rule one level down: start from what is stored, overwrite only what was
+            // named. A fresh dictionary here would clear every faction not in this call.
+            var factionRoles = new Dictionary<string, ulong>(current.FactionRoles, StringComparer.OrdinalIgnoreCase);
+            foreach (var (option, faction) in _factionOptions)
+            {
+                if (Role(option) is { } id) factionRoles[faction] = id;
+            }
+
+            return current with
+            {
+                ModRole = Role("mod_role") ?? current.ModRole,
+                AdminRole = Role("admin_role") ?? current.AdminRole,
+                FactionLeaderRole = Role("whitelist_leader_role") ?? current.FactionLeaderRole,
+                PoliceRole = Role("police_role") ?? current.PoliceRole,
+                FactionRoles = factionRoles,
+            };
         }, ct).ConfigureAwait(false);
 
-        logger.LogInformation("setroles | by={By}", command.User.Username);
+        _logger.LogInformation("setroles | by={By}", command.User.Username);
 
         var map = updated.Value;
-        var lines = new (string Label, ulong? Id)[]
+        var tiers = new List<(string Label, ulong? Id)>
         {
             ("Moderator", map.ModRole), ("Admin", map.AdminRole),
-            ("Whitelist leader", map.FactionLeaderRole), ("Police", map.PoliceRole),
-            ("Mafia", map.MafiaRole), ("NYPD", map.NypdRole),
-        }.Select(r => $"**{r.Label}** — {(r.Id is { } id ? $"<@&{id}>" : "*not set*")}");
+            ("Whitelist leader", map.FactionLeaderRole),
+        };
+        if (_police) tiers.Add(("Police", map.PoliceRole));
 
-        await Reply(command, Theme.Success("Roles updated", string.Join("\n", lines))
-            .AddField("Owners", "Set through the environment, never a role - a role-based owner could be granted by anyone with Manage Roles.")).ConfigureAwait(false);
+        // RoleFor, not the map directly, so a deployment still on the legacy mafia/NYPD
+        // slots sees the role it actually has rather than "not set".
+        var factionLines = _factionOptions
+            .Select(o => (Label: o.Faction, Id: map.RoleFor(o.Faction)));
+
+        var lines = tiers.Concat(factionLines)
+            .Select(r => $"**{r.Label}** — {(r.Id is { } id ? $"<@&{id}>" : "*not set*")}");
+
+        var embed = Theme.Success("Roles updated", string.Join("\n", lines))
+            .AddField("Owners", "Set through the environment, never a role - a role-based owner could be granted by anyone with Manage Roles.");
+
+        if (_unnameable.Count > 0)
+        {
+            embed.AddField("No option available",
+                $"{string.Join(", ", _unnameable.Select(Sanitize.Code))} — manageable only by the whitelist leader role.");
+        }
+
+        await Reply(command, embed).ConfigureAwait(false);
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

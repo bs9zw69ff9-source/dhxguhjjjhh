@@ -16,10 +16,65 @@ public sealed record RoleMap
     public ulong? AdminRole { get; init; }
     public ulong? FactionLeaderRole { get; init; }
     public ulong? PoliceRole { get; init; }
-    /// <summary>Manages BOTH mafia whitelists. They are spawn-only and near-identical.</summary>
+
+    /// <summary>
+    /// Faction name -> the Discord role that may edit THAT faction's roster.
+    /// </summary>
+    /// <remarks>
+    /// A MAP, BECAUSE THE FACTIONS ARE DATA NOW. This used to be two fixed slots named after
+    /// the built-in set - one for the mafias and one for the police - and a bot running a
+    /// configured faction set had neither. Those slots granted nothing, so its only way to
+    /// delegate a roster was the leader role, which manages EVERY roster. The separation rule
+    /// was failing open on exactly the deployments that most needed it.
+    /// </remarks>
+    public IReadOnlyDictionary<string, ulong> FactionRoles { get; init; } =
+        new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Manages BOTH mafia whitelists. Superseded by <see cref="FactionRoles"/>.</summary>
+    /// <remarks>
+    /// KEPT SO A LIVE roles.json STILL READS. Deleting these two would deserialise every
+    /// existing deployment's faction roles as null - the whitelist delegation silently
+    /// vanishing on upgrade, with the file on disk still holding the ids that used to work.
+    /// They are a fallback only: anything set through <see cref="FactionRoles"/> wins.
+    /// </remarks>
     public ulong? MafiaRole { get; init; }
 
     public ulong? NypdRole { get; init; }
+
+    /// <summary>
+    /// The role that manages one faction's roster, or null for none.
+    /// </summary>
+    /// <remarks>
+    /// The map first, then the legacy slots for the three built-in names. Order matters:
+    /// an admin who sets Gambino's role explicitly must not keep getting the old shared
+    /// mafia role, or the new setting would appear to do nothing.
+    ///
+    /// THE SCAN IS NOT LAZINESS. A dictionary's comparer is NOT serialised: however this map
+    /// was built, it comes back from the store ordinal, so TryGetValue alone matches "NCR"
+    /// and misses "ncr". That failure only appears after a restart - case matching works
+    /// perfectly in memory, then a role stops granting anything once the process cycles,
+    /// which is the worst shape a permissions bug can have. The map holds one entry per
+    /// faction, so the scan is over a handful of items on a path that already reads a file.
+    /// </remarks>
+    public ulong? RoleFor(string? faction)
+    {
+        if (string.IsNullOrWhiteSpace(faction)) return null;
+        if (FactionRoles.TryGetValue(faction, out var id)) return id;
+
+        foreach (var configured in FactionRoles)
+        {
+            if (Same(configured.Key, faction)) return configured.Value;
+        }
+
+        return faction switch
+        {
+            var f when Same(f, "Gambino") || Same(f, "Colombo") => MafiaRole,
+            var f when Same(f, "NYPD") => NypdRole,
+            _ => null,
+        };
+    }
+
+    private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     public static RoleMap Empty { get; } = new();
 }
@@ -130,25 +185,25 @@ public sealed class Access
     /// is what stopped one faction's leader adding themselves to another's whitelist. An
     /// OWNER manages all of them, via <see cref="IsFactionLeader"/>.
     ///
-    /// NYPD is the only faction now - the Gambino and Colombo ladders were removed - so the
-    /// distinction currently has one member. It is kept rather than collapsed because the
-    /// rule is about SEPARATION, and flattening it would have to be reasoned out again the
-    /// moment a second faction is added.
+    /// WALKS THE LOADED SET rather than three compiled-in names. It used to read
+    /// <c>if (Has(MafiaRole)) add Gambino, Colombo</c> and the same for NYPD, which meant a
+    /// bot running a configured faction set had no per-faction delegation at all: those two
+    /// role slots matched none of its factions, so the leader role - which manages EVERY
+    /// roster - was the only thing that worked. The separation rule failed open precisely
+    /// where it was needed.
+    ///
+    /// One role may still manage several factions; that is now something an admin sets, by
+    /// naming the same role twice, rather than something the code decides for them.
     /// </remarks>
     public IReadOnlyCollection<string> ManageableFactions(IUser? user)
     {
         if (IsFactionLeader(user)) return [.. _factions.Names];
 
         var roles = Roles;
-        var factions = new List<string>();
 
-        /* ONE ROLE FOR BOTH MAFIAS. They are spawn access with no ladder, so there is nothing
-           for a Gambino manager to do inside Colombo that is worth a second role to prevent.
-           Police stays separate: that separation is between organised crime and the police,
-           which is the one that matters. */
-        if (Has(user, roles.MafiaRole)) { factions.Add("Gambino"); factions.Add("Colombo"); }
-        if (Has(user, roles.NypdRole)) factions.Add("NYPD");
-        return factions;
+        // Only factions that EXIST here. The legacy fallback answers for the three built-in
+        // names, and a themed bot must not report managing a faction it has never heard of.
+        return [.. _factions.Names.Where(name => Has(user, roles.RoleFor(name)))];
     }
 
     public bool CanManage(IUser? user, string faction) =>
