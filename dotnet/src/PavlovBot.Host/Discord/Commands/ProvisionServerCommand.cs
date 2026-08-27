@@ -66,18 +66,17 @@ public sealed class ProvisionServerCommand(
     /// <summary>Ephemeral: operator business, and it prints the generated RCON password.</summary>
     public bool Ephemeral => true;
 
-    private const int DefaultGamePort = 7777;
-    private const int DefaultQueryPort = 8177;
-    private const int DefaultRconPort = 9100;
-
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription("Owner - Install a new Pavlov server, configure it and wire it into this bot (needs root)")
             .AddOption("name", ApplicationCommandOptionType.String, "Public server name", isRequired: true)
-            .AddOption(Port("gameport", $"Game port (UDP, default {DefaultGamePort})"))
-            .AddOption(Port("queryport", $"Query/beacon port (UDP, default {DefaultQueryPort})"))
-            .AddOption(Port("rconport", $"RCON port (TCP, default {DefaultRconPort})"))
+            /* The descriptions name the SEQUENCE, not one number: these are registered with
+               Discord once, so they cannot say what this particular box's next server will get.
+               See ServerPortDefaults for why each stride is what it is. */
+            .AddOption(Port("gameport", "Game port (UDP; defaults step per server: 7777, 7778, 7779...)"))
+            .AddOption(Port("queryport", "Query/beacon port (UDP; defaults to the game port + 400)"))
+            .AddOption(Port("rconport", "RCON port (TCP; defaults step per server: 9100, 9200, 9300...)"))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("maxplayers").WithDescription("Max players (default 24)")
                 .WithType(ApplicationCommandOptionType.Integer).WithMinValue(1).WithMaxValue(100).WithRequired(false))
@@ -126,15 +125,22 @@ public sealed class ProvisionServerCommand(
         var rconPassword = StringOption(command, "rconpassword") is { Length: > 0 } supplied ? supplied : GeneratePassword();
         var generated = StringOption(command, "rconpassword") is not { Length: > 0 };
 
+        /* STEPPED PER SLOT, so server 2 is not a copy of server 1. The query port hangs off the
+           game port rather than the slot, so naming a game port by hand still yields the pair
+           Pavlov expects. */
+        var gamePort = (int)(IntOption(command, "gameport") ?? ServerPortDefaults.GamePort(prospectiveSlot));
+        var queryPort = (int)(IntOption(command, "queryport") ?? ServerPortDefaults.QueryPortFor(gamePort));
+        var rconPort = (int)(IntOption(command, "rconport") ?? ServerPortDefaults.RconPort(prospectiveSlot));
+
         var spec = new ServerProvisionSpec
         {
             Slot = prospectiveSlot,
             UnitName = unit,
             InstallDir = installDir,
             ServerName = ProvisionText.CleanServerName(StringOption(command, "name")),
-            GamePort = (int)(IntOption(command, "gameport") ?? DefaultGamePort),
-            QueryPort = (int)(IntOption(command, "queryport") ?? DefaultQueryPort),
-            RconPort = (int)(IntOption(command, "rconport") ?? DefaultRconPort),
+            GamePort = gamePort,
+            QueryPort = queryPort,
+            RconPort = rconPort,
             RconPassword = rconPassword,
             MaxPlayers = (int)(IntOption(command, "maxplayers") ?? features.DefaultServerCapacity),
             Maps = ParseMaps(StringOption(command, "maps")),
@@ -224,7 +230,9 @@ public sealed class ProvisionServerCommand(
             .AddField("Ports", $"game `{spec.GamePort}/udp` • query `{spec.QueryPort}/udp` • rcon `{spec.RconPort}/tcp`", inline: false)
             .AddField("Install dir", $"`{Sanitize.Code(spec.InstallDir)}`", inline: false)
             .AddField($"{Theme.Warn} Port collisions",
-                "Only RCON ports are checked against other servers. Make sure the game and query ports are unique on this box.", inline: false);
+                "Defaults step per server (game +1, RCON +100), so they do not collide on their own. " +
+                "Only RCON ports can be checked against other servers though - if you named the game or " +
+                "query port yourself, make sure it is unique on this box.", inline: false);
 
         if (generatedPassword)
             embed.AddField("RCON password (generated - save it)", $"||`{spec.RconPassword}`||", inline: false);
