@@ -518,6 +518,49 @@ public class ProvisioningTests
     }
 
     [Fact]
+    public void TheWarmupRunAsksSteamCmdForNothingButALoginAndAQuit()
+    {
+        // Its only job is to absorb the self-update; it must not touch an app or an install dir.
+        var argv = ServerProvisioner.SteamCmdWarmupArgv();
+
+        Assert.Equal(["+login", "anonymous", "+quit"], argv);
+        Assert.DoesNotContain(argv, a => a.Contains("app_update", StringComparison.Ordinal));
+        Assert.DoesNotContain(argv, a => a.Contains("force_install_dir", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AFirstRunThatOnlyUpdatedItselfIsRetriedRatherThanReportedAsAFailure()
+    {
+        /* THE OBSERVED BEHAVIOUR. A freshly unpacked SteamCMD downloads its own ~40 MB update on
+           the first run, applies it, and exits 8 having installed nothing else - which is what a
+           provision hit. Running it again immediately afterwards connects and works, so a
+           non-zero exit that looks like this cycle is worth one more attempt, not a report. */
+        Assert.True(ServerProvisioner.LooksLikeSelfUpdateCycle(
+            "[----] Downloading update (0 of 40321 KB)...\n[  0%] Downloading update (0 of 40321 KB)...", 8));
+        Assert.True(ServerProvisioner.LooksLikeSelfUpdateCycle("[  0%] Checking for available updates...", 8));
+    }
+
+    [Fact]
+    public void ASuccessfulRunIsNeverRetried()
+    {
+        // A healthy run prints the same "Checking for available update" line, so the exit code is
+        // what keeps this from matching every single install.
+        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle("[  0%] Checking for available updates...", 0));
+        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle("Success! App '622970' fully installed.", 0));
+    }
+
+    [Fact]
+    public void AGenuineFailureIsNotMistakenForTheUpdateCycle()
+    {
+        // Nothing about the self-update in it, so it is reported rather than costing another
+        // three-quarters of an hour.
+        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle(
+            "ERROR! Failed to install app '622970' (Disk write failure)", 8));
+        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle("", 1));
+        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle(null, 1));
+    }
+
+    [Fact]
     public void A32BitLoaderFailureIsNamedRatherThanLeftAsAnExitCode()
     {
         // SteamCMD ships a 32-bit binary; on a 64-bit box without the 32-bit runtime it dies

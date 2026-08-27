@@ -144,6 +144,38 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         ["-xzf", tarballPath, "-C", directory];
 
     /// <summary>
+    /// A do-nothing run, purely to let a freshly unpacked SteamCMD update itself.
+    /// </summary>
+    /// <remarks>
+    /// A NEW STEAMCMD SELF-UPDATES ON ITS FIRST RUN AND THEN ENDS, non-zero, WITHOUT DOING THE
+    /// JOB IT WAS ASKED TO DO - it downloads its own ~40 MB update, applies it, and exits 8. The
+    /// work is not lost and nothing is broken; the very next invocation is a normal, working
+    /// SteamCMD. That is exactly what a provision hit: the bot's run reported "Downloading update
+    /// (0 of 40321 KB)" and exit 8, and running it by hand straight afterwards connected happily
+    /// and reported a version. So the update is spent HERE, deliberately and where a failure is
+    /// meaningless, rather than being paid for by the app install that follows it.
+    /// </remarks>
+    internal static IReadOnlyList<string> SteamCmdWarmupArgv() => ["+login", "anonymous", "+quit"];
+
+    /// <summary>
+    /// Whether a failed SteamCMD run looks like the self-update cycle rather than a real fault.
+    /// </summary>
+    /// <remarks>
+    /// Only ever consulted for a run that already FAILED - a healthy run prints the same
+    /// "Checking for available update" line, so this would match everything otherwise. Deliberately
+    /// narrow, because the cost of being wrong is one more attempt at a step that can take the
+    /// better part of an hour.
+    /// </remarks>
+    internal static bool LooksLikeSelfUpdateCycle(string? output, int exitCode)
+    {
+        if (exitCode == 0) return false;
+
+        var text = (output ?? "").ToLowerInvariant();
+        return text.Contains("downloading update (", StringComparison.Ordinal) ||
+               text.Contains("checking for available update", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// What to do about a SteamCMD run that failed for a reason worth naming.
     /// </summary>
     /// <remarks>
@@ -287,6 +319,19 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         await run.Start("downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
         await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
         var steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
+
+        /* ONE RETRY, ONLY FOR THE SELF-UPDATE CYCLE. A SteamCMD that was already on the box can be
+           out of date too, and it spends its first run updating itself and exits non-zero having
+           installed nothing - indistinguishable from a real failure by exit code alone. The
+           bootstrap path above already absorbs this for a copy we unpacked ourselves; this covers
+           the one we merely found. Narrowly matched and capped at a single extra attempt, because
+           this step can take the better part of an hour. */
+        if (LooksLikeSelfUpdateCycle(steam.Combined, steam.ExitCode))
+        {
+            logger.LogWarning("SteamCMD exited {Code} after what looks like its own self-update; retrying once", steam.ExitCode);
+            steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
+        }
+
         if (!steam.Started)
         {
             await run.Fail($"could not execute {steamCmd}.").ConfigureAwait(false);
@@ -555,6 +600,14 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var path = $"{steamDir}/steamcmd.sh";
         if (!File.Exists(path))
             return (null, $"unpacked SteamCMD but {path} is not there - the tarball layout was not what was expected.", false);
+
+        /* SPEND THE SELF-UPDATE HERE. A newly unpacked SteamCMD downloads its own update on the
+           first run and then exits non-zero having done nothing else - so this pass exists purely
+           to absorb that, and its result is deliberately ignored. Doing it here means the app
+           install that follows is a second run, which is the one that works. See
+           SteamCmdWarmupArgv. */
+        var warm = await RunAsync(SteamUser, path, SteamCmdWarmupArgv(), TimeSpan.FromMinutes(15), ct).ConfigureAwait(false);
+        logger.LogInformation("SteamCMD self-update pass finished (exit {Code}) - its result is not a verdict", warm.ExitCode);
 
         logger.LogWarning("SteamCMD was not installed; unpacked Valve's tarball to {Path}", path);
         return (path, null, true);
