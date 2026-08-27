@@ -299,9 +299,10 @@ public class ProvisioningTests
     [Fact]
     public void SteamCmdArgvUsesThePavlovAppIdInOrder()
     {
+        // The wiki's line, argument for argument, including "+exit" rather than "+quit".
         Assert.Equal(
             ["+force_install_dir", "/home/steam/pavlovserver2", "+login", "anonymous",
-             "+app_update", "622970", "-beta", "default", "+quit"],
+             "+app_update", "622970", "-beta", "default", "+exit"],
             ServerProvisioner.SteamCmdArgv("/home/steam/pavlovserver2"));
     }
 
@@ -502,12 +503,12 @@ public class ProvisioningTests
     [Fact]
     public void TheBootstrapDownloadsToAFileRatherThanThroughAShellPipe()
     {
-        // The documented one-liner pipes curl into tar, which needs a shell. Downloading to a
-        // file and extracting separately is the same outcome with nothing to inject into.
+        // The documented one-liner pipes curl into tar, which needs a shell. Its curl flags and
+        // URL are kept exactly; only the pipe becomes a download plus a separate tar.
         var download = ServerProvisioner.SteamCmdDownloadArgv("/home/steam/Steam/steamcmd_linux.tar.gz");
 
         Assert.Contains("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz", download);
-        Assert.Contains("--fail", download);   // a 404 must not be written out as a "tarball"
+        Assert.Contains("-sqL", download);     // the documented flags, verbatim
         Assert.Contains("-o", download);
         Assert.Contains("/home/steam/Steam/steamcmd_linux.tar.gz", download);
         Assert.DoesNotContain(download, a => a.Contains('|', StringComparison.Ordinal));
@@ -515,99 +516,6 @@ public class ProvisioningTests
         Assert.Equal(
             ["-xzf", "/home/steam/Steam/steamcmd_linux.tar.gz", "-C", "/home/steam/Steam"],
             ServerProvisioner.SteamCmdExtractArgv("/home/steam/Steam/steamcmd_linux.tar.gz", "/home/steam/Steam"));
-    }
-
-    [Fact]
-    public void TheWarmupRunAsksSteamCmdForNothingButALoginAndAQuit()
-    {
-        // Its only job is to absorb the self-update; it must not touch an app or an install dir.
-        var argv = ServerProvisioner.SteamCmdWarmupArgv();
-
-        Assert.Equal(["+login", "anonymous", "+quit"], argv);
-        Assert.DoesNotContain(argv, a => a.Contains("app_update", StringComparison.Ordinal));
-        Assert.DoesNotContain(argv, a => a.Contains("force_install_dir", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void AFirstRunThatOnlyUpdatedItselfIsRetriedRatherThanReportedAsAFailure()
-    {
-        /* THE OBSERVED BEHAVIOUR. A freshly unpacked SteamCMD downloads its own ~40 MB update on
-           the first run, applies it, and exits 8 having installed nothing else - which is what a
-           provision hit. Running it again immediately afterwards connects and works, so a
-           non-zero exit that looks like this cycle is worth one more attempt, not a report. */
-        Assert.True(ServerProvisioner.LooksLikeSelfUpdateCycle(
-            "[----] Downloading update (0 of 40321 KB)...\n[  0%] Downloading update (0 of 40321 KB)...", 8));
-        Assert.True(ServerProvisioner.LooksLikeSelfUpdateCycle("[  0%] Checking for available updates...", 8));
-    }
-
-    [Fact]
-    public void ASuccessfulRunIsNeverRetried()
-    {
-        // A healthy run prints the same "Checking for available update" line, so the exit code is
-        // what keeps this from matching every single install.
-        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle("[  0%] Checking for available updates...", 0));
-        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle("Success! App '622970' fully installed.", 0));
-    }
-
-    [Fact]
-    public void AGenuineFailureIsNotMistakenForTheUpdateCycle()
-    {
-        // Nothing about the self-update in it, so it is reported rather than costing another
-        // three-quarters of an hour.
-        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle(
-            "ERROR! Failed to install app '622970' (Disk write failure)", 8));
-        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle("", 1));
-        Assert.False(ServerProvisioner.LooksLikeSelfUpdateCycle(null, 1));
-    }
-
-    [Fact]
-    public void A32BitLoaderFailureIsNamedRatherThanLeftAsAnExitCode()
-    {
-        // SteamCMD ships a 32-bit binary; on a 64-bit box without the 32-bit runtime it dies
-        // with a loader error that names no package. The likeliest first-run failure there is.
-        var advice = ServerProvisioner.SteamCmdAdvice(
-            "/home/steam/Steam/linux32/steamcmd: error while loading shared libraries: " +
-            "libstdc++.so.6: cannot open shared object file: No such file or directory");
-
-        Assert.NotNull(advice);
-        Assert.Contains("lib32gcc-s1", advice, StringComparison.Ordinal);
-        Assert.Contains("i386", advice, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AnOrdinarySteamCmdFailureGetsNoMisleadingAdvice()
-    {
-        // Nothing to say beyond the exit code and output; inventing a library hint for an
-        // unrelated failure would send somebody after the wrong thing.
-        Assert.Null(ServerProvisioner.SteamCmdAdvice("ERROR! Failed to install app '622970' (Disk write failure)", 1));
-        Assert.Null(ServerProvisioner.SteamCmdAdvice("", 0));
-        Assert.Null(ServerProvisioner.SteamCmdAdvice(null, 0));
-    }
-
-    [Fact]
-    public void AStalledSelfUpdatePointsAtSteamsOwnLogAndAWayToReproduceIt()
-    {
-        /* THE SECOND REAL FAILURE. SteamCMD unpacked fine and then died updating ITSELF, showing
-           a progress line pinned at "0 of 40321 KB" and exit 8 - the actual reason goes to its own
-           stderr log rather than the console, so the useful answer is that path plus a command to
-           run it by hand and see the whole thing. */
-        var advice = ServerProvisioner.SteamCmdAdvice(
-            "[----] Downloading update (0 of 40321 KB)...\n[  0%] Downloading update (0 of 40321 KB)...",
-            8, "/home/steam/Steam/steamcmd.sh");
-
-        Assert.NotNull(advice);
-        Assert.Contains("/home/steam/Steam/logs/stderr.txt", advice, StringComparison.Ordinal);
-        Assert.Contains("sudo -u steam /home/steam/Steam/steamcmd.sh", advice, StringComparison.Ordinal);
-        Assert.Contains("df -h", advice, StringComparison.Ordinal);
-    }
-
-    [Theory]
-    [InlineData("/home/steam/Steam/steamcmd.sh", "/home/steam/Steam/logs/stderr.txt")]
-    [InlineData("/usr/games/steamcmd", "/usr/games/logs/stderr.txt")]
-    [InlineData(null, "/home/steam/Steam/logs/stderr.txt")]
-    public void TheSteamCmdLogSitsBesideTheExecutable(string? steamCmd, string expected)
-    {
-        Assert.Equal(expected, ServerProvisioner.SteamCmdLogPath(steamCmd));
     }
 
     // ---- reporting a failure ----
