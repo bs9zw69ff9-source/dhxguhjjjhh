@@ -68,6 +68,36 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Restart the bot",
     ];
 
+    /// <summary>The same run, with the two SteamCMD steps replaced by one copy.</summary>
+    internal static readonly string[] CopyStepNames =
+    [
+        "Pre-flight checks",
+        "Steam user account",
+        "Steam sudo access (full, NOPASSWD)",
+        "Copy an existing install",
+        "Server config (RconSettings.txt, Game.ini)",
+        "systemd unit (write, daemon-reload, enable --now)",
+        "Firewall (ufw)",
+        "RCON reachability",
+        "Wire into the bot (.env)",
+        "Restart the bot",
+    ];
+
+    /// <summary>Which checklist a run follows. Copying skips SteamCMD entirely.</summary>
+    internal static IReadOnlyList<string> StepsFor(bool copying) => copying ? CopyStepNames : StepNames;
+
+    /// <summary>
+    /// <c>cp -r &lt;source&gt;/. &lt;destination&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// The trailing <c>/.</c> copies the source's CONTENTS rather than the source directory
+    /// itself. Plain <c>cp -r src dst</c> means two different things depending on whether dst
+    /// already exists - it becomes dst, or it becomes dst/src - and the second would bury the
+    /// install one level down where nothing would find it. This form is the same either way.
+    /// </remarks>
+    internal static IReadOnlyList<string> CopyInstallArgv(string source, string destination) =>
+        ["-r", $"{source.TrimEnd('/')}/.", destination];
+
     /// <summary>
     /// The SteamCMD argument list, verbatim. Extracted so the exact command line - the app id
     /// and the branch above all - is pinned by a test rather than discovered against a live Steam.
@@ -181,7 +211,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(onProgress);
 
-        var run = new Run(StepNames, onProgress);
+        var copying = request.CopyFromInstallDir is { Length: > 0 };
+        var run = new Run(StepsFor(copying), onProgress);
         var spec = request.Spec;
         var unitPath = $"/etc/systemd/system/{spec.UnitName}.service";
 
@@ -221,40 +252,82 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok($"{SudoersDropIn} installed - steam now has full, passwordless sudo.").ConfigureAwait(false);
 
-        // ---- find SteamCMD, or unpack Valve's tarball where the steam account can run it ----
-        await run.Start("looking for steamcmd…").ConfigureAwait(false);
-        var (steamCmd, locateProblem, bootstrapped) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
-        if (steamCmd is null)
+        // ---- the game files: copied from a working install, or downloaded with SteamCMD ----
+        if (copying)
         {
-            await run.Fail(locateProblem ?? "could not find or install SteamCMD.").ConfigureAwait(false);
-            return await run.Abort().ConfigureAwait(false);
-        }
-        await run.Ok(bootstrapped
-            ? $"not installed, so it was unpacked to {steamCmd}."
-            : $"found at {steamCmd}.").ConfigureAwait(false);
+            var source = request.CopyFromInstallDir!;
+            await run.Start($"copying {source}…").ConfigureAwait(false);
 
-        // ---- SteamCMD ----
-        await run.Start("downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
-        await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
-        var steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
+            if (!Directory.Exists(source))
+            {
+                await run.Fail($"{source} does not exist - there is nothing to copy from.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
 
-        if (!steam.Started)
-        {
-            await run.Fail($"could not execute {steamCmd}.").ConfigureAwait(false);
-            return await run.Abort().ConfigureAwait(false);
+            var mkTarget = await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
+            if (!mkTarget.Ok)
+            {
+                await run.Fail($"could not create {spec.InstallDir}: {Tail(mkTarget.Combined)}").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+
+            // As slow as the disk and as large as the install, so it gets SteamCMD's budget.
+            var copy = await RunAsync(SteamUser, "cp", CopyInstallArgv(source, spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
+            if (!copy.Started)
+            {
+                await run.Fail("could not start cp.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            if (copy.TimedOut)
+            {
+                await run.Fail($"the copy did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            if (copy.ExitCode != 0)
+            {
+                await run.Fail($"cp exited {copy.ExitCode}: {Tail(copy.Combined)}").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+
+            await run.Ok($"copied from {source}.").ConfigureAwait(false);
         }
-        if (steam.TimedOut)
+        else
         {
-            await run.Fail($"SteamCMD did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
-            return await run.Abort().ConfigureAwait(false);
+            // ---- find SteamCMD, or unpack Valve's tarball where the steam account can run it ----
+            await run.Start("looking for steamcmd…").ConfigureAwait(false);
+            var (steamCmd, locateProblem, bootstrapped) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
+            if (steamCmd is null)
+            {
+                await run.Fail(locateProblem ?? "could not find or install SteamCMD.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            await run.Ok(bootstrapped
+                ? $"not installed, so it was unpacked to {steamCmd}."
+                : $"found at {steamCmd}.").ConfigureAwait(false);
+
+            // ---- SteamCMD ----
+            await run.Start("downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
+            await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
+            var steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
+
+            if (!steam.Started)
+            {
+                await run.Fail($"could not execute {steamCmd}.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            if (steam.TimedOut)
+            {
+                await run.Fail($"SteamCMD did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            if (steam.ExitCode != 0)
+            {
+                // What SteamCMD said, and nothing invented on top of it.
+                await run.Fail($"SteamCMD exited {steam.ExitCode}: {Tail(steam.Combined)}").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            await run.Ok("installed.").ConfigureAwait(false);
         }
-        if (steam.ExitCode != 0)
-        {
-            // What SteamCMD said, and nothing invented on top of it.
-            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Tail(steam.Combined)}").ConfigureAwait(false);
-            return await run.Abort().ConfigureAwait(false);
-        }
-        await run.Ok("installed.").ConfigureAwait(false);
 
         // ---- config files ----
         await run.Start("writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
