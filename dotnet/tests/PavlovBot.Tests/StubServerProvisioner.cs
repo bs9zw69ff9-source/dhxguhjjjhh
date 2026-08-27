@@ -33,4 +33,25 @@ internal sealed class StubServerProvisioner(bool restartQueued = true) : IServer
 
         return new ProvisionOutcome(steps, restartQueued);
     }
+
+    public DeleteRequest? Deleted { get; private set; }
+
+    public async Task<ProvisionOutcome> DeleteAsync(
+        DeleteRequest request,
+        Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
+        CancellationToken ct)
+    {
+        Deleted = request;
+
+        var steps = new List<ProvisionStep>
+        {
+            new("Pre-flight checks", ProvisionStatus.Ok, "ok"),
+            new("Delete the install directory", ProvisionStatus.Ok, "deleted"),
+        };
+
+        await onProgress(steps).ConfigureAwait(false);
+        ProgressCallbacks++;
+
+        return new ProvisionOutcome(steps, restartQueued);
+    }
 }

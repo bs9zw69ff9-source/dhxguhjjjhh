@@ -457,6 +457,7 @@ public static class Program
             new PavlovBot.Host.Servers.ServerProvisioner(
                 sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServerProvisioner>>()));
         builder.Services.AddSingleton<ISlashCommand, ProvisionServerCommand>();
+        builder.Services.AddSingleton<ISlashCommand, DeleteServerCommand>();
         /* The owner control panel is both: a slash command that posts the menu, and the
            component handler for the menu and its modals. One instance, registered twice. */
         builder.Services.AddSingleton<ConfigPanel>();

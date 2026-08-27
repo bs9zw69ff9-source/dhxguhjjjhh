@@ -80,4 +80,31 @@ public interface IServerProvisioner
         ProvisionRequest request,
         Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
         CancellationToken ct);
+
+    /// <summary>
+    /// Take a server back off the box: stop it, remove its unit, delete its install, unwire it.
+    /// </summary>
+    /// <remarks>
+    /// IRREVERSIBLE. The install directory goes with it, including that server's own whitelist,
+    /// bans and logs - so the caller is responsible for being sure, and for not offering this
+    /// where a mis-click reaches it.
+    /// </remarks>
+    Task<ProvisionOutcome> DeleteAsync(
+        DeleteRequest request,
+        Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
+        CancellationToken ct);
 }
+
+/// <param name="Slot">The 1-based server number being removed.</param>
+/// <param name="UnitName">Its systemd unit.</param>
+/// <param name="InstallDir">Its install directory, which is deleted outright.</param>
+/// <param name="FinalPavlovUnits">The unit list WITHOUT it.</param>
+/// <param name="FinalPavlovBases">The base list WITHOUT it.</param>
+/// <param name="EnvPath">The bot's <c>.env</c>, which gets the removal block.</param>
+public sealed record DeleteRequest(
+    int Slot,
+    string UnitName,
+    string InstallDir,
+    IReadOnlyList<string> FinalPavlovUnits,
+    IReadOnlyList<string> FinalPavlovBases,
+    string EnvPath);

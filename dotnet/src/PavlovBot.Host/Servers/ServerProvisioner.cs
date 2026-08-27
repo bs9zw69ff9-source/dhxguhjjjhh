@@ -86,6 +86,17 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// <summary>Which checklist a run follows. Copying skips SteamCMD entirely.</summary>
     internal static IReadOnlyList<string> StepsFor(bool copying) => copying ? CopyStepNames : StepNames;
 
+    /// <summary>The checklist for taking a server back off the box.</summary>
+    internal static readonly string[] DeleteStepNames =
+    [
+        "Pre-flight checks",
+        "Stop and disable the service",
+        "Remove the systemd unit",
+        "Delete the install directory",
+        "Unwire from the bot (.env)",
+        "Restart the bot",
+    ];
+
     /// <summary>
     /// <c>cp -r &lt;source&gt;/. &lt;destination&gt;</c>.
     /// </summary>
@@ -373,6 +384,128 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         return await RestartAsync(run, spec.Slot, ct).ConfigureAwait(false);
     }
 
+    public async Task<ProvisionOutcome> DeleteAsync(
+        DeleteRequest request,
+        Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(onProgress);
+
+        var run = new Run(DeleteStepNames, onProgress);
+        var unitPath = $"/etc/systemd/system/{request.UnitName}.service";
+
+        // ---- pre-flight ----
+        await run.Start("checking privileges and the unit name…").ConfigureAwait(false);
+        if (!Environment.IsPrivilegedProcess)
+        {
+            await run.Fail("the bot is not running as root, so it cannot stop a service or remove its unit.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        if (!ServiceControl.IsPlausibleUnitName(request.UnitName))
+        {
+            await run.Fail($"\"{request.UnitName}\" is not a usable systemd unit name.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok("root, and the unit name is usable.").ConfigureAwait(false);
+
+        // ---- stop and disable ----
+        /* Neither is fatal. A unit that is already stopped, already disabled, or was never there
+           at all is the state we want to end in, and systemctl says so with a non-zero exit -
+           refusing to continue would leave the install and the .env entry behind for a
+           "failure" that is actually the goal. */
+        await run.Start($"stopping {request.UnitName}…").ConfigureAwait(false);
+        var stop = await RunAsync(null, "systemctl", ["disable", "--now", request.UnitName], SystemctlTimeout, ct).ConfigureAwait(false);
+        await run.Ok(stop.Ok ? "stopped and disabled." : $"already stopped or absent ({Tail(stop.Combined, 200)}).").ConfigureAwait(false);
+
+        // ---- remove the unit ----
+        await run.Start($"removing {unitPath}…").ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(unitPath)) File.Delete(unitPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await run.Fail($"could not remove {unitPath}: {ex.Message}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+
+        var reload = await RunAsync(null, "systemctl", ["daemon-reload"], SystemctlTimeout, ct).ConfigureAwait(false);
+        if (!reload.Ok)
+        {
+            await run.Fail($"systemctl daemon-reload failed: {Tail(reload.Combined)}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok("removed, and systemd reloaded.").ConfigureAwait(false);
+
+        // ---- delete the install ----
+        await run.Start($"deleting {request.InstallDir}…").ConfigureAwait(false);
+        if (DeletableInstallProblem(request.InstallDir) is { } pathProblem)
+        {
+            await run.Fail(pathProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+
+        var remove = await RunAsync(null, "rm", ["-rf", request.InstallDir], SteamCmdTimeout, ct).ConfigureAwait(false);
+        if (!remove.Ok)
+        {
+            await run.Fail($"could not delete {request.InstallDir}: {Tail(remove.Combined)}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        logger.LogWarning("DELETED the install at {Path} for server {Slot}", request.InstallDir, request.Slot);
+        await run.Ok("deleted.").ConfigureAwait(false);
+
+        // ---- unwire ----
+        await run.Start("clearing it from .env…").ConfigureAwait(false);
+        try
+        {
+            var existing = File.Exists(request.EnvPath)
+                ? await File.ReadAllTextAsync(request.EnvPath, ct).ConfigureAwait(false)
+                : "";
+
+            var block = ProvisionText.EnvRemovalBlock(
+                request.Slot, request.FinalPavlovUnits, request.FinalPavlovBases,
+                DateOnly.FromDateTime(DateTime.UtcNow));
+
+            await AtomicFile.WriteAsync(request.EnvPath, existing + block, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await run.Fail($"could not update {request.EnvPath}: {ex.Message}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"server {request.Slot} cleared.").ConfigureAwait(false);
+
+        // ---- restart ----
+        return await RestartAsync(run, request.Slot, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Refuse to <c>rm -rf</c> anything that is not plausibly one server's install.
+    /// </summary>
+    /// <remarks>
+    /// The one guard worth having in front of a recursive delete run as root. The path is
+    /// configuration rather than anything typed into Discord, but "/" or "/home" reaching this
+    /// through a mis-set PAVLOV_BASE is not a risk worth carrying for the sake of trusting it.
+    /// </remarks>
+    internal static string? DeletableInstallProblem(string? installDir)
+    {
+        if (string.IsNullOrWhiteSpace(installDir) || !installDir.StartsWith('/') ||
+            installDir.Contains("..", StringComparison.Ordinal))
+        {
+            return $"\"{installDir}\" is not an absolute, traversal-free path - refusing to delete it.";
+        }
+
+        var trimmed = installDir.TrimEnd('/');
+
+        // At least three levels down, e.g. /home/steam/pavlovserver. Anything shallower is a
+        // system directory, not one server's install.
+        if (trimmed.Split('/', StringSplitOptions.RemoveEmptyEntries).Length < 3)
+            return $"\"{installDir}\" is too close to the root of the filesystem to be one server's install - refusing to delete it.";
+
+        return null;
+    }
+
     /// <summary>
     /// Every reason the run must not start, or null when it may.
     /// </summary>
@@ -581,21 +714,62 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         return (path, null, true);
     }
 
-    /// <summary>Write the two config files and hand them to steam. Null on success.</summary>
+    /// <summary>
+    /// The directories the guide has you create by hand before first start.
+    /// </summary>
+    /// <remarks>
+    /// The documented setup is to start the server once and let it build these, with creating them
+    /// by hand as the fallback for when that does not work. Doing it up front is the same end state
+    /// and skips a start-then-stop cycle that a provision has no way to supervise.
+    /// </remarks>
+    internal static IReadOnlyList<string> ConfigDirectories(string installDir)
+    {
+        var saved = Path.Combine(installDir, "Pavlov", "Saved");
+        return
+        [
+            Path.Combine(saved, "Logs"),
+            Path.Combine(saved, "Config", "LinuxServer"),
+            Path.Combine(saved, "maps"),
+        ];
+    }
+
+    /// <summary>
+    /// The three optional files the guide creates empty: mods, blacklist, whitelist.
+    /// </summary>
+    /// <remarks>
+    /// EMPTY, AND ONLY IF ABSENT. Each is a list the operator fills in later, and on a copied
+    /// install they may already have contents worth keeping - so these are touched, never written,
+    /// and an existing one is left exactly as it is.
+    /// </remarks>
+    internal static IReadOnlyList<string> OptionalConfigFiles(string installDir)
+    {
+        var config = Path.Combine(installDir, "Pavlov", "Saved", "Config");
+        return
+        [
+            Path.Combine(config, "mods.txt"),
+            Path.Combine(config, "blacklist.txt"),
+            Path.Combine(config, "whitelist.txt"),
+        ];
+    }
+
+    /// <summary>Create the directories and files, then write the two configs. Null on success.</summary>
     private async Task<string?> WriteConfigAsync(ServerProvisionSpec spec, CancellationToken ct)
     {
         var configDir = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "Config");
         var linuxDir = Path.Combine(configDir, "LinuxServer");
 
-        var mk = await RunAsync(SteamUser, "mkdir", ["-p", linuxDir], QuickTimeout, ct).ConfigureAwait(false);
-        if (!mk.Ok) return $"could not create {linuxDir}: {Tail(mk.Combined)}";
+        foreach (var directory in ConfigDirectories(spec.InstallDir))
+        {
+            var mk = await RunAsync(SteamUser, "mkdir", ["-p", directory], QuickTimeout, ct).ConfigureAwait(false);
+            if (!mk.Ok) return $"could not create {directory}: {Tail(mk.Combined)}";
+        }
 
-        /* Shack takes its maps from a directory the guide has you create by hand - map handling is
-           the one part of the setup that genuinely differs from the PC build, and without this the
-           server has nowhere to put them. */
-        var mapsDir = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "maps");
-        var mkMaps = await RunAsync(SteamUser, "mkdir", ["-p", mapsDir], QuickTimeout, ct).ConfigureAwait(false);
-        if (!mkMaps.Ok) return $"could not create {mapsDir}: {Tail(mkMaps.Combined)}";
+        foreach (var file in OptionalConfigFiles(spec.InstallDir))
+        {
+            // touch: creates it empty, and leaves an existing one untouched.
+            var mkFile = await RunAsync(SteamUser, "touch", [file], QuickTimeout, ct).ConfigureAwait(false);
+            if (!mkFile.Ok) return $"could not create {file}: {Tail(mkFile.Combined)}";
+        }
 
         try
         {
