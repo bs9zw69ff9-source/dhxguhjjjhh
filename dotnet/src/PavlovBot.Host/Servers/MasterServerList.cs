@@ -33,7 +33,7 @@ public sealed class MasterServerList
     /// it here is the fix; PAVLOV_VERSION overrides it without a deploy when the next one
     /// lands before anybody has time to.
     /// </remarks>
-    public const string DefaultVersion = "1.0.28";
+    public const string DefaultVersion = "1.0.29";
 
     private static string Endpoint(string version) =>
         $"https://prod2-shack-pavlov-ms.vankrupt.net/servers/v2/list/{version}/oculus/0/0/0/all";
