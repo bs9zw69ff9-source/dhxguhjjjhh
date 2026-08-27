@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Provisioning;
@@ -36,11 +37,31 @@ public sealed class ProvisionServerCommand(
     BotOptions options,
     FeatureOptions features,
     IConfiguration configuration,
-    IAutoPostTarget post,
+    IServiceProvider services,
     IHostApplicationLifetime lifetime,
     ILogger<ProvisionServerCommand> logger) : ISlashCommand
 {
     public string Name => "provisionserver";
+
+    /// <summary>
+    /// The auto-post target, resolved on first use rather than injected.
+    /// </summary>
+    /// <remarks>
+    /// THE GATEWAY IS RESOLVED ON USE, NOT INJECTED, for the exact reason
+    /// <see cref="GatewayChannelRenamer"/> documents: <see cref="DiscordGateway"/> takes every
+    /// <see cref="ISlashCommand"/> in its constructor, and <see cref="IAutoPostTarget"/>'s own
+    /// registration resolves <see cref="DiscordGateway"/> - so a command that took it as a
+    /// constructor parameter would close the cycle DiscordGateway -&gt; every command -&gt; this
+    /// command -&gt; IAutoPostTarget -&gt; DiscordGateway. Because IAutoPostTarget is registered
+    /// behind a factory delegate, the container cannot see that cycle statically the way it can
+    /// for a plain interface mapping, so instead of failing fast with "a circular dependency was
+    /// detected" it deadlocks silently the first time <c>--selftest</c> builds the whole graph -
+    /// which is exactly what happened before this was changed to resolve lazily here. Nothing
+    /// needs the gateway until a command is actually run, long after startup, so resolving it
+    /// then breaks the cycle without pretending the dependency is not real.
+    /// </remarks>
+    private IAutoPostTarget? _post;
+    private IAutoPostTarget Post => _post ??= services.GetRequiredService<IAutoPostTarget>();
 
     /// <summary>Ephemeral: operator business, and it prints the generated RCON password.</summary>
     public bool Ephemeral => true;
@@ -152,7 +173,7 @@ public sealed class ProvisionServerCommand(
             Path.Combine(Directory.GetCurrentDirectory(), ".env"));
 
         var channelId = command.Channel.Id;
-        var messageId = await post.SendAsync(channelId, Checklist(spec, InitialSteps()), null, ct).ConfigureAwait(false);
+        var messageId = await Post.SendAsync(channelId, Checklist(spec, InitialSteps()), null, ct).ConfigureAwait(false);
 
         // Detached: SteamCMD outlives both the command budget and the interaction token, so this
         // runs under the HOST lifetime, not the command's ct, and reports to the channel.
@@ -168,8 +189,8 @@ public sealed class ProvisionServerCommand(
             await provisioner.ProvisionAsync(request, async steps =>
             {
                 var embed = Checklist(spec, steps);
-                if (messageId is { } id) await post.EditAsync(channelId, id, embed, null, stopping).ConfigureAwait(false);
-                else await post.SendAsync(channelId, embed, null, stopping).ConfigureAwait(false);
+                if (messageId is { } id) await Post.EditAsync(channelId, id, embed, null, stopping).ConfigureAwait(false);
+                else await Post.SendAsync(channelId, embed, null, stopping).ConfigureAwait(false);
             }, stopping).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -177,7 +198,7 @@ public sealed class ProvisionServerCommand(
             logger.LogError(ex, "Provisioning server {Slot} threw", spec.Slot);
             try
             {
-                await post.SendAsync(channelId,
+                await Post.SendAsync(channelId,
                     Theme.Failure($"Provisioning server {spec.Slot} failed", Sanitize.Code(ex.Message)).Build(),
                     null, stopping).ConfigureAwait(false);
             }
