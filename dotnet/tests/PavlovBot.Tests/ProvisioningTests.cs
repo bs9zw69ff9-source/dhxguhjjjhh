@@ -562,6 +562,43 @@ public class ProvisioningTests
         Assert.Equal("trimmed", ServerProvisioner.Tail("  trimmed\n"));
     }
 
+    // ---- copying an existing install ----
+
+    [Fact]
+    public void TheCopyTakesTheSourcesCONTENTSSoItCannotNestOneLevelDown()
+    {
+        /* The trailing "/." is the whole point. Plain "cp -r src dst" means two different things
+           depending on whether dst already exists - it BECOMES dst, or it lands as dst/src - and
+           the second would bury the install a level down where nothing would find it. */
+        Assert.Equal(
+            ["-r", "/home/steam/pavlovserver/.", "/home/steam/pavlovserver1"],
+            ServerProvisioner.CopyInstallArgv("/home/steam/pavlovserver", "/home/steam/pavlovserver1"));
+
+        // A trailing slash on the source must not produce "pavlovserver//.".
+        Assert.Equal(
+            ["-r", "/home/steam/pavlovserver/.", "/home/steam/pavlovserver2"],
+            ServerProvisioner.CopyInstallArgv("/home/steam/pavlovserver/", "/home/steam/pavlovserver2"));
+    }
+
+    [Fact]
+    public void CopyingSwapsTheTwoSteamCmdStepsForOneCopyStep()
+    {
+        var download = ServerProvisioner.StepsFor(copying: false);
+        var copy = ServerProvisioner.StepsFor(copying: true);
+
+        Assert.Contains("SteamCMD install", download);
+        Assert.Contains("SteamCMD (locate or bootstrap)", download);
+
+        Assert.Contains("Copy an existing install", copy);
+        Assert.DoesNotContain("SteamCMD install", copy);
+        Assert.DoesNotContain("SteamCMD (locate or bootstrap)", copy);
+
+        // One step shorter, and identical either side of the swap.
+        Assert.Equal(download.Count - 1, copy.Count);
+        Assert.Equal(download.Take(3), copy.Take(3));
+        Assert.Equal(download.Skip(5), copy.Skip(4));
+    }
+
     // ---- steam's sudo grant ----
 
     [Fact]

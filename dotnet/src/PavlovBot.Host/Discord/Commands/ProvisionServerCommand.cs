@@ -66,6 +66,20 @@ public sealed class ProvisionServerCommand(
     /// <summary>Ephemeral: operator business, and it prints the generated RCON password.</summary>
     public bool Ephemeral => true;
 
+    /// <summary>
+    /// The password given to the <c>steam</c> OS account when this creates it.
+    /// </summary>
+    /// <remarks>
+    /// LITERALLY "1", BY EXPLICIT OPERATOR INSTRUCTION, on a box reached only by SSH key. It is
+    /// still set rather than left blank, because an account with no password at all is a different
+    /// and more awkward state to be in later. Worth knowing what this does and does not cost:
+    /// <c>sudo -u steam</c> and key-based SSH never consult it, so it is not what protects the
+    /// account - but it IS a real credential for anything that does check one (a console login,
+    /// <c>su - steam</c>), and combined with the full sudo this command grants, "1" is enough to
+    /// become root for anyone who reaches such a prompt.
+    /// </remarks>
+    private const string SteamUserPassword = "1";
+
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
@@ -82,8 +96,12 @@ public sealed class ProvisionServerCommand(
                 .WithType(ApplicationCommandOptionType.Integer)
                 .WithMinValue(1).WithMaxValue(ProvisionValidation.MaxShackPlayers).WithRequired(false))
             .AddOption("maps", ApplicationCommandOptionType.String, "Rotation as MapId:Mode,MapId:Mode (default datacenter:SND)", isRequired: false)
-            .AddOption("unit", ApplicationCommandOptionType.String, "systemd unit name (default pavlovserverN)", isRequired: false)
-            .AddOption("installdir", ApplicationCommandOptionType.String, "Install directory (default beside the others)", isRequired: false)
+            /* NO unit OR installdir OPTION. The naming is a fixed convention on this box - server
+               1 is pavlovserver, server 2 is pavlovserver1, and so on - and the unit name, the
+               install directory and the slot all have to agree. Letting any of them be typed in
+               is how they stop agreeing, so the slot decides all three. */
+            .AddOption("copy", ApplicationCommandOptionType.Boolean,
+                "Copy server 1's install instead of downloading it with SteamCMD", isRequired: false)
             .AddOption("rconpassword", ApplicationCommandOptionType.String, "RCON password (default: a strong one is generated)", isRequired: false)
             .AddOption("gamepassword", ApplicationCommandOptionType.String, "Optional join password (default: open)", isRequired: false)
             .Build();
@@ -114,15 +132,11 @@ public sealed class ProvisionServerCommand(
         // ---- assemble the request from options + sensible, slot-aware defaults ----
         var prospectiveSlot = usedIndices.Count + 1;
 
-        var unit = (StringOption(command, "unit") ?? $"pavlovserver{Off(prospectiveSlot)}").Trim();
-        if (!ServiceControl.IsPlausibleUnitName(unit))
-        {
-            await Reply(command, Theme.Failure("Unusable unit name",
-                $"`{Sanitize.Code(unit)}` is not a valid systemd unit name.")).ConfigureAwait(false);
-            return;
-        }
-
-        var installDir = (StringOption(command, "installdir") ?? Path.Combine(DefaultInstallParent(), unit)).TrimEnd('/');
+        /* THE CONVENTION DECIDES BOTH, from the slot alone: server 1 is pavlovserver, server 2 is
+           pavlovserver1, server 3 is pavlovserver2. The unit is named for the directory and the
+           directory sits beside its siblings, so the two cannot disagree. */
+        var unit = $"pavlovserver{Off(prospectiveSlot)}";
+        var installDir = Path.Combine(DefaultInstallParent(), unit);
         var rconPassword = StringOption(command, "rconpassword") is { Length: > 0 } supplied ? supplied : GeneratePassword();
         var generated = StringOption(command, "rconpassword") is not { Length: > 0 };
 
@@ -171,18 +185,21 @@ public sealed class ProvisionServerCommand(
         logger.LogWarning("PROVISIONSERVER by {User} | slot {Slot} | unit {Unit} | dir {Dir}",
             who, spec.Slot, spec.UnitName, spec.InstallDir);
 
+        /* Server 1's install, which is what a copy is made from. Same convention as everything
+           else: slot 1 is "pavlovserver" with no suffix. */
+        var copyFrom = BoolOption(command, "copy") == true
+            ? Path.Combine(DefaultInstallParent(), $"pavlovserver{Off(1)}")
+            : null;
+
         // ---- kick off, and hand the slow work to a detached task ----
-        // Generated up front, always - not conditionally, and not inside the provisioner - because
-        // whether the steam account needs creating is only known deep in a background task with no
-        // interaction left to reply on. REQUIRED: an account this creates never goes unpassworded.
-        var steamUserPassword = GeneratePassword();
-        await Reply(command, StartedEmbed(spec, generated, steamUserPassword)).ConfigureAwait(false);
+        await Reply(command, StartedEmbed(spec, generated, SteamUserPassword, copyFrom)).ConfigureAwait(false);
 
         var request = new ProvisionRequest(
             spec, plan.FinalUnits, plan.FinalBases,
             FinalPlayerCountChannels: null,
             Path.Combine(Directory.GetCurrentDirectory(), ".env"),
-            steamUserPassword);
+            SteamUserPassword,
+            copyFrom);
 
         var channelId = command.Channel.Id;
         var messageId = await Post.SendAsync(channelId, Checklist(spec, InitialSteps()), null, ct).ConfigureAwait(false);
@@ -223,10 +240,15 @@ public sealed class ProvisionServerCommand(
 
     // ---- rendering ----
 
-    private static Embed StartedEmbed(ServerProvisionSpec spec, bool generatedPassword, string steamUserPassword)
+    private static Embed StartedEmbed(
+        ServerProvisionSpec spec, bool generatedPassword, string steamUserPassword, string? copyFrom)
     {
+        var source = copyFrom is null
+            ? "SteamCMD downloads several GB, so this"
+            : $"Copying `{Sanitize.Code(copyFrom)}` rather than downloading, so this";
+
         var embed = Theme.Notice($"Provisioning server {spec.Slot} started",
-                $"Installing **{Sanitize.Code(spec.ServerName)}** as `{spec.UnitName}`. SteamCMD downloads several GB, so this " +
+                $"Installing **{Sanitize.Code(spec.ServerName)}** as `{spec.UnitName}`. {source} " +
                 "runs in the background - watch the checklist I just posted in this channel. The bot restarts itself at the end.")
             .AddField("Ports", $"game `{spec.GamePort}/udp` • query `{spec.QueryPort}/udp` • rcon `{spec.RconPort}/tcp`", inline: false)
             .AddField("Install dir", $"`{Sanitize.Code(spec.InstallDir)}`", inline: false)
@@ -335,6 +357,9 @@ public sealed class ProvisionServerCommand(
 
     private static long? IntOption(SocketSlashCommand command, string name) =>
         command.Data.Options.FirstOrDefault(o => o.Name == name)?.Value as long?;
+
+    private static bool? BoolOption(SocketSlashCommand command, string name) =>
+        command.Data.Options.FirstOrDefault(o => o.Name == name)?.Value as bool?;
 
     private static Task Reply(SocketSlashCommand command, Embed embed) =>
         command.ModifyOriginalResponseAsync(m =>
