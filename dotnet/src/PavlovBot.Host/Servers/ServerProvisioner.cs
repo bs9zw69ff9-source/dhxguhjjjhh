@@ -74,7 +74,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// </summary>
     internal static IReadOnlyList<string> SteamCmdArgv(string installDir) =>
         ["+force_install_dir", installDir, "+login", "anonymous",
-         "+app_update", PavlovAppId, "-beta", "default", "+quit"];
+         "+app_update", PavlovAppId, "-beta", "default", "+exit"];
 
     /// <summary><c>systemctl enable --now &lt;unit&gt;</c>, as an argv array.</summary>
     internal static IReadOnlyList<string> EnableArgv(string unit) => ["enable", "--now", unit];
@@ -129,111 +129,22 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         ];
     }
 
-    /// <summary>Download the tarball to a file. No pipe, so no shell is involved.</summary>
+    /// <summary>
+    /// The documented install, as far as it can be run without a shell.
+    /// </summary>
     /// <remarks>
-    /// The documented one-liner is <c>curl … | tar zxvf -</c>, which needs a shell to build the
-    /// pipe. Downloading to a file and extracting it as a second step is the same outcome with
-    /// nothing for a metacharacter to live in, and it also means a failed download is reported as
-    /// a failed download rather than as a confusing tar error.
+    /// The published one-liner is
+    /// <c>mkdir ~/Steam &amp;&amp; cd ~/Steam &amp;&amp; curl -sqL "…" | tar zxvf -</c>. The
+    /// <c>curl</c> flags and the URL are kept exactly; the only departure is that the pipe becomes
+    /// a download followed by a separate <c>tar</c>, because a pipe needs a shell and nothing in
+    /// this class runs one. Same bytes, same destination.
     /// </remarks>
     internal static IReadOnlyList<string> SteamCmdDownloadArgv(string tarballPath) =>
-        ["-sSL", "--fail", SteamCmdTarballUrl, "-o", tarballPath];
+        ["-sqL", SteamCmdTarballUrl, "-o", tarballPath];
 
     /// <summary><c>tar -xzf &lt;tarball&gt; -C &lt;dir&gt;</c>.</summary>
     internal static IReadOnlyList<string> SteamCmdExtractArgv(string tarballPath, string directory) =>
         ["-xzf", tarballPath, "-C", directory];
-
-    /// <summary>
-    /// A do-nothing run, purely to let a freshly unpacked SteamCMD update itself.
-    /// </summary>
-    /// <remarks>
-    /// A NEW STEAMCMD SELF-UPDATES ON ITS FIRST RUN AND THEN ENDS, non-zero, WITHOUT DOING THE
-    /// JOB IT WAS ASKED TO DO - it downloads its own ~40 MB update, applies it, and exits 8. The
-    /// work is not lost and nothing is broken; the very next invocation is a normal, working
-    /// SteamCMD. That is exactly what a provision hit: the bot's run reported "Downloading update
-    /// (0 of 40321 KB)" and exit 8, and running it by hand straight afterwards connected happily
-    /// and reported a version. So the update is spent HERE, deliberately and where a failure is
-    /// meaningless, rather than being paid for by the app install that follows it.
-    /// </remarks>
-    internal static IReadOnlyList<string> SteamCmdWarmupArgv() => ["+login", "anonymous", "+quit"];
-
-    /// <summary>
-    /// Whether a failed SteamCMD run looks like the self-update cycle rather than a real fault.
-    /// </summary>
-    /// <remarks>
-    /// Only ever consulted for a run that already FAILED - a healthy run prints the same
-    /// "Checking for available update" line, so this would match everything otherwise. Deliberately
-    /// narrow, because the cost of being wrong is one more attempt at a step that can take the
-    /// better part of an hour.
-    /// </remarks>
-    internal static bool LooksLikeSelfUpdateCycle(string? output, int exitCode)
-    {
-        if (exitCode == 0) return false;
-
-        var text = (output ?? "").ToLowerInvariant();
-        return text.Contains("downloading update (", StringComparison.Ordinal) ||
-               text.Contains("checking for available update", StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// What to do about a SteamCMD run that failed for a reason worth naming.
-    /// </summary>
-    /// <remarks>
-    /// The same idea as <c>deploy-csharp.sh</c>'s ICU hint and
-    /// <see cref="ServiceControl.Advice"/>: keyed off what the run actually PRINTED, not off
-    /// probing the system. SteamCMD ships a 32-bit binary, so on a 64-bit box without the 32-bit
-    /// C++ runtime it dies with a loader error that says nothing about packages - the single most
-    /// likely first-run failure, and one nobody guesses from the message alone.
-    /// </remarks>
-    internal static string? SteamCmdAdvice(string? output, int exitCode = 0, string? steamCmdPath = null)
-    {
-        var text = (output ?? "").ToLowerInvariant();
-
-        if (text.Contains("error while loading shared libraries", StringComparison.Ordinal) ||
-            text.Contains("libstdc++.so.6", StringComparison.Ordinal) ||
-            text.Contains("lib32", StringComparison.Ordinal) ||
-            (text.Contains("no such file or directory", StringComparison.Ordinal) && text.Contains("linux32", StringComparison.Ordinal)))
-        {
-            return "SteamCMD is a 32-bit binary and this box is missing the 32-bit C++ runtime. On Debian/Ubuntu:\n" +
-                   "`sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y lib32gcc-s1`\n" +
-                   "(on older releases the package is `lib32gcc1`).";
-        }
-
-        /* SteamCMD's SELF-update failing, before it ever reaches the app. It reports this as a
-           progress line stuck at "0 of N KB" and an unhelpful exit code, and the real reason goes
-           to its own stderr log rather than to the console we captured - so the useful thing to
-           hand back is that path plus the command to reproduce it by hand. */
-        var selfUpdateStalled =
-            text.Contains("downloading update (0 of", StringComparison.Ordinal) ||
-            text.Contains("failed to load file", StringComparison.Ordinal);
-
-        if (selfUpdateStalled || exitCode == 8)
-        {
-            var log = SteamCmdLogPath(steamCmdPath);
-            var byHand = steamCmdPath is null
-                ? "sudo -u steam <steamcmd> +login anonymous +quit"
-                : $"sudo -u steam {steamCmdPath} +login anonymous +quit";
-
-            return "SteamCMD could not finish updating ITSELF, so it never got to the game files. That is " +
-                   "almost always the box rather than this bot - the usual causes are the missing 32-bit " +
-                   "runtime (`sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get " +
-                   "install -y lib32gcc-s1`), no free disk (`df -h`), or no outbound route to Steam's CDN.\n" +
-                   $"The real error is in `{log}`, and this reproduces it with the whole message visible:\n" +
-                   $"`{byHand}`";
-        }
-
-        return null;
-    }
-
-    /// <summary>Where SteamCMD writes the stderr it does not print: <c>&lt;its dir&gt;/logs/stderr.txt</c>.</summary>
-    internal static string SteamCmdLogPath(string? steamCmdPath)
-    {
-        var directory = steamCmdPath is { Length: > 0 }
-            ? System.IO.Path.GetDirectoryName(steamCmdPath)
-            : null;
-
-        return $"{(string.IsNullOrEmpty(directory) ? $"/home/{SteamUser}/Steam" : directory)}/logs/stderr.txt";
-    }
 
     /// <summary>
     /// The <c>user:password</c> line <c>chpasswd</c> reads from stdin, newline-terminated.
@@ -320,18 +231,6 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
         var steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
 
-        /* ONE RETRY, ONLY FOR THE SELF-UPDATE CYCLE. A SteamCMD that was already on the box can be
-           out of date too, and it spends its first run updating itself and exits non-zero having
-           installed nothing - indistinguishable from a real failure by exit code alone. The
-           bootstrap path above already absorbs this for a copy we unpacked ourselves; this covers
-           the one we merely found. Narrowly matched and capped at a single extra attempt, because
-           this step can take the better part of an hour. */
-        if (LooksLikeSelfUpdateCycle(steam.Combined, steam.ExitCode))
-        {
-            logger.LogWarning("SteamCMD exited {Code} after what looks like its own self-update; retrying once", steam.ExitCode);
-            steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
-        }
-
         if (!steam.Started)
         {
             await run.Fail($"could not execute {steamCmd}.").ConfigureAwait(false);
@@ -344,11 +243,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         if (steam.ExitCode != 0)
         {
-            // The advice, when there is any, matters more than the exit code - a 32-bit loader
-            // error names no package and is the likeliest first-run failure on a fresh box.
-            var advice = SteamCmdAdvice(steam.Combined, steam.ExitCode, steamCmd);
-            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Tail(steam.Combined)}" +
-                           (advice is null ? "" : $"\n{advice}")).ConfigureAwait(false);
+            // What SteamCMD said, and nothing invented on top of it.
+            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Tail(steam.Combined)}").ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
         await run.Ok("installed.").ConfigureAwait(false);
@@ -600,14 +496,6 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var path = $"{steamDir}/steamcmd.sh";
         if (!File.Exists(path))
             return (null, $"unpacked SteamCMD but {path} is not there - the tarball layout was not what was expected.", false);
-
-        /* SPEND THE SELF-UPDATE HERE. A newly unpacked SteamCMD downloads its own update on the
-           first run and then exits non-zero having done nothing else - so this pass exists purely
-           to absorb that, and its result is deliberately ignored. Doing it here means the app
-           install that follows is a second run, which is the one that works. See
-           SteamCmdWarmupArgv. */
-        var warm = await RunAsync(SteamUser, path, SteamCmdWarmupArgv(), TimeSpan.FromMinutes(15), ct).ConfigureAwait(false);
-        logger.LogInformation("SteamCMD self-update pass finished (exit {Code}) - its result is not a verdict", warm.ExitCode);
 
         logger.LogWarning("SteamCMD was not installed; unpacked Valve's tarball to {Path}", path);
         return (path, null, true);
