@@ -460,6 +460,87 @@ public class ProvisioningTests
         Assert.Contains($"Description=Pavlov VR Dedicated Server ({expectedUnit})\n", text, StringComparison.Ordinal);
     }
 
+    // ---- finding SteamCMD ----
+
+    [Fact]
+    public void TheTarballInstallLocationIsAmongTheCandidates()
+    {
+        /* THE REGRESSION. This used to invoke "steamcmd" and trust PATH, and a provision died on
+           "sudo: steamcmd: command not found" AFTER creating the steam account and granting it
+           sudo. The documented Linux install is a tarball unpacked into ~/Steam, which puts
+           nothing on PATH - so the lookup found nothing even where SteamCMD was present. */
+        var candidates = ServerProvisioner.SteamCmdCandidates("/home/steam");
+
+        Assert.Contains("/home/steam/Steam/steamcmd.sh", candidates);
+
+        // A distro package wins over the tarball when the box has one.
+        Assert.True(
+            candidates.ToList().IndexOf("/usr/games/steamcmd") < candidates.ToList().IndexOf("/home/steam/Steam/steamcmd.sh"),
+            "a packaged steamcmd should be preferred over an unpacked tarball");
+
+        // Every candidate is absolute - a bare name would be a PATH lookup again.
+        Assert.All(candidates, c => Assert.StartsWith("/", c, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ATrailingSlashOnTheHomeDoesNotDoubleUp()
+    {
+        Assert.Contains("/home/steam/Steam/steamcmd.sh", ServerProvisioner.SteamCmdCandidates("/home/steam/"));
+    }
+
+    [Theory]
+    [InlineData("steam:x:1001:1001::/home/steam:/bin/bash\n", "/home/steam")]
+    [InlineData("steam:x:1001:1001::/srv/steam:/bin/bash", "/srv/steam")]
+    [InlineData("", null)]                                   // getent said nothing
+    [InlineData("garbage", null)]                            // not a passwd line
+    [InlineData("steam:x:1:1::relative:/bin/sh", null)]      // a home that is not absolute
+    public void TheSteamHomeIsParsedOutOfGetentRatherThanAssumed(string output, string? expected)
+    {
+        Assert.Equal(expected, ServerProvisioner.HomeFromGetent(output));
+    }
+
+    [Fact]
+    public void TheBootstrapDownloadsToAFileRatherThanThroughAShellPipe()
+    {
+        // The documented one-liner pipes curl into tar, which needs a shell. Downloading to a
+        // file and extracting separately is the same outcome with nothing to inject into.
+        var download = ServerProvisioner.SteamCmdDownloadArgv("/home/steam/Steam/steamcmd_linux.tar.gz");
+
+        Assert.Contains("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz", download);
+        Assert.Contains("--fail", download);   // a 404 must not be written out as a "tarball"
+        Assert.Contains("-o", download);
+        Assert.Contains("/home/steam/Steam/steamcmd_linux.tar.gz", download);
+        Assert.DoesNotContain(download, a => a.Contains('|', StringComparison.Ordinal));
+
+        Assert.Equal(
+            ["-xzf", "/home/steam/Steam/steamcmd_linux.tar.gz", "-C", "/home/steam/Steam"],
+            ServerProvisioner.SteamCmdExtractArgv("/home/steam/Steam/steamcmd_linux.tar.gz", "/home/steam/Steam"));
+    }
+
+    [Fact]
+    public void A32BitLoaderFailureIsNamedRatherThanLeftAsAnExitCode()
+    {
+        // SteamCMD ships a 32-bit binary; on a 64-bit box without the 32-bit runtime it dies
+        // with a loader error that names no package. The likeliest first-run failure there is.
+        var advice = ServerProvisioner.SteamCmdAdvice(
+            "/home/steam/Steam/linux32/steamcmd: error while loading shared libraries: " +
+            "libstdc++.so.6: cannot open shared object file: No such file or directory");
+
+        Assert.NotNull(advice);
+        Assert.Contains("lib32gcc-s1", advice, StringComparison.Ordinal);
+        Assert.Contains("i386", advice, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnOrdinarySteamCmdFailureGetsNoMisleadingAdvice()
+    {
+        // Nothing to say beyond the exit code and output; inventing a library hint for an
+        // unrelated failure would send somebody after the wrong thing.
+        Assert.Null(ServerProvisioner.SteamCmdAdvice("ERROR! Failed to install app '622970' (Disk write failure)"));
+        Assert.Null(ServerProvisioner.SteamCmdAdvice(""));
+        Assert.Null(ServerProvisioner.SteamCmdAdvice(null));
+    }
+
     // ---- steam's sudo grant ----
 
     [Fact]
@@ -481,6 +562,7 @@ public class ProvisioningTests
             "Pre-flight checks",
             "Steam user account",
             "Steam sudo access (full, NOPASSWD)",
+            "SteamCMD (locate or bootstrap)",
             "SteamCMD install",
             "Server config (RconSettings.txt, Game.ini)",
             "systemd unit (write, daemon-reload, enable --now)",

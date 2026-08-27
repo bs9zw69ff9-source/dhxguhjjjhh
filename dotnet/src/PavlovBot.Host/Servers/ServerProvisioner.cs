@@ -58,6 +58,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Pre-flight checks",
         "Steam user account",
         "Steam sudo access (full, NOPASSWD)",
+        "SteamCMD (locate or bootstrap)",
         "SteamCMD install",
         "Server config (RconSettings.txt, Game.ini)",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -84,6 +85,90 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
     /// <summary><c>useradd -m -s /bin/bash &lt;user&gt;</c>: a real home directory, for SteamCMD's cache.</summary>
     internal static IReadOnlyList<string> UseraddArgv(string user) => ["-m", "-s", "/bin/bash", user];
+
+    /// <summary>Where Valve publishes the Linux SteamCMD tarball.</summary>
+    private const string SteamCmdTarballUrl =
+        "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz";
+
+    /// <summary>The steam account's home, parsed out of a <c>getent passwd</c> line.</summary>
+    /// <remarks>
+    /// Field 6 of the seven colon-separated fields
+    /// (<c>name:passwd:uid:gid:gecos:HOME:shell</c>). Parsed rather than assumed because the
+    /// whole point of this step is not to guess where things are; the caller still falls back to
+    /// <c>/home/steam</c> when getent says nothing useful, which is what <c>useradd -m</c> makes.
+    /// </remarks>
+    internal static string? HomeFromGetent(string? getentOutput)
+    {
+        var line = (getentOutput ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (line is null) return null;
+
+        var fields = line.Split(':');
+        return fields.Length >= 6 && fields[5].StartsWith('/') ? fields[5] : null;
+    }
+
+    /// <summary>
+    /// Every place SteamCMD might already be, in the order worth trying.
+    /// </summary>
+    /// <remarks>
+    /// ABSOLUTE PATHS, NOT A <c>PATH</c> LOOKUP, and that is the fix for the failure this was
+    /// written for: the bot ran <c>steamcmd</c> and got "command not found", because the ordinary
+    /// Linux install is a TARBALL unpacked into <c>~/Steam</c> that puts nothing on anyone's PATH.
+    /// The distro packages (<c>/usr/games/steamcmd</c> on Debian/Ubuntu) come first since a box
+    /// that has one should use it, then the tarball locations - including the one this bootstraps.
+    /// </remarks>
+    internal static IReadOnlyList<string> SteamCmdCandidates(string home)
+    {
+        var root = home.TrimEnd('/');
+        return
+        [
+            "/usr/games/steamcmd",
+            "/usr/bin/steamcmd",
+            "/usr/local/bin/steamcmd",
+            $"{root}/Steam/steamcmd.sh",
+            $"{root}/steamcmd/steamcmd.sh",
+        ];
+    }
+
+    /// <summary>Download the tarball to a file. No pipe, so no shell is involved.</summary>
+    /// <remarks>
+    /// The documented one-liner is <c>curl … | tar zxvf -</c>, which needs a shell to build the
+    /// pipe. Downloading to a file and extracting it as a second step is the same outcome with
+    /// nothing for a metacharacter to live in, and it also means a failed download is reported as
+    /// a failed download rather than as a confusing tar error.
+    /// </remarks>
+    internal static IReadOnlyList<string> SteamCmdDownloadArgv(string tarballPath) =>
+        ["-sSL", "--fail", SteamCmdTarballUrl, "-o", tarballPath];
+
+    /// <summary><c>tar -xzf &lt;tarball&gt; -C &lt;dir&gt;</c>.</summary>
+    internal static IReadOnlyList<string> SteamCmdExtractArgv(string tarballPath, string directory) =>
+        ["-xzf", tarballPath, "-C", directory];
+
+    /// <summary>
+    /// What to do about a SteamCMD run that failed for a reason worth naming.
+    /// </summary>
+    /// <remarks>
+    /// The same idea as <c>deploy-csharp.sh</c>'s ICU hint and
+    /// <see cref="ServiceControl.Advice"/>: keyed off what the run actually PRINTED, not off
+    /// probing the system. SteamCMD ships a 32-bit binary, so on a 64-bit box without the 32-bit
+    /// C++ runtime it dies with a loader error that says nothing about packages - the single most
+    /// likely first-run failure, and one nobody guesses from the message alone.
+    /// </remarks>
+    internal static string? SteamCmdAdvice(string? output)
+    {
+        var text = (output ?? "").ToLowerInvariant();
+
+        if (text.Contains("error while loading shared libraries", StringComparison.Ordinal) ||
+            text.Contains("libstdc++.so.6", StringComparison.Ordinal) ||
+            text.Contains("lib32", StringComparison.Ordinal) ||
+            text.Contains("no such file or directory", StringComparison.Ordinal) && text.Contains("linux32", StringComparison.Ordinal))
+        {
+            return "SteamCMD is a 32-bit binary and this box is missing the 32-bit C++ runtime. On Debian/Ubuntu:\n" +
+                   "`sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y lib32gcc-s1`\n" +
+                   "(on older releases the package is `lib32gcc1`).";
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// The <c>user:password</c> line <c>chpasswd</c> reads from stdin, newline-terminated.
@@ -153,13 +238,25 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok($"{SudoersDropIn} installed - steam now has full, passwordless sudo.").ConfigureAwait(false);
 
+        // ---- find SteamCMD, or unpack Valve's tarball where the steam account can run it ----
+        await run.Start("looking for steamcmd…").ConfigureAwait(false);
+        var (steamCmd, locateProblem, bootstrapped) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
+        if (steamCmd is null)
+        {
+            await run.Fail(locateProblem ?? "could not find or install SteamCMD.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok(bootstrapped
+            ? $"not installed, so it was unpacked to {steamCmd}."
+            : $"found at {steamCmd}.").ConfigureAwait(false);
+
         // ---- SteamCMD ----
         await run.Start("downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
         await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
-        var steam = await RunAsync(SteamUser, "steamcmd", SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
+        var steam = await RunAsync(SteamUser, steamCmd, SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
         if (!steam.Started)
         {
-            await run.Fail("could not start SteamCMD - is it installed and on PATH?").ConfigureAwait(false);
+            await run.Fail($"could not execute {steamCmd}.").ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
         if (steam.TimedOut)
@@ -169,7 +266,11 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         if (steam.ExitCode != 0)
         {
-            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}").ConfigureAwait(false);
+            // The advice, when there is any, matters more than the exit code - a 32-bit loader
+            // error names no package and is the likeliest first-run failure on a fresh box.
+            var advice = SteamCmdAdvice(steam.Combined);
+            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}" +
+                           (advice is null ? "" : $"\n{advice}")).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
         await run.Ok("installed.").ConfigureAwait(false);
@@ -363,6 +464,67 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         try { File.Delete(path); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>The steam account's home directory, asked for rather than assumed.</summary>
+    private async Task<string> SteamHomeAsync(CancellationToken ct)
+    {
+        var getent = await RunAsync(null, "getent", ["passwd", SteamUser], QuickTimeout, ct).ConfigureAwait(false);
+        return (getent.Ok ? HomeFromGetent(getent.Stdout) : null) ?? $"/home/{SteamUser}";
+    }
+
+    /// <summary>
+    /// An executable SteamCMD, unpacking Valve's tarball if the box does not already have one.
+    /// </summary>
+    /// <remarks>
+    /// WRITTEN FOR A REAL FAILURE: this used to invoke <c>steamcmd</c> and trust PATH, and a
+    /// provision died on "sudo: steamcmd: command not found" after having already created the
+    /// steam account and granted it sudo - three steps of real, privileged change followed by a
+    /// stop for a missing tool. The ordinary Linux install is a tarball unpacked into
+    /// <c>~/Steam</c>, which puts nothing on PATH, so there was nothing for that lookup to find
+    /// even on a box where SteamCMD was present and working.
+    ///
+    /// Every path here is absolute and every step runs AS THE STEAM USER, so the cache and
+    /// binaries it unpacks are owned by the account that will run them.
+    /// </remarks>
+    /// <returns>The executable, a problem when there is none, and whether it had to be installed.</returns>
+    private async Task<(string? Path, string? Problem, bool Bootstrapped)> EnsureSteamCmdAsync(CancellationToken ct)
+    {
+        var home = await SteamHomeAsync(ct).ConfigureAwait(false);
+
+        foreach (var candidate in SteamCmdCandidates(home))
+            if (File.Exists(candidate)) return (candidate, null, false);
+
+        // Nothing on the box - unpack Valve's tarball into ~/Steam, which is where the
+        // documented install puts it and where the candidate list looks first among homes.
+        var steamDir = $"{home.TrimEnd('/')}/Steam";
+        var tarball = $"{steamDir}/steamcmd_linux.tar.gz";
+
+        var mk = await RunAsync(SteamUser, "mkdir", ["-p", steamDir], QuickTimeout, ct).ConfigureAwait(false);
+        if (!mk.Ok) return (null, $"could not create {steamDir}: {Short(mk.Combined)}", false);
+
+        // Two minutes: the tarball is a few MB, so anything slower is a broken route rather
+        // than a slow one, and this must not sit on the deadline of the 45-minute step after it.
+        var download = await RunAsync(SteamUser, "curl", SteamCmdDownloadArgv(tarball),
+            TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        if (!download.Started)
+            return (null, "steamcmd is not installed and curl is not available to fetch it - install either one.", false);
+        if (!download.Ok)
+            return (null, $"could not download SteamCMD: {Short(download.Combined)}", false);
+
+        var extract = await RunAsync(SteamUser, "tar", SteamCmdExtractArgv(tarball, steamDir),
+            TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        if (!extract.Started)
+            return (null, "downloaded SteamCMD but tar is not available to unpack it.", false);
+        if (!extract.Ok)
+            return (null, $"could not unpack SteamCMD: {Short(extract.Combined)}", false);
+
+        var path = $"{steamDir}/steamcmd.sh";
+        if (!File.Exists(path))
+            return (null, $"unpacked SteamCMD but {path} is not there - the tarball layout was not what was expected.", false);
+
+        logger.LogWarning("SteamCMD was not installed; unpacked Valve's tarball to {Path}", path);
+        return (path, null, true);
     }
 
     /// <summary>Write the two config files and hand them to steam. Null on success.</summary>
