@@ -116,6 +116,40 @@ public static class ProvisionText
     }
 
     /// <summary>
+    /// The appended block that takes a server back OUT of the bot's <c>.env</c>.
+    /// </summary>
+    /// <remarks>
+    /// STILL APPEND-ONLY. The file is read last-key-wins, so removing a setting means appending an
+    /// EMPTY value for it rather than deleting the line it was on - an appended blank clears what
+    /// was inherited above, which is the same rule a second bot's overrides rely on. Editing the
+    /// original lines out would work too and is far easier to get wrong; this way the file only
+    /// ever grows, and its history stays readable.
+    ///
+    /// The positional lists are rewritten whole, as they are when adding, because a positional
+    /// list only has one meaning as a complete value.
+    /// </remarks>
+    public static string EnvRemovalBlock(
+        int slot,
+        IReadOnlyList<string> finalUnits,
+        IReadOnlyList<string> finalBases,
+        DateOnly date)
+    {
+        ArgumentNullException.ThrowIfNull(finalUnits);
+        ArgumentNullException.ThrowIfNull(finalBases);
+
+        var sb = new StringBuilder();
+        sb.Append('\n');
+        sb.Append(CultureInfo.InvariantCulture,
+            $"# ─── server {slot} removed by /deleteserver on {date:yyyy-MM-dd} ───\n");
+        sb.Append(CultureInfo.InvariantCulture, $"RCON_HOST_{slot}=\n");
+        sb.Append(CultureInfo.InvariantCulture, $"RCON_PORT_{slot}=\n");
+        sb.Append(CultureInfo.InvariantCulture, $"RCON_PASSWORD_{slot}=\n");
+        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_UNITS={string.Join(",", finalUnits)}\n");
+        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_BASES={string.Join(",", finalBases)}\n");
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// A server name reduced to something safe inside a quoted INI value on one line.
     /// </summary>
     /// <remarks>

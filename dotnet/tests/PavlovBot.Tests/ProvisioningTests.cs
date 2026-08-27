@@ -599,6 +599,100 @@ public class ProvisioningTests
         Assert.Equal(download.Skip(5), copy.Skip(4));
     }
 
+    // ---- the directories and files the guide creates ----
+
+    [Fact]
+    public void TheGuidesDirectoriesAndOptionalFilesAreAllCreated()
+    {
+        // The documented setup is start-then-stop to let the server build these, with creating
+        // them by hand as the fallback. Doing it up front is the same end state.
+        Assert.Equal(
+        [
+            "/home/steam/pavlovserver1/Pavlov/Saved/Logs",
+            "/home/steam/pavlovserver1/Pavlov/Saved/Config/LinuxServer",
+            "/home/steam/pavlovserver1/Pavlov/Saved/maps",
+        ], ServerProvisioner.ConfigDirectories("/home/steam/pavlovserver1"));
+
+        Assert.Equal(
+        [
+            "/home/steam/pavlovserver1/Pavlov/Saved/Config/mods.txt",
+            "/home/steam/pavlovserver1/Pavlov/Saved/Config/blacklist.txt",
+            "/home/steam/pavlovserver1/Pavlov/Saved/Config/whitelist.txt",
+        ], ServerProvisioner.OptionalConfigFiles("/home/steam/pavlovserver1"));
+    }
+
+    // ---- deleting a server ----
+
+    [Fact]
+    public void TheEnvRemovalBlockBlanksTheSlotAndRewritesTheLists()
+    {
+        // Append-only still: an appended EMPTY value clears what was set above, which is the
+        // same last-key-wins rule the additions rely on.
+        var block = ProvisionText.EnvRemovalBlock(3, ["pavlovserver", "pavlovserver1"],
+            ["/home/steam/pavlovserver", "/home/steam/pavlovserver1"], new DateOnly(2026, 8, 27));
+
+        var parsed = DotEnvConfigurationProvider.Parse(
+            "RCON_HOST_3=127.0.0.1\nRCON_PORT_3=9300\nRCON_PASSWORD_3=secret\n" +
+            "PAVLOV_UNITS=pavlovserver,pavlovserver1,pavlovserver2\n" + block);
+
+        Assert.Equal("", parsed["RCON_HOST_3"]);
+        Assert.Equal("", parsed["RCON_PORT_3"]);
+        Assert.Equal("", parsed["RCON_PASSWORD_3"]);
+        Assert.Equal("pavlovserver,pavlovserver1", parsed["PAVLOV_UNITS"]);
+        Assert.Equal("/home/steam/pavlovserver,/home/steam/pavlovserver1", parsed["PAVLOV_BASES"]);
+    }
+
+    [Fact]
+    public void OnlyTheHighestServerCanBeDeleted()
+    {
+        /* Servers are positional as well as indexed, so removing one from the middle leaves a gap
+           that re-maps which unit belongs to which server and that no later provision will
+           extend. */
+        string[] units = ["a", "b", "c"];
+        string[] bases = ["/a", "/b", "/c"];
+
+        Assert.Null(DeleteServerCommand.Problem(3, [1, 2, 3], units, bases));
+
+        var middle = DeleteServerCommand.Problem(2, [1, 2, 3], units, bases);
+        Assert.NotNull(middle);
+        Assert.Contains("highest-numbered", middle, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheLastRemainingServerCannotBeDeleted()
+    {
+        // The bot requires RCON_HOST_1 to start, and this command restarts the bot as its final
+        // act - so deleting the only server would be the thing that took the bot down.
+        var problem = DeleteServerCommand.Problem(1, [1], ["a"], ["/a"]);
+
+        Assert.NotNull(problem);
+        Assert.Contains("cannot start without one", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeletingNeedsTheListsToLineUpWithTheRconSlots()
+    {
+        var problem = DeleteServerCommand.Problem(2, [1, 2], ["only-one"], ["/a", "/b"]);
+
+        Assert.NotNull(problem);
+        Assert.Contains("exactly 2 entries", problem, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/home/steam/pavlovserver1", true)]
+    [InlineData("/", false)]
+    [InlineData("/home", false)]
+    [InlineData("/home/steam", false)]              // the steam account's whole home
+    [InlineData("/home/steam/../../etc", false)]    // traversal
+    [InlineData("relative/path", false)]
+    [InlineData("", false)]
+    public void ARecursiveDeleteRefusesAnythingThatIsNotOneServersInstall(string path, bool deletable)
+    {
+        // The one guard worth having in front of "rm -rf" as root. The path is configuration
+        // rather than anything typed in, but a mis-set PAVLOV_BASE must not reach this.
+        Assert.Equal(deletable, ServerProvisioner.DeletableInstallProblem(path) is null);
+    }
+
     // ---- steam's sudo grant ----
 
     [Fact]
