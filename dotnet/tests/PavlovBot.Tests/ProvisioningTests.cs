@@ -536,9 +536,61 @@ public class ProvisioningTests
     {
         // Nothing to say beyond the exit code and output; inventing a library hint for an
         // unrelated failure would send somebody after the wrong thing.
-        Assert.Null(ServerProvisioner.SteamCmdAdvice("ERROR! Failed to install app '622970' (Disk write failure)"));
-        Assert.Null(ServerProvisioner.SteamCmdAdvice(""));
-        Assert.Null(ServerProvisioner.SteamCmdAdvice(null));
+        Assert.Null(ServerProvisioner.SteamCmdAdvice("ERROR! Failed to install app '622970' (Disk write failure)", 1));
+        Assert.Null(ServerProvisioner.SteamCmdAdvice("", 0));
+        Assert.Null(ServerProvisioner.SteamCmdAdvice(null, 0));
+    }
+
+    [Fact]
+    public void AStalledSelfUpdatePointsAtSteamsOwnLogAndAWayToReproduceIt()
+    {
+        /* THE SECOND REAL FAILURE. SteamCMD unpacked fine and then died updating ITSELF, showing
+           a progress line pinned at "0 of 40321 KB" and exit 8 - the actual reason goes to its own
+           stderr log rather than the console, so the useful answer is that path plus a command to
+           run it by hand and see the whole thing. */
+        var advice = ServerProvisioner.SteamCmdAdvice(
+            "[----] Downloading update (0 of 40321 KB)...\n[  0%] Downloading update (0 of 40321 KB)...",
+            8, "/home/steam/Steam/steamcmd.sh");
+
+        Assert.NotNull(advice);
+        Assert.Contains("/home/steam/Steam/logs/stderr.txt", advice, StringComparison.Ordinal);
+        Assert.Contains("sudo -u steam /home/steam/Steam/steamcmd.sh", advice, StringComparison.Ordinal);
+        Assert.Contains("df -h", advice, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/home/steam/Steam/steamcmd.sh", "/home/steam/Steam/logs/stderr.txt")]
+    [InlineData("/usr/games/steamcmd", "/usr/games/logs/stderr.txt")]
+    [InlineData(null, "/home/steam/Steam/logs/stderr.txt")]
+    public void TheSteamCmdLogSitsBesideTheExecutable(string? steamCmd, string expected)
+    {
+        Assert.Equal(expected, ServerProvisioner.SteamCmdLogPath(steamCmd));
+    }
+
+    // ---- reporting a failure ----
+
+    [Fact]
+    public void FailureOutputKeepsTheENDWhereTheReasonIs()
+    {
+        /* THE REGRESSION. This kept the FIRST 300 characters, so a SteamCMD failure was reported
+           as three lines of startup banner and a progress bar cut off mid-word, with the actual
+           error trimmed away entirely - the operator was shown everything except the part that
+           mattered. Tools put the reason last. */
+        var output = new string('x', 900) + "\nERROR! the part that actually matters";
+
+        var excerpt = ServerProvisioner.Tail(output);
+
+        Assert.Contains("ERROR! the part that actually matters", excerpt, StringComparison.Ordinal);
+        Assert.StartsWith("…", excerpt, StringComparison.Ordinal);
+        Assert.True(excerpt.Length <= 601, "the excerpt has to stay well inside Discord's embed limits");
+    }
+
+    [Fact]
+    public void ShortOutputIsPassedThroughWhole()
+    {
+        Assert.Equal("useradd: user 'steam' already exists", ServerProvisioner.Tail("useradd: user 'steam' already exists"));
+        Assert.Equal("", ServerProvisioner.Tail(null));
+        Assert.Equal("trimmed", ServerProvisioner.Tail("  trimmed\n"));
     }
 
     // ---- steam's sudo grant ----

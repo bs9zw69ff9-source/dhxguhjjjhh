@@ -153,21 +153,54 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// C++ runtime it dies with a loader error that says nothing about packages - the single most
     /// likely first-run failure, and one nobody guesses from the message alone.
     /// </remarks>
-    internal static string? SteamCmdAdvice(string? output)
+    internal static string? SteamCmdAdvice(string? output, int exitCode = 0, string? steamCmdPath = null)
     {
         var text = (output ?? "").ToLowerInvariant();
 
         if (text.Contains("error while loading shared libraries", StringComparison.Ordinal) ||
             text.Contains("libstdc++.so.6", StringComparison.Ordinal) ||
             text.Contains("lib32", StringComparison.Ordinal) ||
-            text.Contains("no such file or directory", StringComparison.Ordinal) && text.Contains("linux32", StringComparison.Ordinal))
+            (text.Contains("no such file or directory", StringComparison.Ordinal) && text.Contains("linux32", StringComparison.Ordinal)))
         {
             return "SteamCMD is a 32-bit binary and this box is missing the 32-bit C++ runtime. On Debian/Ubuntu:\n" +
                    "`sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y lib32gcc-s1`\n" +
                    "(on older releases the package is `lib32gcc1`).";
         }
 
+        /* SteamCMD's SELF-update failing, before it ever reaches the app. It reports this as a
+           progress line stuck at "0 of N KB" and an unhelpful exit code, and the real reason goes
+           to its own stderr log rather than to the console we captured - so the useful thing to
+           hand back is that path plus the command to reproduce it by hand. */
+        var selfUpdateStalled =
+            text.Contains("downloading update (0 of", StringComparison.Ordinal) ||
+            text.Contains("failed to load file", StringComparison.Ordinal);
+
+        if (selfUpdateStalled || exitCode == 8)
+        {
+            var log = SteamCmdLogPath(steamCmdPath);
+            var byHand = steamCmdPath is null
+                ? "sudo -u steam <steamcmd> +login anonymous +quit"
+                : $"sudo -u steam {steamCmdPath} +login anonymous +quit";
+
+            return "SteamCMD could not finish updating ITSELF, so it never got to the game files. That is " +
+                   "almost always the box rather than this bot - the usual causes are the missing 32-bit " +
+                   "runtime (`sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get " +
+                   "install -y lib32gcc-s1`), no free disk (`df -h`), or no outbound route to Steam's CDN.\n" +
+                   $"The real error is in `{log}`, and this reproduces it with the whole message visible:\n" +
+                   $"`{byHand}`";
+        }
+
         return null;
+    }
+
+    /// <summary>Where SteamCMD writes the stderr it does not print: <c>&lt;its dir&gt;/logs/stderr.txt</c>.</summary>
+    internal static string SteamCmdLogPath(string? steamCmdPath)
+    {
+        var directory = steamCmdPath is { Length: > 0 }
+            ? System.IO.Path.GetDirectoryName(steamCmdPath)
+            : null;
+
+        return $"{(string.IsNullOrEmpty(directory) ? $"/home/{SteamUser}/Steam" : directory)}/logs/stderr.txt";
     }
 
     /// <summary>
@@ -268,8 +301,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         {
             // The advice, when there is any, matters more than the exit code - a 32-bit loader
             // error names no package and is the likeliest first-run failure on a fresh box.
-            var advice = SteamCmdAdvice(steam.Combined);
-            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}" +
+            var advice = SteamCmdAdvice(steam.Combined, steam.ExitCode, steamCmd);
+            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Tail(steam.Combined)}" +
                            (advice is null ? "" : $"\n{advice}")).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
@@ -372,14 +405,14 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         if (id.Ok) return (null, false);
 
         var add = await RunAsync(null, "useradd", UseraddArgv(SteamUser), QuickTimeout, ct).ConfigureAwait(false);
-        if (!add.Ok) return ($"useradd {SteamUser} failed: {Short(add.Combined)}", false);
+        if (!add.Ok) return ($"useradd {SteamUser} failed: {Tail(add.Combined)}", false);
 
         // chpasswd, over STDIN - never as a command-line argument, which ps would show to
         // every other user on the box for as long as the process runs.
         var chpasswd = await RunAsync(null, "chpasswd", [], QuickTimeout, ct, ChpasswdStdin(SteamUser, password))
             .ConfigureAwait(false);
         if (!chpasswd.Ok)
-            return ($"created the \"{SteamUser}\" user but could not set its password: {Short(chpasswd.Combined)}", false);
+            return ($"created the \"{SteamUser}\" user but could not set its password: {Tail(chpasswd.Combined)}", false);
 
         return (null, true);
     }
@@ -427,7 +460,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         {
             TryDelete(temp);
             return check.Started
-                ? $"the generated sudoers file failed validation, so nothing was installed: {Short(check.Combined)}"
+                ? $"the generated sudoers file failed validation, so nothing was installed: {Tail(check.Combined)}"
                 : "could not start visudo to validate the sudoers file - is sudo installed?";
         }
 
@@ -501,7 +534,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var tarball = $"{steamDir}/steamcmd_linux.tar.gz";
 
         var mk = await RunAsync(SteamUser, "mkdir", ["-p", steamDir], QuickTimeout, ct).ConfigureAwait(false);
-        if (!mk.Ok) return (null, $"could not create {steamDir}: {Short(mk.Combined)}", false);
+        if (!mk.Ok) return (null, $"could not create {steamDir}: {Tail(mk.Combined)}", false);
 
         // Two minutes: the tarball is a few MB, so anything slower is a broken route rather
         // than a slow one, and this must not sit on the deadline of the 45-minute step after it.
@@ -510,14 +543,14 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         if (!download.Started)
             return (null, "steamcmd is not installed and curl is not available to fetch it - install either one.", false);
         if (!download.Ok)
-            return (null, $"could not download SteamCMD: {Short(download.Combined)}", false);
+            return (null, $"could not download SteamCMD: {Tail(download.Combined)}", false);
 
         var extract = await RunAsync(SteamUser, "tar", SteamCmdExtractArgv(tarball, steamDir),
             TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
         if (!extract.Started)
             return (null, "downloaded SteamCMD but tar is not available to unpack it.", false);
         if (!extract.Ok)
-            return (null, $"could not unpack SteamCMD: {Short(extract.Combined)}", false);
+            return (null, $"could not unpack SteamCMD: {Tail(extract.Combined)}", false);
 
         var path = $"{steamDir}/steamcmd.sh";
         if (!File.Exists(path))
@@ -534,7 +567,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var linuxDir = Path.Combine(configDir, "LinuxServer");
 
         var mk = await RunAsync(SteamUser, "mkdir", ["-p", linuxDir], QuickTimeout, ct).ConfigureAwait(false);
-        if (!mk.Ok) return $"could not create {linuxDir}: {Short(mk.Combined)}";
+        if (!mk.Ok) return $"could not create {linuxDir}: {Tail(mk.Combined)}";
 
         try
         {
@@ -548,7 +581,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             foreach (var path in new[] { rconPath, gameIniPath })
             {
                 var chown = await RunAsync(null, "chown", [SteamUser, path], QuickTimeout, ct).ConfigureAwait(false);
-                if (!chown.Ok) return $"could not chown {path} to {SteamUser}: {Short(chown.Combined)}";
+                if (!chown.Ok) return $"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}";
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -572,10 +605,10 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
 
         var reload = await RunAsync(null, "systemctl", ["daemon-reload"], SystemctlTimeout, ct).ConfigureAwait(false);
-        if (!reload.Ok) return $"systemctl daemon-reload failed: {Short(reload.Combined)}";
+        if (!reload.Ok) return $"systemctl daemon-reload failed: {Tail(reload.Combined)}";
 
         var enable = await RunAsync(null, "systemctl", EnableArgv(spec.UnitName), SystemctlTimeout, ct).ConfigureAwait(false);
-        if (!enable.Ok) return $"systemctl enable --now {spec.UnitName} failed: {Short(enable.Combined)}";
+        if (!enable.Ok) return $"systemctl enable --now {spec.UnitName} failed: {Tail(enable.Combined)}";
 
         return null;
     }
@@ -594,7 +627,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         {
             var run = await RunAsync(null, "ufw", ["allow", UfwRule(port, proto)], QuickTimeout, ct).ConfigureAwait(false);
             if (!run.Started) return "ufw is not installed or not on PATH - open the ports yourself.";
-            if (!run.Ok) return $"ufw allow {UfwRule(port, proto)} did not succeed: {Short(run.Combined)}";
+            if (!run.Ok) return $"ufw allow {UfwRule(port, proto)} did not succeed: {Tail(run.Combined)}";
         }
 
         return null;
@@ -712,7 +745,24 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
     }
 
-    private static string Short(string text) => text.Length <= 300 ? text : text[..300] + "…";
+    /// <summary>
+    /// The END of a command's output, which is where a failure explains itself.
+    /// </summary>
+    /// <remarks>
+    /// THE TAIL, NOT THE HEAD, and that is a fix rather than a preference. This used to keep the
+    /// first 300 characters, which for anything chatty is the startup banner - a real SteamCMD
+    /// failure was reported as three lines of copyright notice and a progress bar cut off
+    /// mid-word, with the actual error trimmed away entirely. Every caller here passes the output
+    /// of a command that just failed, and tools put the reason last.
+    ///
+    /// Kept well inside Discord's limits: this lands in an embed description alongside every
+    /// other step, and an over-long one costs the whole message rather than just its tail.
+    /// </remarks>
+    internal static string Tail(string? text, int limit = 600)
+    {
+        var trimmed = (text ?? "").Trim();
+        return trimmed.Length <= limit ? trimmed : "…" + trimmed[^limit..];
+    }
 
     /// <summary>
     /// The mutable checklist for one run: holds the steps, tracks which one is current, and
