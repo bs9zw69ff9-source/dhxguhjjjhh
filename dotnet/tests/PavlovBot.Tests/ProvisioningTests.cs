@@ -386,4 +386,97 @@ public class ProvisioningTests
         Assert.True(outcome.Ok);
         Assert.True(outcome.RestartQueued);
     }
+
+    // ---- steam's sudo grant ----
+
+    [Fact]
+    public void SudoersFullAccessLineIsUnrestrictedAndPasswordless()
+    {
+        Assert.Equal("steam ALL=(ALL) NOPASSWD: ALL\n", ServerProvisioner.SudoersFullAccessLine("steam"));
+    }
+
+    // ---- the checklist itself: real step list, real cursor ----
+
+    [Fact]
+    public void TheRealStepListHasSteamAccountAndSudoRightAfterPreflight()
+    {
+        // Pinned in order: this is the exact list ProvisionAsync drives, and its position matters
+        // - the sudo grant has to land after the account exists and before anything that could
+        // need it (SteamCMD, running as steam).
+        Assert.Equal(
+        [
+            "Pre-flight checks",
+            "Steam user account",
+            "Steam sudo access (full, NOPASSWD)",
+            "SteamCMD install",
+            "Server config (RconSettings.txt, Game.ini)",
+            "systemd unit (write, daemon-reload, enable --now)",
+            "Firewall (ufw)",
+            "RCON reachability",
+            "Wire into the bot (.env)",
+            "Restart the bot",
+        ], ServerProvisioner.StepNames);
+    }
+
+    private static ServerProvisioner.Run NewRun(out List<IReadOnlyList<ProvisionStep>> snapshots)
+    {
+        var captured = new List<IReadOnlyList<ProvisionStep>>();
+        snapshots = captured;
+        return new ServerProvisioner.Run(["one", "two", "three"], steps =>
+        {
+            captured.Add(steps);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task StartAdvancesToTheNextStepWithoutAnIndex()
+    {
+        // The whole point of the cursor: nothing here says which step it is. Getting the ORDER
+        // of these calls wrong is still a real mistake, but there is no number left to go stale
+        // the way RestartAsync's did when a step was inserted before it.
+        var run = NewRun(out var snapshots);
+
+        await run.Start("first");
+        await run.Ok("first done");
+        await run.Start("second");
+        await run.Fail("second failed");
+
+        var last = snapshots[^1];
+        Assert.Equal(ProvisionStatus.Ok, last[0].Status);
+        Assert.Equal("first done", last[0].Detail);
+        Assert.Equal(ProvisionStatus.Failed, last[1].Status);
+        Assert.Equal("second failed", last[1].Detail);
+        Assert.Equal(ProvisionStatus.Pending, last[2].Status);
+    }
+
+    [Fact]
+    public async Task AbortSkipsEverythingAfterTheCurrentStepAndLeavesTheFailureAlone()
+    {
+        var run = NewRun(out _);
+
+        await run.Start("first");
+        await run.Ok("fine");
+        await run.Start("second");
+        await run.Fail("boom");
+        var outcome = await run.Abort();
+
+        Assert.Equal(ProvisionStatus.Ok, outcome.Steps[0].Status);
+        Assert.Equal(ProvisionStatus.Failed, outcome.Steps[1].Status);       // NOT overwritten to Skipped
+        Assert.Equal(ProvisionStatus.Skipped, outcome.Steps[2].Status);
+        Assert.False(outcome.Ok);
+        Assert.False(outcome.RestartQueued);
+    }
+
+    [Fact]
+    public async Task EveryChangeEmitsASnapshotOfAllSteps()
+    {
+        var run = NewRun(out var snapshots);
+
+        await run.Start("go");
+
+        Assert.Single(snapshots);
+        Assert.Equal(3, snapshots[0].Count);
+        Assert.Equal(ProvisionStatus.Running, snapshots[0][0].Status);
+    }
 }
