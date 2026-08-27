@@ -165,12 +165,17 @@ public sealed class ProvisionServerCommand(
             who, spec.Slot, spec.UnitName, spec.InstallDir);
 
         // ---- kick off, and hand the slow work to a detached task ----
-        await Reply(command, StartedEmbed(spec, generated)).ConfigureAwait(false);
+        // Generated up front, always - not conditionally, and not inside the provisioner - because
+        // whether the steam account needs creating is only known deep in a background task with no
+        // interaction left to reply on. REQUIRED: an account this creates never goes unpassworded.
+        var steamUserPassword = GeneratePassword();
+        await Reply(command, StartedEmbed(spec, generated, steamUserPassword)).ConfigureAwait(false);
 
         var request = new ProvisionRequest(
             spec, plan.FinalUnits, plan.FinalBases,
             FinalPlayerCountChannels: null,
-            Path.Combine(Directory.GetCurrentDirectory(), ".env"));
+            Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+            steamUserPassword);
 
         var channelId = command.Channel.Id;
         var messageId = await Post.SendAsync(channelId, Checklist(spec, InitialSteps()), null, ct).ConfigureAwait(false);
@@ -211,7 +216,7 @@ public sealed class ProvisionServerCommand(
 
     // ---- rendering ----
 
-    private static Embed StartedEmbed(ServerProvisionSpec spec, bool generatedPassword)
+    private static Embed StartedEmbed(ServerProvisionSpec spec, bool generatedPassword, string steamUserPassword)
     {
         var embed = Theme.Notice($"Provisioning server {spec.Slot} started",
                 $"Installing **{Sanitize.Code(spec.ServerName)}** as `{spec.UnitName}`. SteamCMD downloads several GB, so this " +
@@ -223,6 +228,12 @@ public sealed class ProvisionServerCommand(
 
         if (generatedPassword)
             embed.AddField("RCON password (generated - save it)", $"||`{spec.RconPassword}`||", inline: false);
+
+        /* ALWAYS shown, not conditionally: whether the "steam" OS account already exists is only
+           known deep inside the background provisioner, long after this reply is the only chance
+           to hand the operator a secret. Unused if the account turns out to already exist. */
+        embed.AddField("steam OS account password (used only if the account needs creating)",
+            $"||`{steamUserPassword}`||", inline: false);
 
         return embed.Build();
     }

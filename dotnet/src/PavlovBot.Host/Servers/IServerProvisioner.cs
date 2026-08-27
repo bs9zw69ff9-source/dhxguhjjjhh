@@ -41,12 +41,19 @@ public sealed record ProvisionOutcome(IReadOnlyList<ProvisionStep> Steps, bool R
 /// <param name="FinalPavlovBases">The full, aligned <c>PAVLOV_BASES</c> list to write.</param>
 /// <param name="FinalPlayerCountChannels">The full player-count channel list, or null to leave it.</param>
 /// <param name="EnvPath">The path to the bot's <c>.env</c> that gets the override block.</param>
+/// <param name="SteamUserPassword">
+/// The password to set IF the <c>steam</c> OS account needs to be created. Generated up front by
+/// the command and shown to the operator ephemerally, whether or not it ends up used - the
+/// provisioner cannot know until it actually checks, and a secret that might be needed cannot be
+/// revealed later from a detached background task with no interaction to reply on.
+/// </param>
 public sealed record ProvisionRequest(
     ServerProvisionSpec Spec,
     IReadOnlyList<string> FinalPavlovUnits,
     IReadOnlyList<string> FinalPavlovBases,
     IReadOnlyList<string>? FinalPlayerCountChannels,
-    string EnvPath);
+    string EnvPath,
+    string SteamUserPassword);
 
 /// <summary>
 /// Standing up a new Pavlov dedicated server on this box and wiring it into the bot.

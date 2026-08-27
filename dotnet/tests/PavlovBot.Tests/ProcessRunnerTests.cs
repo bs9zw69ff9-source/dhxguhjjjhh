@@ -183,4 +183,32 @@ public class ProcessRunnerTests
             if (File.Exists(marker)) File.Delete(marker);
         }
     }
+
+    [Fact]
+    public async Task StdinIsWrittenAndClosedSoTheChildSeesItAndExits()
+    {
+        if (!ShellAvailable) return;
+
+        /* cat with no file argument reads until EOF on stdin and echoes it back. If the write
+           did not happen, or stdin was never CLOSED, this would time out instead of returning -
+           exactly the shape of bug this parameter exists to avoid for chpasswd, which reads
+           until EOF the same way. */
+        var outcome = await ProcessRunner.RunAsync(
+            "/bin/cat", [], TimeSpan.FromSeconds(5), NullLogger.Instance, stdin: "steam:hunter2\n");
+
+        Assert.True(outcome.Ok);
+        Assert.Equal("steam:hunter2\n", outcome.Stdout);
+    }
+
+    [Fact]
+    public async Task NullStdinLeavesExistingCallSitesUnaffected()
+    {
+        if (!ShellAvailable) return;
+
+        // No stdin parameter at all - the exact call shape every existing caller uses.
+        var outcome = await Sh("echo unaffected", TimeSpan.FromSeconds(5));
+
+        Assert.True(outcome.Ok);
+        Assert.Equal("unaffected\n", outcome.Stdout);
+    }
 }
