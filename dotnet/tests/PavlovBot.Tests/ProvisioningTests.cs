@@ -235,6 +235,21 @@ public class ProvisioningTests
         Assert.Contains(problems, p => p.Contains("Game mode", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(24, true)]    // Shack's hard cap, and the default
+    [InlineData(25, false)]   // one past it
+    [InlineData(50, false)]   // the PC build's limit, which is not this one
+    [InlineData(0, false)]
+    public void CapacityStopsAtShacksHardLimitRatherThanThePcOne(int maxPlayers, bool allowed)
+    {
+        // 24 is a limit the game enforces, not a preference - a higher number is not a bigger
+        // server, it is a setting Shack will not honour.
+        var problems = ProvisionValidation.Check(Spec(maxPlayers: maxPlayers), [], [], []);
+
+        Assert.Equal(allowed, !problems.Any(p => p.Contains("Max players", StringComparison.Ordinal)));
+    }
+
     // ---- slot allocation and alignment ----
 
     [Fact]
@@ -299,10 +314,13 @@ public class ProvisioningTests
     [Fact]
     public void SteamCmdArgvUsesThePavlovAppIdInOrder()
     {
-        // The wiki's line, argument for argument, including "+exit" rather than "+quit".
+        /* The wiki's line, argument for argument - and "-beta shack", NOT "-beta default". Those
+           are two different builds: default is PC, shack is the Quest/standalone one this bot is
+           built around throughout. Installing the wrong branch yields a server the rest of the bot
+           can never see, and nothing about that failure would name the branch as the reason. */
         Assert.Equal(
             ["+force_install_dir", "/home/steam/pavlovserver2", "+login", "anonymous",
-             "+app_update", "622970", "-beta", "default", "+exit"],
+             "+app_update", "622970", "-beta", "shack", "+exit"],
             ServerProvisioner.SteamCmdArgv("/home/steam/pavlovserver2"));
     }
 
