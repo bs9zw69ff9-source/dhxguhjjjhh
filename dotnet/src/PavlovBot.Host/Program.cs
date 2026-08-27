@@ -449,6 +449,14 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
         builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();
+        /* Standing up a WHOLE NEW server - SteamCMD, a systemd unit, ufw, then a rewrite of the
+           bot's own .env and a restart. A far larger privileged surface than restarting a
+           configured unit, so it lives behind its own provisioner rather than on ServiceControl,
+           and it refuses unless the bot is root. */
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.IServerProvisioner>(sp =>
+            new PavlovBot.Host.Servers.ServerProvisioner(
+                sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServerProvisioner>>()));
+        builder.Services.AddSingleton<ISlashCommand, ProvisionServerCommand>();
         /* The owner control panel is both: a slash command that posts the menu, and the
            component handler for the menu and its modals. One instance, registered twice. */
         builder.Services.AddSingleton<ConfigPanel>();
@@ -605,6 +613,14 @@ public static class Program
         }
         logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
             systemd.Elevation, string.Join(", ", systemd.Units));
+
+        /* Said at startup so an operator learns BEFORE running /provisionserver that a non-root
+           bot will refuse it - provisioning writes /etc/systemd/system, enables a service and
+           runs SteamCMD as steam, none of which fit the narrow sudoers line systemctl uses. */
+        logger.LogInformation("/provisionserver is {State}",
+            Environment.IsPrivilegedProcess
+                ? "available (the bot is root)"
+                : "unavailable until the bot runs as root");
 
         var feeds = host.Services.GetRequiredService<FeedWebhooks>();
         feeds.Register(FeedWebhooks.Join, features.JoinWebhook);

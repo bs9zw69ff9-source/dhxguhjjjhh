@@ -1,0 +1,136 @@
+using System.Globalization;
+using System.Text;
+
+namespace PavlovBot.Core.Provisioning;
+
+/// <summary>
+/// Every file the provisioner writes, generated as an exact string.
+/// </summary>
+/// <remarks>
+/// Pure text, no I/O, so the format is pinned by golden-string tests rather than discovered on
+/// a live box. The provisioner (in the host) does the privileged writing; this only decides what
+/// goes in. Lines end in <c>\n</c> - these are Linux server files and the bot's own <c>.env</c>.
+/// </remarks>
+public static class ProvisionText
+{
+    /// <summary>
+    /// <c>RconSettings.txt</c>: the two lines the game reads to enable and secure RCON.
+    /// </summary>
+    public static string RconSettings(string password, int rconPort)
+    {
+        // The password is charset-checked by ProvisionValidation, so it is safe on one line
+        // unquoted - which is exactly the format the game expects here.
+        return $"Password={password}\nPort={rconPort.ToString(CultureInfo.InvariantCulture)}\n";
+    }
+
+    /// <summary>
+    /// <c>LinuxServer/Game.ini</c>: the dedicated-server section with name, capacity and rotation.
+    /// </summary>
+    public static string GameIni(ServerProvisionSpec spec)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+
+        var sb = new StringBuilder();
+        sb.Append("[/Script/Pavlov.DedicatedServer]\n");
+        sb.Append("bEnabled=true\n");
+        sb.Append(CultureInfo.InvariantCulture, $"ServerName=\"{CleanServerName(spec.ServerName)}\"\n");
+        sb.Append(CultureInfo.InvariantCulture, $"MaxPlayers={spec.MaxPlayers.ToString(CultureInfo.InvariantCulture)}\n");
+
+        foreach (var map in spec.Maps)
+            sb.Append(CultureInfo.InvariantCulture, $"MapRotation=(MapId=\"{map.MapId}\", GameMode=\"{map.GameMode}\")\n");
+
+        // Only written when set: an empty Password line reads as "the password is the empty
+        // string" to the game, which is not the same as an open server.
+        if (!string.IsNullOrEmpty(spec.GamePassword))
+            sb.Append(CultureInfo.InvariantCulture, $"Password={spec.GamePassword}\n");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The systemd unit that runs the server as the <c>steam</c> user and restarts it if it dies.
+    /// </summary>
+    public static string SystemdUnit(ServerProvisionSpec spec)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+
+        var dir = spec.InstallDir.TrimEnd('/');
+        var port = spec.GamePort.ToString(CultureInfo.InvariantCulture);
+
+        return
+            "[Unit]\n" +
+            $"Description=Pavlov VR Dedicated Server ({spec.UnitName})\n" +
+            "After=network-online.target\n" +
+            "Wants=network-online.target\n" +
+            "\n" +
+            "[Service]\n" +
+            "Type=simple\n" +
+            "User=steam\n" +
+            $"WorkingDirectory={dir}\n" +
+            $"ExecStart={dir}/PavlovServer.sh -PORT={port}\n" +
+            "Restart=on-failure\n" +
+            "RestartSec=5\n" +
+            "\n" +
+            "[Install]\n" +
+            "WantedBy=multi-user.target\n";
+    }
+
+    /// <summary>
+    /// The labelled block appended to the bot's <c>.env</c> to wire the new server in.
+    /// </summary>
+    /// <remarks>
+    /// APPEND-ONLY, LAST-KEY-WINS. The bot reads <c>.env</c> with dotenv semantics where a later
+    /// line for a key overrides an earlier one, so the safe way to change configuration is to add
+    /// a block at the end rather than edit lines in place (the same pattern SECOND-BOT.md uses for
+    /// a second bot). The RCON triple is added as three INDEXED keys, which need no rewrite; the
+    /// positional lists are rewritten IN FULL because a positional list only has one meaning as a
+    /// whole value.
+    /// </remarks>
+    public static string EnvOverrideBlock(
+        ServerProvisionSpec spec,
+        IReadOnlyList<string> finalUnits,
+        IReadOnlyList<string> finalBases,
+        IReadOnlyList<string>? finalPlayerCountChannels,
+        DateOnly date)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(finalUnits);
+        ArgumentNullException.ThrowIfNull(finalBases);
+
+        var sb = new StringBuilder();
+        sb.Append('\n');
+        sb.Append(CultureInfo.InvariantCulture,
+            $"# ─── provisioned by /provisionserver on {date:yyyy-MM-dd} — server {spec.Slot} ({spec.UnitName}) ───\n");
+        sb.Append(CultureInfo.InvariantCulture, $"RCON_HOST_{spec.Slot}=127.0.0.1\n");
+        sb.Append(CultureInfo.InvariantCulture, $"RCON_PORT_{spec.Slot}={spec.RconPort.ToString(CultureInfo.InvariantCulture)}\n");
+        sb.Append(CultureInfo.InvariantCulture, $"RCON_PASSWORD_{spec.Slot}={spec.RconPassword}\n");
+        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_UNITS={string.Join(",", finalUnits)}\n");
+        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_BASES={string.Join(",", finalBases)}\n");
+
+        // Only when the operator supplied a channel for this server, so an untouched
+        // PLAYER_COUNT_CHANNELS is not blanked by writing an empty value.
+        if (finalPlayerCountChannels is { Count: > 0 })
+            sb.Append(CultureInfo.InvariantCulture, $"PLAYER_COUNT_CHANNELS={string.Join(",", finalPlayerCountChannels)}\n");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// A server name reduced to something safe inside a quoted INI value on one line.
+    /// </summary>
+    /// <remarks>
+    /// The only characters that MUST go are the double quote (it would close the value early) and
+    /// newlines (they would split the line). Everything else a player might want in a name is
+    /// kept; the length is capped so a pasted essay cannot run the line away.
+    /// </remarks>
+    public static string CleanServerName(string? raw)
+    {
+        var text = (raw ?? "")
+            .Replace("\"", "", StringComparison.Ordinal)
+            .Replace('\r', ' ')
+            .Replace('\n', ' ');
+
+        text = new string([.. text.Where(c => !char.IsControl(c))]).Trim();
+        return text.Length > 63 ? text[..63].Trim() : text;
+    }
+}

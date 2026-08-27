@@ -163,9 +163,7 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger, GameFileGuard? 
             /* ATOMIC. A crash or a full disk part-way through a direct write leaves a
                TRUNCATED whitelist, which on a whitelisted server locks out everybody below
                the cut. The rename either happens or it does not. */
-            var temp = $"{path}.bot.tmp";
-            await File.WriteAllTextAsync(temp, string.Join("\n", next) + "\n", ct).ConfigureAwait(false);
-            File.Move(temp, path, overwrite: true);
+            await AtomicFile.WriteAsync(path, string.Join("\n", next) + "\n", ct).ConfigureAwait(false);
 
             logger.LogInformation("whitelist {Action} | \"{Entry}\" | {Path}",
                 removing ? "remove" : "add", entry, path);
