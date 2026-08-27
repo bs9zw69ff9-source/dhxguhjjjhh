@@ -235,6 +235,12 @@ public sealed class ProvisionServerCommand(
         embed.AddField("steam OS account password (used only if the account needs creating)",
             $"||`{steamUserPassword}`||", inline: false);
 
+        embed.AddField($"{Theme.Warn} steam is getting FULL sudo",
+            "Every provision installs `/etc/sudoers.d/pavlov-steam-full`, giving the `steam` account " +
+            "unrestricted, passwordless root. This was requested explicitly and is not this bot's usual " +
+            "narrow, per-unit grant - a compromise of the game server or a bad workshop map is a root " +
+            "compromise from here on. Remove that file if you did not mean for that to apply here.", inline: false);
+
         return embed.Build();
     }
 

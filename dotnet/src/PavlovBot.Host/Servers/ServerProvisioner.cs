@@ -22,6 +22,10 @@ namespace PavlovBot.Host.Servers;
 /// <c>/etc/systemd/system</c>, <c>enable</c>, creating the <c>steam</c> OS account, running
 /// SteamCMD as it and <c>ufw</c> are not covered by ServiceControl's tiny sudoers line, so a
 /// non-root bot is refused up front rather than left to fail obscurely halfway through.
+///
+/// ONE STEP HERE - granting <c>steam</c> full sudo - IS DELIBERATELY BROAD, on explicit operator
+/// instruction, and is the opposite of the least-privilege pattern everything else follows. See
+/// <see cref="GrantFullSudoAsync"/> for why that is dangerous and why it happens anyway.
 /// </remarks>
 public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServerProvisioner
 {
@@ -31,16 +35,29 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// <summary>The OS user the game server runs as and owns its files.</summary>
     private const string SteamUser = "steam";
 
+    /// <summary>
+    /// The sudoers drop-in this installs. NO DOT, NO TRAILING '~' - sudo's default
+    /// <c>#includedir /etc/sudoers.d</c> silently SKIPS a filename shaped like either (they read
+    /// as an editor backup or a package-manager artifact), which would leave this step reporting
+    /// success while granting nothing.
+    /// </summary>
+    private const string SudoersDropIn = "/etc/sudoers.d/pavlov-steam-full";
+
     // Generous by necessity: SteamCMD pulls several GB on a first install.
     private static readonly TimeSpan SteamCmdTimeout = TimeSpan.FromMinutes(45);
     private static readonly TimeSpan SystemctlTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan QuickTimeout = TimeSpan.FromSeconds(15);
 
-    /// <summary>The ordered step labels, so the checklist reads the same every run.</summary>
-    private static readonly string[] StepNames =
+    /// <summary>
+    /// The ordered step labels, so the checklist reads the same every run. Internal so a test can
+    /// pin the count and order directly, the same list <see cref="ProvisionAsync"/> actually
+    /// drives through - the site of a real, shipped off-by-one already.
+    /// </summary>
+    internal static readonly string[] StepNames =
     [
         "Pre-flight checks",
         "Steam user account",
+        "Steam sudo access (full, NOPASSWD)",
         "SteamCMD install",
         "Server config (RconSettings.txt, Game.ini)",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -81,6 +98,13 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// </remarks>
     internal static string ChpasswdStdin(string user, string password) => $"{user}:{password}\n";
 
+    /// <summary>
+    /// The full-access sudoers line, verbatim. <c>ALL=(ALL) NOPASSWD: ALL</c> is unrestricted -
+    /// every command, as every user, no password - which is the whole point of this method's
+    /// warnings: there is no narrower argument list to point to, because there isn't one here.
+    /// </summary>
+    internal static string SudoersFullAccessLine(string user) => $"{user} ALL=(ALL) NOPASSWD: ALL\n";
+
     public async Task<ProvisionOutcome> ProvisionAsync(
         ProvisionRequest request,
         Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
@@ -93,89 +117,104 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var spec = request.Spec;
         var unitPath = $"/etc/systemd/system/{spec.UnitName}.service";
 
-        // ---- 0: pre-flight ----
-        await run.Start(0, "checking privileges and free slots…").ConfigureAwait(false);
+        /* STEPS ADVANCE THEMSELVES. Nothing below names its own position in StepNames - Start()
+           moves to the next pending one. Inserting or reordering a step used to mean renumbering
+           every call after it by hand, and that is exactly the bug (RestartAsync referencing a
+           stale index) that shipped once already; a cursor makes the mistake impossible instead
+           of relying on getting the renumbering right the next time too. */
+
+        // ---- pre-flight ----
+        await run.Start("checking privileges and free slots…").ConfigureAwait(false);
         if (Preflight(spec, unitPath) is { } preflightProblem)
         {
-            await run.Fail(0, preflightProblem).ConfigureAwait(false);
-            return await run.Abort(1).ConfigureAwait(false);
+            await run.Fail(preflightProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(0, "root, unit name and slot are usable.").ConfigureAwait(false);
+        await run.Ok("root, unit name and slot are usable.").ConfigureAwait(false);
 
-        // ---- 1: the steam OS account - created here, REQUIRED to get a password if it is new ----
-        await run.Start(1, "checking for the steam account…").ConfigureAwait(false);
+        // ---- the steam OS account - created here, REQUIRED to get a password if it is new ----
+        await run.Start("checking for the steam account…").ConfigureAwait(false);
         var (userProblem, created) = await EnsureSteamUserAsync(request.SteamUserPassword, ct).ConfigureAwait(false);
         if (userProblem is not null)
         {
-            await run.Fail(1, userProblem).ConfigureAwait(false);
-            return await run.Abort(2).ConfigureAwait(false);
+            await run.Fail(userProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(1, created
+        await run.Ok(created
             ? "created, with the generated password from your ephemeral reply."
             : "already existed - left untouched.").ConfigureAwait(false);
 
-        // ---- 2: SteamCMD ----
-        await run.Start(2, "downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
+        // ---- steam's sudo access - see GrantFullSudoAsync for why this is deliberately broad ----
+        await run.Start("installing its sudoers file…").ConfigureAwait(false);
+        if (await GrantFullSudoAsync(ct).ConfigureAwait(false) is { } sudoProblem)
+        {
+            await run.Fail(sudoProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"{SudoersDropIn} installed - steam now has full, passwordless sudo.").ConfigureAwait(false);
+
+        // ---- SteamCMD ----
+        await run.Start("downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
         await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
         var steam = await RunAsync(SteamUser, "steamcmd", SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
         if (!steam.Started)
         {
-            await run.Fail(2, "could not start SteamCMD - is it installed and on PATH?").ConfigureAwait(false);
-            return await run.Abort(3).ConfigureAwait(false);
+            await run.Fail("could not start SteamCMD - is it installed and on PATH?").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
         if (steam.TimedOut)
         {
-            await run.Fail(2, $"SteamCMD did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
-            return await run.Abort(3).ConfigureAwait(false);
+            await run.Fail($"SteamCMD did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
         if (steam.ExitCode != 0)
         {
-            await run.Fail(2, $"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}").ConfigureAwait(false);
-            return await run.Abort(3).ConfigureAwait(false);
+            await run.Fail($"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(2, "installed.").ConfigureAwait(false);
+        await run.Ok("installed.").ConfigureAwait(false);
 
-        // ---- 3: config files ----
-        await run.Start(3, "writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
+        // ---- config files ----
+        await run.Start("writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
         if (await WriteConfigAsync(spec, ct).ConfigureAwait(false) is { } configProblem)
         {
-            await run.Fail(3, configProblem).ConfigureAwait(false);
-            return await run.Abort(4).ConfigureAwait(false);
+            await run.Fail(configProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(3, "written and owned by steam.").ConfigureAwait(false);
+        await run.Ok("written and owned by steam.").ConfigureAwait(false);
 
-        // ---- 4: systemd unit ----
-        await run.Start(4, "installing and enabling the service…").ConfigureAwait(false);
+        // ---- systemd unit ----
+        await run.Start("installing and enabling the service…").ConfigureAwait(false);
         if (await InstallUnitAsync(spec, unitPath, ct).ConfigureAwait(false) is { } unitProblem)
         {
-            await run.Fail(4, unitProblem).ConfigureAwait(false);
-            return await run.Abort(5).ConfigureAwait(false);
+            await run.Fail(unitProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(4, $"{spec.UnitName} enabled and started.").ConfigureAwait(false);
+        await run.Ok($"{spec.UnitName} enabled and started.").ConfigureAwait(false);
 
-        // ---- 5: firewall (non-critical) ----
-        await run.Start(5, "opening the game, query and RCON ports…").ConfigureAwait(false);
+        // ---- firewall (non-critical) ----
+        await run.Start("opening the game, query and RCON ports…").ConfigureAwait(false);
         var ufw = await OpenPortsAsync(spec, ct).ConfigureAwait(false);
-        if (ufw is null) await run.Ok(5, $"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
-        else await run.SoftFail(5, ufw).ConfigureAwait(false);
+        if (ufw is null) await run.Ok($"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
+        else await run.SoftFail(ufw).ConfigureAwait(false);
 
-        // ---- 6: RCON reachability (non-critical) ----
-        await run.Start(6, "asking the new server for ServerInfo…").ConfigureAwait(false);
+        // ---- RCON reachability (non-critical) ----
+        await run.Start("asking the new server for ServerInfo…").ConfigureAwait(false);
         if (await RconReachableAsync(spec, ct).ConfigureAwait(false))
-            await run.Ok(6, "answered RCON.").ConfigureAwait(false);
+            await run.Ok("answered RCON.").ConfigureAwait(false);
         else
-            await run.SoftFail(6, "no RCON answer yet - the server may still be starting; check /health after a minute.").ConfigureAwait(false);
+            await run.SoftFail("no RCON answer yet - the server may still be starting; check /health after a minute.").ConfigureAwait(false);
 
-        // ---- 7: wire into the bot's .env (only reached when every critical step passed) ----
-        await run.Start(7, "appending the server to .env…").ConfigureAwait(false);
+        // ---- wire into the bot's .env (only reached when every critical step passed) ----
+        await run.Start("appending the server to .env…").ConfigureAwait(false);
         if (await AppendEnvAsync(request, ct).ConfigureAwait(false) is { } envProblem)
         {
-            await run.Fail(7, envProblem).ConfigureAwait(false);
-            return await run.Abort(8).ConfigureAwait(false);
+            await run.Fail(envProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(7, $"added as server {spec.Slot}.").ConfigureAwait(false);
+        await run.Ok($"added as server {spec.Slot}.").ConfigureAwait(false);
 
-        // ---- 8: restart the bot ----
+        // ---- restart the bot ----
         return await RestartAsync(run, spec.Slot, ct).ConfigureAwait(false);
     }
 
@@ -242,6 +281,88 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             return ($"created the \"{SteamUser}\" user but could not set its password: {Short(chpasswd.Combined)}", false);
 
         return (null, true);
+    }
+
+    /// <summary>
+    /// Grant <c>steam</c> unrestricted, passwordless sudo. Runs every provision, whether or not
+    /// the account was just created.
+    /// </summary>
+    /// <remarks>
+    /// DELIBERATELY BROAD, ON EXPLICIT OPERATOR INSTRUCTION - and the opposite of the pattern
+    /// everything else in this class follows. <see cref="ServiceControl.Advice"/> grants the
+    /// BOT'S OWN user exactly <c>systemctl start/stop/restart</c> on named units and nothing
+    /// else; this grants the account that runs SteamCMD and the game server - the single most
+    /// exposed process on the box, the one an untrusted workshop map or a Pavlov exploit reaches
+    /// first - the same access as root. A compromise of either becomes a root compromise the
+    /// instant this file exists. Kept as one small, clearly-named method rather than folded into
+    /// anything else so this decision's blast radius stays legible in exactly one place, not
+    /// scattered across the class.
+    ///
+    /// A DROP-IN, NEVER AN EDIT TO <c>/etc/sudoers</c> ITSELF. The main file is parsed as a
+    /// whole; a bad edit there breaks sudo for EVERY user on the box, root included if root
+    /// normally reaches privilege through sudo too. A drop-in under <c>/etc/sudoers.d</c> is
+    /// purely additive - this step can only ever add exactly the one file named above.
+    ///
+    /// VALIDATED BEFORE IT GOES LIVE. <c>visudo -c -f</c> checks a file's syntax without
+    /// installing it, run here against the file we are ABOUT TO install rather than the live
+    /// one - so a mistake is caught before anything is broken, not after.
+    /// </remarks>
+    /// <returns>A problem, or null on success.</returns>
+    private async Task<string?> GrantFullSudoAsync(CancellationToken ct)
+    {
+        var temp = $"{SudoersDropIn}.bot.tmp";
+
+        try
+        {
+            await File.WriteAllTextAsync(temp, SudoersFullAccessLine(SteamUser), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"could not write a temporary sudoers file: {ex.Message}";
+        }
+
+        var check = await RunAsync(null, "visudo", ["-c", "-f", temp], QuickTimeout, ct).ConfigureAwait(false);
+        if (!check.Ok)
+        {
+            TryDelete(temp);
+            return check.Started
+                ? $"the generated sudoers file failed validation, so nothing was installed: {Short(check.Combined)}"
+                : "could not start visudo to validate the sudoers file - is sudo installed?";
+        }
+
+        // PavlovBot.Host is Linux-only by design (CLAUDE.md), and this guard is what tells the
+        // platform-compatibility analyzer that File.SetUnixFileMode below is reachable only on a
+        // platform it supports - the same OperatingSystem.IsLinux() idiom ProcessRunnerTests
+        // already uses to gate Unix-only behaviour.
+        if (!OperatingSystem.IsLinux())
+            return "this step needs a POSIX chmod, which is not available on this platform.";
+
+        try
+        {
+            // The rename is the same-directory atomic swap AtomicFile uses elsewhere; the mode
+            // set after it matters just as much - sudo REFUSES a drop-in that is group- or
+            // world-writable rather than silently ignoring the risk, so a wrong mode here would
+            // report success while granting nothing.
+            File.Move(temp, SudoersDropIn, overwrite: true);
+            File.SetUnixFileMode(SudoersDropIn, UnixFileMode.UserRead | UnixFileMode.GroupRead);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"validated but could not install {SudoersDropIn}: {ex.Message}";
+        }
+
+        logger.LogWarning(
+            "PROVISIONSERVER granted \"{User}\" full passwordless sudo via {Path} - deliberately broad and " +
+            "operator-requested, not this bot's usual least-privilege pattern", SteamUser, SudoersDropIn);
+
+        return null;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>Write the two config files and hand them to steam. Null on success.</summary>
@@ -386,14 +507,16 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
                       ?? "pavlov-bot-cs";
         var underPm2 = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("pm_id"));
 
+        await run.Start("checking how to bring the bot back…").ConfigureAwait(false);
+
         if (!underPm2)
         {
-            await run.Ok(8, $"not running under pm2 - restart the bot yourself to bring server {slot} online.").ConfigureAwait(false);
+            await run.Ok($"not running under pm2 - restart the bot yourself to bring server {slot} online.").ConfigureAwait(false);
             return run.Finish(restartQueued: false);
         }
 
         // Announce and FLUSH the final state before we trigger our own SIGTERM.
-        await run.Start(8, $"restarting `{appName}` now to bring server {slot} online…").ConfigureAwait(false);
+        await run.Ok($"restarting `{appName}` now to bring server {slot} online…").ConfigureAwait(false);
         var outcome = run.Finish(restartQueued: true);
 
         logger.LogWarning("Provision complete; restarting {App} via pm2 to load server {Slot}", appName, slot);
@@ -430,22 +553,40 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     private static string Short(string text) => text.Length <= 300 ? text : text[..300] + "…";
 
     /// <summary>
-    /// The mutable checklist for one run: holds the steps and pushes a snapshot on every change.
+    /// The mutable checklist for one run: holds the steps, tracks which one is current, and
+    /// pushes a snapshot on every change.
     /// </summary>
-    private sealed class Run(IReadOnlyList<string> names, Func<IReadOnlyList<ProvisionStep>, Task> onProgress)
+    /// <remarks>
+    /// A CURSOR, NOT AN INDEX EVERY CALLER PASSES IN. The previous shape took the step number as
+    /// an argument at every call site, and inserting one step meant hand-renumbering every call
+    /// after it - which is exactly how <c>RestartAsync</c> shipped once still pointing at the
+    /// step before it. <see cref="Start"/> advances to the next pending step; every other method
+    /// acts on whichever one that left current. Getting the ORDER of the <c>Start</c> calls in
+    /// <see cref="ProvisionAsync"/> wrong is still possible - it always was, the checklist is
+    /// only ever as correct as the sequence that drives it - but a stale number left behind by an
+    /// insertion is not, because there is no longer a number to go stale.
+    /// </remarks>
+    internal sealed class Run(IReadOnlyList<string> names, Func<IReadOnlyList<ProvisionStep>, Task> onProgress)
     {
         private readonly ProvisionStep[] _steps =
             [.. names.Select(n => new ProvisionStep(n, ProvisionStatus.Pending, ""))];
+        private int _current = -1;
 
-        public Task Start(int i, string detail) => Set(i, ProvisionStatus.Running, detail);
-        public Task Ok(int i, string detail) => Set(i, ProvisionStatus.Ok, detail);
-        public Task Fail(int i, string detail) => Set(i, ProvisionStatus.Failed, detail);
-        public Task SoftFail(int i, string detail) => Set(i, ProvisionStatus.Failed, detail);
-
-        /// <summary>Mark every step from <paramref name="from"/> onward Skipped and finish.</summary>
-        public async Task<ProvisionOutcome> Abort(int from)
+        /// <summary>Advance to the next step and mark it Running.</summary>
+        public Task Start(string detail)
         {
-            for (var i = from; i < _steps.Length; i++)
+            _current++;
+            return Set(_current, ProvisionStatus.Running, detail);
+        }
+
+        public Task Ok(string detail) => Set(_current, ProvisionStatus.Ok, detail);
+        public Task Fail(string detail) => Set(_current, ProvisionStatus.Failed, detail);
+        public Task SoftFail(string detail) => Set(_current, ProvisionStatus.Failed, detail);
+
+        /// <summary>Mark every step AFTER the current one Skipped, and finish.</summary>
+        public async Task<ProvisionOutcome> Abort()
+        {
+            for (var i = _current + 1; i < _steps.Length; i++)
                 _steps[i] = _steps[i] with { Status = ProvisionStatus.Skipped, Detail = "skipped - an earlier step failed" };
             await Emit().ConfigureAwait(false);
             return Finish(restartQueued: false);
