@@ -70,11 +70,18 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
     /// <summary>
     /// The SteamCMD argument list, verbatim. Extracted so the exact command line - the app id
-    /// above all - is pinned by a test rather than discovered against a live Steam.
+    /// and the branch above all - is pinned by a test rather than discovered against a live Steam.
     /// </summary>
+    /// <remarks>
+    /// <c>-beta shack</c>, NOT <c>-beta default</c>. Those are two different builds of the game:
+    /// <c>default</c> is the PC one and <c>shack</c> is the Quest/standalone one, and this bot is
+    /// a Shack bot throughout - its master-server list is the shack/oculus endpoint and it counts
+    /// Shack players. Installing <c>default</c> here produced a server the rest of the bot could
+    /// never see, and nothing about that failure would have named the branch as the reason.
+    /// </remarks>
     internal static IReadOnlyList<string> SteamCmdArgv(string installDir) =>
         ["+force_install_dir", installDir, "+login", "anonymous",
-         "+app_update", PavlovAppId, "-beta", "default", "+exit"];
+         "+app_update", PavlovAppId, "-beta", "shack", "+exit"];
 
     /// <summary><c>systemctl enable --now &lt;unit&gt;</c>, as an argv array.</summary>
     internal static IReadOnlyList<string> EnableArgv(string unit) => ["enable", "--now", unit];
@@ -509,6 +516,13 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         var mk = await RunAsync(SteamUser, "mkdir", ["-p", linuxDir], QuickTimeout, ct).ConfigureAwait(false);
         if (!mk.Ok) return $"could not create {linuxDir}: {Tail(mk.Combined)}";
+
+        /* Shack takes its maps from a directory the guide has you create by hand - map handling is
+           the one part of the setup that genuinely differs from the PC build, and without this the
+           server has nowhere to put them. */
+        var mapsDir = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "maps");
+        var mkMaps = await RunAsync(SteamUser, "mkdir", ["-p", mapsDir], QuickTimeout, ct).ConfigureAwait(false);
+        if (!mkMaps.Ok) return $"could not create {mapsDir}: {Tail(mkMaps.Combined)}";
 
         try
         {

@@ -23,6 +23,9 @@ public static partial class ProvisionValidation
     /// <summary>The highest RCON slot the bot scans, matching <c>BotOptions.MaxServers</c>.</summary>
     public const int MaxServers = 9;
 
+    /// <summary>Shack's hard player cap. The PC build allows 50; this bot provisions Shack.</summary>
+    public const int MaxShackPlayers = 24;
+
     /// <summary>
     /// Characters allowed in an RCON password. Deliberately excludes <c>#</c>, quotes, backtick,
     /// <c>$</c> and whitespace so the value survives both file formats unquoted.
@@ -94,8 +97,12 @@ public static partial class ProvisionValidation
                 "(no spaces, quotes or #), so it is safe to write unquoted into both the server config and .env.");
 
         // ---- capacity ----
-        if (spec.MaxPlayers is < 1 or > 100)
-            problems.Add($"Max players must be between 1 and 100 (got {spec.MaxPlayers}).");
+        // 24 is SHACK'S HARD LIMIT, not a preference - the PC build allows 50, and this bot
+        // provisions Shack servers. A higher number here is not a bigger server, it is a setting
+        // the game will not honour.
+        if (spec.MaxPlayers is < 1 or > MaxShackPlayers)
+            problems.Add($"Max players must be between 1 and {MaxShackPlayers} (got {spec.MaxPlayers}) - " +
+                         $"{MaxShackPlayers} is Shack's hard cap.");
 
         // ---- server name ----
         if (string.IsNullOrWhiteSpace(spec.ServerName))
