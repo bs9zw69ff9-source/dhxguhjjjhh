@@ -387,6 +387,79 @@ public class ProvisioningTests
         Assert.True(outcome.RestartQueued);
     }
 
+    // ---- per-slot port defaults ----
+
+    [Theory]
+    [InlineData(1, 7777, 8177, 9100)]
+    [InlineData(2, 7778, 8178, 9200)]
+    [InlineData(3, 7779, 8179, 9300)]
+    [InlineData(9, 7785, 8185, 9900)]
+    public void DefaultPortsStepPerSlotSoASecondServerIsNotACopyOfTheFirst(
+        int slot, int game, int query, int rcon)
+    {
+        /* THE REGRESSION THIS EXISTS FOR. These were three fixed constants, so provisioning
+           server 2 proposed server 1's exact ports: the RCON clash was caught and the command
+           refused outright, and working around that by naming an RCON port left the game and
+           query ports colliding silently - which does not fail cleanly, the second server just
+           loses the bind and never appears. */
+        Assert.Equal(game, ServerPortDefaults.GamePort(slot));
+        Assert.Equal(query, ServerPortDefaults.QueryPortFor(ServerPortDefaults.GamePort(slot)));
+        Assert.Equal(rcon, ServerPortDefaults.RconPort(slot));
+    }
+
+    [Fact]
+    public void TheQueryPortFollowsTheGamePortEvenWhenItIsChosenByHand()
+    {
+        // Derived from the game port, not the slot, so a hand-picked game port keeps Pavlov's
+        // own +400 pairing instead of drifting away from it.
+        Assert.Equal(8200, ServerPortDefaults.QueryPortFor(7800));
+        Assert.Equal(ServerPortDefaults.QueryPortOffset, 8177 - 7777);
+    }
+
+    [Fact]
+    public void EveryDefaultPortStaysInsideTheValidRange()
+    {
+        // The slot ceiling is 9; nothing in that range may produce a port validation rejects.
+        for (var slot = 1; slot <= ProvisionValidation.MaxServers; slot++)
+        {
+            var spec = Spec(
+                slot: slot,
+                game: ServerPortDefaults.GamePort(slot),
+                query: ServerPortDefaults.QueryPortFor(ServerPortDefaults.GamePort(slot)),
+                rcon: ServerPortDefaults.RconPort(slot));
+
+            Assert.Empty(ProvisionValidation.Check(spec, [], [], []));
+        }
+    }
+
+    // ---- slot to unit name to install dir to unit file ----
+
+    [Theory]
+    [InlineData(1, "pavlovserver", "/home/steam/pavlovserver", 7777)]
+    [InlineData(2, "pavlovserver1", "/home/steam/pavlovserver1", 7778)]
+    [InlineData(3, "pavlovserver2", "/home/steam/pavlovserver2", 7779)]
+    public void TheUnitFileGetsThisServersOwnDirectoryAndPort(
+        int slot, string expectedUnit, string expectedDir, int expectedGamePort)
+    {
+        /* THE WHOLE CHAIN, pinned end to end: the slot picks the unit name (off by one - server 1
+           is "pavlovserver" with no suffix), the unit name picks the install directory beside its
+           siblings, and the unit file has to carry THAT directory and THAT server's game port.
+           A unit pointing at another server's tree runs the wrong install; one carrying another
+           server's port fights it for the socket. */
+        var unit = $"pavlovserver{ProvisionServerCommand.Off(slot)}";
+        Assert.Equal(expectedUnit, unit);
+
+        var installDir = Path.Combine("/home/steam", unit);
+        Assert.Equal(expectedDir, installDir);
+
+        var text = ProvisionText.SystemdUnit(Spec(
+            slot: slot, unit: unit, dir: installDir, game: ServerPortDefaults.GamePort(slot)));
+
+        Assert.Contains($"WorkingDirectory={expectedDir}\n", text, StringComparison.Ordinal);
+        Assert.Contains($"ExecStart={expectedDir}/PavlovServer.sh -PORT={expectedGamePort}\n", text, StringComparison.Ordinal);
+        Assert.Contains($"Description=Pavlov VR Dedicated Server ({expectedUnit})\n", text, StringComparison.Ordinal);
+    }
+
     // ---- steam's sudo grant ----
 
     [Fact]
