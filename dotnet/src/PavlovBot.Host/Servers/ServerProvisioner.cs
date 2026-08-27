@@ -19,9 +19,9 @@ namespace PavlovBot.Host.Servers;
 /// bounded timeout, so there is no shell to inject into. The unit name is validated by
 /// <see cref="ServiceControl.IsPlausibleUnitName"/> before it can reach a command line. The one
 /// thing this cannot design around is that it needs to be ROOT: writing
-/// <c>/etc/systemd/system</c>, <c>enable</c>, running SteamCMD as <c>steam</c> and <c>ufw</c>
-/// are not covered by ServiceControl's tiny sudoers line, so a non-root bot is refused up front
-/// rather than left to fail obscurely halfway through.
+/// <c>/etc/systemd/system</c>, <c>enable</c>, creating the <c>steam</c> OS account, running
+/// SteamCMD as it and <c>ufw</c> are not covered by ServiceControl's tiny sudoers line, so a
+/// non-root bot is refused up front rather than left to fail obscurely halfway through.
 /// </remarks>
 public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServerProvisioner
 {
@@ -40,6 +40,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     private static readonly string[] StepNames =
     [
         "Pre-flight checks",
+        "Steam user account",
         "SteamCMD install",
         "Server config (RconSettings.txt, Game.ini)",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -64,6 +65,22 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     internal static string UfwRule(int port, string proto) =>
         $"{port.ToString(System.Globalization.CultureInfo.InvariantCulture)}/{proto}";
 
+    /// <summary><c>useradd -m -s /bin/bash &lt;user&gt;</c>: a real home directory, for SteamCMD's cache.</summary>
+    internal static IReadOnlyList<string> UseraddArgv(string user) => ["-m", "-s", "/bin/bash", user];
+
+    /// <summary>
+    /// The <c>user:password</c> line <c>chpasswd</c> reads from stdin, newline-terminated.
+    /// </summary>
+    /// <remarks>
+    /// STDIN, NOT AN ARGUMENT. A password passed on a command line sits in that process's argv
+    /// for as long as it runs, readable by anyone on the box via <c>ps</c> or <c>/proc</c>; stdin
+    /// leaves nothing there. This is the one place a colon in the password would be read as the
+    /// field separator and corrupt the line, which is why the account password is always
+    /// GENERATED here from the same alphanumeric charset as the RCON one rather than accepted
+    /// as free text.
+    /// </remarks>
+    internal static string ChpasswdStdin(string user, string password) => $"{user}:{password}\n";
+
     public async Task<ProvisionOutcome> ProvisionAsync(
         ProvisionRequest request,
         Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
@@ -77,92 +94,109 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var unitPath = $"/etc/systemd/system/{spec.UnitName}.service";
 
         // ---- 0: pre-flight ----
-        await run.Start(0, "checking privileges, the steam user and free slots…").ConfigureAwait(false);
-        if (await PreflightAsync(spec, unitPath, ct).ConfigureAwait(false) is { } preflightProblem)
+        await run.Start(0, "checking privileges and free slots…").ConfigureAwait(false);
+        if (Preflight(spec, unitPath) is { } preflightProblem)
         {
             await run.Fail(0, preflightProblem).ConfigureAwait(false);
             return await run.Abort(1).ConfigureAwait(false);
         }
-        await run.Ok(0, "root, steam user present, slot free.").ConfigureAwait(false);
+        await run.Ok(0, "root, unit name and slot are usable.").ConfigureAwait(false);
 
-        // ---- 1: SteamCMD ----
-        await run.Start(1, "downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
+        // ---- 1: the steam OS account - created here, REQUIRED to get a password if it is new ----
+        await run.Start(1, "checking for the steam account…").ConfigureAwait(false);
+        var (userProblem, created) = await EnsureSteamUserAsync(request.SteamUserPassword, ct).ConfigureAwait(false);
+        if (userProblem is not null)
+        {
+            await run.Fail(1, userProblem).ConfigureAwait(false);
+            return await run.Abort(2).ConfigureAwait(false);
+        }
+        await run.Ok(1, created
+            ? "created, with the generated password from your ephemeral reply."
+            : "already existed - left untouched.").ConfigureAwait(false);
+
+        // ---- 2: SteamCMD ----
+        await run.Start(2, "downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
         await RunAsync(SteamUser, "mkdir", ["-p", spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
         var steam = await RunAsync(SteamUser, "steamcmd", SteamCmdArgv(spec.InstallDir), SteamCmdTimeout, ct).ConfigureAwait(false);
         if (!steam.Started)
         {
-            await run.Fail(1, "could not start SteamCMD - is it installed and on PATH?").ConfigureAwait(false);
-            return await run.Abort(2).ConfigureAwait(false);
+            await run.Fail(2, "could not start SteamCMD - is it installed and on PATH?").ConfigureAwait(false);
+            return await run.Abort(3).ConfigureAwait(false);
         }
         if (steam.TimedOut)
         {
-            await run.Fail(1, $"SteamCMD did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
-            return await run.Abort(2).ConfigureAwait(false);
+            await run.Fail(2, $"SteamCMD did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes.").ConfigureAwait(false);
+            return await run.Abort(3).ConfigureAwait(false);
         }
         if (steam.ExitCode != 0)
         {
-            await run.Fail(1, $"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}").ConfigureAwait(false);
-            return await run.Abort(2).ConfigureAwait(false);
-        }
-        await run.Ok(1, "installed.").ConfigureAwait(false);
-
-        // ---- 2: config files ----
-        await run.Start(2, "writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
-        if (await WriteConfigAsync(spec, ct).ConfigureAwait(false) is { } configProblem)
-        {
-            await run.Fail(2, configProblem).ConfigureAwait(false);
+            await run.Fail(2, $"SteamCMD exited {steam.ExitCode}: {Short(steam.Combined)}").ConfigureAwait(false);
             return await run.Abort(3).ConfigureAwait(false);
         }
-        await run.Ok(2, "written and owned by steam.").ConfigureAwait(false);
+        await run.Ok(2, "installed.").ConfigureAwait(false);
 
-        // ---- 3: systemd unit ----
-        await run.Start(3, "installing and enabling the service…").ConfigureAwait(false);
-        if (await InstallUnitAsync(spec, unitPath, ct).ConfigureAwait(false) is { } unitProblem)
+        // ---- 3: config files ----
+        await run.Start(3, "writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
+        if (await WriteConfigAsync(spec, ct).ConfigureAwait(false) is { } configProblem)
         {
-            await run.Fail(3, unitProblem).ConfigureAwait(false);
+            await run.Fail(3, configProblem).ConfigureAwait(false);
             return await run.Abort(4).ConfigureAwait(false);
         }
-        await run.Ok(3, $"{spec.UnitName} enabled and started.").ConfigureAwait(false);
+        await run.Ok(3, "written and owned by steam.").ConfigureAwait(false);
 
-        // ---- 4: firewall (non-critical) ----
-        await run.Start(4, "opening the game, query and RCON ports…").ConfigureAwait(false);
+        // ---- 4: systemd unit ----
+        await run.Start(4, "installing and enabling the service…").ConfigureAwait(false);
+        if (await InstallUnitAsync(spec, unitPath, ct).ConfigureAwait(false) is { } unitProblem)
+        {
+            await run.Fail(4, unitProblem).ConfigureAwait(false);
+            return await run.Abort(5).ConfigureAwait(false);
+        }
+        await run.Ok(4, $"{spec.UnitName} enabled and started.").ConfigureAwait(false);
+
+        // ---- 5: firewall (non-critical) ----
+        await run.Start(5, "opening the game, query and RCON ports…").ConfigureAwait(false);
         var ufw = await OpenPortsAsync(spec, ct).ConfigureAwait(false);
-        if (ufw is null) await run.Ok(4, $"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
-        else await run.SoftFail(4, ufw).ConfigureAwait(false);
+        if (ufw is null) await run.Ok(5, $"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
+        else await run.SoftFail(5, ufw).ConfigureAwait(false);
 
-        // ---- 5: RCON reachability (non-critical) ----
-        await run.Start(5, "asking the new server for ServerInfo…").ConfigureAwait(false);
+        // ---- 6: RCON reachability (non-critical) ----
+        await run.Start(6, "asking the new server for ServerInfo…").ConfigureAwait(false);
         if (await RconReachableAsync(spec, ct).ConfigureAwait(false))
-            await run.Ok(5, "answered RCON.").ConfigureAwait(false);
+            await run.Ok(6, "answered RCON.").ConfigureAwait(false);
         else
-            await run.SoftFail(5, "no RCON answer yet - the server may still be starting; check /health after a minute.").ConfigureAwait(false);
+            await run.SoftFail(6, "no RCON answer yet - the server may still be starting; check /health after a minute.").ConfigureAwait(false);
 
-        // ---- 6: wire into the bot's .env (only reached when every critical step passed) ----
-        await run.Start(6, "appending the server to .env…").ConfigureAwait(false);
+        // ---- 7: wire into the bot's .env (only reached when every critical step passed) ----
+        await run.Start(7, "appending the server to .env…").ConfigureAwait(false);
         if (await AppendEnvAsync(request, ct).ConfigureAwait(false) is { } envProblem)
         {
-            await run.Fail(6, envProblem).ConfigureAwait(false);
-            return await run.Abort(7).ConfigureAwait(false);
+            await run.Fail(7, envProblem).ConfigureAwait(false);
+            return await run.Abort(8).ConfigureAwait(false);
         }
-        await run.Ok(6, $"added as server {spec.Slot}.").ConfigureAwait(false);
+        await run.Ok(7, $"added as server {spec.Slot}.").ConfigureAwait(false);
 
-        // ---- 7: restart the bot ----
+        // ---- 8: restart the bot ----
         return await RestartAsync(run, spec.Slot, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Every reason the run must not start, or null when it may.</summary>
-    private async Task<string?> PreflightAsync(ServerProvisionSpec spec, string unitPath, CancellationToken ct)
+    /// <summary>
+    /// Every reason the run must not start, or null when it may.
+    /// </summary>
+    /// <remarks>
+    /// Purely local checks - root, the unit name, and what is already on disk - so this is not
+    /// async. Whether the <c>steam</c> account exists is a SEPARATE, later step: existence there
+    /// is not a refusal but a fork (create it vs. leave it), which does not fit "every reason not
+    /// to start" the way these do.
+    /// </remarks>
+    private static string? Preflight(ServerProvisionSpec spec, string unitPath)
     {
         if (!Environment.IsPrivilegedProcess)
-            return "the bot is not running as root, so it cannot write a systemd unit, enable a service or run SteamCMD as steam. " +
-                   "Run the bot as root for this command (its other privileged actions use a narrow sudoers line; this one does not fit that).";
+            return "the bot is not running as root, so it cannot write a systemd unit, enable a service, create the steam " +
+                   "account or run SteamCMD as it. Run the bot as root for this command (its other privileged actions use a " +
+                   "narrow sudoers line; this one does not fit that).";
 
         if (!ServiceControl.IsPlausibleUnitName(spec.UnitName))
             return $"\"{spec.UnitName}\" is not a usable systemd unit name.";
-
-        var id = await RunAsync(null, "id", [SteamUser], QuickTimeout, ct).ConfigureAwait(false);
-        if (!id.Ok)
-            return $"the \"{SteamUser}\" user does not exist on this box - create it before provisioning a server it will own.";
 
         if (File.Exists(unitPath))
             return $"{unitPath} already exists - refusing to overwrite an existing unit.";
@@ -178,6 +212,36 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Make sure the <c>steam</c> OS account exists, creating it - WITH A PASSWORD, never left
+    /// blank - if it does not.
+    /// </summary>
+    /// <remarks>
+    /// A password is REQUIRED whenever this creates the account: an unprivileged account with no
+    /// password is not a hardened account, it is a locked door nobody has the key to yet, which
+    /// turns into "give it a password" as an out-of-band step somebody has to remember under
+    /// pressure the first time they need to log in as steam. If the account already exists, it is
+    /// left completely alone - this never resets a password an operator may already be relying on.
+    /// </remarks>
+    /// <returns>A problem, or null with whether the account was newly created.</returns>
+    private async Task<(string? Problem, bool Created)> EnsureSteamUserAsync(string password, CancellationToken ct)
+    {
+        var id = await RunAsync(null, "id", [SteamUser], QuickTimeout, ct).ConfigureAwait(false);
+        if (id.Ok) return (null, false);
+
+        var add = await RunAsync(null, "useradd", UseraddArgv(SteamUser), QuickTimeout, ct).ConfigureAwait(false);
+        if (!add.Ok) return ($"useradd {SteamUser} failed: {Short(add.Combined)}", false);
+
+        // chpasswd, over STDIN - never as a command-line argument, which ps would show to
+        // every other user on the box for as long as the process runs.
+        var chpasswd = await RunAsync(null, "chpasswd", [], QuickTimeout, ct, ChpasswdStdin(SteamUser, password))
+            .ConfigureAwait(false);
+        if (!chpasswd.Ok)
+            return ($"created the \"{SteamUser}\" user but could not set its password: {Short(chpasswd.Combined)}", false);
+
+        return (null, true);
     }
 
     /// <summary>Write the two config files and hand them to steam. Null on success.</summary>
@@ -324,12 +388,12 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         if (!underPm2)
         {
-            await run.Ok(7, $"not running under pm2 - restart the bot yourself to bring server {slot} online.").ConfigureAwait(false);
+            await run.Ok(8, $"not running under pm2 - restart the bot yourself to bring server {slot} online.").ConfigureAwait(false);
             return run.Finish(restartQueued: false);
         }
 
         // Announce and FLUSH the final state before we trigger our own SIGTERM.
-        await run.Start(7, $"restarting `{appName}` now to bring server {slot} online…").ConfigureAwait(false);
+        await run.Start(8, $"restarting `{appName}` now to bring server {slot} online…").ConfigureAwait(false);
         var outcome = run.Finish(restartQueued: true);
 
         logger.LogWarning("Provision complete; restarting {App} via pm2 to load server {Slot}", appName, slot);
@@ -341,8 +405,10 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// One external command, as root or dropped to another user, always through ProcessRunner.
     /// </summary>
     /// <param name="asUser">Run as this user via <c>sudo -u</c>; null runs it as the bot (root here).</param>
+    /// <param name="stdin">Passed straight through to <see cref="ProcessRunner.RunAsync"/>.</param>
     private async Task<ProcessOutcome> RunAsync(
-        string? asUser, string file, IReadOnlyList<string> argv, TimeSpan timeout, CancellationToken ct)
+        string? asUser, string file, IReadOnlyList<string> argv, TimeSpan timeout, CancellationToken ct,
+        string? stdin = null)
     {
         // No shell anywhere: argv stays an array through sudo too, so there is nothing to inject
         // into even when a value is interpolated into a path above.
@@ -352,7 +418,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         try
         {
-            return await ProcessRunner.RunAsync(exe, args, timeout, logger, ct).ConfigureAwait(false);
+            return await ProcessRunner.RunAsync(exe, args, timeout, logger, ct, stdin).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

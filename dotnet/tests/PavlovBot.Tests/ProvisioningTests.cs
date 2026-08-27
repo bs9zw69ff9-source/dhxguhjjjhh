@@ -313,6 +313,21 @@ public class ProvisioningTests
         Assert.Equal("9100/tcp", ServerProvisioner.UfwRule(9100, "tcp"));
     }
 
+    [Fact]
+    public void UseraddArgvGivesTheSteamAccountARealHomeAndShell()
+    {
+        Assert.Equal(["-m", "-s", "/bin/bash", "steam"], ServerProvisioner.UseraddArgv("steam"));
+    }
+
+    [Fact]
+    public void ChpasswdStdinIsTheColonFormatWithATrailingNewline()
+    {
+        // The exact wire format chpasswd documents: "user:password\n". Pinned because getting
+        // this wrong either fails silently or, with no newline, leaves chpasswd waiting on more
+        // input that never comes.
+        Assert.Equal("steam:Ab1_-.!xyzZ\n", ServerProvisioner.ChpasswdStdin("steam", "Ab1_-.!xyzZ"));
+    }
+
     // ---- command helpers ----
 
     [Theory]
@@ -361,7 +376,7 @@ public class ProvisioningTests
     public async Task TheProvisionerSeamReportsProgressAndReturnsAnOutcome()
     {
         var stub = new StubServerProvisioner();
-        var request = new ProvisionRequest(Spec(), ["a", "b", "c"], ["/a", "/b", "/c"], null, "/tmp/.env");
+        var request = new ProvisionRequest(Spec(), ["a", "b", "c"], ["/a", "/b", "/c"], null, "/tmp/.env", "SteamAcctPass1");
 
         var seen = 0;
         var outcome = await stub.ProvisionAsync(request, _ => { seen++; return Task.CompletedTask; }, CancellationToken.None);

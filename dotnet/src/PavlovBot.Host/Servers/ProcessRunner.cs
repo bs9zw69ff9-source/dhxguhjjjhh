@@ -44,12 +44,21 @@ public sealed record ProcessOutcome(bool Started, bool TimedOut, int ExitCode, s
 /// </remarks>
 public static class ProcessRunner
 {
+    /// <param name="stdin">
+    /// Fed to the child's standard input and closed immediately, for the handful of programs -
+    /// <c>chpasswd</c> is the one this bot uses - whose documented interface IS stdin rather than
+    /// an argument. Kept tiny by every caller: this is not a general pipe, just enough to avoid
+    /// putting a secret on the command line where <c>ps</c> would show it to every other user on
+    /// the box. Null (the default) leaves stdin untouched, exactly as before this parameter
+    /// existed - every existing call site is unaffected.
+    /// </param>
     public static async Task<ProcessOutcome> RunAsync(
         string file,
         IReadOnlyList<string> argv,
         TimeSpan timeout,
         ILogger logger,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? stdin = null)
     {
         ArgumentNullException.ThrowIfNull(argv);
         ArgumentNullException.ThrowIfNull(logger);
@@ -58,12 +67,24 @@ public static class ProcessRunner
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = stdin is not null,
             UseShellExecute = false,   // no shell, so there is nothing to inject into
         };
         foreach (var argument in argv) info.ArgumentList.Add(argument);
 
         using var process = Process.Start(info);
         if (process is null) return ProcessOutcome.NotStarted;
+
+        /* Written and closed BEFORE the output reads start, not raced against them: the payload
+           is a handful of bytes, far under any pipe buffer, so there is no write-blocks-while-
+           nobody-reads deadlock to avoid here the way there is for the two OUTPUT streams below.
+           Closing stdin is what tells a program like chpasswd, which reads until EOF, that the
+           input is complete. */
+        if (stdin is not null)
+        {
+            await process.StandardInput.WriteAsync(stdin).ConfigureAwait(false);
+            process.StandardInput.Close();
+        }
 
         // Started before either is awaited. See the remarks - this is the deadlock fix.
         var stdout = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
