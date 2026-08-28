@@ -143,22 +143,11 @@ public sealed class FeedBridge
         var server = _servers.Of(confirmed.File);
         await Safe(() => _feeds.PostLeaveAsync(name, server, confirmed.At)).ConfigureAwait(false);
 
-        if (!_feeds.IsConfigured(FeedWebhooks.Connect))
-        {
-            /* SAID OUT LOUD, once. "The ip logs don't work" and "no CONNECT_WEBHOOK_URL is
-               set" are the same thing from the channel, and this branch returning silently
-               is what made them indistinguishable. */
-            if (!_warnedNoConnectFeed)
-            {
-                _warnedNoConnectFeed = true;
-                _logger.LogWarning(
-                    "A player disconnected and the connection card was not posted: CONNECT_WEBHOOK_URL is not " +
-                    "set (or is not a valid webhook address), so the connect feed is off. Leave lines are " +
-                    "unaffected - they go to JOIN_WEBHOOK_URL. Run /feeds to see every feed's state");
-            }
-            return;
-        }
-
+        /* SCREENED UNCONDITIONALLY, and before anything can return. This block used to sit
+           BELOW an early return for an unset CONNECT_WEBHOOK_URL, which meant a Discord
+           webhook - a display setting - silently switched VPN AUTO-BAN off entirely. A
+           moderation action must not depend on whether there is somewhere pretty to
+           announce it. */
         VpnRecord? screening = null;
 
         // Cached per address, so this is one lookup the first time an address is seen and
@@ -171,26 +160,61 @@ public sealed class FeedBridge
             }
             catch (Exception ex)
             {
-                // The address is the point of this feed; the verdict is decoration.
-                _logger.LogDebug(ex, "Could not screen {Address} for the connect feed", confirmed.Ip);
+                // The card can do without a verdict. The ban cannot, and says so itself.
+                _logger.LogWarning(ex, "Could not screen {Address} - no VPN verdict for this connection",
+                    confirmed.Ip);
             }
         }
 
+        if (_feeds.IsConfigured(FeedWebhooks.Connect))
+        {
+            await PostCardAsync(confirmed, name, server, screening).ConfigureAwait(false);
+        }
+        else if (!_warnedNoConnectFeed)
+        {
+            /* SAID OUT LOUD, once. "The ip logs don't work" and "no CONNECT_WEBHOOK_URL is
+               set" are the same thing from the channel. It now also names what is NOT
+               affected: the old wording listed only the leave lines, which read as though
+               everything else on this path had stopped - and until this commit it had. */
+            _warnedNoConnectFeed = true;
+            _logger.LogWarning(
+                "A player disconnected and the connection card was not posted: CONNECT_WEBHOOK_URL is not " +
+                "set (or is not a valid webhook address), so the connect feed is off. Leave lines and VPN " +
+                "screening - auto-ban included - are unaffected. Run /feeds to see every feed's state");
+        }
+
+        /* ACT on the verdict, after the card when there was one: if the ban throws, staff
+           still have the evidence in front of them. NOT conditional on the card, though -
+           neither a missing webhook nor a card Discord rejected is a reason to let a VPN
+           ban go unissued, and both used to do exactly that.
+
+           The account id is passed rather than left to a name lookup: it is certain on this
+           line, and it is what the ban and its eventual lift both have to name. */
+        if (_vpnBans is not null && screening is not null)
+            await Safe(() => _vpnBans.RespondAsync(name, screening, confirmed.AccountId)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Build and post the connection card. Never throws, and never skips what follows it.
+    /// </summary>
+    /// <remarks>
+    /// BUILDING is inside the guard, not just posting. <c>EmbedBuilder.Build()</c> validates
+    /// eagerly and throws, and this call used to sit outside every try in the handler - so a
+    /// card Discord would reject took out the whole handler, and because this runs inline in
+    /// the log poll it took the REST OF THAT POLL'S LINES with it: the tailer advances its
+    /// offset before handing the batch over, so they are gone.
+    ///
+    /// It also used to <c>return</c> out of the caller on a build failure, which quietly took
+    /// the VPN auto-ban with it. Returning from here cannot reach that far.
+    /// </remarks>
+    private async Task PostCardAsync(PlayerConfirmed confirmed, string name, string server, VpnRecord? screening)
+    {
+        // Only read for the card, so it is not loaded at all on a deployment with no connect feed.
         var flags = _tracking.LoadFlags();
         var flagged = flags.Ips.Contains(confirmed.Ip) ||
                       flags.Ids.Contains(confirmed.AccountId) ||
                       flags.Names.Contains(name);
 
-        /* BUILDING the card is inside the guard, not just posting it. EmbedBuilder.Build()
-           validates eagerly and throws, and this call used to sit outside every try in the
-           method - so a card Discord would reject took out the whole handler, and because
-           this runs inline in the log poll it took the REST OF THAT POLL'S LINES with it:
-           the tailer advances its offset before handing the batch over, so they are gone.
-
-           No input is known to make ConnectCard throw, and it now caps itself so none
-           should. This is the second of the two braces, and it is here because of the cost
-           asymmetry rather than a reproduced failure - a caught exception costs one card,
-           an uncaught one costs every line after it in that poll. */
         Embed card;
         try
         {
@@ -208,18 +232,11 @@ public sealed class FeedBridge
         {
             _logger.LogError(ex,
                 "Could not build the connection card for {Player} - Discord would have rejected it. " +
-                "The leave line was still posted", name);
+                "The leave line was still posted, and any VPN verdict is still acted on", name);
             return;
         }
 
         await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
-
-        /* ACT on the verdict, after the card is posted. The screening had no consumer at
-           all - it computed a ban decision on every connection and nothing read it - so a
-           VPN user connected and played while the log said a ban had been decided on.
-           Posted first deliberately: if the ban throws, staff still get the evidence. */
-        if (_vpnBans is not null && screening is not null)
-            await Safe(() => _vpnBans.RespondAsync(name, screening)).ConfigureAwait(false);
     }
 
     private bool ShouldReport(string accountId, DateTimeOffset at) => Report(_reported, accountId, at);

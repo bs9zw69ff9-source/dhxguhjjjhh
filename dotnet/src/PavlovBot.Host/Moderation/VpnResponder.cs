@@ -79,7 +79,14 @@ public sealed class VpnResponder(
     private readonly ConcurrentDictionary<string, DateTimeOffset> _actioned = new(StringComparer.Ordinal);
 
     /// <param name="record">The screening result. Null means nothing could be determined.</param>
-    public async Task<VpnBanOutcome> RespondAsync(string player, VpnRecord? record, CancellationToken ct = default)
+    /// <param name="uniqueId">
+    /// The account id, when the caller has a certain one. Strongly preferred over the display
+    /// name: <see cref="BanService.HardEnforceAsync"/> otherwise resolves the name through the
+    /// tracker, and two accounts that have used one display name resolve to whichever the
+    /// tracker saw last. The disconnect line carries both, so there is no reason to guess.
+    /// </param>
+    public async Task<VpnBanOutcome> RespondAsync(
+        string player, VpnRecord? record, string? uniqueId = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(player) || record is null) return VpnBanOutcome.NoVerdict;
 
@@ -142,10 +149,12 @@ public sealed class VpnResponder(
             list.Add(new BanRecord
             {
                 PlayerId = player,
-                /* Null here is honest: this path is driven by an ADDRESS, and the account id
-                   is not one of its inputs. BanService resolves it by name at enforce time
-                   and again at lift time, so both still name the same thing. */
-                UniqueId = null,
+                /* THE ID WHEN THE CALLER HAS ONE. This path is driven by an address, so it
+                   used to store null and leave BanService to resolve the display name at
+                   enforce time and again at lift time - correct only for as long as one name
+                   maps to one account. The caller reads both off the same disconnect line,
+                   so the certain id is recorded rather than re-derived from the name twice. */
+                UniqueId = uniqueId,
                 Reason = Sanitize.Message(reason),
                 Moderator = "auto",
                 At = now,
@@ -159,7 +168,7 @@ public sealed class VpnResponder(
             return list;
         }, ct).ConfigureAwait(false);
 
-        var enforcement = await bans.HardEnforceAsync(player, ct: ct).ConfigureAwait(false);
+        var enforcement = await bans.HardEnforceAsync(player, uniqueId, ct: ct).ConfigureAwait(false);
         await audit.RecordAsync("vpnban", "auto", player, reason, ct).ConfigureAwait(false);
 
         metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "banned"));
