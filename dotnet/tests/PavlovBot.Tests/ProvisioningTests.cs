@@ -56,35 +56,75 @@ public class ProvisioningTests
     }
 
     [Fact]
-    public void GameIniHasTheSectionNameCapacityAndOneMapPerLine()
+    public void GameIniIsTheConfigThatActuallyRuns()
     {
-        var spec = Spec(name: "Test Server", maxPlayers: 16, maps:
-            [new MapEntry("UGC1758245796", "GUN"), new MapEntry("datacenter", "SND")]);
+        /* GOLDEN, against the file taken off a working server rather than the wiki's minimal
+           example. Two lines here are load-bearing rather than cosmetic:
+
+             bVerboseLogging=true - the kill feed parses lines the game only writes with it on
+             (see PavlovLogLine), so without it a server looks healthy and produces no kills.
+
+             ServerName is UNQUOTED - quoting it made the quotes part of the name in the browser. */
+        var spec = Spec(name: "Nuclear RP [#1]", maxPlayers: 24,
+            maps: [new MapEntry("UGC5616264", "CUSTOM")]);
 
         var expected =
             "[/Script/Pavlov.DedicatedServer]\n" +
             "bEnabled=true\n" +
-            "ServerName=\"Test Server\"\n" +
-            "MaxPlayers=16\n" +
-            "MapRotation=(MapId=\"UGC1758245796\", GameMode=\"GUN\")\n" +
-            "MapRotation=(MapId=\"datacenter\", GameMode=\"SND\")\n";
+            "ServerName=Nuclear RP [#1]\n" +
+            "MaxPlayers=24\n" +
+            "bSecured=true\n" +
+            "bCustomServer=true\n" +
+            "bVerboseLogging=true\n" +
+            "bEnableBots=false\n" +
+            "bCompetitive=false #This only works for SND\n" +
+            "bWhitelist=false\n" +
+            "RefreshListTime=120\n" +
+            "LimitedAmmoType=0\n" +
+            "TickRate=60\n" +
+            "TimeLimit=60\n" +
+            "AFKTimeLimit=300\n" +
+            "#Password=0000\n" +
+            "#BalanceTableURL=\"vankruptgames/BalancingTable/main\"\n" +
+            "MapRotation=(MapId=\"UGC5616264\", GameMode=\"CUSTOM\")\n" +
+            "AdditionalMods=UGC3462586\n";
 
         Assert.Equal(expected, ProvisionText.GameIni(spec));
     }
 
     [Fact]
-    public void GameIniWritesAPasswordLineOnlyWhenOneIsSet()
+    public void EveryMapInTheRotationGetsItsOwnLine()
     {
-        Assert.DoesNotContain("Password=", ProvisionText.GameIni(Spec(gamePassword: null)));
-        Assert.Contains("Password=0451\n", ProvisionText.GameIni(Spec(gamePassword: "0451")));
+        var text = ProvisionText.GameIni(Spec(maps:
+            [new MapEntry("UGC1758245796", "GUN"), new MapEntry("datacenter", "SND")]));
+
+        Assert.Contains("MapRotation=(MapId=\"UGC1758245796\", GameMode=\"GUN\")\n", text, StringComparison.Ordinal);
+        Assert.Contains("MapRotation=(MapId=\"datacenter\", GameMode=\"SND\")\n", text, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void GameIniStripsQuotesAndNewlinesFromTheServerName()
+    public void ThePasswordLineIsCommentedOutWhenThereIsNoPassword()
     {
-        var text = ProvisionText.GameIni(Spec(name: "Bad\"Name\nHere"));
-        // The value stays on one line and cannot close early.
-        Assert.Contains("ServerName=\"BadName Here\"\n", text);
+        /* NOT OMITTED. An empty "Password=" reads as "the password is the empty string" and locks
+           everyone out; the commented example is what the working config carries and shows where
+           to put one. */
+        var open = ProvisionText.GameIni(Spec(gamePassword: null));
+        Assert.Contains("#Password=0000\n", open, StringComparison.Ordinal);
+        Assert.DoesNotContain("\nPassword=", open, StringComparison.Ordinal);
+
+        var locked = ProvisionText.GameIni(Spec(gamePassword: "0451"));
+        Assert.Contains("\nPassword=0451\n", locked, StringComparison.Ordinal);
+        Assert.DoesNotContain("#Password=0000", locked, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANewlineInTheServerNameCannotSplitTheLine()
+    {
+        // The name is unquoted now, so the only thing that must not survive is a line break -
+        // it would turn the rest of the name into a setting of its own.
+        var text = ProvisionText.GameIni(Spec(name: "Bad\nName"));
+
+        Assert.Contains("ServerName=Bad Name\n", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -486,7 +526,10 @@ public class ProvisioningTests
     [Fact]
     public void ParseMapsDefaultsAndSplitsModes()
     {
-        Assert.Equal([new MapEntry("datacenter", "SND")], ProvisionServerCommand.ParseMaps(null));
+        // Naming none gets this network's own map, not a stock one nobody here plays.
+        Assert.Equal([new MapEntry("UGC5616264", "CUSTOM")], ProvisionServerCommand.ParseMaps(null));
+        Assert.Equal([ProvisionServerCommand.DefaultMap], ProvisionServerCommand.ParseMaps("   "));
+
         Assert.Equal([new MapEntry("UGC123", "GUN")], ProvisionServerCommand.ParseMaps("UGC123:GUN"));
         Assert.Equal(
             [new MapEntry("UGC123", "GUN"), new MapEntry("datacenter", "SND")],
