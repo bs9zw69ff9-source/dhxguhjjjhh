@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using Discord;
 using Discord.WebSocket;
@@ -212,6 +214,7 @@ public sealed class ProvisionServerCommand(
             FinalPlayerCountChannels: null,
             Path.Combine(Directory.GetCurrentDirectory(), ".env"),
             SteamUserPassword,
+            RconHostFor(prospectiveSlot),
             copyFrom,
             refilling);
 
@@ -361,6 +364,53 @@ public sealed class ProvisionServerCommand(
         }
 
         return installed;
+    }
+
+    /// <summary>
+    /// The address to put in <c>RCON_HOST_{N}</c>.
+    /// </summary>
+    /// <remarks>
+    /// THE BOX'S OWN ANSWER FIRST. This was hard-coded to <c>127.0.0.1</c>, which is right in
+    /// isolation - RCON is on the same machine - but wrong for consistency: a box whose existing
+    /// servers are configured by their real address gained one slot that disagreed with the rest,
+    /// and the next person to read the file has to work out whether that was deliberate. So an
+    /// address already in use by another server wins, because it is the one the operator has
+    /// already proved works here.
+    ///
+    /// Failing that, the machine's own primary address, discovered without sending anything (see
+    /// <see cref="LocalAddress"/>), and loopback only when even that cannot be determined.
+    /// </remarks>
+    private string RconHostFor(int slotBeingBuilt)
+    {
+        for (var i = 1; i <= ProvisionValidation.MaxServers; i++)
+        {
+            if (i == slotBeingBuilt) continue;   // its own stale value is not a precedent
+            if (configuration[$"RCON_HOST_{i}"]?.Trim() is { Length: > 0 } host) return host;
+        }
+
+        return LocalAddress() ?? "127.0.0.1";
+    }
+
+    /// <summary>
+    /// This machine's primary IPv4, or null.
+    /// </summary>
+    /// <remarks>
+    /// A connected UDP socket to a routable address. NOTHING IS SENT - connecting a datagram
+    /// socket only makes the OS pick the interface it would use, which is exactly the question
+    /// being asked, and needs no DNS, no network round trip and no external service to answer it.
+    /// </remarks>
+    internal static string? LocalAddress()
+    {
+        try
+        {
+            using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            probe.Connect("8.8.8.8", 65530);
+            return (probe.LocalEndPoint as IPEndPoint)?.Address.ToString();
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or NotSupportedException)
+        {
+            return null;
+        }
     }
 
     /// <summary>A copy of <paramref name="values"/> without the entry at 1-based <paramref name="slot"/>.</summary>

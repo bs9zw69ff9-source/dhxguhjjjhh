@@ -566,6 +566,13 @@ public static class Program
             ? $"on (application {options.FactionClientId}, owns /whitelist /promotion /demotion /subclass)"
             : "off (FACTION_BOT_TOKEN / FACTION_CLIENT_ID not set - those commands stay on the main bot)");
 
+        /* THE ROSTER FILES THE LOADED FACTIONS EXPECT, created empty if the install does not have
+           them yet. Nothing existing is written to, so a roster with members in it is untouched -
+           this only means the whole set is present and visible from the first start rather than
+           appearing one file at a time as each faction gains its first member. It still never
+           creates the DIRECTORY: a missing one means the path is wrong. */
+        host.Services.GetRequiredService<RosterService>().EnsureRosterFiles();
+
         var seeded = 0;
         var backend = host.Services.GetRequiredService<SqliteKeyValueBackend>();
         foreach (var (name, seed) in Datasets.Seeds)

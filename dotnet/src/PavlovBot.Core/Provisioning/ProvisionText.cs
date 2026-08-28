@@ -86,8 +86,10 @@ public static class ProvisionText
     /// positional lists are rewritten IN FULL because a positional list only has one meaning as a
     /// whole value.
     /// </remarks>
-    public static string EnvOverrideBlock(
+    public static string EnvWithServer(
+        string existing,
         ServerProvisionSpec spec,
+        string rconHost,
         IReadOnlyList<string> finalUnits,
         IReadOnlyList<string> finalBases,
         IReadOnlyList<string>? finalPlayerCountChannels,
@@ -97,22 +99,22 @@ public static class ProvisionText
         ArgumentNullException.ThrowIfNull(finalUnits);
         ArgumentNullException.ThrowIfNull(finalBases);
 
-        var sb = new StringBuilder();
-        sb.Append('\n');
-        sb.Append(CultureInfo.InvariantCulture,
-            $"# ─── provisioned by /provisionserver on {date:yyyy-MM-dd} — server {spec.Slot} ({spec.UnitName}) ───\n");
-        sb.Append(CultureInfo.InvariantCulture, $"RCON_HOST_{spec.Slot}=127.0.0.1\n");
-        sb.Append(CultureInfo.InvariantCulture, $"RCON_PORT_{spec.Slot}={spec.RconPort.ToString(CultureInfo.InvariantCulture)}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"RCON_PASSWORD_{spec.Slot}={spec.RconPassword}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_UNITS={string.Join(",", finalUnits)}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_BASES={string.Join(",", finalBases)}\n");
+        var values = new List<KeyValuePair<string, string?>>
+        {
+            new($"RCON_HOST_{spec.Slot}", rconHost),
+            new($"RCON_PORT_{spec.Slot}", spec.RconPort.ToString(CultureInfo.InvariantCulture)),
+            new($"RCON_PASSWORD_{spec.Slot}", spec.RconPassword),
+            new("PAVLOV_UNITS", string.Join(",", finalUnits)),
+            new("PAVLOV_BASES", string.Join(",", finalBases)),
+        };
 
         // Only when the operator supplied a channel for this server, so an untouched
-        // PLAYER_COUNT_CHANNELS is not blanked by writing an empty value.
+        // PLAYER_COUNT_CHANNELS is neither blanked nor rewritten.
         if (finalPlayerCountChannels is { Count: > 0 })
-            sb.Append(CultureInfo.InvariantCulture, $"PLAYER_COUNT_CHANNELS={string.Join(",", finalPlayerCountChannels)}\n");
+            values.Add(new("PLAYER_COUNT_CHANNELS", string.Join(",", finalPlayerCountChannels)));
 
-        return sb.ToString();
+        return EnvFileEditor.Set(existing, values,
+            EnvFileEditor.Note($"server {spec.Slot} ({spec.UnitName}) provisioned", date));
     }
 
     /// <summary>
@@ -128,7 +130,8 @@ public static class ProvisionText
     /// The positional lists are rewritten whole, as they are when adding, because a positional
     /// list only has one meaning as a complete value.
     /// </remarks>
-    public static string EnvRemovalBlock(
+    public static string EnvWithoutServer(
+        string existing,
         int slot,
         IReadOnlyList<string> finalUnits,
         IReadOnlyList<string> finalBases,
@@ -137,16 +140,20 @@ public static class ProvisionText
         ArgumentNullException.ThrowIfNull(finalUnits);
         ArgumentNullException.ThrowIfNull(finalBases);
 
-        var sb = new StringBuilder();
-        sb.Append('\n');
-        sb.Append(CultureInfo.InvariantCulture,
-            $"# ─── server {slot} removed by /deleteserver on {date:yyyy-MM-dd} ───\n");
-        sb.Append(CultureInfo.InvariantCulture, $"RCON_HOST_{slot}=\n");
-        sb.Append(CultureInfo.InvariantCulture, $"RCON_PORT_{slot}=\n");
-        sb.Append(CultureInfo.InvariantCulture, $"RCON_PASSWORD_{slot}=\n");
-        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_UNITS={string.Join(",", finalUnits)}\n");
-        sb.Append(CultureInfo.InvariantCulture, $"PAVLOV_BASES={string.Join(",", finalBases)}\n");
-        return sb.ToString();
+        /* NULL MEANS GONE, not blank. Writing an empty override cleared the setting but left the
+           deleted server's host sitting in the file - and after a few provision/delete cycles the
+           slot had a stack of them. Removing the lines outright is what "wipe every mention"
+           means, and it is also the only version an operator can read. */
+        var values = new List<KeyValuePair<string, string?>>
+        {
+            new($"RCON_HOST_{slot}", null),
+            new($"RCON_PORT_{slot}", null),
+            new($"RCON_PASSWORD_{slot}", null),
+            new("PAVLOV_UNITS", string.Join(",", finalUnits)),
+            new("PAVLOV_BASES", string.Join(",", finalBases)),
+        };
+
+        return EnvFileEditor.Set(existing, values, EnvFileEditor.Note($"server {slot} removed", date));
     }
 
     /// <summary>
