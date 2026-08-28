@@ -705,17 +705,36 @@ public class ProvisioningTests
         var middle = DeleteServerCommand.Problem(2, [1, 2, 3], units, bases);
         Assert.NotNull(middle);
         Assert.Contains("highest-numbered", middle, StringComparison.Ordinal);
+
+        /* SERVER 1 REACHES THE EXPLANATION rather than being refused by Discord. The option's
+           range used to start at 2, which enforced this a layer too early: Discord rejected the
+           value with its own "Enter a number between 2 and 9" and the actual reason never ran. */
+        var first = DeleteServerCommand.Problem(1, [1, 2, 3], units, bases);
+        Assert.NotNull(first);
+        Assert.Contains("highest-numbered", first, StringComparison.Ordinal);
+        Assert.Contains("server 3", first, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AServerNumberThatDoesNotExistSaysSo()
+    {
+        var problem = DeleteServerCommand.Problem(5, [1, 2], ["a", "b"], ["/a", "/b"]);
+
+        Assert.NotNull(problem);
+        Assert.Contains("no server 5", problem, StringComparison.Ordinal);
     }
 
     [Fact]
     public void TheLastRemainingServerCannotBeDeleted()
     {
-        // The bot requires RCON_HOST_1 to start, and this command restarts the bot as its final
-        // act - so deleting the only server would be the thing that took the bot down.
+        // The bot cannot start with no RCON servers, and this command restarts the bot as its
+        // final act - so deleting the only one would be the thing that took the bot down.
         var problem = DeleteServerCommand.Problem(1, [1], ["a"], ["/a"]);
 
         Assert.NotNull(problem);
-        Assert.Contains("cannot start without one", problem, StringComparison.Ordinal);
+        Assert.Contains("only server configured", problem, StringComparison.Ordinal);
+        // And it names the way out rather than just refusing.
+        Assert.Contains("by hand", problem, StringComparison.Ordinal);
     }
 
     [Fact]
