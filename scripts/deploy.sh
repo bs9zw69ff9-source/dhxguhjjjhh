@@ -116,14 +116,51 @@ fi
 
 echo "Deployed $(git log --oneline -1)"
 
+# ---- the second bot ---------------------------------------------------------
+# BOTH BOTS RUN THE SAME PUBLISHED OUTPUT, so the build above is already the
+# clone's build too - but it keeps serving the OLD binary until its own process
+# is replaced. That step lived only in SECOND-BOT.md as a thing to remember, and
+# "the fix works on one bot and not the other" is exactly what forgetting it
+# looks like.
+#
+# THE ECOSYSTEM FILE, NOT THE APP NAME. `pm2 restart pavlov-bot-fallout`
+# restarts the process without re-reading the config, so a change to
+# kill_timeout or the env block would deploy and never apply - the same trap
+# deploy-csharp.sh documents for the main bot.
+#
+# Skipped without complaint on a box that does not run a clone: most do not, and
+# a missing second bot is a deployment choice rather than a fault.
+if [ "$START" = true ] && command -v pm2 >/dev/null; then
+  if pm2 describe pavlov-bot-fallout >/dev/null 2>&1; then
+    echo "==> Restarting pavlov-bot-fallout (it runs the same build)"
+
+    # Not fatal. The main bot is already up and verified by this point, so a
+    # clone that will not restart is worth saying loudly and not worth undoing
+    # a good deploy over.
+    if pm2 restart ecosystem.fallout.config.js --update-env; then
+      pm2 save >/dev/null 2>&1 || true
+    else
+      echo "WARNING: pavlov-bot-fallout did not restart. It is still serving the OLD binary." >&2
+      echo "  Retry with:  pm2 restart ecosystem.fallout.config.js --update-env" >&2
+    fi
+  else
+    echo "No pavlov-bot-fallout under pm2 on this host - nothing else to restart."
+  fi
+fi
+
 # ---- proof it is the new binary that is running -----------------------------
 # "Did the deploy take?" has come up on nearly every fix in this branch, and the
 # answer lived only in a log line at startup. pm2 restarting is not the same as
 # the new build serving, so print what is actually up and where to confirm it.
 if [ "$START" = true ]; then
   if command -v pm2 >/dev/null; then
-    pm2 describe pavlov-bot-cs 2>/dev/null \
-      | grep -E "status|uptime|restarts" | head -3 || true
+    for app in pavlov-bot-cs pavlov-bot-fallout; do
+      if pm2 describe "$app" >/dev/null 2>&1; then
+        echo "--- $app"
+        pm2 describe "$app" 2>/dev/null \
+          | grep -E "status|uptime|restarts" | head -3 || true
+      fi
+    done
   fi
   echo
   echo "Confirm in Discord: /health shows 'build $(git rev-parse HEAD)' in its footer."

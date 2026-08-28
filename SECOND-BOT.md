@@ -402,9 +402,14 @@ pm2 restart /root/pavlov-bot/ecosystem.fallout.config.js --update-env
 from its working directory, and the ecosystem file points that at
 `/root/pavlov-bot-fallout`. Set `FALLOUT_HOME` if it lives somewhere else.
 
-Both apps run the same published output, so `scripts/deploy.sh` rebuilds for both — but it
-only restarts `pavlov-bot-cs`. **The clone keeps serving the old binary until you restart it**
-with the command above. That is the step that gets forgotten.
+Both apps run the same published output, and `scripts/deploy.sh` now restarts **both**: after
+the main bot is up and its build stamp verified, it restarts `pavlov-bot-fallout` too, naming
+the ecosystem file for the same reason as above. A box with no clone under pm2 says so and
+carries on.
+
+This used to be a manual step, and forgetting it is what "the fix works on one bot and not the
+other" looks like. If the clone fails to restart the deploy says so loudly rather than failing
+— the main bot is already up by then — and the command above is what to retry with.
 
 ### Sharing one install instead
 
