@@ -54,10 +54,15 @@ public sealed class DeleteServerCommand(
         new SlashCommandBuilder()
             .WithName(Name)
             .WithDescription("Owner - Delete a server: its service, its install directory and its slot (needs root)")
+            /* THE RANGE STARTS AT 1 EVEN THOUGH SERVER 1 IS NEVER DELETABLE. It was 2, which is
+               the same rule enforced a layer too early: Discord rejected the value itself with
+               its own generic "Enter a number between 2 and 9", so the reason - that server 1 is
+               either not the highest or is the last one standing - never reached the operator.
+               Bounds belong here only to keep nonsense out; the explaining is Problem()'s job. */
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("server").WithDescription("Which server number to delete (the highest one only)")
                 .WithType(ApplicationCommandOptionType.Integer)
-                .WithMinValue(2).WithMaxValue(ProvisionValidation.MaxServers).WithRequired(true))
+                .WithMinValue(1).WithMaxValue(ProvisionValidation.MaxServers).WithRequired(true))
             .AddOption("confirm", ApplicationCommandOptionType.Boolean,
                 "Yes, delete it - the install directory is erased and does not come back", isRequired: true)
             .Build();
@@ -125,13 +130,22 @@ public sealed class DeleteServerCommand(
 
         var count = usedRconIndices.Count;
 
+        if (slot > count)
+            return $"there is no server {slot} - this box has {count} configured. Nothing was deleted.";
+
         if (count <= 1)
-            return "this box only has one server configured, and the bot cannot start without one. Nothing was deleted.";
+        {
+            return "this is the only server configured, and the bot cannot start with none - it would not come back " +
+                   "from the restart this does at the end. Nothing was deleted.\n" +
+                   "To decommission the box entirely, stop the unit and clear its RCON settings out of `.env` by hand.";
+        }
 
         if (slot != count)
         {
-            return $"only the highest-numbered server can be deleted, which is server {count}. " +
-                   "Removing one from the middle would leave a gap that re-maps which unit belongs to which server.";
+            return $"only the highest-numbered server can be deleted, which is server {count}. Servers are positional " +
+                   $"as well as indexed - the unit for server N is the Nth entry of PAVLOV_UNITS - so removing server " +
+                   $"{slot} would leave a gap that silently re-points the remaining units at the wrong servers.\n" +
+                   $"Delete from the top down if you want it gone: server {count} first.";
         }
 
         if (units.Count != count || bases.Count != count)
