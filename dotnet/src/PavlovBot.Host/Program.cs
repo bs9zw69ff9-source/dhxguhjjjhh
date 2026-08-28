@@ -458,6 +458,7 @@ public static class Program
                 sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServerProvisioner>>()));
         builder.Services.AddSingleton<ISlashCommand, ProvisionServerCommand>();
         builder.Services.AddSingleton<ISlashCommand, DeleteServerCommand>();
+        builder.Services.AddSingleton<ISlashCommand, GuildInvitesCommand>();
         /* The owner control panel is both: a slash command that posts the menu, and the
            component handler for the menu and its modals. One instance, registered twice. */
         builder.Services.AddSingleton<ConfigPanel>();
@@ -514,6 +515,10 @@ public static class Program
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
+
+        /* Resolves the gateway ON USE rather than taking it here, so a command depending on this
+           does not close the DiscordGateway -> every ISlashCommand -> command -> gateway cycle. */
+        builder.Services.AddSingleton<IGuildDirectory, GatewayGuildDirectory>();
 
         // Hosted services start in registration order and stop in reverse, which is exactly
         // the order this needs: monitoring up first and down last, gateway up last so no

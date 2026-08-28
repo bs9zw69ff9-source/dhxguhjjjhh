@@ -152,6 +152,17 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     }
 
     /// <summary>
+    /// The live client, for the thin adapters that need more of it than one method.
+    /// </summary>
+    /// <remarks>
+    /// INTERNAL, and deliberately not public: it is here so <see cref="GatewayGuildDirectory"/>
+    /// can walk the guild list and open a DM without this class growing a method per Discord
+    /// concept. Everything a COMMAND needs still goes through a narrow interface, so nothing
+    /// outside this assembly gets the whole client by accident.
+    /// </remarks>
+    internal DiscordSocketClient Client => _client;
+
+    /// <summary>
     /// The commands this bot will actually register, after COMMANDS_DISABLED.
     /// </summary>
     /// <remarks>
