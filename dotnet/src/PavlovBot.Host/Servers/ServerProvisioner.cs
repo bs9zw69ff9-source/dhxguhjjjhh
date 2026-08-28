@@ -235,7 +235,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         // ---- pre-flight ----
         await run.Start("checking privileges and free slots…").ConfigureAwait(false);
-        if (Preflight(spec, unitPath) is { } preflightProblem)
+        if (Preflight(spec, unitPath, request.RebuildingExistingSlot) is { } preflightProblem)
         {
             await run.Fail(preflightProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
@@ -515,7 +515,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// is not a refusal but a fork (create it vs. leave it), which does not fit "every reason not
     /// to start" the way these do.
     /// </remarks>
-    private static string? Preflight(ServerProvisionSpec spec, string unitPath)
+    private static string? Preflight(ServerProvisionSpec spec, string unitPath, bool rebuildingExistingSlot)
     {
         if (!Environment.IsPrivilegedProcess)
             return "the bot is not running as root, so it cannot write a systemd unit, enable a service, create the steam " +
@@ -525,7 +525,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         if (!ServiceControl.IsPlausibleUnitName(spec.UnitName))
             return $"\"{spec.UnitName}\" is not a usable systemd unit name.";
 
-        if (File.Exists(unitPath))
+        // Overwriting this slot's OWN unit is the point when rebuilding it; refusing would block
+        // exactly the repair being asked for. Only an unexpected one blocks a fresh slot.
+        if (!rebuildingExistingSlot && File.Exists(unitPath))
             return $"{unitPath} already exists - refusing to overwrite an existing unit.";
 
         try

@@ -250,6 +250,55 @@ public class ProvisioningTests
         Assert.Equal(allowed, !problems.Any(p => p.Contains("Max players", StringComparison.Ordinal)));
     }
 
+    // ---- which slot gets built ----
+
+    [Fact]
+    public void AConfiguredSlotWithNoInstallIsTheOneToBuild()
+    {
+        /* THE REGRESSION. The slot used to be "however many RCON entries are configured, plus
+           one", which is only right when each entry has a real install behind it. On a box where
+           RCON_HOST_1 was set but /home/steam/pavlovserver had never been installed, asking for a
+           first server produced a SECOND one - and the missing first was then skipped forever. */
+        Assert.Equal(1, ServerSlotPlanner.TargetSlot(configuredCount: 1, slotsWithInstalls: []));
+        Assert.Equal(1, ServerSlotPlanner.TargetSlot(configuredCount: 3, slotsWithInstalls: [2, 3]));
+        Assert.Equal(2, ServerSlotPlanner.TargetSlot(configuredCount: 3, slotsWithInstalls: [1, 3]));
+    }
+
+    [Fact]
+    public void WithEveryConfiguredServerReallyInstalledTheNextSlotIsANewOne()
+    {
+        Assert.Equal(2, ServerSlotPlanner.TargetSlot(configuredCount: 1, slotsWithInstalls: [1]));
+        Assert.Equal(4, ServerSlotPlanner.TargetSlot(configuredCount: 3, slotsWithInstalls: [1, 2, 3]));
+        Assert.Equal(1, ServerSlotPlanner.TargetSlot(configuredCount: 0, slotsWithInstalls: []));
+    }
+
+    [Fact]
+    public void FillingInAnExistingSlotReplacesItsEntryRatherThanAppending()
+    {
+        // The lists keep their length and every other server keeps its position - only the one
+        // being rebuilt changes.
+        var (plan, problems) = ServerSlotPlanner.Plan(
+            new ServerLayout([1, 2], ["stale", "pavlovserver1"], ["/stale", "/b"]),
+            targetSlot: 1, "pavlovserver", "/home/steam/pavlovserver");
+
+        Assert.Empty(problems);
+        Assert.NotNull(plan);
+        Assert.Equal(1, plan!.Slot);
+        Assert.Equal(["pavlovserver", "pavlovserver1"], plan.FinalUnits);
+        Assert.Equal(["/home/steam/pavlovserver", "/b"], plan.FinalBases);
+    }
+
+    [Fact]
+    public void FillingInStillNeedsTheListsToLineUpWithTheRconSlots()
+    {
+        var (plan, problems) = ServerSlotPlanner.Plan(
+            new ServerLayout([1, 2], ["only-one"], ["/a", "/b"]),
+            targetSlot: 1, "pavlovserver", "/home/steam/pavlovserver");
+
+        Assert.Null(plan);
+        Assert.Contains(problems, p => p.Contains("exactly 2 entries", StringComparison.Ordinal));
+    }
+
     // ---- slot allocation and alignment ----
 
     [Fact]
@@ -257,7 +306,7 @@ public class ProvisioningTests
     {
         var (plan, problems) = ServerSlotPlanner.Plan(
             new ServerLayout([1, 2], ["pavlovserver", "pavlovserver1"], ["/a", "/b"]),
-            "pavlovserver2", "/c");
+            targetSlot: 3, "pavlovserver2", "/c");
 
         Assert.Empty(problems);
         Assert.NotNull(plan);
@@ -270,7 +319,7 @@ public class ProvisioningTests
     public void AGappedRconLayoutIsRefused()
     {
         var (plan, problems) = ServerSlotPlanner.Plan(
-            new ServerLayout([1, 3], ["a", "b"], ["/a", "/b"]), "u", "/d");
+            new ServerLayout([1, 3], ["a", "b"], ["/a", "/b"]), targetSlot: 3, "u", "/d");
 
         Assert.Null(plan);
         Assert.Contains(problems, p => p.Contains("gapless", StringComparison.Ordinal));
@@ -281,7 +330,7 @@ public class ProvisioningTests
     {
         // Two RCON servers but only one unit listed: a positional append would misalign.
         var (plan, problems) = ServerSlotPlanner.Plan(
-            new ServerLayout([1, 2], ["only-one"], ["/a", "/b"]), "u", "/d");
+            new ServerLayout([1, 2], ["only-one"], ["/a", "/b"]), targetSlot: 3, "u", "/d");
 
         Assert.Null(plan);
         Assert.Contains(problems, p => p.Contains("PAVLOV_UNITS must list exactly 2", StringComparison.Ordinal));
@@ -290,7 +339,7 @@ public class ProvisioningTests
     [Fact]
     public void NoServersYetIsRefusedBecauseServerOneMustExistFirst()
     {
-        var (plan, problems) = ServerSlotPlanner.Plan(new ServerLayout([], [], []), "u", "/d");
+        var (plan, problems) = ServerSlotPlanner.Plan(new ServerLayout([], [], []), targetSlot: 1, "u", "/d");
 
         Assert.Null(plan);
         Assert.Contains(problems, p => p.Contains("No RCON servers are configured", StringComparison.Ordinal));
@@ -303,7 +352,7 @@ public class ProvisioningTests
         var names = indices.Select(i => $"u{i}").ToList();
         var bases = indices.Select(i => $"/b{i}").ToList();
 
-        var (plan, problems) = ServerSlotPlanner.Plan(new ServerLayout(indices, names, bases), "u10", "/b10");
+        var (plan, problems) = ServerSlotPlanner.Plan(new ServerLayout(indices, names, bases), targetSlot: ProvisionValidation.MaxServers + 1, "u10", "/b10");
 
         Assert.Null(plan);
         Assert.Contains(problems, p => p.Contains("no room", StringComparison.Ordinal));

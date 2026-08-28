@@ -49,6 +49,11 @@ public sealed record ProvisionOutcome(IReadOnlyList<ProvisionStep> Steps, bool R
 /// that directory's contents into the new install, which is far quicker than fetching several GB
 /// again and starts from a build already known to work on this box.
 /// </param>
+/// <param name="RebuildingExistingSlot">
+/// True when this slot is already configured and is being filled in rather than added. Its unit
+/// file may well already be there, and replacing it is the whole point - refusing to overwrite it
+/// would block exactly the repair being asked for.
+/// </param>
 public sealed record ProvisionRequest(
     ServerProvisionSpec Spec,
     IReadOnlyList<string> FinalPavlovUnits,
@@ -56,7 +61,8 @@ public sealed record ProvisionRequest(
     IReadOnlyList<string>? FinalPlayerCountChannels,
     string EnvPath,
     string SteamUserPassword,
-    string? CopyFromInstallDir = null);
+    string? CopyFromInstallDir = null,
+    bool RebuildingExistingSlot = false);
 
 /// <summary>
 /// Standing up a new Pavlov dedicated server on this box and wiring it into the bot.
