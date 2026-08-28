@@ -96,15 +96,59 @@ public sealed class FeedBridge
         tracking.Kill += OnKillAsync;
     }
 
-    /// <summary>The public join line. No address, no account id - safe in a public channel.</summary>
-    private Task OnJoinedAsync(PlayerJoined join)
+    /// <summary>
+    /// The public join line, and the first chance to act on a VPN.
+    /// </summary>
+    /// <remarks>
+    /// The line itself carries no address and no account id, so it is safe in a public
+    /// channel. The screening below is not posted anywhere from here; it only decides.
+    ///
+    /// SCREENED HERE, NOT ONLY ON THE DISCONNECT LINE. The disconnect is where the address is
+    /// CERTAIN, which is why it stays as the backstop - but it is also after the player has
+    /// had their entire session, so a ban issued there is a ban issued to somebody who has
+    /// already gone. Acting on the join is what actually keeps them off, and the player is
+    /// still online to be kicked.
+    ///
+    /// THE PRICE IS THE CORRELATION, and it is only ever paid on a CONFIDENT one: exactly one
+    /// address was accepted in the window before this login, so there is nothing else it
+    /// could have been. An ambiguous or missing correlation is skipped here entirely and left
+    /// to the disconnect path - which is the whole reason that path remains.
+    ///
+    /// A NAMELESS JOIN IS SKIPPED, because master protection is BY NAME. Banning against an
+    /// account id whose name has not arrived yet would walk straight past the check that
+    /// stops an owner locking themselves out of their own server.
+    /// </remarks>
+    private async Task OnJoinedAsync(PlayerJoined join)
     {
         var name = join.Name ?? join.AccountId;
 
-        // One line per arrival, not one per login line. See _announced.
-        if (!Report(_announced, name, join.At)) return Task.CompletedTask;
+        /* One line per arrival, not one per login line - Pavlov writes several. See
+           _announced. It gates the screening below too, so one connection costs one pass
+           rather than one per repeated login line. */
+        if (!Report(_announced, name, join.At)) return;
 
-        return Safe(() => _feeds.PostJoinAsync(name, _servers.Of(join.File), join.At));
+        await Safe(() => _feeds.PostJoinAsync(name, _servers.Of(join.File), join.At)).ConfigureAwait(false);
+
+        if (_vpn is null || _vpnBans is null) return;
+        if (join.Name is not { Length: > 0 } named) return;
+        if (!join.Confident || join.Ip is not { Length: > 0 } ip) return;
+
+        VpnRecord? screening;
+        try
+        {
+            // Cached per address, so this is a lookup the first time an address is seen on
+            // this server and free for every join after it.
+            screening = await _vpn.CheckAsync(ip).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Could not screen {Address} on join - the disconnect line will try again", ip);
+            return;
+        }
+
+        if (screening is not null)
+            await Safe(() => _vpnBans.RespondAsync(named, screening, join.AccountId, "join")).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -188,10 +232,15 @@ public sealed class FeedBridge
            neither a missing webhook nor a card Discord rejected is a reason to let a VPN
            ban go unissued, and both used to do exactly that.
 
+           THE BACKSTOP, now that the join line screens too: this catches the connection
+           whose address could not be confidently correlated at join, and the one whose login
+           line carried no name. Where the join already acted, the responder's per-address
+           window makes this a no-op rather than a second ban.
+
            The account id is passed rather than left to a name lookup: it is certain on this
            line, and it is what the ban and its eventual lift both have to name. */
         if (_vpnBans is not null && screening is not null)
-            await Safe(() => _vpnBans.RespondAsync(name, screening, confirmed.AccountId)).ConfigureAwait(false);
+            await Safe(() => _vpnBans.RespondAsync(name, screening, confirmed.AccountId, "disconnect")).ConfigureAwait(false);
     }
 
     /// <summary>
