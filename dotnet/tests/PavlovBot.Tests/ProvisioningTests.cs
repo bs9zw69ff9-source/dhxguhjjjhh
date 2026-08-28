@@ -337,12 +337,19 @@ public class ProvisioningTests
     }
 
     [Fact]
-    public void NoServersYetIsRefusedBecauseServerOneMustExistFirst()
+    public void AnEmptyBoxCanStillGrowItsFirstServer()
     {
-        var (plan, problems) = ServerSlotPlanner.Plan(new ServerLayout([], [], []), targetSlot: 1, "u", "/d");
+        /* This used to refuse, assuming server 1 always already existed. Deleting the last server
+           makes that false, and refusing here would leave a box with no servers unable to grow
+           one - deleted into a corner it could not get out of. */
+        var (plan, problems) = ServerSlotPlanner.Plan(
+            new ServerLayout([], [], []), targetSlot: 1, "pavlovserver", "/home/steam/pavlovserver");
 
-        Assert.Null(plan);
-        Assert.Contains(problems, p => p.Contains("No RCON servers are configured", StringComparison.Ordinal));
+        Assert.Empty(problems);
+        Assert.NotNull(plan);
+        Assert.Equal(1, plan!.Slot);
+        Assert.Equal(["pavlovserver"], plan.FinalUnits);
+        Assert.Equal(["/home/steam/pavlovserver"], plan.FinalBases);
     }
 
     [Fact]
@@ -725,16 +732,12 @@ public class ProvisioningTests
     }
 
     [Fact]
-    public void TheLastRemainingServerCannotBeDeleted()
+    public void TheLastRemainingServerIncludingServerOneCanBeDeleted()
     {
-        // The bot cannot start with no RCON servers, and this command restarts the bot as its
-        // final act - so deleting the only one would be the thing that took the bot down.
-        var problem = DeleteServerCommand.Problem(1, [1], ["a"], ["/a"]);
-
-        Assert.NotNull(problem);
-        Assert.Contains("only server configured", problem, StringComparison.Ordinal);
-        // And it names the way out rather than just refusing.
-        Assert.Contains("by hand", problem, StringComparison.Ordinal);
+        /* THE LAST SERVER CAN NOW GO, including server 1. The bot exits 78 with none configured,
+           which is a reason to skip the restart this normally ends with - not a reason to trap
+           the operator with a server they cannot remove. */
+        Assert.Null(DeleteServerCommand.Problem(1, [1], ["a"], ["/a"]));
     }
 
     [Fact]

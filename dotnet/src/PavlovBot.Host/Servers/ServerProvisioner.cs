@@ -476,6 +476,21 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok($"server {request.Slot} cleared.").ConfigureAwait(false);
 
+        /* NOT RESTARTING INTO AN EMPTY CONFIGURATION. With no RCON server left the bot exits 78
+           at startup, and under pm2's autorestart that is a crash loop rather than a clean stop -
+           so the last server can be removed, but the process is left running on the configuration
+           it already has. It keeps working until somebody restarts it deliberately, by which time
+           there is a server to point it at. */
+        if (request.FinalPavlovUnits.Count == 0)
+        {
+            await run.Start("checking how to bring the bot back…").ConfigureAwait(false);
+            await run.Ok(
+                "skipped - no servers are configured now, and the bot cannot start with none. " +
+                "It is still running on its current configuration. Provision a server before restarting it.")
+                .ConfigureAwait(false);
+            return run.Finish(restartQueued: false);
+        }
+
         // ---- restart ----
         return await RestartAsync(run, request.Slot, ct).ConfigureAwait(false);
     }
