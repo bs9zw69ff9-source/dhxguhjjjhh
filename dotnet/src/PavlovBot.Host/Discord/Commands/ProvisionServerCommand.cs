@@ -129,14 +129,27 @@ public sealed class ProvisionServerCommand(
         var existingUnits = SplitList(configuration["PAVLOV_UNITS"]);
         var existingBases = SplitList(configuration["PAVLOV_BASES"]);
 
-        // ---- assemble the request from options + sensible, slot-aware defaults ----
-        var prospectiveSlot = usedIndices.Count + 1;
+        /* THE DISK DECIDES WHICH SLOT, not the count of .env entries. A configured slot with no
+           install behind it is the slot to build - otherwise asking for a first server on a box
+           where RCON_HOST_1 was set but nothing was ever installed produced a SECOND one, leaving
+           the first as a hole that every later run then skipped too. */
+        var installed = InstalledSlots(usedIndices.Count);
+        var prospectiveSlot = ServerSlotPlanner.TargetSlot(usedIndices.Count, installed);
+        var refilling = prospectiveSlot <= usedIndices.Count;
 
         /* THE CONVENTION DECIDES BOTH, from the slot alone: server 1 is pavlovserver, server 2 is
            pavlovserver1, server 3 is pavlovserver2. The unit is named for the directory and the
            directory sits beside its siblings, so the two cannot disagree. */
         var unit = $"pavlovserver{Off(prospectiveSlot)}";
         var installDir = Path.Combine(DefaultInstallParent(), unit);
+
+        /* When filling in a slot that is already configured, its OWN current port, unit and base
+           are what is being replaced - counting them as collisions would make the command refuse
+           to rebuild the very server it was asked to rebuild. The planner still gets the FULL
+           lists, because it replaces one entry in place and needs to see every position. */
+        var rconPortsToAvoid = Without(existingRconPorts, refilling ? prospectiveSlot : 0);
+        var unitsToAvoid = Without(existingUnits, refilling ? prospectiveSlot : 0);
+        var basesToAvoid = Without(existingBases, refilling ? prospectiveSlot : 0);
         var rconPassword = StringOption(command, "rconpassword") is { Length: > 0 } supplied ? supplied : GeneratePassword();
         var generated = StringOption(command, "rconpassword") is not { Length: > 0 };
 
@@ -164,9 +177,9 @@ public sealed class ProvisionServerCommand(
 
         // ---- plan the slot and validate everything, reporting all problems at once ----
         var (plan, planProblems) = ServerSlotPlanner.Plan(
-            new ServerLayout(usedIndices, existingUnits, existingBases), unit, installDir);
+            new ServerLayout(usedIndices, existingUnits, existingBases), prospectiveSlot, unit, installDir);
         var problems = new List<string>(planProblems);
-        problems.AddRange(ProvisionValidation.Check(spec, existingRconPorts, existingUnits, existingBases));
+        problems.AddRange(ProvisionValidation.Check(spec, rconPortsToAvoid, unitsToAvoid, basesToAvoid));
 
         if (problems.Count > 0 || plan is null)
         {
@@ -192,14 +205,15 @@ public sealed class ProvisionServerCommand(
             : null;
 
         // ---- kick off, and hand the slow work to a detached task ----
-        await Reply(command, StartedEmbed(spec, generated, SteamUserPassword, copyFrom)).ConfigureAwait(false);
+        await Reply(command, StartedEmbed(spec, generated, SteamUserPassword, copyFrom, refilling)).ConfigureAwait(false);
 
         var request = new ProvisionRequest(
             spec, plan.FinalUnits, plan.FinalBases,
             FinalPlayerCountChannels: null,
             Path.Combine(Directory.GetCurrentDirectory(), ".env"),
             SteamUserPassword,
-            copyFrom);
+            copyFrom,
+            refilling);
 
         var channelId = command.Channel.Id;
         var messageId = await Post.SendAsync(channelId, Checklist(spec, InitialSteps()), null, ct).ConfigureAwait(false);
@@ -241,7 +255,7 @@ public sealed class ProvisionServerCommand(
     // ---- rendering ----
 
     private static Embed StartedEmbed(
-        ServerProvisionSpec spec, bool generatedPassword, string steamUserPassword, string? copyFrom)
+        ServerProvisionSpec spec, bool generatedPassword, string steamUserPassword, string? copyFrom, bool refilling)
     {
         var source = copyFrom is null
             ? "SteamCMD downloads several GB, so this"
@@ -249,7 +263,17 @@ public sealed class ProvisionServerCommand(
 
         var embed = Theme.Notice($"Provisioning server {spec.Slot} started",
                 $"Installing **{Sanitize.Code(spec.ServerName)}** as `{spec.UnitName}`. {source} " +
-                "runs in the background - watch the checklist I just posted in this channel. The bot restarts itself at the end.")
+                "runs in the background - watch the checklist I just posted in this channel. The bot restarts itself at the end.");
+
+        /* Said out loud, because "server 1" when the operator expected the next number is
+           surprising until you know why - and the reason is worth knowing: that slot was
+           configured but had nothing installed behind it. */
+        if (refilling)
+            embed.AddField($"{Theme.Info} Filling in an existing slot",
+                $"Server {spec.Slot} is already configured but has no install on disk, so this builds THAT " +
+                "rather than adding another. Its RCON settings are replaced.", inline: false);
+
+        embed
             .AddField("Ports", $"game `{spec.GamePort}/udp` • query `{spec.QueryPort}/udp` • rcon `{spec.RconPort}/tcp`", inline: false)
             .AddField("Install dir", $"`{Sanitize.Code(spec.InstallDir)}`", inline: false)
             .AddField($"{Theme.Warn} Port collisions",
@@ -315,6 +339,36 @@ public sealed class ProvisionServerCommand(
             if (!string.IsNullOrWhiteSpace(configuration[$"RCON_HOST_{i}"])) indices.Add(i);
         return indices;
     }
+
+    /// <summary>
+    /// Which configured slots have a real install behind them.
+    /// </summary>
+    /// <remarks>
+    /// KEYED ON <c>PavlovServer.sh</c>, not on the directory existing. That script is what the
+    /// unit's ExecStart runs, so its absence means there is nothing to start no matter what else
+    /// is in the tree - and an empty or half-deleted directory left over from a failed run would
+    /// otherwise read as a working server and get skipped forever.
+    /// </remarks>
+    private IReadOnlyCollection<int> InstalledSlots(int configuredCount)
+    {
+        var parent = DefaultInstallParent();
+        var installed = new List<int>();
+
+        for (var slot = 1; slot <= configuredCount; slot++)
+        {
+            var path = Path.Combine(parent, $"pavlovserver{Off(slot)}", "PavlovServer.sh");
+            if (File.Exists(path)) installed.Add(slot);
+        }
+
+        return installed;
+    }
+
+    /// <summary>A copy of <paramref name="values"/> without the entry at 1-based <paramref name="slot"/>.</summary>
+    /// <remarks>Slot 0 means "drop nothing", which is the append case.</remarks>
+    private static List<T> Without<T>(IReadOnlyList<T> values, int slot) =>
+        slot >= 1 && slot <= values.Count
+            ? [.. values.Where((_, i) => i != slot - 1)]
+            : [.. values];
 
     private string DefaultInstallParent()
     {

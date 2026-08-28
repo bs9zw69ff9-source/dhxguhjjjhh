@@ -31,20 +31,71 @@ public sealed record SlotPlan(int Slot, IReadOnlyList<string> FinalUnits, IReadO
 public static class ServerSlotPlanner
 {
     /// <summary>
-    /// Plan the next slot, or return every reason the layout cannot take one.
+    /// Which slot to actually build: the lowest configured one with NO install on disk, or the
+    /// next new slot when every configured server is really there.
+    /// </summary>
+    /// <remarks>
+    /// BEING IN <c>.env</c> IS NOT THE SAME AS EXISTING. The slot used to be "however many RCON
+    /// entries are configured, plus one", which is only right when each of those entries has a
+    /// real install behind it. On a box where <c>RCON_HOST_1</c> was set but
+    /// <c>/home/steam/pavlovserver</c> had never been installed, that produced server 2 while
+    /// server 1 remained a hole - the operator asked for their first server and got their second,
+    /// with the missing one still missing and now permanently skipped.
+    ///
+    /// So the disk decides. A configured slot with nothing installed is the slot to build, and
+    /// only when all of them are genuinely present does this move on to a new one.
+    /// </remarks>
+    /// <param name="configuredCount">How many RCON slots are set in configuration.</param>
+    /// <param name="slotsWithInstalls">The slots that have a real install on disk.</param>
+    public static int TargetSlot(int configuredCount, IReadOnlyCollection<int> slotsWithInstalls)
+    {
+        ArgumentNullException.ThrowIfNull(slotsWithInstalls);
+
+        for (var slot = 1; slot <= configuredCount; slot++)
+            if (!slotsWithInstalls.Contains(slot)) return slot;
+
+        return configuredCount + 1;
+    }
+
+    /// <summary>
+    /// Plan a slot, or return every reason the layout cannot take it.
     /// </summary>
     /// <param name="layout">What the bot is running now.</param>
-    /// <param name="newUnit">The unit name for the new server.</param>
-    /// <param name="newBase">The install root for the new server.</param>
+    /// <param name="targetSlot">The slot to build - an existing one to fill in, or the next new one.</param>
+    /// <param name="newUnit">The unit name for the server.</param>
+    /// <param name="newBase">The install root for the server.</param>
     /// <param name="maxServers">The highest slot the bot will scan. Defaults to the RCON maximum.</param>
     public static (SlotPlan? Plan, IReadOnlyList<string> Problems) Plan(
-        ServerLayout layout, string newUnit, string newBase, int maxServers = ProvisionValidation.MaxServers)
+        ServerLayout layout, int targetSlot, string newUnit, string newBase,
+        int maxServers = ProvisionValidation.MaxServers)
     {
         ArgumentNullException.ThrowIfNull(layout);
 
         var problems = new List<string>();
         var indices = layout.RconIndices.Distinct().OrderBy(i => i).ToList();
         var count = indices.Count;
+
+        /* FILLING IN A SLOT THAT IS ALREADY CONFIGURED. Its unit and base are already at their
+           position in the lists, so this REPLACES them rather than appending - the lists keep
+           their length and every other server keeps its position. */
+        if (targetSlot >= 1 && targetSlot <= count)
+        {
+            if (layout.Units.Count != count || layout.Bases.Count != count)
+            {
+                return (null,
+                [
+                    $"PAVLOV_UNITS and PAVLOV_BASES must each list exactly {count} entries, one per RCON server in order, " +
+                    $"before server {targetSlot} can be rebuilt (they list {layout.Units.Count} and {layout.Bases.Count}). " +
+                    "Set them explicitly - see SECOND-BOT.md.",
+                ]);
+            }
+
+            var replacedUnits = layout.Units.ToList();
+            var replacedBases = layout.Bases.ToList();
+            replacedUnits[targetSlot - 1] = newUnit;
+            replacedBases[targetSlot - 1] = newBase;
+            return (new SlotPlan(targetSlot, replacedUnits, replacedBases), []);
+        }
 
         // Contiguous 1..M. A gap (1 and 3 with no 2) means "server N" no longer equals the Nth
         // positional entry, so a positional append cannot be placed safely.
