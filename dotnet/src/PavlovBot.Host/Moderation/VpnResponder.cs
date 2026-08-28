@@ -78,7 +78,24 @@ public sealed class VpnResponder(
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _actioned = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Addresses already REPORTED on, separate from those already actioned.
+    /// </summary>
+    /// <remarks>
+    /// One connection is now screened twice - once on the join line, once on the disconnect -
+    /// so every outcome that only talks (below threshold, master, exempt) would say the same
+    /// thing twice per session without this. The action debounce cannot serve here: it is
+    /// consumed only when something is actually done, and these branches do nothing.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _reported = new(StringComparer.Ordinal);
+
     /// <param name="record">The screening result. Null means nothing could be determined.</param>
+    /// <param name="stage">
+    /// Where in the connection this verdict was reached - <c>join</c> or <c>disconnect</c>.
+    /// Carried into the log and the metrics because "banned as they arrived" and "banned on
+    /// the way out" are the difference between the feature working and the feature being
+    /// too late, and from a bare ban record they look identical.
+    /// </param>
     /// <param name="uniqueId">
     /// The account id, when the caller has a certain one. Strongly preferred over the display
     /// name: <see cref="BanService.HardEnforceAsync"/> otherwise resolves the name through the
@@ -86,24 +103,36 @@ public sealed class VpnResponder(
     /// tracker saw last. The disconnect line carries both, so there is no reason to guess.
     /// </param>
     public async Task<VpnBanOutcome> RespondAsync(
-        string player, VpnRecord? record, string? uniqueId = null, CancellationToken ct = default)
+        string player, VpnRecord? record, string? uniqueId = null, string stage = "connection",
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(player) || record is null) return VpnBanOutcome.NoVerdict;
 
         var decision = record.Decision;
         if (!decision.Flagged) return VpnBanOutcome.NoVerdict;
 
+        var now = DateTimeOffset.UtcNow;
+
+        /* SAID ONCE PER ADDRESS. The join line and the disconnect line both reach here for
+           one connection, and the branches below that only talk would otherwise say the same
+           thing twice a session. The ban branch has its own window and is unaffected. */
+        var announce = ShouldAction(_reported, record.Ip, now, ActionDebounce);
+
         if (!decision.Actionable)
         {
             /* Flagged but under the threshold. Said out loud rather than dropped: this is
                the state somebody checks when they ask why a known VPN user is still on. */
-            logger.LogInformation("VPN flag NOT actioned for {Player} @ {Ip}: {Reason}",
-                player, record.Ip, decision.Reason);
-            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "below_threshold"),
-                help: "VPN verdicts by what was done about them");
+            if (announce)
+            {
+                logger.LogInformation("VPN flag NOT actioned for {Player} @ {Ip} at {Stage}: {Reason}",
+                    player, record.Ip, stage, decision.Reason);
 
-            await PostAsync($"[VPN] {Sanitize.Message(player)}  |  {VpnVerdict.Of(record).Headline}  |  NOT BANNED - {decision.Reason}")
-                .ConfigureAwait(false);
+                await PostAsync($"[VPN] {Sanitize.Message(player)}  |  {VpnVerdict.Of(record).Headline}  |  NOT BANNED - {decision.Reason}")
+                    .ConfigureAwait(false);
+            }
+
+            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "below_threshold", "stage", stage),
+                help: "VPN verdicts by what was done about them");
             return VpnBanOutcome.BelowThreshold;
         }
 
@@ -112,15 +141,17 @@ public sealed class VpnResponder(
             /* A master behind a VPN is an owner on a phone hotspot or a work connection,
                not an evader. Locking yourself out of your own server needs console access
                to undo, so this refusal is loud rather than silent. */
-            logger.LogWarning("VPN AUTO-BAN REFUSED - {Player} is a master account ({Reason})", player, decision.Reason);
-            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "master"));
+            if (announce)
+                logger.LogWarning("VPN AUTO-BAN REFUSED - {Player} is a master account ({Reason})", player, decision.Reason);
+
+            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "master", "stage", stage));
             return VpnBanOutcome.Master;
         }
 
         if (masters.IsExempt(player))
         {
-            logger.LogInformation("VPN auto-ban skipped - {Player} is exempt", player);
-            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "exempt"));
+            if (announce) logger.LogInformation("VPN auto-ban skipped - {Player} is exempt", player);
+            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "exempt", "stage", stage));
             return VpnBanOutcome.Exempt;
         }
 
@@ -128,16 +159,15 @@ public sealed class VpnResponder(
         {
             // Rewriting the record would silently promote an active temp ban to permanent.
             logger.LogDebug("VPN auto-ban skipped - {Player} is already banned", player);
-            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "already_banned"));
+            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "already_banned", "stage", stage));
             return VpnBanOutcome.AlreadyBanned;
         }
 
-        var now = DateTimeOffset.UtcNow;
         if (!ShouldAction(_actioned, record.Ip, now, ActionDebounce))
         {
-            logger.LogInformation("VPN auto-ban skipped for {Player} - {Ip} was already actioned recently",
-                player, record.Ip);
-            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "debounced"));
+            logger.LogInformation("VPN auto-ban skipped for {Player} at {Stage} - {Ip} was already actioned recently",
+                player, stage, record.Ip);
+            metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "debounced", "stage", stage));
             return VpnBanOutcome.Debounced;
         }
 
@@ -171,9 +201,9 @@ public sealed class VpnResponder(
         var enforcement = await bans.HardEnforceAsync(player, uniqueId, ct: ct).ConfigureAwait(false);
         await audit.RecordAsync("vpnban", "auto", player, reason, ct).ConfigureAwait(false);
 
-        metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "banned"));
-        logger.LogWarning("VPN AUTO-BANNED {Player} @ {Ip} on {Servers} server(s): {Reason}",
-            player, record.Ip, enforcement.Servers, reason);
+        metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "banned", "stage", stage));
+        logger.LogWarning("VPN AUTO-BANNED {Player} @ {Ip} at {Stage} on {Servers} server(s): {Reason}",
+            player, record.Ip, stage, enforcement.Servers, reason);
 
         await PostAsync($"[VPN BAN] {Sanitize.Message(player)}  |  {reason}").ConfigureAwait(false);
         return VpnBanOutcome.Banned;
