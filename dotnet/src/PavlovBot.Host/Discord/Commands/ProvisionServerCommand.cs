@@ -97,7 +97,7 @@ public sealed class ProvisionServerCommand(
                 .WithName("maxplayers").WithDescription("Max players (default 24 - Shack's hard cap)")
                 .WithType(ApplicationCommandOptionType.Integer)
                 .WithMinValue(1).WithMaxValue(ProvisionValidation.MaxShackPlayers).WithRequired(false))
-            .AddOption("maps", ApplicationCommandOptionType.String, "Rotation as MapId:Mode,MapId:Mode (default datacenter:SND)", isRequired: false)
+            .AddOption("maps", ApplicationCommandOptionType.String, "Rotation as MapId:Mode,MapId:Mode (default: this network's map)", isRequired: false)
             /* NO unit OR installdir OPTION. The naming is a fixed convention on this box - server
                1 is pavlovserver, server 2 is pavlovserver1, and so on - and the unit name, the
                install directory and the slot all have to agree. Letting any of them be typed in
@@ -430,9 +430,15 @@ public sealed class ProvisionServerCommand(
     /// <summary>The box's off-by-one unit numbering: server 1 is <c>pavlovserver</c> (no suffix).</summary>
     internal static string Off(int slot) => slot <= 1 ? "" : (slot - 1).ToString(CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// The rotation a server gets when none is named: this network's own map, from the config
+    /// that is actually running, rather than a stock one nobody here plays.
+    /// </summary>
+    internal static readonly MapEntry DefaultMap = new("UGC5616264", "CUSTOM");
+
     internal static IReadOnlyList<MapEntry> ParseMaps(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return [new MapEntry("datacenter", "SND")];
+        if (string.IsNullOrWhiteSpace(raw)) return [DefaultMap];
 
         var maps = new List<MapEntry>();
         foreach (var item in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -442,7 +448,7 @@ public sealed class ProvisionServerCommand(
             var mode = parts.Length > 1 && parts[1].Length > 0 ? parts[1] : "SND";
             if (mapId.Length > 0) maps.Add(new MapEntry(mapId, mode));
         }
-        return maps.Count > 0 ? maps : [new MapEntry("datacenter", "SND")];
+        return maps.Count > 0 ? maps : [DefaultMap];
     }
 
     private static string GeneratePassword()

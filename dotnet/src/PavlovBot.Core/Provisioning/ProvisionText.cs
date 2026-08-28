@@ -26,6 +26,15 @@ public static class ProvisionText
     /// <summary>
     /// <c>LinuxServer/Game.ini</c>: the dedicated-server section with name, capacity and rotation.
     /// </summary>
+    /// <summary>
+    /// The mod every server on this network loads, from the working config this was taken from.
+    /// </summary>
+    /// <remarks>
+    /// One constant rather than scattered through the template, because it is the line most
+    /// likely to change and the one an operator will come looking for.
+    /// </remarks>
+    public const string AdditionalMods = "UGC3462586";
+
     public static string GameIni(ServerProvisionSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
@@ -33,16 +42,41 @@ public static class ProvisionText
         var sb = new StringBuilder();
         sb.Append("[/Script/Pavlov.DedicatedServer]\n");
         sb.Append("bEnabled=true\n");
-        sb.Append(CultureInfo.InvariantCulture, $"ServerName=\"{CleanServerName(spec.ServerName)}\"\n");
+
+        /* UNQUOTED, unlike the wiki's example. This follows the config that is actually running:
+           quoting made the quotes part of the name in the browser. */
+        sb.Append(CultureInfo.InvariantCulture, $"ServerName={CleanServerName(spec.ServerName)}\n");
         sb.Append(CultureInfo.InvariantCulture, $"MaxPlayers={spec.MaxPlayers.ToString(CultureInfo.InvariantCulture)}\n");
+        sb.Append("bSecured=true\n");
+        sb.Append("bCustomServer=true\n");
+
+        /* NOT COSMETIC. The kill feed parses lines the game only writes with verbose logging on -
+           see PavlovLogLine - so a server provisioned without this looks healthy and silently
+           produces no kills. */
+        sb.Append("bVerboseLogging=true\n");
+
+        sb.Append("bEnableBots=false\n");
+        sb.Append("bCompetitive=false #This only works for SND\n");
+        sb.Append("bWhitelist=false\n");
+        sb.Append("RefreshListTime=120\n");
+        sb.Append("LimitedAmmoType=0\n");
+        sb.Append("TickRate=60\n");
+        sb.Append("TimeLimit=60\n");
+        sb.Append("AFKTimeLimit=300\n");
+
+        /* COMMENTED OUT WHEN THERE IS NO PASSWORD, rather than omitted. An empty Password line
+           reads as "the password is the empty string" and locks everyone out; leaving the
+           commented example is what the working config does and shows where to put one. */
+        sb.Append(!string.IsNullOrEmpty(spec.GamePassword)
+            ? string.Create(CultureInfo.InvariantCulture, $"Password={spec.GamePassword}\n")
+            : "#Password=0000\n");
+
+        sb.Append("#BalanceTableURL=\"vankruptgames/BalancingTable/main\"\n");
 
         foreach (var map in spec.Maps)
             sb.Append(CultureInfo.InvariantCulture, $"MapRotation=(MapId=\"{map.MapId}\", GameMode=\"{map.GameMode}\")\n");
 
-        // Only written when set: an empty Password line reads as "the password is the empty
-        // string" to the game, which is not the same as an open server.
-        if (!string.IsNullOrEmpty(spec.GamePassword))
-            sb.Append(CultureInfo.InvariantCulture, $"Password={spec.GamePassword}\n");
+        sb.Append(CultureInfo.InvariantCulture, $"AdditionalMods={AdditionalMods}\n");
 
         return sb.ToString();
     }
