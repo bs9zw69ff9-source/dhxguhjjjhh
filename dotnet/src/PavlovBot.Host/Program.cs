@@ -582,7 +582,16 @@ public static class Program
            this only means the whole set is present and visible from the first start rather than
            appearing one file at a time as each faction gains its first member. It still never
            creates the DIRECTORY: a missing one means the path is wrong. */
-        host.Services.GetRequiredService<RosterService>().EnsureRosterFiles();
+        var rosters = host.Services.GetRequiredService<RosterService>().EnsureRosterFiles();
+
+        /* SAID EVERY START, INCLUDING WHEN IT DID NOTHING. "Zero created" is the answer whether
+           the feature is off, every file was already there, or the directory refused every
+           write, and an operator staring at an empty roster directory needs to be told which
+           of the three happened - silence sent one of those debugging sessions the long way
+           round. */
+        logger.LogInformation("  faction rosters: {Summary}", rosters.Summary);
+        foreach (var failure in rosters.Failed)
+            logger.LogWarning("  faction roster NOT created - {Failure}", failure);
 
         var seeded = 0;
         var backend = host.Services.GetRequiredService<SqliteKeyValueBackend>();
@@ -667,7 +676,7 @@ public static class Program
         {
             ("ModSave ban list", features.ModsaveBanlistPath),
             ("economy ledger", features.LedgerDirectory is { } d ? Path.Combine(d, "<player>.txt") : null),
-            ("faction rosters", features.RosterDirectory is { } r ? Path.Combine(r, "<faction>") : null),
+            ("faction rosters", features.RosterDirectory is { } r ? Path.Combine(r, "<roster>.txt") : null),
         }.Concat(installs.Select(i => ("whitelist", (string?)PavlovInstalls.WhitelistPath(i)))))
         {
             if (path is null) continue;

@@ -7,6 +7,23 @@ namespace PavlovBot.Host.Factions;
 /// <param name="Rank">The highest rank whose roster file contains them.</param>
 public sealed record Membership(FactionDefinition Faction, string Player, string Rank);
 
+/// <summary>
+/// What creating the missing roster files at startup actually did.
+/// </summary>
+/// <remarks>
+/// A COUNT WAS NOT ENOUGH. Zero created is the answer in three unrelated situations - the
+/// feature is off, every file was already there, or nothing could be written - and an operator
+/// looking at a roster directory that is still empty needs to be told which. <see cref="Summary"/>
+/// is written to be printed verbatim in the startup block beside the other feature lines.
+/// </remarks>
+/// <param name="Summary">One line, safe to log as-is.</param>
+/// <param name="Expected">How many files the loaded factions own.</param>
+/// <param name="Created">How many were missing and have now been created empty.</param>
+/// <param name="Present">How many already existed and were left untouched.</param>
+/// <param name="Failed">"file: reason" for each one that could not be created.</param>
+public sealed record RosterFileReport(
+    string Summary, int Expected, int Created, int Present, IReadOnlyList<string> Failed);
+
 /// <summary>The result of emptying a faction's rosters.</summary>
 /// <param name="Removed">Distinct members cleared, not rows deleted.</param>
 /// <param name="Failed">Roster files that could not be read or written, and so still hold members.</param>
@@ -98,22 +115,42 @@ public sealed class RosterService
     /// STILL NEVER CREATES THE DIRECTORY. That rule is unchanged and is what
     /// <see cref="Enabled"/> already enforces - a missing roster directory means the configured
     /// path is wrong, and building a tree the game never reads is worse than doing nothing.
+    ///
+    /// IT ALWAYS SAYS WHAT IT DID, which is the whole reason this returns a report rather than a
+    /// count. Doing nothing because the feature is off, doing nothing because every file was
+    /// already there, and doing nothing because the directory is not writable are three very
+    /// different situations that used to look identical from the outside: silence.
     /// </remarks>
-    /// <returns>How many files were created.</returns>
-    public int EnsureRosterFiles()
+    public RosterFileReport EnsureRosterFiles()
     {
-        if (!Enabled) return 0;
+        var expected = RosterFilesOf(Factions);
+
+        if (string.IsNullOrWhiteSpace(_directory))
+            return new RosterFileReport("off (FACTION_ROLES_PATH not set)", expected.Count, 0, 0, []);
+
+        if (!Directory.Exists(_directory))
+        {
+            /* NOT CREATED, DELIBERATELY. A missing roster directory means the path is wrong, and
+               a tree built beside the real one is a bot that looks healthy and writes where the
+               game never reads. */
+            return new RosterFileReport(
+                $"off (FACTION_ROLES_PATH is {_directory}, which does not exist)", expected.Count, 0, 0, []);
+        }
 
         var created = 0;
-        foreach (var file in RosterFilesOf(Factions))
+        var present = 0;
+        var failed = new List<string>();
+
+        foreach (var file in expected)
         {
             var path = PathFor(file);
             try
             {
-                if (File.Exists(path)) continue;
+                if (File.Exists(path)) { present++; continue; }
+
                 if (_guard.Problem(path) is { } problem)
                 {
-                    _logger.LogWarning("Not creating {File}: {Problem}", file, problem);
+                    failed.Add($"{file}: {problem}");
                     continue;
                 }
 
@@ -122,12 +159,14 @@ public sealed class RosterService
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _logger.LogWarning("Could not create the roster file {File}: {Message}", file, ex.Message);
+                failed.Add($"{file}: {ex.Message}");
             }
         }
 
-        if (created > 0) _logger.LogInformation("Created {Count} missing faction roster file(s)", created);
-        return created;
+        var summary = $"{created} created, {present} already there, of {expected.Count} in {_directory}";
+        if (failed.Count > 0) summary += $" - {failed.Count} COULD NOT BE CREATED";
+
+        return new RosterFileReport(summary, expected.Count, created, present, failed);
     }
 
     /// <summary>Read a roster. Null means UNREADABLE, which is not the same as empty.</summary>
