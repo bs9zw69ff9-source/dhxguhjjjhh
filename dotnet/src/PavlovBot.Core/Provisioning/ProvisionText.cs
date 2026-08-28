@@ -190,6 +190,61 @@ public static class ProvisionText
         return EnvFileEditor.Set(existing, values, EnvFileEditor.Note($"server {slot} removed", date));
     }
 
+    /// <summary>The section every dedicated-server setting lives under.</summary>
+    public const string GameIniSection = "[/Script/Pavlov.DedicatedServer]";
+
+    /// <summary>
+    /// Change one setting in an existing <c>Game.ini</c>, leaving the rest of the file alone.
+    /// </summary>
+    /// <remarks>
+    /// A LINE EDIT, NOT A REWRITE, and that distinction is the whole point. Regenerating the file
+    /// from <see cref="GameIni"/> would be simpler and would silently discard whatever the
+    /// operator has since tuned by hand - the map rotation they added, the tick rate they
+    /// changed - every time a single flag was flipped.
+    ///
+    /// A COMMENTED-OUT LINE IS NOT THE SETTING. <c>#bWhitelist=false</c> means the setting is
+    /// absent, so it is left exactly where it is and an active line is written instead; treating
+    /// it as the value to edit would produce a change the game never reads.
+    ///
+    /// An inline comment on the line being changed is kept, because in this file those are notes
+    /// about the setting itself ("#This only works for SND") and losing them costs the next
+    /// reader the explanation.
+    /// </remarks>
+    public static string SetGameIniValue(string existing, string key, string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+
+        var lines = (existing ?? "").Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var trimmed = lines[i].TrimStart();
+
+            // Commented-out lines are not the setting, so they are not what gets edited.
+            if (trimmed.StartsWith('#') || trimmed.StartsWith(';')) continue;
+
+            var equals = trimmed.IndexOf('=', StringComparison.Ordinal);
+            if (equals <= 0) continue;
+            if (!trimmed[..equals].Trim().Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Keep a note about this setting if there is one.
+            var rest = trimmed[(equals + 1)..];
+            var note = rest.IndexOf('#', StringComparison.Ordinal) is var hash && hash >= 0
+                ? " " + rest[hash..].Trim()
+                : "";
+
+            lines[i] = $"{key}={value}{note}";
+            return string.Join("\n", lines);
+        }
+
+        // Not there at all: add it under the section header, or at the end if there is none.
+        var header = lines.FindIndex(l => l.Trim().Equals(GameIniSection, StringComparison.OrdinalIgnoreCase));
+        if (header >= 0) lines.Insert(header + 1, $"{key}={value}");
+        else lines.Add($"{key}={value}");
+
+        return string.Join("\n", lines);
+    }
+
     /// <summary>
     /// A server name reduced to something safe inside a quoted INI value on one line.
     /// </summary>

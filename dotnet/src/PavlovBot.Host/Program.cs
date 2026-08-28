@@ -459,6 +459,17 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, ProvisionServerCommand>();
         builder.Services.AddSingleton<ISlashCommand, DeleteServerCommand>();
         builder.Services.AddSingleton<ISlashCommand, GuildInvitesCommand>();
+        /* Takes the discovered installs positionally, like the units - server N's Game.ini is
+           installs[N-1] - so the file it edits and the unit it restarts are the same server. */
+        builder.Services.AddSingleton<ISlashCommand>(sp => new TestModeCommand(
+            sp.GetRequiredService<PavlovBot.Host.Servers.ServiceControl>(),
+            sp.GetRequiredService<PavlovBot.Host.Servers.PlayerNotice>(),
+            sp.GetRequiredService<WhitelistFile>(),
+            sp.GetRequiredService<GameFileGuard>(),
+            sp.GetRequiredService<Access>(),
+            sp.GetRequiredService<AuditLog>(),
+            installs,
+            sp.GetRequiredService<ILogger<TestModeCommand>>()));
         /* The owner control panel is both: a slash command that posts the menu, and the
            component handler for the menu and its modals. One instance, registered twice. */
         builder.Services.AddSingleton<ConfigPanel>();
