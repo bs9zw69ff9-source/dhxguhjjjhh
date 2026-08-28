@@ -69,4 +69,15 @@ public static class PavlovInstalls
     /// <summary>The whitelist file inside an install.</summary>
     public static string WhitelistPath(string installRoot) =>
         Path.Combine(installRoot, "Pavlov", "Saved", "Config", "whitelist.txt");
+
+    /// <summary>
+    /// The server's own <c>Game.ini</c>.
+    /// </summary>
+    /// <remarks>
+    /// Under <c>LinuxServer</c>, which is the platform directory the game reads on this box - a
+    /// <c>WindowsServer</c> copy beside it would be ignored, so the platform is part of the path
+    /// rather than something to guess at.
+    /// </remarks>
+    public static string GameIniPath(string installRoot) =>
+        Path.Combine(installRoot, "Pavlov", "Saved", "Config", "LinuxServer", "Game.ini");
 }

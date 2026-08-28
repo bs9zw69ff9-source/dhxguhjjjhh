@@ -150,6 +150,85 @@ public class ProvisioningTests
         Assert.Equal(expected, ProvisionText.SystemdUnit(Spec()));
     }
 
+    // ---- editing one setting in an existing Game.ini ----
+
+    /// <summary>The shape of a real, hand-tuned file: notes, commented settings, a rotation.</summary>
+    private const string LiveGameIni =
+        "[/Script/Pavlov.DedicatedServer]\n" +
+        "bEnabled=true\n" +
+        "ServerName=Nuclear RP [#1]\n" +
+        "MaxPlayers=24\n" +
+        "bCompetitive=false #This only works for SND\n" +
+        "bWhitelist=false\n" +
+        "TickRate=60\n" +
+        "#Password=0000\n" +
+        "MapRotation=(MapId=\"UGC5616264\", GameMode=\"CUSTOM\")\n";
+
+    [Fact]
+    public void FlippingOneSettingLeavesTheRestOfTheFileAlone()
+    {
+        /* A LINE EDIT, NOT A REWRITE. Regenerating from the template would be simpler and would
+           silently discard whatever the operator has tuned by hand - the rotation they added, the
+           tick rate they changed - every time a single flag was flipped. */
+        var after = ProvisionText.SetGameIniValue(LiveGameIni, "bWhitelist", "true");
+
+        Assert.Contains("bWhitelist=true\n", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("bWhitelist=false", after, StringComparison.Ordinal);
+
+        // Everything else, untouched.
+        Assert.Contains("ServerName=Nuclear RP [#1]\n", after, StringComparison.Ordinal);
+        Assert.Contains("TickRate=60\n", after, StringComparison.Ordinal);
+        Assert.Contains("#Password=0000\n", after, StringComparison.Ordinal);
+        Assert.Contains("MapRotation=(MapId=\"UGC5616264\", GameMode=\"CUSTOM\")\n", after, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANoteOnTheChangedSettingSurvives()
+    {
+        // In this file inline comments explain the setting itself, so losing one costs the next
+        // reader the explanation.
+        var after = ProvisionText.SetGameIniValue(LiveGameIni, "bCompetitive", "true");
+
+        Assert.Contains("bCompetitive=true #This only works for SND\n", after, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACommentedOutLineIsNotTheSettingAndIsNotEdited()
+    {
+        /* "#Password=0000" means the setting is ABSENT. Editing it in place would produce a
+           change the game never reads, so the commented line stays and a live one is added. */
+        var after = ProvisionText.SetGameIniValue(LiveGameIni, "Password", "hunter2");
+
+        Assert.Contains("#Password=0000\n", after, StringComparison.Ordinal);
+        Assert.Contains("\nPassword=hunter2\n", after, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMissingSettingIsAddedUnderTheSectionHeader()
+    {
+        // Not appended after the map rotation, where it would read as belonging to nothing.
+        var after = ProvisionText.SetGameIniValue(
+            "[/Script/Pavlov.DedicatedServer]\nbEnabled=true\n", "bWhitelist", "true");
+
+        var lines = after.Split('\n');
+        Assert.Equal("[/Script/Pavlov.DedicatedServer]", lines[0]);
+        Assert.Equal("bWhitelist=true", lines[1]);
+        Assert.Equal("bEnabled=true", lines[2]);
+    }
+
+    [Fact]
+    public void TheKeyIsMatchedWholeAndCaseInsensitively()
+    {
+        // "bWhitelist" must not match "bWhitelistSomethingElse", and the game's own files are
+        // not consistent about case.
+        var after = ProvisionText.SetGameIniValue(
+            "[/Script/Pavlov.DedicatedServer]\nbwhitelist = false\nbWhitelistExtra=1\n", "bWhitelist", "true");
+
+        Assert.Contains("bWhitelist=true\n", after, StringComparison.Ordinal);
+        Assert.Contains("bWhitelistExtra=1\n", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("bwhitelist = false", after, StringComparison.Ordinal);
+    }
+
     // ---- .env rewriting, and its round trip through the real parser ----
 
     [Fact]
