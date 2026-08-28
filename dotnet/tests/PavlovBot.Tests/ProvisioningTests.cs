@@ -110,50 +110,119 @@ public class ProvisioningTests
         Assert.Equal(expected, ProvisionText.SystemdUnit(Spec()));
     }
 
-    // ---- .env override block, and its round trip through the real parser ----
+    // ---- .env rewriting, and its round trip through the real parser ----
 
     [Fact]
-    public void EnvBlockAddsAnIndexedRconTripleAndRewritesThePositionalLists()
+    public void ProvisioningWritesTheTripleAndTheListsWithTheGivenHost()
     {
         var spec = Spec(slot: 3, rcon: 9102, password: "Ab1_-.!@%^*+=z");
-        var block = ProvisionText.EnvOverrideBlock(
-            spec,
+        var env = ProvisionText.EnvWithServer(
+            "", spec, "10.0.0.7",
             ["pavlovserver", "pavlovserver1", "pavlovserver2"],
             ["/home/steam/pavlovserver", "/home/steam/pavlovserver1", "/home/steam/pavlovserver2"],
             null,
             new DateOnly(2026, 8, 27));
 
-        Assert.Contains("RCON_HOST_3=127.0.0.1\n", block);
-        Assert.Contains("RCON_PORT_3=9102\n", block);
-        Assert.Contains("RCON_PASSWORD_3=Ab1_-.!@%^*+=z\n", block);
-        Assert.Contains("PAVLOV_UNITS=pavlovserver,pavlovserver1,pavlovserver2\n", block);
-        Assert.Contains("PAVLOV_BASES=/home/steam/pavlovserver,/home/steam/pavlovserver1,/home/steam/pavlovserver2\n", block);
+        // The host is the caller's, not a hard-coded loopback.
+        Assert.Contains("RCON_HOST_3=10.0.0.7\n", env, StringComparison.Ordinal);
+        Assert.Contains("RCON_PORT_3=9102\n", env, StringComparison.Ordinal);
+        Assert.Contains("RCON_PASSWORD_3=Ab1_-.!@%^*+=z\n", env, StringComparison.Ordinal);
+        Assert.Contains("PAVLOV_UNITS=pavlovserver,pavlovserver1,pavlovserver2\n", env, StringComparison.Ordinal);
+        Assert.Contains("PAVLOV_BASES=/home/steam/pavlovserver,/home/steam/pavlovserver1,/home/steam/pavlovserver2\n", env, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AppendedBlockParsesBackToTheNewValuesUnderLastKeyWins()
+    public void ReprovisioningTheSameSlotLeavesExactlyONELineForEachKey()
     {
-        // An existing .env with a one-server layout; the block appends a second, and the parser
-        // the bot actually uses must read the LATER values, password intact and unquoted.
-        const string existing =
-            "PAVLOV_UNITS=pavlovserver\n" +
-            "PAVLOV_BASES=/home/steam/pavlovserver\n";
+        /* THE DUPING. Every provision used to APPEND its block, so a slot rebuilt a few times
+           left a stack of RCON_HOST_N lines - correct under last-key-wins, and unreadable, with
+           no way to tell from the file which one the bot was using. */
+        var env = "";
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            env = ProvisionText.EnvWithServer(
+                env, Spec(slot: 2, rcon: 9200, password: $"Pass{attempt}xyzzy"), "127.0.0.1",
+                ["pavlovserver", "pavlovserver1"],
+                ["/home/steam/pavlovserver", "/home/steam/pavlovserver1"],
+                null, new DateOnly(2026, 8, 27));
+        }
 
-        var spec = Spec(slot: 2, rcon: 9101, password: "S3cret_-.!@%^*+=");
-        var block = ProvisionText.EnvOverrideBlock(
-            spec,
-            ["pavlovserver", "pavlovserver1"],
-            ["/home/steam/pavlovserver", "/home/steam/pavlovserver1"],
-            null,
-            new DateOnly(2026, 8, 27));
+        Assert.Equal(1, CountLines(env, "RCON_HOST_2="));
+        Assert.Equal(1, CountLines(env, "RCON_PORT_2="));
+        Assert.Equal(1, CountLines(env, "RCON_PASSWORD_2="));
+        Assert.Equal(1, CountLines(env, "PAVLOV_UNITS="));
+        Assert.Equal(1, CountLines(env, "PAVLOV_BASES="));
 
-        var parsed = DotEnvConfigurationProvider.Parse(existing + block);
-
-        Assert.Equal("S3cret_-.!@%^*+=", parsed["RCON_PASSWORD_2"]);
-        Assert.Equal("9101", parsed["RCON_PORT_2"]);
-        Assert.Equal("pavlovserver,pavlovserver1", parsed["PAVLOV_UNITS"]);
-        Assert.Equal("/home/steam/pavlovserver,/home/steam/pavlovserver1", parsed["PAVLOV_BASES"]);
+        // And the surviving one is the latest.
+        Assert.Equal("Pass4xyzzy", DotEnvConfigurationProvider.Parse(env)["RCON_PASSWORD_2"]);
     }
+
+    [Fact]
+    public void DeletingRemovesTheSlotsLinesOutrightRatherThanBlankingThem()
+    {
+        // "Wipe all mentions" - not an empty override that still names the deleted server's slot.
+        var env = ProvisionText.EnvWithServer(
+            "", Spec(slot: 2, rcon: 9200), "10.0.0.7",
+            ["pavlovserver", "pavlovserver1"], ["/a", "/b"], null, new DateOnly(2026, 8, 27));
+
+        Assert.Contains("RCON_HOST_2", env, StringComparison.Ordinal);
+
+        var after = ProvisionText.EnvWithoutServer(env, 2, ["pavlovserver"], ["/a"], new DateOnly(2026, 8, 27));
+
+        Assert.DoesNotContain("RCON_HOST_2", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("RCON_PORT_2", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("RCON_PASSWORD_2", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("10.0.0.7", after, StringComparison.Ordinal);
+
+        var parsed = DotEnvConfigurationProvider.Parse(after);
+        Assert.False(parsed.ContainsKey("RCON_HOST_2"));
+        Assert.Equal("pavlovserver", parsed["PAVLOV_UNITS"]);
+    }
+
+    [Fact]
+    public void EverythingTheOperatorWroteSurvivesTheRewrite()
+    {
+        // The file is hand-maintained and full of comments explaining why settings are what they
+        // are. Only lines assigning a named key may be touched.
+        const string existing =
+            "# the bot's own identity - do not share\n" +
+            "DISCORD_TOKEN=abc.def.ghi\n" +
+            "\n" +
+            "# why this is 40 and not 24\n" +
+            "PAYROLL_AMOUNT=40\n" +
+            "RCON_HOST_1=127.0.0.1\n";
+
+        var after = ProvisionText.EnvWithServer(
+            existing, Spec(slot: 2, rcon: 9200), "127.0.0.1",
+            ["pavlovserver", "pavlovserver1"], ["/a", "/b"], null, new DateOnly(2026, 8, 27));
+
+        Assert.Contains("# the bot's own identity - do not share", after, StringComparison.Ordinal);
+        Assert.Contains("DISCORD_TOKEN=abc.def.ghi", after, StringComparison.Ordinal);
+        Assert.Contains("# why this is 40 and not 24", after, StringComparison.Ordinal);
+        Assert.Contains("PAYROLL_AMOUNT=40", after, StringComparison.Ordinal);
+        // Another server's slot is not this one's business.
+        Assert.Contains("RCON_HOST_1=127.0.0.1", after, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AKeyIsClearedWhicheverFormItWasWrittenIn()
+    {
+        // The reader accepts "export KEY=", "KEY: value" and mixed case as one setting, so
+        // removal has to reach all of them or a stale host survives in a form nobody looks for.
+        const string existing =
+            "export RCON_HOST_2=1.1.1.1\n" +
+            "rcon_port_2: 9200\n" +
+            "RCON_PASSWORD_2=old\n";
+
+        var after = ProvisionText.EnvWithoutServer(existing, 2, [], [], new DateOnly(2026, 8, 27));
+
+        Assert.DoesNotContain("1.1.1.1", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("9200", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("old", after, StringComparison.Ordinal);
+    }
+
+    private static int CountLines(string text, string startsWith) =>
+        text.Split('\n').Count(l => l.TrimStart().StartsWith(startsWith, StringComparison.Ordinal));
 
     // ---- password charset ----
 
@@ -680,20 +749,27 @@ public class ProvisioningTests
     // ---- deleting a server ----
 
     [Fact]
-    public void TheEnvRemovalBlockBlanksTheSlotAndRewritesTheLists()
+    public void RemovingASlotLeavesNoTraceOfItAndKeepsTheOthers()
     {
-        // Append-only still: an appended EMPTY value clears what was set above, which is the
-        // same last-key-wins rule the additions rely on.
-        var block = ProvisionText.EnvRemovalBlock(3, ["pavlovserver", "pavlovserver1"],
+        // The whole file is rewritten now, so this asserts on the result rather than on a block
+        // appended to the end.
+        const string existing =
+            "RCON_HOST_3=127.0.0.1\nRCON_PORT_3=9300\nRCON_PASSWORD_3=secret\n" +
+            "RCON_HOST_1=127.0.0.1\n" +
+            "PAVLOV_UNITS=pavlovserver,pavlovserver1,pavlovserver2\n";
+
+        var after = ProvisionText.EnvWithoutServer(existing, 3, ["pavlovserver", "pavlovserver1"],
             ["/home/steam/pavlovserver", "/home/steam/pavlovserver1"], new DateOnly(2026, 8, 27));
 
-        var parsed = DotEnvConfigurationProvider.Parse(
-            "RCON_HOST_3=127.0.0.1\nRCON_PORT_3=9300\nRCON_PASSWORD_3=secret\n" +
-            "PAVLOV_UNITS=pavlovserver,pavlovserver1,pavlovserver2\n" + block);
+        var parsed = DotEnvConfigurationProvider.Parse(after);
 
-        Assert.Equal("", parsed["RCON_HOST_3"]);
-        Assert.Equal("", parsed["RCON_PORT_3"]);
-        Assert.Equal("", parsed["RCON_PASSWORD_3"]);
+        Assert.False(parsed.ContainsKey("RCON_HOST_3"));
+        Assert.False(parsed.ContainsKey("RCON_PORT_3"));
+        Assert.False(parsed.ContainsKey("RCON_PASSWORD_3"));
+        Assert.DoesNotContain("secret", after, StringComparison.Ordinal);
+
+        // The servers that stay are untouched.
+        Assert.Equal("127.0.0.1", parsed["RCON_HOST_1"]);
         Assert.Equal("pavlovserver,pavlovserver1", parsed["PAVLOV_UNITS"]);
         Assert.Equal("/home/steam/pavlovserver,/home/steam/pavlovserver1", parsed["PAVLOV_BASES"]);
     }

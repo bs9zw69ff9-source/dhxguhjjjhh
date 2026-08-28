@@ -66,6 +66,70 @@ public sealed class RosterService
 
     private string PathFor(string file) => Path.Combine(_directory!, file);
 
+    /// <summary>
+    /// Every roster file the loaded factions own: spawn files, rank files and sub-classes.
+    /// </summary>
+    /// <remarks>
+    /// Pure, and sorted so the startup line reads the same every time. A spawn-only faction uses
+    /// one file as both its membership and its single rank, so this is de-duplicated rather than
+    /// concatenated.
+    /// </remarks>
+    public static IReadOnlyList<string> RosterFilesOf(FactionSet factions)
+    {
+        ArgumentNullException.ThrowIfNull(factions);
+
+        return [.. factions.All.Values
+            .SelectMany(f => f.RankFiles.Values.Concat(f.Subclasses.Values).Append(f.SpawnFile))
+            .Where(f => !string.IsNullOrWhiteSpace(f))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)];
+    }
+
+    /// <summary>
+    /// Create any roster file the loaded factions expect but the install does not have.
+    /// </summary>
+    /// <remarks>
+    /// EMPTY, AND ONLY WHEN MISSING - never a write to a file that already exists, so a roster
+    /// with members in it is never touched by this. A faction whose file does not exist yet is
+    /// indistinguishable in game from one whose file is empty, so the value here is not in the
+    /// game's behaviour: it is that the whole set is present and visible on disk from the first
+    /// start, rather than appearing one file at a time as each faction gains its first member.
+    ///
+    /// STILL NEVER CREATES THE DIRECTORY. That rule is unchanged and is what
+    /// <see cref="Enabled"/> already enforces - a missing roster directory means the configured
+    /// path is wrong, and building a tree the game never reads is worse than doing nothing.
+    /// </remarks>
+    /// <returns>How many files were created.</returns>
+    public int EnsureRosterFiles()
+    {
+        if (!Enabled) return 0;
+
+        var created = 0;
+        foreach (var file in RosterFilesOf(Factions))
+        {
+            var path = PathFor(file);
+            try
+            {
+                if (File.Exists(path)) continue;
+                if (_guard.Problem(path) is { } problem)
+                {
+                    _logger.LogWarning("Not creating {File}: {Problem}", file, problem);
+                    continue;
+                }
+
+                File.WriteAllText(path, "");
+                created++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning("Could not create the roster file {File}: {Message}", file, ex.Message);
+            }
+        }
+
+        if (created > 0) _logger.LogInformation("Created {Count} missing faction roster file(s)", created);
+        return created;
+    }
+
     /// <summary>Read a roster. Null means UNREADABLE, which is not the same as empty.</summary>
     /// <remarks>
     /// The distinction is load-bearing: an empty roster is a valid state the game accepts,

@@ -49,6 +49,11 @@ public sealed record ProvisionOutcome(IReadOnlyList<ProvisionStep> Steps, bool R
 /// that directory's contents into the new install, which is far quicker than fetching several GB
 /// again and starts from a build already known to work on this box.
 /// </param>
+/// <param name="RconHost">
+/// The address to write into <c>RCON_HOST_{N}</c>. Decided by the caller rather than fixed at
+/// loopback, so a box whose other servers are reached by their real address stays consistent
+/// with itself instead of gaining one slot that disagrees with the rest.
+/// </param>
 /// <param name="RebuildingExistingSlot">
 /// True when this slot is already configured and is being filled in rather than added. Its unit
 /// file may well already be there, and replacing it is the whole point - refusing to overwrite it
@@ -61,6 +66,7 @@ public sealed record ProvisionRequest(
     IReadOnlyList<string>? FinalPlayerCountChannels,
     string EnvPath,
     string SteamUserPassword,
+    string RconHost = "127.0.0.1",
     string? CopyFromInstallDir = null,
     bool RebuildingExistingSlot = false);
 

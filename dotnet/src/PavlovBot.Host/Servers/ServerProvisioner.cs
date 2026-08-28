@@ -463,11 +463,11 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
                 ? await File.ReadAllTextAsync(request.EnvPath, ct).ConfigureAwait(false)
                 : "";
 
-            var block = ProvisionText.EnvRemovalBlock(
-                request.Slot, request.FinalPavlovUnits, request.FinalPavlovBases,
+            var updated = ProvisionText.EnvWithoutServer(
+                existing, request.Slot, request.FinalPavlovUnits, request.FinalPavlovBases,
                 DateOnly.FromDateTime(DateTime.UtcNow));
 
-            await AtomicFile.WriteAsync(request.EnvPath, existing + block, ct).ConfigureAwait(false);
+            await AtomicFile.WriteAsync(request.EnvPath, updated, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -891,11 +891,12 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
                 ? await File.ReadAllTextAsync(request.EnvPath, ct).ConfigureAwait(false)
                 : "";
 
-            var block = ProvisionText.EnvOverrideBlock(
-                request.Spec, request.FinalPavlovUnits, request.FinalPavlovBases,
+            var updated = ProvisionText.EnvWithServer(
+                existing, request.Spec, request.RconHost,
+                request.FinalPavlovUnits, request.FinalPavlovBases,
                 request.FinalPlayerCountChannels, DateOnly.FromDateTime(DateTime.UtcNow));
 
-            await AtomicFile.WriteAsync(request.EnvPath, existing + block, ct).ConfigureAwait(false);
+            await AtomicFile.WriteAsync(request.EnvPath, updated, ct).ConfigureAwait(false);
             logger.LogWarning("Wrote server {Slot} into {Path}", request.Spec.Slot, request.EnvPath);
             return null;
         }
