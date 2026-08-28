@@ -97,15 +97,19 @@ public static class ServerSlotPlanner
             return (new SlotPlan(targetSlot, replacedUnits, replacedBases), []);
         }
 
-        // Contiguous 1..M. A gap (1 and 3 with no 2) means "server N" no longer equals the Nth
-        // positional entry, so a positional append cannot be placed safely.
-        var contiguous = count > 0 && indices[0] == 1 && indices[^1] == count;
+        /* Contiguous 1..M. A gap (1 and 3 with no 2) means "server N" no longer equals the Nth
+           positional entry, so a positional append cannot be placed safely.
+
+           AN EMPTY LAYOUT IS CONTIGUOUS. Appending slot 1 to nothing is perfectly well defined -
+           one unit, one base, no positions to get wrong - and this used to refuse it, on the
+           assumption that server 1 always already existed. Deleting the last server makes that
+           false, and refusing here would leave a box with no servers unable to grow one. */
+        var contiguous = count == 0 || (indices[0] == 1 && indices[^1] == count);
         if (!contiguous)
         {
-            problems.Add(count == 0
-                ? "No RCON servers are configured yet - set RCON_HOST_1/PORT_1/PASSWORD_1 for the first server before provisioning a second."
-                : $"The RCON slots in use are {string.Join(", ", indices)}, which are not a gapless 1..{count}. " +
-                  "Fill the gap first; positional PAVLOV_UNITS/PAVLOV_BASES cannot be aligned to a gapped layout.");
+            problems.Add(
+                $"The RCON slots in use are {string.Join(", ", indices)}, which are not a gapless 1..{count}. " +
+                "Fill the gap first; positional PAVLOV_UNITS/PAVLOV_BASES cannot be aligned to a gapped layout.");
         }
 
         // The positional lists must be explicitly set and exactly as long as the RCON layout, or

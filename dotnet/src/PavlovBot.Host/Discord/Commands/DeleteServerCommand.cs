@@ -133,12 +133,11 @@ public sealed class DeleteServerCommand(
         if (slot > count)
             return $"there is no server {slot} - this box has {count} configured. Nothing was deleted.";
 
-        if (count <= 1)
-        {
-            return "this is the only server configured, and the bot cannot start with none - it would not come back " +
-                   "from the restart this does at the end. Nothing was deleted.\n" +
-                   "To decommission the box entirely, stop the unit and clear its RCON settings out of `.env` by hand.";
-        }
+        /* DELETING THE LAST ONE IS ALLOWED, and used to be refused. The bot exits 78 with no RCON
+           server configured, so the refusal was protecting against a crash-loop on the restart
+           this normally ends with - but that is a reason to SKIP the restart, not a reason to
+           trap the operator with a server they cannot remove. The run leaves the process up on
+           its existing configuration and says what to do next. */
 
         if (slot != count)
         {
