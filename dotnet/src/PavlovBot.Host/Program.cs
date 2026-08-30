@@ -570,8 +570,8 @@ public static class Program
            game server, and the failure that costs a roster is the clone quietly running the
            built-in factions and writing the other bot's files. Printing the names is the
            check that takes one glance; nothing else would say which set is loaded. */
-        logger.LogInformation("  factions: {Source} - {Names}",
-            features.FactionsPath ?? "built in (FACTIONS_PATH not set)",
+        logger.LogInformation("  factions: {Count} from {Source} - {Names}",
+            factions.Names.Count, FactionSource(features.FactionsPath),
             string.Join(", ", factions.Names));
         logger.LogInformation("  whitelist bot: {State}", options.FactionBotEnabled
             ? $"on (application {options.FactionClientId}, owns /whitelist /promotion /demotion /subclass)"
@@ -839,6 +839,46 @@ public static class Program
     /// build still says something that changes between builds. An unchanging stamp is the
     /// signal that the process was never replaced.
     /// </remarks>
+    /// <summary>
+    /// Where the factions came from, RESOLVED, so "the file I edited" and "the file the bot
+    /// read" can be compared.
+    /// </summary>
+    /// <remarks>
+    /// THE CONFIGURED STRING WAS NOT ENOUGH. A relative FACTIONS_PATH resolves against the
+    /// process's working directory, which under pm2 is not necessarily where somebody was
+    /// standing when they edited a file of that name - so a bot reading a DIFFERENT copy
+    /// printed exactly the same line as one reading theirs, and an edit that had plainly been
+    /// made looked like it had been ignored.
+    ///
+    /// The last-write time answers the other half of the same question: a file whose edit
+    /// predates this process was edited and never deployed. Between the two, "the factions I
+    /// removed are still there" stops being a guess.
+    ///
+    /// The names on this line are also exactly what the slash commands' faction CHOICES are
+    /// built from, so a set here that disagrees with what Discord shows is Discord's cache,
+    /// not this file.
+    /// </remarks>
+    internal static string FactionSource(string? path)
+    {
+        if (path is null) return "built in (FACTIONS_PATH not set)";
+
+        try
+        {
+            var full = Path.GetFullPath(path);
+
+            // Startup has already refused a path that does not resolve, so this is belt and
+            // braces - but a missing file must not turn the summary into an exception.
+            return File.Exists(full)
+                ? $"{full} (last edited {File.GetLastWriteTimeUtc(full):yyyy-MM-dd HH:mm}Z)"
+                : full;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or ArgumentException or NotSupportedException)
+        {
+            return path;
+        }
+    }
+
     private static string BuildStamp()
     {
         var informational = System.Reflection.Assembly.GetEntryAssembly()
