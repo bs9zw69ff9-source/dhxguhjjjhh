@@ -116,7 +116,7 @@ public sealed class FactionStatsCommand(
         if (faction.HasRanks)
         {
             embed.AddField("Ranks", string.Join("\n", report.RankCounts.Select(r =>
-                $"`{r.Count,3}{(r.Cap == int.MaxValue ? "    " : $"/{r.Cap,-3}")}` {Sanitize.Message(r.Rank)}")));
+                $"`{r.Count,3}` {Sanitize.Message(r.Rank)}")));
         }
 
         embed.AddField("Active means",

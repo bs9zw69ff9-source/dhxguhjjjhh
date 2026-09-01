@@ -43,10 +43,6 @@ public sealed record FactionDefinition
     /// </remarks>
     public required string SpawnFile { get; init; }
 
-    /// <summary>Rank -> member limit. A rank absent from this map is uncapped.</summary>
-    public IReadOnlyDictionary<string, int> RankCaps { get; init; } =
-        new Dictionary<string, int>();
-
     /// <summary>
     /// Sub-classes are NOT ranks. A member keeps their rank and may additionally hold one
     /// of these, each with its own roster file.
@@ -76,9 +72,6 @@ public sealed record FactionDefinition
         rank is null ? -1 : Order.ToList().FindIndex(r => string.Equals(r, rank, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Member limit for a rank, or <see cref="int.MaxValue"/> when uncapped.</summary>
-    public int CapFor(string rank) =>
-        RankCaps.TryGetValue(rank, out var cap) ? cap : int.MaxValue;
-
     public bool HasSubclass(string subclass) => Subclasses.ContainsKey(subclass);
 }
 
@@ -135,12 +128,6 @@ public static class FactionRegistry
                     ["Captain"] = "policecaptain.txt",
                     ["Deputy Chief"] = "policedeputychief.txt",
                     ["Chief of Police"] = "policechief.txt",
-                },
-                // Every NYPD rank is capped, unlike the mafia ladders.
-                RankCaps = new Dictionary<string, int>
-                {
-                    ["Cadet"] = 50, ["Patrolman"] = 20, ["Corporal"] = 15, ["Sergeant"] = 20,
-                    ["Lieutenant"] = 8, ["Captain"] = 4, ["Deputy Chief"] = 1, ["Chief of Police"] = 1,
                 },
                 /* SUB-CLASSES ARE NOT RANKS. A member keeps their rank and may additionally
                    hold one of these, each with its own whitelist file. */

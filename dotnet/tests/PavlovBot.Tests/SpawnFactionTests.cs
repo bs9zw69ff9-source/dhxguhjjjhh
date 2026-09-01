@@ -32,7 +32,6 @@ public class SpawnFactionTests : IDisposable
         Assert.False(faction!.HasRanks);
         Assert.Single(faction.Order);
         Assert.Single(faction.RankFiles);
-        Assert.Empty(faction.RankCaps);      // nothing to cap when there is one rank
         Assert.Empty(faction.Subclasses);
     }
 
@@ -40,12 +39,11 @@ public class SpawnFactionTests : IDisposable
     public void NypdStillHasItsLadder()
     {
         /* The regression that would matter most: making the mafias rank-less must not flatten
-           the police, whose eight ranks and caps are the reason the ladder exists at all. */
+           the police, whose eight ranks are the reason the ladder exists at all. */
         var nypd = FactionRegistry.Get("NYPD")!;
 
         Assert.True(nypd.HasRanks);
         Assert.Equal(8, nypd.Order.Count);
-        Assert.NotEmpty(nypd.RankCaps);
     }
 
     [Fact]

@@ -88,15 +88,6 @@ public sealed class FactionSet
                     problems.Add($"{faction.Name}/{rank} has no roster file.");
             }
 
-            foreach (var capped in faction.RankCaps)
-            {
-                if (!faction.Order.Contains(capped.Key, StringComparer.OrdinalIgnoreCase))
-                    problems.Add($"{faction.Name} caps \"{capped.Key}\", which is not one of its ranks.");
-
-                if (capped.Value <= 0)
-                    problems.Add($"{faction.Name}/{capped.Key} has a cap of {capped.Value}; a cap must be at least 1.");
-            }
-
             /* THE SPAWN FILE IS ALLOWED TO BE A RANK FILE, and only for a faction with no
                ladder - that is how a spawn-only faction is expressed, one file serving as
                both its membership and its single rank. Anywhere else it is a collision. */

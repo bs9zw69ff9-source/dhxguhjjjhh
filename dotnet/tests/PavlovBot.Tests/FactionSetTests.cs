@@ -62,7 +62,6 @@ public class FactionSetTests : IDisposable
         var ncr = loaded.Set.Get("NCR")!;
         Assert.Equal("Recruit", ncr.Default);          // the lowest rank, unstated
         Assert.Equal("Ranger", ncr.Highest);
-        Assert.Equal(5, ncr.CapFor("Ranger"));
         Assert.True(ncr.HasRanks);
     }
 
@@ -185,12 +184,33 @@ public class FactionSetTests : IDisposable
         Assert.True(FactionsFile.Load(path).Problems.Count >= 2);
     }
 
-    // ---- caps ----
+    // ---- caps, which are no longer enforced ----
 
     [Fact]
-    public void AnOmittedOrZeroCapMeansUncapped()
+    public void AFileThatStillSetsCapsLoadsAndSaysHowManyWereIgnored()
     {
-        // The same thing the built-in set expresses by leaving the rank out of the cap map.
+        /* AN OLD FILE IS A GOOD FILE. Rank caps are gone, and refusing to start over a
+           setting that no longer does anything would be worse than ignoring it - but
+           silently ignoring it is how a setting comes to mean something other than what it
+           says, so the count comes back for the startup summary to report. */
+        var path = Write("""
+            { "factions": [
+                { "name": "NCR", "ranks": [ { "name": "Recruit", "file": "ncrrecruit.txt", "cap": 40 },
+                                            { "name": "Trooper", "file": "ncrtrooper.txt", "cap": 25 } ] }
+            ] }
+            """);
+
+        var loaded = FactionsFile.Load(path);
+
+        Assert.NotNull(loaded.Set);
+        Assert.Empty(loaded.Problems);
+        Assert.Equal(2, loaded.IgnoredRankCaps);
+    }
+
+    [Fact]
+    public void AFileWithNoCapsReportsNoneIgnored()
+    {
+        // The control: the count has to mean "caps were found", not "ranks were found".
         var path = Write("""
             { "factions": [
                 { "name": "NCR", "ranks": [ { "name": "Recruit", "file": "ncrrecruit.txt" },
@@ -198,10 +218,7 @@ public class FactionSetTests : IDisposable
             ] }
             """);
 
-        var ncr = FactionsFile.Load(path).Set!.Get("NCR")!;
-
-        Assert.Equal(int.MaxValue, ncr.CapFor("Recruit"));
-        Assert.Equal(int.MaxValue, ncr.CapFor("Trooper"));
+        Assert.Equal(0, FactionsFile.Load(path).IgnoredRankCaps);
     }
 
     // ---- the shipped template ----
