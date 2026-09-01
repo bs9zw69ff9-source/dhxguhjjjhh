@@ -77,7 +77,8 @@ public class BoardsTests : IDisposable
         var board = _boards.BuildCashBoard();
 
         Assert.NotNull(board);
-        Assert.Contains("$1,250", board!.Description, StringComparison.Ordinal);
+        // Money reads "1,250$" now: the table puts the sign after the figure.
+        Assert.Contains("1,250$", board!.Description, StringComparison.Ordinal);
         Assert.Contains("Richest", board.Title, StringComparison.Ordinal);
         Assert.DoesNotContain("Playtime", board.Title, StringComparison.Ordinal);
         Assert.True(board.Description.IndexOf("Alice", StringComparison.Ordinal) <
@@ -92,9 +93,10 @@ public class BoardsTests : IDisposable
 
         var board = _boards.BuildCashBoard();
 
-        // 20 x 100, even though only the top 15 are listed.
-        Assert.Contains("$2,000", board!.Description, StringComparison.Ordinal);
-        Assert.Contains("**20** ledger(s)", board.Description, StringComparison.Ordinal);
+        /* 20 x 100, and both numbers live in the FOOTER now - the description is the table
+           and a line of prose inside it would be the one thing that lines up with nothing. */
+        Assert.Contains("$2,000", board!.Footer!.Value.Text, StringComparison.Ordinal);
+        Assert.Contains("20 ledger(s)", board.Footer!.Value.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -118,7 +120,7 @@ public class BoardsTests : IDisposable
         var board = _boards.BuildCashBoard();
 
         Assert.DoesNotContain("Bob", board!.Description, StringComparison.Ordinal);
-        Assert.Contains("**1** ledger(s)", board.Description, StringComparison.Ordinal);
+        Assert.Contains("1 ledger(s)", board.Footer!.Value.Text, StringComparison.Ordinal);
     }
 
     [Fact]
