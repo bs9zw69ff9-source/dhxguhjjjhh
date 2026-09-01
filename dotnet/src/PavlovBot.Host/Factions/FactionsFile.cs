@@ -6,7 +6,18 @@ namespace PavlovBot.Host.Factions;
 
 /// <param name="Set">Null when the file could not be read or parsed at all.</param>
 /// <param name="Problems">Everything wrong with it, in terms an operator can act on.</param>
-public sealed record FactionsFileResult(FactionSet? Set, IReadOnlyList<string> Problems);
+/// <param name="IgnoredRankCaps">
+/// How many ranks still carry a <c>cap</c>, which is no longer enforced.
+/// </param>
+/// <remarks>
+/// THE CAP IS REPORTED RATHER THAN REJECTED. Rank caps are gone, and an old file full of
+/// them is a perfectly good file - refusing to start over a setting that no longer does
+/// anything would be worse than ignoring it. But silently ignoring it is how a setting
+/// comes to mean something different from what it says, so the count travels back and the
+/// startup summary says it out loud once.
+/// </remarks>
+public sealed record FactionsFileResult(
+    FactionSet? Set, IReadOnlyList<string> Problems, int IgnoredRankCaps = 0);
 
 /// <summary>
 /// The faction roster as a JSON file, so one binary can run more than one RP.
@@ -86,6 +97,7 @@ public static class FactionsFile
 
         var problems = new List<string>();
         var definitions = new List<FactionDefinition>();
+        var ignoredCaps = 0;
 
         foreach (var faction in factions)
         {
@@ -107,6 +119,9 @@ public static class FactionsFile
 
             var order = ranks.Select(r => r.Name!).ToList();
 
+            // Still READ, only so a file that still sets one can be told about it.
+            ignoredCaps += ranks.Count(r => r.Cap is > 0);
+
             definitions.Add(new FactionDefinition
             {
                 Name = faction.Name.Trim(),
@@ -125,11 +140,6 @@ public static class FactionsFile
 
                 RankFiles = ranks.ToDictionary(r => r.Name!.Trim(), r => r.File!.Trim(), StringComparer.OrdinalIgnoreCase),
 
-                // Absent or non-positive means uncapped, which is the same thing the built-in
-                // set expresses by leaving the rank out of the map entirely.
-                RankCaps = ranks.Where(r => r.Cap is > 0)
-                    .ToDictionary(r => r.Name!.Trim(), r => r.Cap!.Value, StringComparer.OrdinalIgnoreCase),
-
                 Subclasses = (faction.Subclasses ?? [])
                     .Where(s => !string.IsNullOrWhiteSpace(s.Name) && !string.IsNullOrWhiteSpace(s.File))
                     .ToDictionary(s => s.Name!.Trim(), s => s.File!.Trim(), StringComparer.OrdinalIgnoreCase),
@@ -141,6 +151,6 @@ public static class FactionsFile
         var set = FactionSet.Of(definitions);
         problems.AddRange(set.Problems());
 
-        return new FactionsFileResult(problems.Count == 0 ? set : null, problems);
+        return new FactionsFileResult(problems.Count == 0 ? set : null, problems, ignoredCaps);
     }
 }

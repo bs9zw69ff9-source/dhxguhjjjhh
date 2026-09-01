@@ -24,7 +24,7 @@ public sealed record FactionReport(
     string Faction,
     int Total,
     int Active,
-    IReadOnlyList<(string Rank, int Count, int Cap)> RankCounts,
+    IReadOnlyList<(string Rank, int Count)> RankCounts,
     IReadOnlyList<InactiveMember> Inactive,
     long TotalMinutes)
 {
@@ -82,8 +82,7 @@ public static class FactionActivity
         var counts = faction.Order
             .Select(rank => (
                 Rank: rank,
-                Count: members.Count(m => string.Equals(m.Rank, rank, StringComparison.OrdinalIgnoreCase)),
-                Cap: faction.CapFor(rank)))
+                Count: members.Count(m => string.Equals(m.Rank, rank, StringComparison.OrdinalIgnoreCase))))
             .Reverse()   // highest first: "who runs this faction" is the question being asked
             .ToList();
 

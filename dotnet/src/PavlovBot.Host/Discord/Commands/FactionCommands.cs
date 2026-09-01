@@ -301,9 +301,7 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
                 .OrderBy(m => m.Player, StringComparer.OrdinalIgnoreCase).ToList();
             if (members.Count == 0) continue;
 
-            var cap = faction.CapFor(rank);
-            var capLabel = cap == int.MaxValue ? "" : $"/{cap}";
-            lines.Add($"**{rank}** ({members.Count}{capLabel})");
+            lines.Add($"**{rank}** ({members.Count})");
             lines.Add(string.Join(", ", members.Select(m => $"`{Sanitize.Code(m.Player)}`")));
         }
 
@@ -321,10 +319,6 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
             Theme.Denied("Already in another faction",
                 $"**{Sanitize.Code(player)}** belongs to **{decision.Conflict}**. " +
                 "Remove them from that faction first - a player may only belong to one."),
-
-        MembershipOutcome.RankFull =>
-            Theme.Denied("That rank is full",
-                $"**{decision.Rank}** is capped at **{decision.Cap}** and is already at its limit."),
 
         MembershipOutcome.NoChange =>
             Theme.Notice("Nothing to do", $"**{Sanitize.Code(player)}** is already in that state."),
@@ -449,11 +443,6 @@ public sealed class RankChangeCommand : ISlashCommand
 
             MembershipOutcome.AlreadyLowest => Theme.Notice("Already at the bottom",
                 $"**{Sanitize.Code(player)}** is **{decision.Rank}**. Remove them from the whitelist instead."),
-
-            /* A demotion into a full rank is refused too. Overflow is overflow regardless of
-               direction, and checking only the promote path is a real bug in this shape. */
-            MembershipOutcome.RankFull => Theme.Denied("That rank is full",
-                $"**{decision.Rank}** is capped at **{decision.Cap}** and is already at its limit."),
 
             _ => MembershipReply.Fallback(decision),
         };

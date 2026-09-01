@@ -54,13 +54,18 @@ public class RosterServiceTests : IDisposable
        need them to exist on this server. Restore a RosterService-level version of this the
        day a second faction is added. */
     [Fact]
-    public async Task AFullEntryRankRefusesTheJoin()
+    public async Task ABusyEntryRankStillTakesTheJoin()
     {
+        /* Fifty was the Cadet cap and it refused the fifty-first. Rank caps are gone, so the
+           file simply grows - and the assertion is on the ROSTER rather than the decision,
+           because "allowed" that does not reach the file the game reads is not allowed. */
         Seed("policecadet.txt", Enumerable.Range(0, 50).Select(i => $"Player{i}").ToArray());
 
         var decision = await _rosters.JoinAsync(Nypd, "Alice");
-        Assert.Equal(MembershipOutcome.RankFull, decision.Outcome);
-        Assert.Equal(50, decision.Cap);
+
+        Assert.True(decision.IsAllowed);
+        Assert.Contains("Alice", Contents("policecadet.txt"));
+        Assert.Equal(51, Contents("policecadet.txt").Count);
     }
 
     [Fact]
@@ -93,16 +98,17 @@ public class RosterServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ADemotionIntoAFullRankIsRefused()
+    public async Task ADemotionIntoABusyRankGoesThrough()
     {
-        // Overflow is overflow regardless of direction. Checking only the promote path is
-        // a real bug in this shape of code.
+        // The other direction, because the refusal used to apply to both.
         Seed("policesergeant.txt", "Alice");
         Seed("policecorporal.txt", Enumerable.Range(0, 15).Select(i => $"Player{i}").ToArray());
 
         var decision = await _rosters.ChangeRankAsync(Nypd, "Alice", -1);
-        Assert.Equal(MembershipOutcome.RankFull, decision.Outcome);
-        Assert.Contains("Alice", Contents("policesergeant.txt"));
+
+        Assert.True(decision.IsAllowed);
+        Assert.Contains("Alice", Contents("policecorporal.txt"));
+        Assert.DoesNotContain("Alice", Contents("policesergeant.txt"));
     }
 
     [Fact]

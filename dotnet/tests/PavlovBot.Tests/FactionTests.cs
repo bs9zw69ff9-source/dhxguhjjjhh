@@ -27,11 +27,6 @@ internal static class TestFactions
             ["Capo"] = "othercapo.txt", ["Consigliere"] = "otherconsigliere.txt",
             ["Underboss"] = "otherunderboss.txt", ["Boss"] = "otherboss.txt",
         },
-        // Consigliere is deliberately absent: it is the one uncapped rank here.
-        RankCaps = new Dictionary<string, int>
-        {
-            ["Associate"] = 18, ["Soldier"] = 12, ["Capo"] = 3, ["Underboss"] = 1, ["Boss"] = 1,
-        },
     };
 }
 
@@ -49,8 +44,8 @@ public class FactionRegistryTests
     public void EveryFactionIsInternallyConsistent()
     {
         /* The invariant that keeps the "ranks are data" design honest: every rank needs a
-           roster file, the default must be a real rank, and a cap must not name a rank
-           that does not exist. A typo here would fail silently at write time. */
+           roster file and the default must be a real rank. A typo here would fail silently
+           at write time. */
         foreach (var faction in FactionRegistry.All.Values)
         {
             Assert.NotEmpty(faction.Order);
@@ -58,9 +53,6 @@ public class FactionRegistryTests
 
             foreach (var rank in faction.Order)
                 Assert.True(faction.RankFiles.ContainsKey(rank), $"{faction.Name}/{rank} has no roster file");
-
-            foreach (var capped in faction.RankCaps.Keys)
-                Assert.Contains(capped, faction.Order);
 
             Assert.False(string.IsNullOrWhiteSpace(faction.SpawnFile), $"{faction.Name} has no spawn file");
         }
@@ -121,21 +113,6 @@ public class FactionRegistryTests
     }
 
     [Fact]
-    public void CapsMatchTheConfiguredLimits()
-    {
-        var nypd = FactionRegistry.Get("NYPD")!;
-        Assert.Equal(1, nypd.CapFor("Chief of Police"));
-        Assert.Equal(4, nypd.CapFor("Captain"));
-        Assert.Equal(50, nypd.CapFor("Cadet"));
-
-        var gambino = TestFactions.Other;
-        Assert.Equal(1, gambino.CapFor("Boss"));
-        Assert.Equal(3, gambino.CapFor("Capo"));
-        // Consigliere is deliberately uncapped.
-        Assert.Equal(int.MaxValue, gambino.CapFor("Consigliere"));
-    }
-
-    [Fact]
     public void FactionLookupIsCaseInsensitive()
     {
         Assert.NotNull(FactionRegistry.Get("nypd"));
@@ -156,13 +133,11 @@ public class MembershipRulesTests
 {
     private static readonly FactionDefinition Nypd = FactionRegistry.Get("NYPD")!;
     private static readonly FactionDefinition Gambino = TestFactions.Other;
-    private static Func<string, int> Empty => _ => 0;
-    private static Func<string, int> Full(string rank, int n) => r => r == rank ? n : 0;
 
     [Fact]
     public void PromotionMovesOneStepUp()
     {
-        var d = MembershipRules.ChangeRank(Nypd, "Patrolman", +1, Empty);
+        var d = MembershipRules.ChangeRank(Nypd, "Patrolman", +1);
         Assert.True(d.IsAllowed);
         Assert.Equal("Corporal", d.Rank);
     }
@@ -170,7 +145,7 @@ public class MembershipRulesTests
     [Fact]
     public void DemotionMovesOneStepDown()
     {
-        var d = MembershipRules.ChangeRank(Nypd, "Corporal", -1, Empty);
+        var d = MembershipRules.ChangeRank(Nypd, "Corporal", -1);
         Assert.True(d.IsAllowed);
         Assert.Equal("Patrolman", d.Rank);
     }
@@ -178,36 +153,41 @@ public class MembershipRulesTests
     [Fact]
     public void TheLadderEndsAreRefusedRatherThanWrappingAround()
     {
-        Assert.Equal(MembershipOutcome.AlreadyLowest, MembershipRules.ChangeRank(Nypd, "Cadet", -1, Empty).Outcome);
-        Assert.Equal(MembershipOutcome.AlreadyHighest, MembershipRules.ChangeRank(Nypd, "Chief of Police", +1, Empty).Outcome);
+        Assert.Equal(MembershipOutcome.AlreadyLowest, MembershipRules.ChangeRank(Nypd, "Cadet", -1).Outcome);
+        Assert.Equal(MembershipOutcome.AlreadyHighest, MembershipRules.ChangeRank(Nypd, "Chief of Police", +1).Outcome);
     }
 
     [Fact]
-    public void PromotionIntoAFullRankIsRefused()
+    public void APromotionIntoABusyRankIsAllowed()
     {
-        // There is one Chief. The rule is the only thing preventing a second.
-        var d = MembershipRules.ChangeRank(Nypd, "Deputy Chief", +1, Full("Chief of Police", 1));
-        Assert.Equal(MembershipOutcome.RankFull, d.Outcome);
+        /* RANK CAPS ARE GONE. There used to be exactly one Chief of Police and this rule was
+           the only thing preventing a second; a promotion into a rank at its old limit is now
+           an ordinary promotion. */
+        var d = MembershipRules.ChangeRank(Nypd, "Deputy Chief", +1);
+        Assert.True(d.IsAllowed);
         Assert.Equal("Chief of Police", d.Rank);
-        Assert.Equal(1, d.Cap);
     }
 
     [Fact]
-    public void DemotionIntoAFullRankIsAlsoRefused()
+    public void ADemotionIntoABusyRankIsAllowedToo()
     {
-        /* Easy to miss: a demotion into a full rank overflows it exactly as a promotion
-           would. Checking only the promote direction is a real bug in this shape of code. */
-        var d = MembershipRules.ChangeRank(Nypd, "Sergeant", -1, Full("Corporal", 15));
-        Assert.Equal(MembershipOutcome.RankFull, d.Outcome);
+        // Both directions, because the refusal used to apply to both.
+        var d = MembershipRules.ChangeRank(Nypd, "Sergeant", -1);
+        Assert.True(d.IsAllowed);
         Assert.Equal("Corporal", d.Rank);
     }
 
     [Fact]
-    public void AnUncappedRankNeverFills()
+    public void NoRankSizeIsConsultedAtAll()
     {
-        var d = MembershipRules.ChangeRank(Gambino, "Capo", +1, Full("Consigliere", 9999));
-        Assert.True(d.IsAllowed);
-        Assert.Equal("Consigliere", d.Rank);
+        /* THE PROPERTY, rather than one example of it: the rules take no member count, so
+           there is no input by which a decision could depend on how full a rank is. A
+           reintroduced cap would have to change this signature to work, which is what makes
+           this test worth more than another allowed-case. */
+        Assert.Equal(3, typeof(MembershipRules)
+            .GetMethod(nameof(MembershipRules.ChangeRank))!.GetParameters().Length);
+        Assert.Equal(2, typeof(MembershipRules)
+            .GetMethod(nameof(MembershipRules.Join))!.GetParameters().Length);
     }
 
     [Fact]
@@ -215,7 +195,7 @@ public class MembershipRulesTests
     {
         /* A member can end up off-ladder if a rank was renamed underneath them. Letting a
            promotion fix that is more useful than stranding them. */
-        var d = MembershipRules.ChangeRank(Nypd, "Traffic Warden", +1, Empty);
+        var d = MembershipRules.ChangeRank(Nypd, "Traffic Warden", +1);
         Assert.True(d.IsAllowed);
         Assert.Equal("Patrolman", d.Rank);   // index 0 -> 1
     }
@@ -223,7 +203,7 @@ public class MembershipRulesTests
     [Fact]
     public void ANullRankBehavesTheSameWay()
     {
-        var d = MembershipRules.ChangeRank(Nypd, null, +1, Empty);
+        var d = MembershipRules.ChangeRank(Nypd, null, +1);
         Assert.True(d.IsAllowed);
         Assert.Equal("Patrolman", d.Rank);
     }
@@ -231,7 +211,7 @@ public class MembershipRulesTests
     [Fact]
     public void JoiningStartsAtTheDefaultRank()
     {
-        var d = MembershipRules.Join(Nypd, [], Empty);
+        var d = MembershipRules.Join(Nypd, []);
         Assert.True(d.IsAllowed);
         Assert.Equal("Cadet", d.Rank);
     }
@@ -240,7 +220,7 @@ public class MembershipRulesTests
     public void APlayerCannotBeInTwoFactions()
     {
         // Factions are mutually exclusive by design.
-        var d = MembershipRules.Join(Nypd, ["Other"], Empty);
+        var d = MembershipRules.Join(Nypd, ["Other"]);
         Assert.Equal(MembershipOutcome.AlreadyInAnotherFaction, d.Outcome);
         Assert.Equal("Other", d.Conflict);
     }
@@ -248,16 +228,18 @@ public class MembershipRulesTests
     [Fact]
     public void RejoiningTheSameFactionIsANoChange()
     {
-        var d = MembershipRules.Join(Nypd, ["NYPD"], Empty);
+        var d = MembershipRules.Join(Nypd, ["NYPD"]);
         Assert.Equal(MembershipOutcome.NoChange, d.Outcome);
     }
 
     [Fact]
-    public void JoiningIsRefusedWhenTheEntryRankIsFull()
+    public void JoiningABusyFactionIsAllowed()
     {
-        var d = MembershipRules.Join(Nypd, [], Full("Cadet", 50));
-        Assert.Equal(MembershipOutcome.RankFull, d.Outcome);
-        Assert.Equal(50, d.Cap);
+        // The entry rank had a cap of 50 and a faction has never had a total limit. Neither
+        // is consulted now, so a faction takes as many members as it is given.
+        var d = MembershipRules.Join(Nypd, []);
+        Assert.True(d.IsAllowed);
+        Assert.Equal("Cadet", d.Rank);
     }
 
     [Fact]
@@ -301,8 +283,8 @@ public class MembershipRulesTests
     [Fact]
     public void AnUnknownFactionIsRefusedEverywhere()
     {
-        Assert.Equal(MembershipOutcome.UnknownFaction, MembershipRules.ChangeRank(null, "Cadet", +1, Empty).Outcome);
-        Assert.Equal(MembershipOutcome.UnknownFaction, MembershipRules.Join(null, [], Empty).Outcome);
+        Assert.Equal(MembershipOutcome.UnknownFaction, MembershipRules.ChangeRank(null, "Cadet", +1).Outcome);
+        Assert.Equal(MembershipOutcome.UnknownFaction, MembershipRules.Join(null, []).Outcome);
         Assert.Equal(MembershipOutcome.UnknownFaction, MembershipRules.ChangeSubclass(null, "x", [], false).Outcome);
     }
 }

@@ -11,9 +11,6 @@ public enum MembershipOutcome
     /// <summary>Already at the top of the ladder.</summary>
     AlreadyHighest,
 
-    /// <summary>The destination rank is at its member limit.</summary>
-    RankFull,
-
     /// <summary>The player is not whitelisted anywhere.</summary>
     NotWhitelisted,
 
@@ -54,12 +51,10 @@ public enum MembershipOutcome
 
 /// <param name="Outcome">Allowed, or the specific reason it was refused.</param>
 /// <param name="Rank">Destination rank, on an allowed rank change.</param>
-/// <param name="Cap">The limit that was hit, when the outcome is <see cref="MembershipOutcome.RankFull"/>.</param>
 /// <param name="Conflict">The faction or sub-class already held, on a conflict.</param>
 public sealed record MembershipDecision(
     MembershipOutcome Outcome,
     string? Rank = null,
-    int? Cap = null,
     string? Conflict = null)
 {
     public bool IsAllowed => Outcome == MembershipOutcome.Allowed;
@@ -68,12 +63,17 @@ public sealed record MembershipDecision(
 }
 
 /// <summary>
-/// The whitelist rules: one faction, one rank, at most one sub-class, and per-rank limits.
+/// The whitelist rules: one faction, one rank, at most one sub-class.
 /// </summary>
 /// <remarks>
 /// The roster files these rules protect are plain text that the game reads live, and they
 /// cannot express any of this - nothing stops a name appearing in six files at once. So
 /// the constraints have to be enforced at the boundary, before anything is written.
+///
+/// THERE ARE NO SIZE LIMITS. Ranks were once capped per rank, and a faction has never had a
+/// total. The caps are gone: a rank holds as many members as it is given, and a promotion
+/// into a busy rank is the same decision as a promotion into an empty one. Nothing counts
+/// the roster to decide whether somebody may be added to it.
 ///
 /// Pure: current membership is passed in, so every rule tests without a filesystem.
 /// </remarks>
@@ -85,14 +85,11 @@ public static class MembershipRules
     /// <param name="faction">The faction they belong to.</param>
     /// <param name="currentRank">Their rank now. Unknown or absent is treated as the lowest.</param>
     /// <param name="direction">+1 to promote, -1 to demote.</param>
-    /// <param name="countAtRank">How many members currently hold a given rank.</param>
     public static MembershipDecision ChangeRank(
         FactionDefinition? faction,
         string? currentRank,
-        int direction,
-        Func<string, int> countAtRank)
+        int direction)
     {
-        ArgumentNullException.ThrowIfNull(countAtRank);
         if (faction is null) return new MembershipDecision(MembershipOutcome.UnknownFaction);
 
         /* An unrecognised current rank is treated as index 0 rather than rejected. A
@@ -104,14 +101,8 @@ public static class MembershipRules
         if (next < 0) return new MembershipDecision(MembershipOutcome.AlreadyLowest, faction.Lowest);
         if (next >= faction.Order.Count) return new MembershipDecision(MembershipOutcome.AlreadyHighest, faction.Highest);
 
-        var target = faction.Order[next];
-        var cap = faction.CapFor(target);
-
-        // Refuse to move somebody INTO a rank that is already full - in either direction.
-        // A demotion into a full rank is just as much of an overflow as a promotion.
-        return countAtRank(target) >= cap
-            ? new MembershipDecision(MembershipOutcome.RankFull, target, cap)
-            : MembershipDecision.Allow(target);
+        // How many are already at the destination is not consulted: ranks are uncapped.
+        return MembershipDecision.Allow(faction.Order[next]);
     }
 
     /// <summary>
@@ -120,11 +111,9 @@ public static class MembershipRules
     /// <param name="currentFactions">Factions they already belong to.</param>
     public static MembershipDecision Join(
         FactionDefinition? faction,
-        IReadOnlyCollection<string> currentFactions,
-        Func<string, int> countAtRank)
+        IReadOnlyCollection<string> currentFactions)
     {
         ArgumentNullException.ThrowIfNull(currentFactions);
-        ArgumentNullException.ThrowIfNull(countAtRank);
         if (faction is null) return new MembershipDecision(MembershipOutcome.UnknownFaction);
 
         // One faction per player. Factions are mutually exclusive.
@@ -136,10 +125,9 @@ public static class MembershipRules
         if (currentFactions.Any(f => string.Equals(f, faction.Name, StringComparison.OrdinalIgnoreCase)))
             return new MembershipDecision(MembershipOutcome.NoChange, Conflict: faction.Name);
 
-        var cap = faction.CapFor(faction.Default);
-        return countAtRank(faction.Default) >= cap
-            ? new MembershipDecision(MembershipOutcome.RankFull, faction.Default, cap)
-            : MembershipDecision.Allow(faction.Default);
+        // The faction's size is not consulted either: there has never been a total cap, and
+        // the default rank no longer has one.
+        return MembershipDecision.Allow(faction.Default);
     }
 
     /// <summary>

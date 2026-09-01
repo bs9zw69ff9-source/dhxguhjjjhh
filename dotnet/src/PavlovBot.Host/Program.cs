@@ -117,6 +117,20 @@ public static class Program
                 return 78;   // EX_CONFIG
             }
             factions = loaded.Set;
+
+            /* A CAP THAT NO LONGER DOES ANYTHING IS SAID OUT LOUD. Rank caps were removed, and
+               an old file is still a perfectly good file - but a setting that is read, kept and
+               quietly ignored is how "why is the cap not working" becomes an afternoon. Written
+               to stderr with the other configuration notes rather than the log, because this is
+               about the file the operator is holding, not about the run. */
+            if (loaded.IgnoredRankCaps > 0)
+            {
+                await Console.Error.WriteLineAsync(
+                    $"{factionsPath} sets a cap on {loaded.IgnoredRankCaps} rank(s). Rank caps were " +
+                    "removed - ranks and factions now take as many members as they are given, and " +
+                    "these values do nothing. The file loads either way; delete them when convenient.")
+                    .ConfigureAwait(false);
+            }
         }
 
         builder.Services.AddSingleton(factions);

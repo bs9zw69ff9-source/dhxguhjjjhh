@@ -122,15 +122,10 @@ if (Stage("--factions", 1) is { } factionArgs)
         var orderOk = jsOrder.SequenceEqual(def.Order);
         var defaultOk = jsDefault == def.Default;
 
-        var capsOk = true;
-        foreach (var cap in jsFaction.Value.GetProperty("rankCaps").EnumerateObject())
-            if (def.CapFor(cap.Name) != cap.Value.GetInt32()) capsOk = false;
-        foreach (var rank in def.Order)
-        {
-            var jsHasCap = jsFaction.Value.GetProperty("rankCaps").TryGetProperty(rank, out _);
-            var csCapped = def.CapFor(rank) != int.MaxValue;
-            if (jsHasCap != csCapped) capsOk = false;
-        }
+        /* RANK CAPS ARE NOT COMPARED ANY MORE, and this is the one place in this tool where
+           the two bots are MEANT to differ. The Node bot capped ranks; the C# bot no longer
+           has caps at all, so asserting they agree would be asserting a removed feature is
+           still there. Everything else here still has to match. */
 
         var filesOk = true;
         foreach (var f in jsFaction.Value.GetProperty("rankFiles").EnumerateObject())
@@ -140,23 +135,31 @@ if (Stage("--factions", 1) is { } factionArgs)
         foreach (var sc in jsFaction.Value.GetProperty("subclasses").EnumerateObject())
             if (!def.Subclasses.TryGetValue(sc.Name, out var v) || v != sc.Value.GetString()) subsOk = false;
 
-        var ok = orderOk && defaultOk && capsOk && filesOk && subsOk;
+        var ok = orderOk && defaultOk && filesOk && subsOk;
         if (!ok) ff++;
-        Console.WriteLine($"{(ok ? "match  " : "DIFFER ")} {jsFaction.Name,-10} order={orderOk} default={defaultOk} caps={capsOk} files={filesOk} subclasses={subsOk}");
+        Console.WriteLine($"{(ok ? "match  " : "DIFFER ")} {jsFaction.Name,-10} order={orderOk} default={defaultOk} files={filesOk} subclasses={subsOk} (caps: not compared, removed)");
     }
 
-    int sf = 0, si = 0;
+    int sf = 0, si = 0, skipped = 0;
     foreach (var sc in fj.RootElement.GetProperty("scenarios").EnumerateArray())
     {
         si++;
         var def = PavlovBot.Core.Factions.FactionRegistry.Get(sc.GetProperty("faction").GetString());
         var cur = sc.GetProperty("current").ValueKind == JsonValueKind.Null ? null : sc.GetProperty("current").GetString();
-        var d = PavlovBot.Core.Factions.MembershipRules.ChangeRank(def, cur, sc.GetProperty("dir").GetInt32(), _ => 0);
+        var d = PavlovBot.Core.Factions.MembershipRules.ChangeRank(def, cur, sc.GetProperty("dir").GetInt32());
         var jsOutcome = sc.GetProperty("outcome").GetString();
+
+        /* A SCENARIO THE NODE BOT REFUSED FOR A FULL RANK IS EXPECTED TO DIVERGE. Caps are
+           gone, so the C# answer is now "allowed" and that is the correct answer, not a
+           regression. Counting it as a divergence would make this tool cry wolf on every
+           run and train whoever reads it to ignore the number that matters. */
+        if (jsOutcome == "RankFull") { skipped++; continue; }
+
         var jsRank = sc.TryGetProperty("rank", out var r) ? r.GetString() : null;
         if (d.Outcome.ToString() != jsOutcome || d.Rank != (jsRank ?? d.Rank)) sf++;
     }
-    Console.WriteLine($"\nrank-change arithmetic: {si - sf}/{si} scenarios agree");
+    Console.WriteLine($"\nrank-change arithmetic: {si - sf - skipped}/{si - skipped} scenarios agree" +
+        (skipped > 0 ? $" ({skipped} cap scenario(s) skipped - rank caps were removed)" : ""));
     Console.WriteLine(ff == 0 && sf == 0
         ? $"ALL {fi} FACTIONS AND {si} SCENARIOS AGREE"
         : $"{ff} faction(s) and {sf} scenario(s) DIVERGED");

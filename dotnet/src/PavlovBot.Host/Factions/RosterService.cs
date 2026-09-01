@@ -300,19 +300,13 @@ public sealed class RosterService
         return Task.FromResult<IReadOnlyList<Membership>>(seen.Values.ToList());
     }
 
-    private Task<int> CountAsync(FactionDefinition faction, string rank) =>
-        Task.FromResult((Read(faction.RankFiles[rank]) ?? []).Count);
-
-    private Func<string, int> Counter(FactionDefinition faction) =>
-        rank => (Read(faction.RankFiles[rank]) ?? []).Count;
-
     /// <summary>Add a player to a faction at its default rank.</summary>
     public async Task<MembershipDecision> JoinAsync(FactionDefinition faction, string player, CancellationToken ct = default)
     {
         var existing = await FindAsync(player, ct).ConfigureAwait(false);
         var current = existing is null ? Array.Empty<string>() : [existing.Faction.Name];
 
-        var decision = MembershipRules.Join(faction, current, Counter(faction));
+        var decision = MembershipRules.Join(faction, current);
         if (!decision.IsAllowed) return decision;
 
         var file = faction.RankFiles[decision.Rank!];
@@ -463,7 +457,7 @@ public sealed class RosterService
 
         var membership = await FindAsync(player, ct).ConfigureAwait(false);
 
-        var decision = MembershipRules.ChangeRank(faction, membership?.Rank, direction, Counter(faction));
+        var decision = MembershipRules.ChangeRank(faction, membership?.Rank, direction);
         if (!decision.IsAllowed) return decision;
 
         /* Remove from EVERY rank file before adding to the target. Removing only from their
