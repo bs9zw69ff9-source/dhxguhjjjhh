@@ -82,7 +82,6 @@ public sealed class ScopedPluginServices(
         ["PavlovBot.Host.Vpn.VpnScreeningService"] = PluginPermission.PlayerNetwork,
         ["PavlovBot.Host.Moderation.BanService"] = PluginPermission.ModerationWrite,
         ["PavlovBot.Host.Moderation.WarningService"] = PluginPermission.ModerationWrite,
-        ["PavlovBot.Host.Cases.CaseService"] = PluginPermission.ModerationRead,
         ["PavlovBot.Host.Moderation.AuditLog"] = PluginPermission.ModerationRead,
         ["PavlovBot.Core.Economy.Ledger"] = PluginPermission.EconomyWrite,
         ["PavlovBot.Core.Economy.IBalanceStore"] = PluginPermission.EconomyRead,

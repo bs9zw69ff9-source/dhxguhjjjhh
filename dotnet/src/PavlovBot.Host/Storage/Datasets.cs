@@ -56,16 +56,6 @@ public static class Datasets
     public const string BanReconcileState = "ban_reconcile_state";
 
     /// <summary>
-    /// Moderation cases, with their evidence and notes. An ARRAY, newest last.
-    /// </summary>
-    /// <remarks>
-    /// New in the C# bot, so there is no Node file shape to match. Kept in the document store
-    /// rather than the events table on purpose: cases are bounded - a handful a week - and
-    /// every query is "this case" or "the open ones", which is what this store is for.
-    /// </remarks>
-    public const string Cases = "cases";
-
-    /// <summary>
     /// Players deliberately unbanned, and when. Name -> lift instant.
     /// </summary>
     /// <remarks>
@@ -157,7 +147,6 @@ public static class Datasets
         [AutobanExempt] = "{}",
         [Warnings] = "{}",
         [BanReconcileState] = "{}",
-        [Cases] = "[]",
         [UnbanTombstones] = "{}",
         [VpnChecks] = "{}",
         [ServerLock] = "{}",

@@ -29,9 +29,11 @@ namespace PavlovBot.Tests;
 /// two of the same names. Two lines, invisible in review, and it took every command in the bot
 /// off the picker for nine hours.
 ///
-/// <see cref="TheEventLogCommandHasNoDuplicateSubcommands"/> is the regression test. The rest
-/// pin the validator, and the validator is what turns this class of mistake from an outage
-/// into one missing command and a loud log line.
+/// THAT COMMAND HAS SINCE BEEN REMOVED, and its regression test with it, but the account stays
+/// because the shape does: a subcommand list that is part hand-written and part generated is
+/// where this recurs, and the validator is what turns it from an outage into one missing
+/// command and a loud log line. The tests below pin the validator, and the two that build a
+/// REAL command are what would catch the next one.
 /// </remarks>
 public class SlashCommandValidationTests
 {
@@ -48,25 +50,6 @@ public class SlashCommandValidationTests
     }
 
     // ---- the regression ----
-
-    /// <summary>
-    /// The exact bug: /eventlog must not declare a subcommand name twice.
-    /// </summary>
-    /// <remarks>
-    /// Built for real rather than reconstructed, so it stays true as the command changes. It
-    /// generates one subcommand per EventCategory alongside its hand-written ones, and adding
-    /// a category called "recent" would break it again - this is what would catch that.
-    /// </remarks>
-    [Fact]
-    public void TheEventLogCommandHasNoDuplicateSubcommands()
-    {
-        var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var command = new EventLogCommand(new NullEventStore(), new Access(store, [], []));
-
-        var problems = SlashCommandValidation.Problems(command.Build());
-
-        Assert.Empty(problems);
-    }
 
     /// <summary>
     /// /whitelist registers cleanly, subcommands and all.
