@@ -315,17 +315,6 @@ public static class Program
             sp.GetRequiredService<EventRecorder>()));
 
         builder.Services.AddSingleton<PlayerEventBridge>();
-        builder.Services.AddSingleton<ISlashCommand, EventLogCommand>();
-
-        /* ---- cases ----
-           In the document store, not the events table: bounded, and queried by id. See
-           CaseService for why that is the right side of the line. */
-        builder.Services.AddSingleton(sp => new PavlovBot.Host.Cases.CaseService(
-            sp.GetRequiredService<SerializedStore>(),
-            sp.GetRequiredService<AuditLog>(),
-            sp.GetRequiredService<ILogger<PavlovBot.Host.Cases.CaseService>>()));
-
-        builder.Services.AddSingleton<ISlashCommand, CaseCommand>();
 
         // ---- analytics: aggregates over the event table, computed in SQL ----
         builder.Services.AddSingleton<AnalyticsService>();
@@ -333,7 +322,6 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, PluginsCommand>();
         builder.Services.AddSingleton<ISlashCommand, FactionStatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, EconomyIntelCommand>();
-        builder.Services.AddSingleton<ISlashCommand, InvestigateCommand>();
         builder.Services.AddSingleton<ISlashCommand, StaffStatsCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
            LedgerFileStore. Resolved lazily through the provider because RconRegistry is

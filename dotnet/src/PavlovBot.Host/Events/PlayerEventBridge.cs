@@ -18,7 +18,7 @@ namespace PavlovBot.Host.Events;
 /// what makes the timeline genuinely optional.
 ///
 /// NO ADDRESSES ARE RECORDED, and that is not an oversight. The timeline is readable by any
-/// moderator through /eventlog, and an address written into it would be an address in a
+/// moderator through /serverstats and the plugin timeline, and an address written into it would be an address in a
 /// Discord channel with no redaction step in front of it. The account id is enough to
 /// correlate, and /player security is where addresses live behind an Admin gate.
 /// </remarks>

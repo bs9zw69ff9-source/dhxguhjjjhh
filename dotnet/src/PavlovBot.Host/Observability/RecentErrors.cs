@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace PavlovBot.Host.Observability;
 
-/// <param name="Operation">The command or component that failed, e.g. <c>/case</c>.</param>
+/// <param name="Operation">The command or component that failed, e.g. <c>/whitelist</c>.</param>
 /// <param name="Trace">The stack trace, unabridged. Trimmed at display time, not here.</param>
 public sealed record RecordedError(
     string CorrelationId,

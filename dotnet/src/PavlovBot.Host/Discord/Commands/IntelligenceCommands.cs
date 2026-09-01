@@ -272,7 +272,7 @@ public sealed class EconomyIntelCommand(
                 string.Join("\n", v.Signals.Select(s => $"{Theme.Dot} {Sanitize.Message(s.Summary)}")))))
             .AddField("Nothing was done",
                 "These are statistical flags, not findings. A good night and a duplication bug " +
-                "look identical in a total. Open a case with `/case open` if one is worth pursuing.");
+                "look identical in a total. Check one with `/player` before acting on it.");
     }
 
     private EmbedBuilder Audit(string player, IReadOnlyDictionary<string, EarningWindow> windows)

@@ -57,11 +57,10 @@ COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck
 That is the **whole** police surface. All four live in `PoliceCommands.cs`, and the penal
 code is reachable from nowhere else.
 
-**`/suspendrank` and `/case` are deliberately not on that list**, though both read as police.
-Each looks the player's faction up from whatever roster they are on — `/suspendrank` pulls a
-rank and auto-restores it, `/case` is "moderation cases: investigations, evidence and
-findings" — so they work as well for an NCR trooper as for an officer. Disabling them would
-cost a themed bot two useful mod tools over a name.
+**`/suspendrank` is deliberately not on that list**, though it reads as police. It looks the
+player's faction up from whatever roster they are on, pulls a rank and auto-restores it, so it
+works as well for an NCR trooper as for an officer. Disabling it would cost a themed bot a
+useful mod tool over a name.
 
 A leading slash is accepted, so `/arrest` works too. A name that is not a command logs a
 warning naming it and starts anyway — a typo here should not take a bot down.
