@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Discord;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Text;
@@ -26,7 +27,42 @@ public sealed record PlaytimeEntry(string Player, long Minutes, DateTimeOffset? 
 /// </remarks>
 public sealed class Boards(SerializedStore store, RconRegistry rcon, string? ledgerDirectory = null)
 {
-    private const int TopRows = 15;
+    /// <summary>How many rows every board except the richest one shows.</summary>
+    private const int ArrestRows = 15;
+
+    /// <summary>How many players the richest board ranks.</summary>
+    private const int TopRows = 100;
+
+    /// <summary>Width of the rank column: room for "100" and a gutter.</summary>
+    private const int RankWidth = 5;
+
+    /// <summary>Spaces between the longest username and the money column.</summary>
+    private const int Gutter = 3;
+
+    /// <summary>
+    /// Longest username the table prints before it is trimmed.
+    /// </summary>
+    /// <remarks>
+    /// A fixed-width table is only readable while ONE row cannot set the width of all of
+    /// them. Pavlov names are short; a pasted essay of a name would otherwise push the money
+    /// column off the right-hand side of every phone in the channel.
+    /// </remarks>
+    private const int MaxNameWidth = 32;
+
+    /// <summary>
+    /// How much of an embed description the table may fill.
+    /// </summary>
+    /// <remarks>
+    /// Discord's limit is 4096 and Theme.Brand TRUNCATES rather than rejects, which on a
+    /// fenced block would cut the CLOSING FENCE off and leave Discord rendering the rest of
+    /// the message as code. The margin covers the heading above the block and a little slack.
+    ///
+    /// A HUNDRED ROWS OF ORDINARY NAMES FIT, and only just: at a 21-character longest name a
+    /// row is 40 characters, so the table lands near 4,050 of the 4,096 available. Longer
+    /// names genuinely do not fit, which is a limit of the platform rather than a choice -
+    /// hence the row budget rather than an assumption that the whole hundred always go.
+    /// </remarks>
+    private const int TableBudget = 4060;
 
     /// <summary>The whole economy: every ledger, richest first.</summary>
     /// <param name="Total">Across EVERY ledger, not just the rows shown.</param>
@@ -112,15 +148,19 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
                 .Build();
         }
 
-        var top = standing.Top.Count > 0 ? Math.Max(standing.Top[0].Balance, 1) : 1;
-        var lines = standing.Top.Select((row, i) =>
-            $"`{i + 1,2}.` {Medal(i)} **{Sanitize.Code(row.Player)}** — ${row.Balance.ToString("N0", CultureInfo.InvariantCulture)}" +
-            (i < 5 ? $"\n{Theme.Bar(Math.Max(row.Balance, 0), top)}" : ""));
+        var (table, shown) = CashTable(standing.Top, TableBudget);
 
-        return Theme.Notice($"{Theme.Money} Richest players — top {standing.Top.Count}",
-                $"Combined **${standing.Total.ToString("N0", CultureInfo.InvariantCulture)}** across " +
-                $"**{standing.Ledgers}** ledger(s)\n\n{string.Join("\n", lines)}")
-            .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
+        /* THE COUNT AND THE TOTAL MOVE TO THE FOOTER. The table is the message, and a line of
+           prose above it would be the one thing in the block that does not line up with
+           anything. Neither number is dropped - they answer "is this the whole economy",
+           which is the question a total is for. */
+        var footer = $"Combined ${standing.Total.ToString("N0", CultureInfo.InvariantCulture)} across " +
+                     $"{standing.Ledgers} ledger(s)" +
+                     (shown < standing.Top.Count ? $" - showing {shown}, the rest would not fit" : "") +
+                     $" - updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern";
+
+        return Theme.Notice($"{Theme.Money} Richest players", $"**Top {TopRows} Richest Players**\n\n{table}")
+            .Brand(footer)
             .Build();
     }
 
@@ -181,7 +221,7 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
             // Jail time first, arrest count as the tiebreak: one long sentence outranks
             // several short ones, which is what "most wanted" is supposed to mean.
             .OrderByDescending(r => r.Minutes).ThenByDescending(r => r.Count)
-            .Take(TopRows)
+            .Take(ArrestRows)
             .ToList();
 
         /* An explicit empty board, NOT null. Null means "skip this cycle and leave what is
@@ -234,7 +274,7 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
                 Oldest: kv.Value.Min(w => w.At),
                 Latest: kv.Value[^1]))
             .OrderBy(r => r.Oldest)
-            .Take(TopRows)
+            .Take(ArrestRows)
             .ToList();
 
         if (rows.Count == 0)
@@ -254,8 +294,8 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
             .AddField("Wanted", rows.Count.ToString(CultureInfo.InvariantCulture), true)
             .AddField("Warrants", total.ToString(CultureInfo.InvariantCulture), true);
 
-        if (warrants.Count(kv => kv.Value is { Count: > 0 }) > TopRows)
-            embed.AddField("Not shown", $"{warrants.Count(kv => kv.Value is { Count: > 0 }) - TopRows} more wanted.");
+        if (warrants.Count(kv => kv.Value is { Count: > 0 }) > ArrestRows)
+            embed.AddField("Not shown", $"{warrants.Count(kv => kv.Value is { Count: > 0 }) - ArrestRows} more wanted.");
 
         return embed
             .Brand($"Oldest first · Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
@@ -272,7 +312,7 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
             .GroupBy(a => a.Moderator, StringComparer.OrdinalIgnoreCase)
             .Select(g => (Staff: g.Key, Count: g.Count(), Last: g.Max(a => a.At)))
             .OrderByDescending(r => r.Count)
-            .Take(TopRows)
+            .Take(ArrestRows)
             .ToList();
 
         var lines = rows.Select((r, i) =>
@@ -282,6 +322,67 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
             .Brand($"{log.Count} recorded action(s)")
             .Build();
     }
+
+    /// <summary>
+    /// The ranked table, as one fenced block.
+    /// </summary>
+    /// <remarks>
+    /// FIXED WIDTH, WHICH IS WHY IT IS FENCED. Discord renders everything outside a code
+    /// block in a proportional font, where padding with spaces lines nothing up at all.
+    ///
+    /// THE MONEY IS RIGHT-ALIGNED, so the digits of a seven-figure account and a
+    /// three-figure one sit under each other rather than starting together and ending
+    /// wherever. The header sits over the same column.
+    ///
+    /// THE OPENING FENCE IS FOLLOWED BY A NEWLINE. Text on the same line as a fence is read
+    /// as a language tag by some clients, and the first thing on this line is the header
+    /// row. The rendering is identical and the ambiguity is not there.
+    ///
+    /// BOUNDED, and this is the part that would fail in production rather than in review:
+    /// the description this goes into is capped, and the branding TRUNCATES what is over the
+    /// cap instead of rejecting it - which on a fenced block cuts the closing fence off and
+    /// leaves Discord rendering the rest of the message as code. Rows are dropped until the
+    /// block fits, and the caller is told how many survived so it can say so.
+    /// </remarks>
+    /// <param name="budget">Characters the whole block, fences included, may occupy.</param>
+    /// <returns>The block, and how many rows it ended up showing.</returns>
+    internal static (string Block, int Shown) CashTable(
+        IReadOnlyList<(string Player, long Balance)> rows, int budget)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+
+        var cells = rows
+            .Select(r => (
+                Name: Clamp(Sanitize.Code(r.Player)),
+                Money: r.Balance.ToString("N0", CultureInfo.InvariantCulture) + "$"))
+            .ToList();
+
+        // An empty table still needs columns wide enough for its own header.
+        var nameWidth = cells.Count == 0 ? "Username".Length : cells.Max(c => c.Name.Length);
+        var moneyWidth = cells.Count == 0 ? "Money".Length : cells.Max(c => c.Money.Length);
+
+        var header = "#".PadRight(RankWidth) +
+                     "Username".PadRight(nameWidth + Gutter) +
+                     "Money".PadLeft(moneyWidth);
+
+        var rowWidth = RankWidth + nameWidth + Gutter + moneyWidth + 1;
+        var overhead = "```\n".Length + header.Length + 1 + "```".Length;
+        var shown = Math.Clamp((budget - overhead) / rowWidth, 0, cells.Count);
+
+        var block = new StringBuilder("```\n").Append(header).Append('\n');
+        for (var i = 0; i < shown; i++)
+        {
+            block.Append((i + 1).ToString(CultureInfo.InvariantCulture).PadRight(RankWidth))
+                 .Append(cells[i].Name.PadRight(nameWidth + Gutter))
+                 .Append(cells[i].Money.PadLeft(moneyWidth))
+                 .Append('\n');
+        }
+
+        return (block.Append("```").ToString(), shown);
+    }
+
+    private static string Clamp(string name) =>
+        name.Length <= MaxNameWidth ? name : name[..(MaxNameWidth - 1)] + "\u2026";
 
     private static string Medal(int index) => index switch { 0 => "🥇", 1 => "🥈", 2 => "🥉", _ => Theme.Dot };
 
