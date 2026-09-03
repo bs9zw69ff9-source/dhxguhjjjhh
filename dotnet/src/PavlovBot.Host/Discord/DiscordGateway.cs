@@ -543,9 +543,10 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
 
         // DEFER FIRST, ALWAYS. See the class remarks: the acknowledgement cannot be sent
         // late, so it must not wait on anything that can be slow.
+        var ephemeral = command.Ephemeral || MustBeEphemeral(interaction);
         try
         {
-            await interaction.DeferAsync(ephemeral: command.Ephemeral).ConfigureAwait(false);
+            await interaction.DeferAsync(ephemeral: ephemeral).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -690,6 +691,57 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 _logger.LogWarning(nested, "Could not tell the caller that {CustomId} failed", customId);
             }
         }
+    }
+
+    /// <summary>
+    /// Whether a reply here MUST be ephemeral, whatever the command would have preferred.
+    /// </summary>
+    /// <remarks>
+    /// A USER-INSTALLED APP IN SOMEBODY ELSE'S SERVER MAY ONLY SPEAK EPHEMERALLY. That is
+    /// Discord's rule, not a preference, and breaking it fails the interaction outright: the
+    /// deferral is rejected, this dispatch gives up, and the person who ran the command sees
+    /// Discord's own "the application did not respond" with nothing in the bot to explain it.
+    ///
+    /// It is the ordinary case for a user-installed app, not an edge one - somebody carries
+    /// the commands into a server the bot was never added to, which is the entire point of
+    /// USER_APP. /server lookup is the command it bites first because it is public and reads
+    /// nothing from the guild, so there is no permission refusal to hide behind: it simply
+    /// breaks.
+    ///
+    /// The authoritative signal is which installation authorised the interaction. Discord
+    /// sends it, so it is read rather than inferred; a guild install being absent is exactly
+    /// the "not installed here" condition. Older payloads carry no owners at all, and there
+    /// the gateway's own cache answers the same question - a guild this bot is a member of is
+    /// a guild it has, and one it has never heard of is one it is not in.
+    ///
+    /// DMs need nothing: they are already private, and the deferral there is unrestricted.
+    /// </remarks>
+    private bool MustBeEphemeral(SocketInteraction interaction) =>
+        RequiresEphemeral(
+            interaction.GuildId,
+            interaction.IntegrationOwners,
+            // Only asked when there are no owners to read, and only then is the cache
+            // consulted - a lookup per interaction is not worth paying for the common case.
+            () => _client.GetGuild(interaction.GuildId ?? 0) is not null);
+
+    /// <summary>The decision itself, with nothing of Discord.Net in it.</summary>
+    /// <param name="guildInstalled">
+    /// Whether this bot is a member of that guild. A fallback for payloads carrying no
+    /// owners, and deferred because it costs a cache lookup that is usually not needed.
+    /// </param>
+    internal static bool RequiresEphemeral(
+        ulong? guildId,
+        IReadOnlyDictionary<ApplicationIntegrationType, ulong>? owners,
+        Func<bool> guildInstalled)
+    {
+        ArgumentNullException.ThrowIfNull(guildInstalled);
+
+        if (guildId is null) return false;
+
+        if (owners is { Count: > 0 })
+            return !owners.ContainsKey(ApplicationIntegrationType.GuildInstall);
+
+        return !guildInstalled();
     }
 
     /// <summary>
