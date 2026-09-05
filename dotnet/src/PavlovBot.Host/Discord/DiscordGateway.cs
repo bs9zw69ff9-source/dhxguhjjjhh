@@ -163,6 +163,35 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     internal DiscordSocketClient Client => _client;
 
     /// <summary>
+    /// The staff guild's membership, primed before dispatch so the access checks can see it.
+    /// </summary>
+    /// <remarks>
+    /// Set from the composition root for the same reason the staff log sink is: this is built
+    /// from every command, and the resolver needs the client this owns.
+    /// </remarks>
+    private HomeGuildMembers? _homeGuild;
+
+    public void UseHomeGuild(HomeGuildMembers members) => _homeGuild = members;
+
+    /// <summary>
+    /// Resolve the caller's staff-guild roles before anything checks them.
+    /// </summary>
+    /// <remarks>
+    /// HERE RATHER THAN INSIDE ACCESS, because Access's predicates are synchronous and
+    /// called from every command in the bot; making them async to serve the one interaction
+    /// shape that needs a fetch would be a change to every call site. One await, once per
+    /// interaction, before the handler runs, and the sync checks then answer from cache.
+    ///
+    /// Skipped when the interaction already carries a guild member - the common case, and
+    /// the one where a lookup would buy nothing.
+    /// </remarks>
+    private async Task PrimeAccessAsync(SocketInteraction interaction, CancellationToken ct)
+    {
+        if (_homeGuild is null || interaction.User is IGuildUser) return;
+        await _homeGuild.PrimeAsync(interaction.User, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// The commands this bot will actually register, after COMMANDS_DISABLED.
     /// </summary>
     /// <remarks>
@@ -389,13 +418,14 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 "User Install must also be enabled in the Discord Developer Portal",
                 properties.Count);
 
-            /* SAID AT EVERY START, not once. Outside a guild there is no member to read roles
-               from, so this is not a warning about a mistake - it is the standing shape of the
-               permission model, and the log is where somebody looks when a moderator reports
-               that every command refuses them in a DM. */
+            /* SAID AT EVERY START, not once. Outside a guild there is no member on the
+               interaction to read roles from, so where they ARE read from is the standing
+               shape of the permission model - and this log is where somebody looks when a
+               moderator reports that every command refuses them in a DM. */
             _logger.LogInformation(
-                "In DMs only OWNER_IDS and SUPER_OWNER_IDS apply. Mod, admin, faction leader " +
-                "and police are Discord role checks and are always false outside a guild");
+                "Outside a server, roles are read from the staff guild - see the " +
+                "\"staff roles outside a server\" line above for which one, and HOME_GUILD_ID " +
+                "to set it. Owners work regardless: OWNER_IDS and SUPER_OWNER_IDS are user ids");
 
             return true;
         }
@@ -567,6 +597,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         deadline.CancelAfter(CommandBudget);
         var ct = deadline.Token;
 
+        /* AFTER THE DEFERRAL, NEVER BEFORE IT. The acknowledgement is on a three-second
+           clock and this is a REST call; putting it first would trade a permission bug for
+           an interaction that times out under a slow Discord. */
+        await PrimeAccessAsync(interaction, ct).ConfigureAwait(false);
+
         try
         {
             await _metrics.TimeAsync("command_duration_ms", MetricLabels.Of("command", name), async () =>
@@ -663,6 +698,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         }
 
         var ct = _stopping?.Token ?? CancellationToken.None;
+
+        // Components re-check access on every click - see IComponentHandler - so they need
+        // the same roles resolved as the command that opened the panel.
+        await PrimeAccessAsync(interaction, ct).ConfigureAwait(false);
+
         try
         {
             await _metrics.TimeAsync("component_duration_ms", MetricLabels.Of("component", id.Prefix), async () =>
