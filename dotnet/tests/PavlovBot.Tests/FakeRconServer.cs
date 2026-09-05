@@ -57,6 +57,25 @@ internal sealed class FakeRconServer : IAsyncDisposable
     /// <summary>Answer with bare text rather than JSON, which some builds do on failure.</summary>
     public string? PlainTextReply { get; set; }
 
+    /// <summary>Answer with this exact body, verbatim, instead of a generated one.</summary>
+    /// <remarks>
+    /// For asserting against a reply the CLIENT has to decode correctly - a player list with
+    /// multi-byte names in it - rather than one shaped by the flags above.
+    /// </remarks>
+    public string? ExactReply { get; set; }
+
+    /// <summary>
+    /// Write the reply as two TCP writes, splitting after this many BYTES.
+    /// </summary>
+    /// <remarks>
+    /// THE POINT IS TO SPLIT MID-CHARACTER. TCP breaks wherever it likes, including through
+    /// the middle of a multi-byte sequence, and a client that decodes each chunk on its own
+    /// turns both halves into replacement characters. That is invisible in a code read and
+    /// unreproducible on demand against a real server, because it depends on where the
+    /// network chose to break. Here it is chosen.
+    /// </remarks>
+    public int? SplitReplyAfterBytes { get; set; }
+
     /// <summary>
     /// Verbs the server ACCEPTS AND NEVER ANSWERS.
     /// </summary>
@@ -126,11 +145,26 @@ internal sealed class FakeRconServer : IAsyncDisposable
                     var answering = AnswerEverythingAs ?? command.Split(' ')[0];
                     var outcome = RefuseEverything ? "false" : "true";
                     string reply;
-                    if (PlainTextReply is { } plain) reply = plain + "\r\n";
+                    if (ExactReply is { } exact) reply = exact;
+                    else if (PlainTextReply is { } plain) reply = plain + "\r\n";
                     else if (OmitCommandField) reply = $"{{\"Successful\":{outcome},\"PlayerList\":[]}}\r\n";
                     else if (OmitSuccessfulField) reply = $"{{\"Command\":\"{answering}\",\"PlayerList\":[]}}\r\n";
                     else reply = $"{{\"Command\":\"{answering}\",\"Successful\":{outcome},\"PlayerList\":[]}}\r\n";
-                    await stream.WriteAsync(Encoding.UTF8.GetBytes(reply), _cts.Token);
+                    var bytes = Encoding.UTF8.GetBytes(reply);
+                    if (SplitReplyAfterBytes is { } at && at > 0 && at < bytes.Length)
+                    {
+                        await stream.WriteAsync(bytes.AsMemory(0, at), _cts.Token);
+                        await stream.FlushAsync(_cts.Token);
+
+                        // Long enough that the client's read cannot coalesce the two writes,
+                        // which would quietly turn this into the single-chunk case.
+                        await Task.Delay(50, _cts.Token);
+                        await stream.WriteAsync(bytes.AsMemory(at), _cts.Token);
+                    }
+                    else
+                    {
+                        await stream.WriteAsync(bytes, _cts.Token);
+                    }
 
                     if (DropAfterNextCommand) { DropAfterNextCommand = false; return; }
                 }
