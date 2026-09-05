@@ -617,6 +617,25 @@ public static class Program
            whether a silent server was stopped on purpose. See RconRegistry.UseLifecycle. */
         host.Services.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>().UseLifecycle(systemd);
 
+        /* STAFF ROLES OUTSIDE THE STAFF SERVER, attached here for the same reason as
+           everything else in this section: the resolver needs the gateway's client, the
+           gateway is built from every command, and nearly every command needs Access. A
+           constructor dependency closes that loop and the container deadlocks on it.
+
+           Without this, roles are read only off the interaction - which is correct inside a
+           guild and answers false everywhere else, so in a DM a moderator was a member of
+           the public and only owners, matched by user id, could use anything. */
+        var gatewayForRoles = host.Services.GetRequiredService<DiscordGateway>();
+        var homeGuild = new PavlovBot.Host.Discord.HomeGuildMembers(
+            gatewayForRoles.Client, options.HomeGuildId, options.GuildId,
+            host.Services.GetRequiredService<ILogger<PavlovBot.Host.Discord.HomeGuildMembers>>());
+
+        gatewayForRoles.UseHomeGuild(homeGuild);
+        host.Services.GetRequiredService<PavlovBot.Host.Discord.Access>().UseHomeGuild(homeGuild.Member);
+
+        logger.LogInformation(
+            "  staff roles outside a server: read from {Source}", homeGuild.Describe());
+
         /* STAFF LOG CHANNELS, attached here for the same reason as the lifecycle above:
            posting to a channel needs the gateway, the gateway is built from every command,
            and nearly every command needs AuditLog. A constructor dependency closes that loop

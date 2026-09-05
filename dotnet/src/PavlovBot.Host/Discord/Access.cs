@@ -122,6 +122,27 @@ public sealed class Access
 
     private readonly FactionSet _factions;
 
+    /// <summary>
+    /// The staff guild's membership for a user who is not in one here, or null for none.
+    /// </summary>
+    /// <remarks>
+    /// SETTABLE RATHER THAN INJECTED, and for the usual reason in this composition root:
+    /// resolving it needs the gateway, the gateway is built from every command, and nearly
+    /// every command needs this type. A constructor dependency closes that loop and the
+    /// container deadlocks on it - see GatewayChannelRenamer, and the outage that taught it.
+    ///
+    /// Null leaves behaviour exactly as it was: roles read off the interaction and nothing
+    /// else, which is correct inside a guild and was the whole problem outside one.
+    /// </remarks>
+    private Func<ulong, IGuildUser?>? _homeMember;
+
+    /// <summary>Attach the home-guild lookup. See <see cref="_homeMember"/>.</summary>
+    public void UseHomeGuild(Func<ulong, IGuildUser?> lookup)
+    {
+        ArgumentNullException.ThrowIfNull(lookup);
+        _homeMember = lookup;
+    }
+
     public Access(SerializedStore store, IEnumerable<ulong> owners, IEnumerable<ulong>? superOwners = null,
         FactionSet? factions = null)
     {
@@ -141,8 +162,28 @@ public sealed class Access
 
     public RoleMap Roles => _store.Read(Datasets.Roles, RoleMap.Empty);
 
-    private static bool Has(IUser? user, ulong? roleId) =>
-        roleId is { } id && user is IGuildUser member && member.RoleIds.Contains(id);
+    /// <summary>
+    /// The guild member to read roles from: the interaction's own, or the staff guild's.
+    /// </summary>
+    /// <remarks>
+    /// THE INTERACTION'S MEMBER WINS when there is one, because it is the guild the person
+    /// is actually standing in and it needs no lookup. The home guild answers only when
+    /// there is no member at all - a DM, or a server this bot was carried into - which is
+    /// exactly where every role check used to answer false.
+    ///
+    /// A user this resolves for in a DM gets the same access they would have had in the
+    /// staff guild. That is the point, and it is also the whole of the widening: no role is
+    /// granted that the guild has not granted.
+    /// </remarks>
+    private IGuildUser? Member(IUser? user) => user switch
+    {
+        null => null,
+        IGuildUser member => member,
+        _ => _homeMember?.Invoke(user.Id),
+    };
+
+    private bool Has(IUser? user, ulong? roleId) =>
+        roleId is { } id && Member(user) is { } member && member.RoleIds.Contains(id);
 
     public bool IsSuperOwner(IUser? user)
     {
@@ -168,8 +209,9 @@ public sealed class Access
     public bool IsAdmin(IUser? user) =>
         IsOwner(user) || Has(user, Roles.AdminRole) ||
         // Discord's own Administrator permission counts: somebody who can delete the guild
-        // is not meaningfully restricted by a bot role check.
-        ((user as IGuildUser)?.GuildPermissions.Administrator ?? false);
+        // is not meaningfully restricted by a bot role check. Through Member, so it holds in
+        // a DM too - an administrator who loses admin by messaging the bot is the same bug.
+        (Member(user)?.GuildPermissions.Administrator ?? false);
 
     public bool IsMod(IUser? user) => IsAdmin(user) || Has(user, Roles.ModRole);
 
@@ -239,14 +281,17 @@ public sealed class Access
         var held = DescribeAccess(user);
         lines.Add($"You currently hold: **{held}**.");
 
-        if (user is not IGuildUser)
+        if (Member(user) is null)
         {
-            /* The cast failing is not the same as lacking a role, and it used to look
-               identical. Owner tiers still work in this state because they are id-based,
-               which is exactly the confusing part. */
+            /* No member ANYWHERE - not in this interaction, and not in the staff guild
+               either. Distinct from lacking a role, and it used to look identical. Owner
+               tiers still work in this state because they are id-based, which is exactly
+               the confusing part. */
             lines.Add(
                 "The bot could not read your server roles for this interaction, so only " +
-                "owner access - which is by user id - could be checked.");
+                "owner access - which is by user id - could be checked. Outside the server " +
+                "your roles are read from the staff guild; if you are not in it, or the bot " +
+                "has not been told which guild that is, there is nothing to read.");
         }
         else if (required is RequiredAccess.Mod && Roles.ModRole is null)
         {

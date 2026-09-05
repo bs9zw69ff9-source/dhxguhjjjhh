@@ -24,6 +24,22 @@ public sealed record BotOptions
     public ulong? GuildId { get; init; }
 
     /// <summary>
+    /// The guild whose roles decide a person's access when the interaction is not in it.
+    /// </summary>
+    /// <remarks>
+    /// STAFF ROLES LIVE IN ONE PLACE, and outside it there is no member to read them from.
+    /// In a DM - and in any server this bot was carried into as a user-installed app - every
+    /// role check answered false, so only owners, who are matched by user id, could use
+    /// anything at all. A moderator messaging the bot privately was a member of the public.
+    ///
+    /// Naming the guild is what makes that answerable without guessing. Unset, it falls back
+    /// to <see cref="GuildId"/>, and then to the single guild the bot is in; a bot in several
+    /// guilds with none named refuses to pick one, because "roles from whichever server we
+    /// happen to share" is a privilege escalation dressed as a convenience.
+    /// </remarks>
+    public ulong? HomeGuildId { get; init; }
+
+    /// <summary>
     /// Register as a USER-INSTALLABLE app, so commands follow the installing account into
     /// DMs and servers the bot is not in.
     /// </summary>
@@ -121,6 +137,7 @@ public sealed record BotOptions
         {
             DiscordToken = configuration["DISCORD_TOKEN"]?.Trim() ?? "",
             GuildId = ulong.TryParse(configuration["GUILD_ID"], CultureInfo.InvariantCulture, out var guild) ? guild : null,
+            HomeGuildId = ulong.TryParse(configuration["HOME_GUILD_ID"], CultureInfo.InvariantCulture, out var home) ? home : null,
             UserApp = configuration["USER_APP"]?.Trim().ToLowerInvariant()
                 is "1" or "true" or "yes" or "on",
 
