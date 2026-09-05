@@ -207,13 +207,29 @@ internal sealed class RconConnection : IAsyncDisposable
 
         var sb = new StringBuilder();
         var buffer = ArrayPool<byte>.Shared.Rent(4096);
+
+        /* A DECODER, NOT Encoding.GetString PER CHUNK, and this is a correctness fix rather
+           than a tidy-up. TCP splits wherever it likes, including through the middle of a
+           multi-byte character - and a player name is exactly where those live. Decoding each
+           chunk independently turned the halves into replacement characters, so a name with
+           an accent or an emoji in it came back mangled whenever the split landed inside it:
+           intermittent, invisible in a code read, and impossible to reproduce on demand
+           because it depends on where the network chose to break. A Decoder holds the partial
+           sequence over to the next call. */
+        var decoder = Encoding.UTF8.GetDecoder();
+
+        // Sized from the BUFFER, not from 4096: Rent may hand back a larger array, the read
+        // above uses all of it, and UTF-8 never decodes to more chars than it had bytes.
+        var chars = ArrayPool<char>.Shared.Rent(buffer.Length);
         try
         {
             while (true)
             {
                 var read = await stream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
                 if (read == 0) throw new IOException("connection closed while awaiting a reply");
-                sb.Append(Encoding.UTF8.GetString(buffer, 0, read));
+
+                var decoded = decoder.GetChars(buffer, 0, read, chars, 0);
+                sb.Append(chars, 0, decoded);
 
                 /* Settle as soon as the buffer is a complete JSON document rather than
                    waiting for a close or a timeout. A truncated document does not parse, so
@@ -227,6 +243,7 @@ internal sealed class RconConnection : IAsyncDisposable
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+            ArrayPool<char>.Shared.Return(chars);
         }
     }
 

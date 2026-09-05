@@ -225,7 +225,14 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
 
                 if (!RconReply.TryParse(raw, out var document) || document is null)
                 {
-                    Problem(server, "the server's reply to RefreshList could not be parsed");
+                    /* SAY WHAT THE SERVER ACTUALLY SENT. This message used to be the whole
+                       report, and it names the one thing nobody needed telling: the reply
+                       was not JSON. What it WAS is the entire diagnosis - an auth error, a
+                       command this build does not have, a plain-text refusal - and the bot
+                       read it, decided it could not use it, and threw it away. Three servers
+                       failing identically then looked like a bot fault rather than something
+                       the servers were saying out loud. */
+                    Problem(server, $"the server's reply to RefreshList was not JSON: {Excerpt(raw)}");
                     continue;
                 }
 
@@ -254,6 +261,29 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
                 Problem(server, ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// A reply quoted safely into a report that reaches Discord.
+    /// </summary>
+    /// <remarks>
+    /// BOUNDED AND ESCAPED, because this is a server-controlled string on its way into an
+    /// embed. Sanitize.Message strips control characters and caps the length downstream, but
+    /// backticks would still break out of the code span this is quoted in, and an empty reply
+    /// needs saying rather than rendering as an empty pair of quotes.
+    ///
+    /// The HEAD, not the tail: a non-JSON reply says what it is in its first few words, and
+    /// a truncated body's opening is what identifies it.
+    /// </remarks>
+    internal static string Excerpt(string? raw)
+    {
+        var text = (raw ?? "").Trim();
+        if (text.Length == 0) return "it was empty";
+
+        text = text.Replace("`", "'", StringComparison.Ordinal);
+        if (text.Length > 200) text = text[..200] + "...";
+
+        return $"\"{text}\"";
     }
 
     /// <summary>
