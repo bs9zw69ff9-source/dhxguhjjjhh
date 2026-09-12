@@ -54,11 +54,69 @@ public class PlayerBoardTests : IAsyncDisposable
         Assert.NotNull(board);
         var text = Values(board!);
 
-        Assert.Contains("`Alice` — NYPD", text, StringComparison.Ordinal);
-        Assert.Contains("`Bob`", text, StringComparison.Ordinal);
+        Assert.Contains("• Alice — NYPD", text, StringComparison.Ordinal);
+        Assert.Contains("• Bob", text, StringComparison.Ordinal);
         // The civilian gets no tag at all rather than an invented one.
-        Assert.DoesNotContain("`Bob` —", text, StringComparison.Ordinal);
-        Assert.Contains("**2** online", board!.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("• Bob —", text, StringComparison.Ordinal);
+        Assert.Equal("Live Player List", board!.Title);
+        Assert.Contains("**2**", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("Server 1 (2)", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AServerIsNamedTheWayThePlayerCountChannelsNameIt()
+    {
+        // server2 is a config key from the RCON_HOST_n index, not a name anybody chose, and
+        // the voice counters beside this board already say "Server 2" in public.
+        var board = PlayerBoard.Build(
+        [
+            Server("server2", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Alice", null)]),
+            Server("Mojave Outpost", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Bob", null)]),
+        ], DateTimeOffset.UtcNow);
+
+        Assert.NotNull(board);
+        var text = Values(board!);
+
+        Assert.Contains("Server 2 (1)", text, StringComparison.Ordinal);
+        // A name somebody actually chose is left alone.
+        Assert.Contains("Mojave Outpost (1)", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheServersSitSideBySide()
+    {
+        /* THE LAYOUT. Discord lays inline fields out three to a row, and three columns of
+           names is the whole shape of this board - one stacked field per server is a
+           different thing entirely on a phone. */
+        var board = PlayerBoard.Build(
+        [
+            Server("server1", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Alice", "NYPD")]),
+            Server("server2", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Bob", "NCR")]),
+            Server("server3", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Carol", null)]),
+        ], DateTimeOffset.UtcNow);
+
+        Assert.NotNull(board);
+        Assert.Equal(3, board!.Fields.Length);
+        Assert.All(board!.Fields, f => Assert.True(f.Inline, $"{f.Name} was not inline"));
+    }
+
+    [Fact]
+    public void ANameCannotFormatTheNamesBelowIt()
+    {
+        /* The cost of printing names plain instead of in code spans: an unclosed marker in
+           one name restyles the rest of the column. Escaped, not stripped - the board has to
+           agree with what an admin types back into a command. */
+        var board = PlayerBoard.Build(
+        [
+            Server("server1", TimeSpan.FromSeconds(5),
+                players: [new BoardPlayer("*Ghost", "NCR"), new BoardPlayer("Butter_Life", null)]),
+        ], DateTimeOffset.UtcNow);
+
+        Assert.NotNull(board);
+        var text = Values(board!);
+
+        Assert.Contains(@"\*Ghost", text, StringComparison.Ordinal);
+        Assert.Contains(@"Butter\_Life", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -68,8 +126,10 @@ public class PlayerBoardTests : IAsyncDisposable
            past it, so a naive board either dies on a busy server or - once something catches
            the throw - quietly lists the alphabetical first twenty as though they were
            everybody. "Is so-and-so on" would then answer no for half the server. */
-        var crowd = Enumerable.Range(1, 200)
-            .Select(i => new BoardPlayer($"Player{i:000}", "NYPD"))
+        // Past what four columns hold, so the cut is exercised rather than assumed. A real
+        // Pavlov server caps well under one column's worth.
+        var crowd = Enumerable.Range(1, 400)
+            .Select(i => new BoardPlayer($"Player{i:000}", "Brotherhood of Steel"))
             .ToArray();
 
         var board = PlayerBoard.Build(
@@ -77,9 +137,16 @@ public class PlayerBoardTests : IAsyncDisposable
 
         Assert.NotNull(board);
         Assert.All(board!.Fields, f => Assert.True(f.Value.Length <= 1024, $"field was {f.Value.Length} characters"));
-        Assert.Contains("more", Values(board!), StringComparison.Ordinal);
-        Assert.Contains("200 online", Values(board!), StringComparison.Ordinal);
+        Assert.Contains("Server 1 (400)", Values(board!), StringComparison.Ordinal);
         Assert.True(board!.Length < 6000, $"embed was {board!.Length} characters");
+
+        // It CONTINUES rather than stopping at one field, and what it still cannot fit is
+        // counted rather than dropped in silence.
+        Assert.True(board!.Fields.Length > 1, "the list did not continue into another column");
+        Assert.Contains("more", Values(board!), StringComparison.Ordinal);
+
+        // Every name shown is shown once: the continuation is a split, not a re-listing.
+        Assert.Equal(1, Values(board!).Split("• Player001").Length - 1);
     }
 
     [Fact]
@@ -97,7 +164,7 @@ public class PlayerBoardTests : IAsyncDisposable
         var text = Values(board!);
 
         Assert.Contains("42 minutes ago", text, StringComparison.Ordinal);
-        Assert.Contains("`Alice`", text, StringComparison.Ordinal);
+        Assert.Contains("• Alice", text, StringComparison.Ordinal);
         Assert.Equal(Theme.Amber, board!.Color);
     }
 
@@ -116,7 +183,8 @@ public class PlayerBoardTests : IAsyncDisposable
         Assert.Contains("no roster yet", text, StringComparison.Ordinal);
         Assert.Contains("the reply could not be parsed", text, StringComparison.Ordinal);
         // One online on the server that answered, NOT "nobody online" on the one that did not.
-        Assert.Contains("**1** online across 1 server(s)", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("**1** *courier ", board!.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("nobody online", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -178,9 +246,9 @@ public class PlayerBoardTests : IAsyncDisposable
         Assert.NotNull(board);
         var text = Values(board!);
 
-        Assert.Contains($"`Alice` — {Nypd.Name}", text, StringComparison.Ordinal);
-        Assert.Contains("`Bob`", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("`Bob` —", text, StringComparison.Ordinal);
+        Assert.Contains($"• Alice — {Nypd.Name}", text, StringComparison.Ordinal);
+        Assert.Contains("• Bob", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("• Bob —", text, StringComparison.Ordinal);
 
         await rcon.DisposeAsync();
     }
@@ -202,7 +270,7 @@ public class PlayerBoardTests : IAsyncDisposable
         var board = await boards.BuildPlayerBoardAsync(CancellationToken.None);
 
         Assert.NotNull(board);
-        Assert.Contains("`Alice`", Values(board!), StringComparison.Ordinal);
+        Assert.Contains("• Alice", Values(board!), StringComparison.Ordinal);
 
         await rcon.DisposeAsync();
     }
