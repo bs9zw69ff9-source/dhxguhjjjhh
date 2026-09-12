@@ -18,11 +18,18 @@ using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Discord.Commands;
 
-/// <summary><c>/stats</c> - what the process is actually costing.</summary>
-public sealed class StatsCommand(
+/// <summary>
+/// <c>/botstats</c> - what the process is actually costing.
+/// </summary>
+/// <remarks>
+/// RENAMED FROM <c>/stats</c>, which now belongs to the player scoreboard. This one is an
+/// owner-only diagnostic about the machine - resident memory, GC counts, systemd unit CPU -
+/// and the name people type when they want to know their own K/D is not it.
+/// </remarks>
+public sealed class BotStatsCommand(
     MetricsRegistry metrics, PluginHost plugins, ServiceControl services, Access access) : ISlashCommand
 {
-    public string Name => "stats";
+    public string Name => "botstats";
     public bool Ephemeral => true;
 
     public ApplicationCommandProperties Build() =>

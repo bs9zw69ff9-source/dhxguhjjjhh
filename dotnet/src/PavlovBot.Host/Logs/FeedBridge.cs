@@ -54,6 +54,7 @@ public sealed class FeedBridge
     private readonly ConcurrentDictionary<string, DateTimeOffset> _reported = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly SecurityAlerts? _alerts;
+    private readonly Stats.KillStats? _killStats;
 
     /// <summary>
     /// One alt alert per account per day.
@@ -96,9 +97,11 @@ public sealed class FeedBridge
         VpnScreeningService? vpn = null,
         IMasterNames? masters = null,
         VpnResponder? vpnBans = null,
-        SecurityAlerts? alerts = null)
+        SecurityAlerts? alerts = null,
+        Stats.KillStats? killStats = null)
     {
         _alerts = alerts;
+        _killStats = killStats;
         ArgumentNullException.ThrowIfNull(tracking);
         _tracking = tracking;
         _masters = masters;
@@ -384,6 +387,12 @@ public sealed class FeedBridge
         // A kill line is assembled from fragments that can arrive across several log lines,
         // so it carries no timestamp of its own. Now is within a poll interval of the truth.
         if (string.IsNullOrEmpty(kill.Killed)) return Task.CompletedTask;
+
+        /* COUNTED BEFORE IT IS POSTED, and outside the feed guard. The scoreboard must not
+           depend on whether a kill webhook happens to be configured - that is the same
+           display-setting-gates-a-feature mistake as the VPN block above. It only buffers,
+           so it cannot throw a write at the log poll. */
+        _killStats?.Record(kill, DateTimeOffset.UtcNow);
 
         return Safe(() => _feeds.PostKillAsync(kill.Killer, kill.Killed, kill.KilledBy, DateTimeOffset.UtcNow));
     }

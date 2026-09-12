@@ -48,7 +48,8 @@ public sealed class PlayerIntelligenceService(
     FactionMembers? members = null,
     IBalanceStore? balances = null,
     Payroll? payroll = null,
-    VpnScreeningService? vpn = null)
+    VpnScreeningService? vpn = null,
+    Stats.KillStats? killStats = null)
 {
     /// <summary>How recently an account must have appeared to count as brand new.</summary>
     /// <remarks>
@@ -87,7 +88,15 @@ public sealed class PlayerIntelligenceService(
         var risk = RiskScorer.Assess(
             Signals(name, account, network, moderation, associations, activity));
 
-        return new PlayerProfile(identity, activity, network, moderation, faction, economy, associations, risk);
+        /* BY NAME, not by account id, because that is the only key a Pavlov kill line gives
+           - see KillStats. It is also why this uses the name the caller asked about rather
+           than a canonical one: the stats are filed under whatever they were called. */
+        var combat = killStats?.Of(name) is { } kills
+            ? new ProfileCombat(kills.Kills, kills.Deaths, kills.Suicides, kills.LastAt)
+            : null;
+
+        return new PlayerProfile(identity, activity, network, moderation, faction, economy, associations, risk,
+            Combat: combat);
     }
 
     /// <summary>A profile narrowed to what the viewer may see.</summary>

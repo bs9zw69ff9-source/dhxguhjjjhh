@@ -104,6 +104,18 @@ public static class Datasets
 
     // ---- players ----
     public const string Playtime = "playtime";
+
+    /// <summary>
+    /// Kills, deaths and suicides per player name.
+    /// </summary>
+    /// <remarks>
+    /// NEW IN THE C# BOT - the Node bot posted a kill feed and counted nothing, so there is
+    /// no file shape to match here and nothing reads it but this bot.
+    ///
+    /// Keyed by DISPLAY NAME because a Pavlov kill line carries nothing else: no account id,
+    /// no platform id. A rename starts a fresh record, which is the honest outcome.
+    /// </remarks>
+    public const string KillStats = "killstats";
     public const string LastSeen = "lastseen";
     public const string KnownPlayers = "known_players";
     public const string DiscordLinks = "discord_links";
