@@ -53,6 +53,21 @@ public sealed class FeedBridge
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _reported = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly SecurityAlerts? _alerts;
+
+    /// <summary>
+    /// One alt alert per account per day.
+    /// </summary>
+    /// <remarks>
+    /// Its own window, and a long one. Linked accounts do not change between connections, so
+    /// the second alert about the same pair says nothing the first did not - and a direct
+    /// message every time somebody with a second account reconnects is how a useful alert
+    /// becomes one nobody reads.
+    /// </remarks>
+    private static readonly TimeSpan AltAlertWindow = TimeSpan.FromHours(24);
+
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _altsReported = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Joins already announced. Pavlov logs a player's login SEVERAL TIMES per connection.
     /// </summary>
@@ -80,8 +95,10 @@ public sealed class FeedBridge
         ILogger<FeedBridge> logger,
         VpnScreeningService? vpn = null,
         IMasterNames? masters = null,
-        VpnResponder? vpnBans = null)
+        VpnResponder? vpnBans = null,
+        SecurityAlerts? alerts = null)
     {
+        _alerts = alerts;
         ArgumentNullException.ThrowIfNull(tracking);
         _tracking = tracking;
         _masters = masters;
@@ -210,6 +227,11 @@ public sealed class FeedBridge
             }
         }
 
+        /* OUTSIDE the connect-feed check, deliberately. The card below is a display
+           setting; this is a detection, and gating it on a webhook URL is the same mistake
+           the VPN screening block above documents. */
+        await Safe(() => AlertOnAltsAsync(confirmed, name, server)).ConfigureAwait(false);
+
         if (_feeds.IsConfigured(FeedWebhooks.Connect))
         {
             await PostCardAsync(confirmed, name, server, screening).ConfigureAwait(false);
@@ -288,6 +310,40 @@ public sealed class FeedBridge
         await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Say when one person is on several accounts.
+    /// </summary>
+    /// <remarks>
+    /// ALTS ARE NOT A BAN, and this deliberately does not become one: two people in a house
+    /// share an address, and so does everybody behind one CGNAT. This tells a human that the
+    /// accounts are linked and leaves the judgement to them - the auto-ban path is the one
+    /// that requires a standing flag, which is a decision somebody already made.
+    ///
+    /// ITS OWN DEBOUNCE, per account and per day. The connection debounce above is minutes
+    /// long, which is right for a feed line and would be a direct message every time somebody
+    /// with a second account reconnected.
+    /// </remarks>
+    private async Task AlertOnAltsAsync(PlayerConfirmed confirmed, string name, string server)
+    {
+        if (_alerts is not { Enabled: true }) return;
+
+        var alts = _tracking.AltsOf(confirmed.AccountId);
+        if (alts.Count == 0) return;
+
+        if (!Report(_altsReported, confirmed.AccountId, confirmed.At, AltAlertWindow)) return;
+
+        await _alerts.PostAsync(new SecurityAlert(
+            SecurityAlertKind.Alts,
+            name,
+            $"They share an address with {alts.Count} other account(s).",
+            "Nothing. Linked accounts are not evasion on their own - this is for a human to look at.",
+            AccountId: confirmed.AccountId,
+            Ip: confirmed.Ip,
+            Server: server,
+            Alts: alts.Select(a => a.Name ?? a.Id).ToList(),
+            At: confirmed.At)).ConfigureAwait(false);
+    }
+
     private bool ShouldReport(string accountId, DateTimeOffset at) => Report(_reported, accountId, at);
 
     /// <summary>
@@ -299,17 +355,24 @@ public sealed class FeedBridge
     /// Too tight and every disconnect posts four identical lines; too loose and a player who
     /// rejoins and drops again is silently never reported. Neither shows up in a code read.
     /// </remarks>
-    internal static bool Report(IDictionary<string, DateTimeOffset> reported, string accountId, DateTimeOffset at)
+    /// <param name="window">
+    /// How long one account stays reported. Defaults to the disconnect debounce; the alt
+    /// alert passes its own, which is a day rather than twenty seconds.
+    /// </param>
+    internal static bool Report(
+        IDictionary<string, DateTimeOffset> reported, string accountId, DateTimeOffset at, TimeSpan? window = null)
     {
         ArgumentNullException.ThrowIfNull(reported);
 
-        if (reported.TryGetValue(accountId, out var last) && at - last < ConfirmDebounce) return false;
+        var debounce = window ?? ConfirmDebounce;
+
+        if (reported.TryGetValue(accountId, out var last) && at - last < debounce) return false;
         reported[accountId] = at;
 
         // Bounded: without this, a long-running bot accumulates an entry per account seen.
         if (reported.Count > 1000)
         {
-            foreach (var stale in reported.Where(e => at - e.Value > ConfirmDebounce).Select(e => e.Key).ToList())
+            foreach (var stale in reported.Where(e => at - e.Value > debounce).Select(e => e.Key).ToList())
                 reported.Remove(stale);
         }
 

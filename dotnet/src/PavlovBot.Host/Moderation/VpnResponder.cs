@@ -68,7 +68,8 @@ public sealed class VpnResponder(
     FeedWebhooks feeds,
     MetricsRegistry metrics,
     ILogger<VpnResponder> logger,
-    bool autoBan = true)
+    bool autoBan = true,
+    SecurityAlerts? alerts = null)
 {
     /// <summary>
     /// How long one address stays actioned before it may ban again.
@@ -133,6 +134,13 @@ public sealed class VpnResponder(
 
                 await PostAsync($"[VPN] {Sanitize.Message(player)}  |  {VpnVerdict.Of(record).Headline}  |  NOT BANNED - {decision.Reason}")
                     .ConfigureAwait(false);
+
+                /* ALERTED THOUGH NOTHING WAS DONE. This is the branch somebody asks about -
+                   "why is that obvious VPN still on" - and the answer is here rather than in
+                   a log they would have to go and read. */
+                await AlertAsync(player, record, stage,
+                        $"Not banned - under the threshold. {decision.Reason}", uniqueId, ct)
+                    .ConfigureAwait(false);
             }
 
             metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "below_threshold", "stage", stage),
@@ -155,6 +163,10 @@ public sealed class VpnResponder(
 
                 await PostAsync($"[VPN] {Sanitize.Message(player)}  |  {VpnVerdict.Of(record).Headline}  |  " +
                                 "NOT BANNED - automatic VPN banning is off (VPN_AUTOBAN)").ConfigureAwait(false);
+
+                await AlertAsync(player, record, stage,
+                        "Not banned - automatic VPN banning is off (VPN_AUTOBAN).", uniqueId, ct)
+                    .ConfigureAwait(false);
             }
 
             metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "disabled", "stage", stage));
@@ -167,7 +179,12 @@ public sealed class VpnResponder(
                not an evader. Locking yourself out of your own server needs console access
                to undo, so this refusal is loud rather than silent. */
             if (announce)
+            {
                 logger.LogWarning("VPN AUTO-BAN REFUSED - {Player} is a master account ({Reason})", player, decision.Reason);
+
+                await AlertAsync(player, record, stage,
+                        "Not banned - they are a master account.", uniqueId, ct).ConfigureAwait(false);
+            }
 
             metrics.Increment("vpn_bans_total", MetricLabels.Of("outcome", "master", "stage", stage));
             return VpnBanOutcome.Master;
@@ -238,6 +255,10 @@ public sealed class VpnResponder(
             player, record.Ip, stage, enforcement.Servers, reason);
 
         await PostAsync($"[VPN BAN] {Sanitize.Message(player)}  |  {reason}").ConfigureAwait(false);
+
+        await AlertAsync(player, record, stage,
+                $"Banned permanently on {enforcement.Servers} server(s).", uniqueId, ct).ConfigureAwait(false);
+
         return VpnBanOutcome.Banned;
     }
 
@@ -281,6 +302,34 @@ public sealed class VpnResponder(
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Tell somebody a screening fired, and what came of it.
+    /// </summary>
+    /// <remarks>
+    /// RIDES THE EXISTING DEBOUNCE rather than adding one of its own. Both the join line and
+    /// the disconnect line reach this class for a single connection, and every branch that
+    /// alerts is already inside the once-per-address-per-hour guard the feed lines use - so
+    /// one player on a VPN is one direct message, not one per connection per stage.
+    /// </remarks>
+    private Task AlertAsync(
+        string player, VpnRecord record, string stage, string action, string? uniqueId, CancellationToken ct)
+    {
+        if (alerts is not { Enabled: true }) return Task.CompletedTask;
+
+        var summary = VpnVerdict.Of(record);
+        var where = record.Organization ?? record.Isp;
+
+        return alerts.PostAsync(new SecurityAlert(
+            SecurityAlertKind.Vpn,
+            player,
+            $"{summary.Headline} on {stage}." +
+            (where is { Length: > 0 } ? $" Network: {Sanitize.Message(where)}." : ""),
+            action,
+            AccountId: uniqueId,
+            Ip: record.Ip,
+            At: DateTimeOffset.UtcNow), ct);
     }
 
     private async Task PostAsync(string line)

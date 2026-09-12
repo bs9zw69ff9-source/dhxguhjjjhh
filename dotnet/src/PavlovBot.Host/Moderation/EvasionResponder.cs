@@ -43,7 +43,12 @@ public sealed class EvasionResponder
     private readonly FeedWebhooks _feeds;
     private readonly MetricsRegistry _metrics;
     private readonly ILogger<EvasionResponder> _logger;
+    private readonly SecurityAlerts? _alerts;
 
+    /// <param name="alerts">
+    /// Where a catch is announced to a person. OPTIONAL - with none, every existing route
+    /// (the log, the connect feed, the ban itself) is unchanged and nobody is DM'd.
+    /// </param>
     public EvasionResponder(
         IpTrackingService tracking,
         BanService bans,
@@ -52,8 +57,10 @@ public sealed class EvasionResponder
         AuditLog audit,
         FeedWebhooks feeds,
         MetricsRegistry metrics,
-        ILogger<EvasionResponder> logger)
+        ILogger<EvasionResponder> logger,
+        SecurityAlerts? alerts = null)
     {
+        _alerts = alerts;
         ArgumentNullException.ThrowIfNull(tracking);
         _tracking = tracking;
         _bans = bans;
@@ -104,6 +111,12 @@ public sealed class EvasionResponder
                 "Check whether that flag should exist at all", name, join.Verdict.Detail);
             _metrics.Increment("autoban_refused_total", MetricLabels.Of("reason", "master"),
                 help: "Auto-bans refused by a protection");
+
+            /* ALERTED EVEN THOUGH NOTHING WAS DONE, and especially because nothing was done.
+               A master account matching an evasion flag is either a stale flag on an owner's
+               own address or somebody the bot will never stop - both need a human. */
+            await AlertAsync(name, join, "Matched a standing flag, but they are a master account. Nothing was done.", ct)
+                .ConfigureAwait(false);
             return AutoBanOutcome.Master;
         }
 
@@ -117,6 +130,9 @@ public sealed class EvasionResponder
                 name, join.Verdict.Detail);
             _metrics.Increment("autoban_refused_total", MetricLabels.Of("reason", "never-ban"),
                 help: "Auto-bans refused by a protection");
+
+            await AlertAsync(name, join, "Matched a standing flag, but they are on the never-ban list. Nothing was done.", ct)
+                .ConfigureAwait(false);
             return AutoBanOutcome.Protected;
         }
 
@@ -211,6 +227,11 @@ public sealed class EvasionResponder
         // it responded to rather than only in a channel nobody has open.
         await PostAsync(name, join, already).ConfigureAwait(false);
 
+        await AlertAsync(name, join, already
+                ? "Already banned. The ban was enforced again on every server."
+                : "Banned permanently, on every server.", ct)
+            .ConfigureAwait(false);
+
         return already ? AutoBanOutcome.EnforcedExisting : AutoBanOutcome.Banned;
     }
 
@@ -252,6 +273,10 @@ public sealed class EvasionResponder
         await SafePostAsync($"[AUTO-BAN SKIPPED] {Sanitize.Message(name)}  |  {join.Verdict.Detail}" +
                             "  |  their own served ban, lifted instead of re-banning").ConfigureAwait(false);
 
+        await AlertAsync(name, join,
+                "Their own served ban's leftovers, not evasion. The stale flags were lifted rather than re-banning.",
+                ct).ConfigureAwait(false);
+
         return AutoBanOutcome.Served;
     }
 
@@ -263,6 +288,32 @@ public sealed class EvasionResponder
         SafePostAsync($"[AUTO-BAN] {Sanitize.Message(name)}  |  {join.Verdict.Detail}" +
                       $" ({(join.Verdict.Manual ? "set by an owner" : "from a ban")})" +
                       (already ? "  |  already banned, removed again" : ""));
+
+    /// <summary>
+    /// Tell somebody, whatever was decided.
+    /// </summary>
+    /// <remarks>
+    /// EVERY OUTCOME, including the refusals. "We caught an evader and banned him" and "we
+    /// caught an evader and let him in because of a protection" are both things the person
+    /// who owns the server wants to hear about, and only one of them is visible from the
+    /// ban list afterwards.
+    /// </remarks>
+    private Task AlertAsync(string name, FlaggedJoin join, string action, CancellationToken ct)
+    {
+        if (_alerts is not { Enabled: true }) return Task.CompletedTask;
+
+        var source = join.Verdict.Manual ? "set by an owner" : "left by a previous ban";
+
+        return _alerts.PostAsync(new SecurityAlert(
+            SecurityAlertKind.Evasion,
+            name,
+            $"Their join matched {join.Verdict.Detail ?? join.Verdict.Match.ToString()} ({source}).",
+            action,
+            AccountId: join.AccountId,
+            Ip: join.Ip,
+            Alts: _tracking.AltsOf(join.AccountId).Select(a => a.Name ?? a.Id).ToList(),
+            At: DateTimeOffset.UtcNow), ct);
+    }
 
     private async Task SafePostAsync(string line)
     {
