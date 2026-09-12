@@ -152,7 +152,7 @@ public class PenalCodeTests
         Assert.Equal(2, booking.Charges.Count);
         Assert.Equal(6, booking.JailMinutes);
         Assert.Equal(85, booking.Bail);
-        Assert.Equal("$85", booking.BailLabel());
+        Assert.Equal("85 caps", booking.BailLabel());
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public class PenalCodeTests
         Assert.Equal(3, alone.JailMinutes);      // the sentence is fixed even so
 
         var withOthers = PenalCode.Book(["PC 100", "PC 700"]);
-        Assert.Equal("$10 + based on the associated charge", withOthers.BailLabel());
+        Assert.Equal("10 caps + based on the associated charge", withOthers.BailLabel());
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public class PenalCodeTests
         Assert.Empty(booking.Charges);
         Assert.True(booking.Bailable);
         Assert.Equal("No jail time", booking.SentenceLabel());
-        Assert.Equal("$0", booking.BailLabel());
+        Assert.Equal("0 caps", booking.BailLabel());
     }
 
     [Fact]

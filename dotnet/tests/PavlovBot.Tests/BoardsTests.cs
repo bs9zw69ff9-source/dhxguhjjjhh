@@ -62,7 +62,7 @@ public class BoardsTests : IDisposable
         var board = _boards.BuildCashBoard();
 
         Assert.NotNull(board);
-        Assert.Contains("Richest", board!.Title, StringComparison.Ordinal);
+        Assert.Contains("Deepest pockets", board!.Title, StringComparison.Ordinal);
         Assert.DoesNotContain("Playtime", board.Title, StringComparison.Ordinal);
     }
 
@@ -77,9 +77,11 @@ public class BoardsTests : IDisposable
         var board = _boards.BuildCashBoard();
 
         Assert.NotNull(board);
-        // Money reads "1,250$" now: the table puts the sign after the figure.
-        Assert.Contains("1,250$", board!.Description, StringComparison.Ordinal);
-        Assert.Contains("Richest", board.Title, StringComparison.Ordinal);
+        /* A bare figure in the table: the column header says Caps, and a unit or a glyph on
+           every row would break the alignment a fenced block exists for. */
+        Assert.Contains("1,250", board!.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("1,250$", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("Deepest pockets", board.Title, StringComparison.Ordinal);
         Assert.DoesNotContain("Playtime", board.Title, StringComparison.Ordinal);
         Assert.True(board.Description.IndexOf("Alice", StringComparison.Ordinal) <
                     board.Description.IndexOf("Bob", StringComparison.Ordinal));
@@ -95,7 +97,7 @@ public class BoardsTests : IDisposable
 
         /* 20 x 100, and both numbers live in the FOOTER now - the description is the table
            and a line of prose inside it would be the one thing that lines up with nothing. */
-        Assert.Contains("$2,000", board!.Footer!.Value.Text, StringComparison.Ordinal);
+        Assert.Contains("2,000 caps", board!.Footer!.Value.Text, StringComparison.Ordinal);
         Assert.Contains("20 ledger(s)", board.Footer!.Value.Text, StringComparison.Ordinal);
     }
 
@@ -235,7 +237,7 @@ public class BoardsTests : IDisposable
         var board = _boards.BuildWarrantBoard();
 
         Assert.NotNull(board);
-        Assert.Contains("No active warrants", board!.Title, StringComparison.Ordinal);
+        Assert.Contains("No open bounties", board!.Title, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -270,7 +272,7 @@ public class BoardsTests : IDisposable
         var board = _boards.BuildWarrantBoard();
 
         Assert.NotNull(board);
-        Assert.Contains("No active warrants", board!.Title, StringComparison.Ordinal);
+        Assert.Contains("No open bounties", board!.Title, StringComparison.Ordinal);
     }
 
     public void Dispose()

@@ -102,6 +102,11 @@ public sealed record FeatureOptions
     /// </remarks>
     public ulong? ModLogChannel { get; init; }
 
+    /// <summary>
+    /// The name stamped on every embed. <c>BOT_NAME</c>, which nothing read until now.
+    /// </summary>
+    public string? BotName { get; init; }
+
     /// <summary>Channel for bans, unbans and automatic bans. Falls back to the mod log.</summary>
     public ulong? BanLogChannel { get; init; }
 
@@ -350,6 +355,7 @@ public sealed record FeatureOptions
             ConnectWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
             StaffWebhook = Text(configuration, "STAFF_WEBHOOK_URL"),
             ModLogChannel = Snowflake(configuration, "MOD_LOG_CHANNEL"),
+            BotName = Text(configuration, "BOT_NAME"),
             BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
             PoliceLogChannel = Snowflake(configuration, "POLICE_LOG_CHANNEL"),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),

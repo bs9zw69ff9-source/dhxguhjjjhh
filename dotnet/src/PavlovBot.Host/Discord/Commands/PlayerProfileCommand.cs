@@ -147,7 +147,8 @@ public sealed class PlayerProfileCommand(PlayerIntelligenceService intelligence,
             embed.AddField("Faction", $"{faction} — **{p.Faction.Rank}**", inline: true);
 
         if (p.Economy.Balance is { } balance)
-            embed.AddField("Balance", $"${balance:N0}" + (p.Economy.OwedWages > 0 ? $" (+${p.Economy.OwedWages:N0} owed)" : ""), inline: true);
+            embed.AddField("Caps", Lore.Amount(balance) +
+                (p.Economy.OwedWages > 0 ? $" (+{Lore.Amount(p.Economy.OwedWages)} owed)" : ""), inline: true);
 
         embed.AddField("Risk", $"**{p.Risk.Score}/100** — {p.Risk.Band.ToString().ToUpperInvariant()} " +
             $"({p.Risk.Confidence.ToString().ToLowerInvariant()} confidence)\n" +

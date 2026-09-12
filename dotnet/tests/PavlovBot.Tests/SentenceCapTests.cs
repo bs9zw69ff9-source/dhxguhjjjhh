@@ -165,14 +165,14 @@ public class SentenceCapTests
     {
         /* A blank price column is indistinguishable from a charge that costs nothing, and
            the difference between "free" and "you cannot pay this" is the whole point. */
-        Assert.Equal("2 min, $10", ArrestCommand.ChargeLine(PenalCode.Get("PC 100")!, 1.0));
+        Assert.Equal("2 min, 10 caps", ArrestCommand.ChargeLine(PenalCode.Get("PC 100")!, 1.0));
         Assert.Equal("3 min, no bail", ArrestCommand.ChargeLine(PenalCode.Get("PC 801")!, 1.0));
-        Assert.Equal("no jail, $50", ArrestCommand.ChargeLine(PenalCode.Get("VC 600")!, 1.0));
+        Assert.Equal("no jail, 50 caps", ArrestCommand.ChargeLine(PenalCode.Get("VC 600")!, 1.0));
         Assert.Equal("3 min, bail from the associated charge", ArrestCommand.ChargeLine(PenalCode.Get("PC 700")!, 1.0));
         Assert.Equal("ranges with the associated charge, no bail", ArrestCommand.ChargeLine(PenalCode.Get("PC 707")!, 1.0));
     }
 
     [Fact]
     public void TheReceiptShowsTheScaledPrice() =>
-        Assert.Equal("2 min, $20", ArrestCommand.ChargeLine(PenalCode.Get("PC 100")!, 2.0));
+        Assert.Equal("2 min, 20 caps", ArrestCommand.ChargeLine(PenalCode.Get("PC 100")!, 2.0));
 }

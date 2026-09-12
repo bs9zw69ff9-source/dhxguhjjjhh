@@ -169,7 +169,7 @@ public abstract class BanCommandBase : ISlashCommand
             flags?.Pending == true ? " (pending confirmation)" : "", EasternTime.Stamp(now));
 
         var embed = Theme.Punishment(
-            permanent ? $"{Theme.Deny} Permanently banned" : $"{Theme.Deny} Banned",
+            permanent ? $"{Theme.Deny} Exiled from {Lore.World}" : $"{Theme.Deny} Run out of {Lore.World}",
             $"**{Sanitize.Code(name)}** — {Sanitize.Code(record.Reason ?? "no reason given")}")
             .AddField("Length", permanent ? "Permanent" : $"{record.DurationLabel} (until {Theme.Relative(record.Expires!.Value)})", true)
             .AddField("Issued by", command.User.Username, true);
@@ -360,7 +360,7 @@ public sealed class UnbanCommand(
 
         await Audit.RecordAsync("unban", command.User.Username, player, existing.Reason, ct).ConfigureAwait(false);
 
-        var embed = Theme.Success("Ban lifted", $"**{Sanitize.Code(player)}** may reconnect.")
+        var embed = Theme.Success("Exile lifted", $"**{Sanitize.Code(player)}** may walk back in.")
             .AddField("Was", $"{Sanitize.Code(existing.Reason ?? "no reason recorded")} — by {existing.Moderator ?? "unknown"}")
             .AddField("Lifted by", command.User.Username, true);
 
@@ -403,7 +403,7 @@ public sealed class CheckBanCommand(
             var body = $"**{Sanitize.Code(player)}** is not banned by this bot.\n\n{BanFileReport.Describe(listed)}";
 
             await Reply(command, listed.Listed
-                ? Theme.Punishment($"{Theme.Deny} Banned by the server", body)
+                ? Theme.Punishment($"{Theme.Deny} Exiled by the server", body)
                     .AddField("Lift it", "`/unban` removes them from that file.")
                     .Brand()
                 : Theme.Success("No ban on record", body)).ConfigureAwait(false);
@@ -414,12 +414,12 @@ public sealed class CheckBanCommand(
         {
             // A record whose time has passed but which the sweep has not cleared yet. Say
             // so plainly rather than reporting them as banned.
-            await Reply(command, Theme.Notice("Ban served",
+            await Reply(command, Theme.Notice("Sentence served",
                 $"**{Sanitize.Code(player)}** served their ban; it expired {Theme.Relative(record.Expires!.Value)}.")).ConfigureAwait(false);
             return;
         }
 
-        var embed = Theme.Punishment($"{Theme.Deny} Banned", $"**{Sanitize.Code(player)}**")
+        var embed = Theme.Punishment($"{Theme.Deny} Exiled", $"**{Sanitize.Code(player)}**")
             .AddField("Reason", Sanitize.Code(record.Reason ?? "none recorded"))
             .AddField("By", record.Moderator ?? "unknown", true)
             .AddField("Since", record.At is { } at ? Theme.Relative(at) : "unknown", true)

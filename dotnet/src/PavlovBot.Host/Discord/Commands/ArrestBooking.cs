@@ -101,7 +101,7 @@ public sealed class ArrestBooking(ILogger<ArrestBooking> logger) : IComponentHan
             ? "*No charges yet.*"
             : string.Join("\n", result.Charges.Select(c =>
                 $"`{c.Code}`  {c.Name} — {c.Class}" +
-                (c.BailAt(booking.Rate) is { } b ? $" • ${b:N0}" : "")));
+                (c.BailAt(booking.Rate) is { } b ? $" • {Lore.Amount(b)}" : "")));
 
         var sentence = $"**Jail:** {result.SentenceLabel()}" +
                        (booking.Minutes is not null ? " *(set by you)*" : "") +

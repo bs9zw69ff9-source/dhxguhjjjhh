@@ -40,13 +40,23 @@ public static class Theme
     public const string Dot = "•";
     public const string Up = "🟢";
     public const string Down = "🔴";
-    public const string Money = "💰";
+    /// <summary>Money. Caps, not coins - see <see cref="Lore"/>.</summary>
+    public const string Money = Lore.Caps;
     public const string Rank = "🏅";
 
     public const string Divider = "────────────────────────────";
 
-    /// <summary>The name stamped on branded embeds. Set BOT_NAME to skin the bot per server.</summary>
-    public static string BrandName { get; set; } = "Server Authority";
+    /// <summary>
+    /// The name stamped on every branded embed. <c>BOT_NAME</c> skins the bot per server.
+    /// </summary>
+    /// <remarks>
+    /// IT WAS NEVER READ. <c>.env.example</c> has documented BOT_NAME as "stamped on every
+    /// embed" since the port, and nothing set this property or printed it - a skin that
+    /// silently did nothing, which is the kind of port gap that only shows up when somebody
+    /// sets the variable and waits for a change that never comes. <see cref="Brand"/> now
+    /// stamps it, and Program wires the variable in.
+    /// </remarks>
+    public static string BrandName { get; set; } = "Mojave Authority";
 
     // Discord's hard limits. Exceeding any one of them rejects the entire message.
     private const int MaxTitle = 256;
@@ -59,15 +69,24 @@ public static class Theme
     /// Apply the house style and clamp everything to Discord's limits.
     /// </summary>
     /// <remarks>
-    /// Deliberately minimal: colour bar, title, body. No author header, no thumbnail, no
-    /// default footer, no timestamp - the clean look the help menu established. Any
-    /// timestamp a call site set is stripped so every embed in the bot looks the same.
+    /// Deliberately minimal: colour bar, title, body, and the brand name in the footer. No
+    /// author header, no thumbnail, no timestamp - the clean look the help menu established.
+    /// Any timestamp a call site set is stripped so every embed in the bot looks the same.
     /// </remarks>
     public static EmbedBuilder Brand(this EmbedBuilder embed, string? footer = null)
     {
         ArgumentNullException.ThrowIfNull(embed);
 
-        if (footer is { Length: > 0 }) embed.WithFooter(Truncate(footer, 2048));
+        /* THE BRAND GOES ON EVERYTHING, which is what makes a wall of embeds read as one
+           bot rather than thirty commands. The caller's footer keeps its place after it, so
+           "Mojave Authority • Updated 14:02 Eastern" is the shape every board and card
+           shares. Composed from the argument, never from the footer already set, so branding
+           an embed twice cannot stack the name up. */
+        var stamp = footer is { Length: > 0 }
+            ? $"{BrandName} {Dot} {footer}"
+            : BrandName;
+
+        if (stamp is { Length: > 0 }) embed.WithFooter(Truncate(stamp, 2048));
         embed.Timestamp = null;
 
         if (embed.Title is { Length: > MaxTitle }) embed.Title = Truncate(embed.Title, MaxTitle);
