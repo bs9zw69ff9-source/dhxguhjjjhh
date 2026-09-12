@@ -330,6 +330,19 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
+        if (_features.PlayerBoardChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "player-board",
+                Interval = _features.LeaderboardInterval,
+                Tick = ct => _autoPost.PostAsync("players", _features.PlayerBoardChannel,
+                    () => _boards.BuildPlayerBoardAsync(ct), ct),
+                // It renders the roster cache, so it posts after the sweep that fills it.
+                DependsOn = ["player-cache"],
+            });
+        }
+
         if (_features.PlayerCountChannels.Count > 0 || _features.ShackTotalChannel is not null)
         {
             /* FIVE MINUTES, and the interval is load-bearing. Discord allows two channel

@@ -5,6 +5,7 @@ using PavlovBot.Core.Data;
 using PavlovBot.Core.Text;
 using PavlovBot.Core.Time;
 using PavlovBot.Host.Discord.Commands;
+using PavlovBot.Host.Factions;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Storage;
 
@@ -25,7 +26,13 @@ public sealed record PlaytimeEntry(string Player, long Minutes, DateTimeOffset? 
 /// cycle". An empty board would overwrite yesterday's real one with "no data" during a
 /// restart or a transient read failure - showing stale numbers is strictly better.
 /// </remarks>
-public sealed class Boards(SerializedStore store, RconRegistry rcon, string? ledgerDirectory = null)
+/// <param name="rosters">
+/// The faction rosters, for the affiliation tag on the player board. OPTIONAL, and null
+/// simply leaves the names untagged - the board is still worth posting on an install with no
+/// roster directory configured.
+/// </param>
+public sealed class Boards(
+    SerializedStore store, RconRegistry rcon, string? ledgerDirectory = null, RosterService? rosters = null)
 {
     /// <summary>How many rows every board except the richest one shows.</summary>
     private const int ArrestRows = 15;
@@ -203,6 +210,55 @@ public sealed class Boards(SerializedStore store, RconRegistry rcon, string? led
        Playtime is still ACCUMULATED above, because `/whitelist playtime` reports it and the
        Node bot reads the same dataset. Tracking it costs one write a minute; stopping would
        leave that command answering with numbers frozen at the cutover. */
+
+    /// <summary>
+    /// Who is online, per server, with their faction beside the name.
+    /// </summary>
+    /// <remarks>
+    /// OFF THE ROSTER CACHE THE RCON SWEEP ALREADY FILLED, so the board costs no round trip
+    /// and cannot disagree with <c>/players</c> about who is on.
+    ///
+    /// The affiliation comes from the ROSTER FILES, which are the source of truth the game
+    /// itself reads - not from the faction-member index, which only covers people added
+    /// through <c>/whitelist add</c> and would leave anyone hand-added to a file looking like
+    /// a civilian. One pass over the rank files answers every name on the board; see
+    /// <see cref="RosterService.AffiliationsAsync"/> for why that matters at a tick a minute.
+    /// </remarks>
+    public async Task<Embed?> BuildPlayerBoardAsync(CancellationToken ct = default)
+    {
+        var affiliation = rosters is null
+            ? new Dictionary<string, Membership>(StringComparer.OrdinalIgnoreCase)
+            : await rosters.AffiliationsAsync(ct).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var servers = new List<BoardRoster>();
+
+        foreach (var server in rcon.Servers)
+        {
+            var snapshot = rcon.Roster(server);
+
+            /* A roster that has never been fetched is NOT an empty server. MinValue is how
+               the cache says "no sweep has landed", and reporting that as nobody online is
+               the lie the old board told on every restart. */
+            var answered = snapshot.TakenAt != DateTimeOffset.MinValue;
+
+            var players = snapshot.Players
+                .Select(p => p.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .Select(n => new BoardPlayer(n, affiliation.GetValueOrDefault(n)?.Faction.Name))
+                .ToList();
+
+            servers.Add(new BoardRoster(
+                server,
+                players,
+                answered ? now - snapshot.TakenAt : null,
+                Stale: answered && !rcon.RosterIsFresh(server),
+                rcon.RosterProblem(server)));
+        }
+
+        return PlayerBoard.Build(servers, now);
+    }
 
     /// <summary>Players ranked by jail time served - the "most wanted" board.</summary>
     public Embed? BuildArrestBoard()

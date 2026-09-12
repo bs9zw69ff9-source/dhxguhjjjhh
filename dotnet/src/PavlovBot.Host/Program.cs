@@ -361,7 +361,11 @@ public static class Program
         builder.Services.AddSingleton(sp => new Boards(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<RconRegistry>(),
-            features.LedgerDirectory));
+            features.LedgerDirectory,
+            /* The player board tags each name with its faction, and the rosters are the only
+               source of truth for that. Resolved through the provider because RosterService
+               is registered below; neither depends on the other, so there is no cycle. */
+            sp.GetRequiredService<RosterService>()));
 
         /* THE CONFIGURED SET, NOT THE DEFAULT. Both of these take it as an optional
            parameter so tests and existing callers keep working, which means forgetting to

@@ -22,9 +22,9 @@ namespace PavlovBot.Host.Discord;
 /// changes per player is one you have to read carefully to notice something is missing;
 /// a constant shape means an empty field is visible at a glance.
 ///
-/// IT MUST NOT BE POSSIBLE TO BUILD A CARD DISCORD REJECTS, and that is what the local
-/// <c>Add</c> is for. <c>EmbedBuilder.Build()</c> validates EAGERLY AND THROWS:
-/// <c>ArgumentException</c> on a field that is empty or over 1024 characters, and
+/// IT MUST NOT BE POSSIBLE TO BUILD A CARD DISCORD REJECTS, and that is what
+/// <see cref="EmbedBudget"/> is for. <c>EmbedBuilder.Build()</c> validates EAGERLY AND
+/// THROWS: <c>ArgumentException</c> on a field that is empty or over 1024 characters, and
 /// <c>InvalidOperationException</c> when the whole embed exceeds 6000.
 ///
 /// This is a guard, not a fix for a reproduced failure - the distinction matters, because
@@ -41,18 +41,6 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public static class ConnectCard
 {
-    /// <summary>Discord's per-field cap, enforced by <c>EmbedBuilder.Build()</c>.</summary>
-    private const int FieldLimit = 1024;
-
-    /// <summary>
-    /// Discord's total is 6000. Staying under it leaves room for the title, description and
-    /// branded footer, which are not counted as fields but do count towards the total.
-    /// </summary>
-    private const int TotalBudget = 5400;
-
-    /// <summary>Discord's title cap is 256.</summary>
-    private const int TitleLimit = 200;
-
     public static Embed Build(
         string name,
         string accountId,
@@ -71,42 +59,23 @@ public static class ConnectCard
         var who = Sanitize.Message(name);
         var where = Sanitize.Message(server);
 
-        var title = Truncate($"Player information: {who}", TitleLimit);
+        var title = EmbedBudget.Truncate($"Player information: {who}", EmbedBudget.TitleLimit);
         var description = $"{who} just connected on **{where}**.";
 
         var embed = new EmbedBuilder()
             .WithColor(flagged ? Theme.BanRed : vpn?.Decision.Flagged == true ? Theme.Amber : Theme.Green)
             .WithTitle(title)
-            .WithDescription(Truncate(description, 2048));
+            .WithDescription(EmbedBudget.Truncate(description, 2048));
 
         /* The running total, seeded with everything that counts towards Discord's 6000 but
            is not a field. Add() spends what is left, IN THE ORDER THE FIELDS ARE ADDED - so
            the address and the account id, which are the reason anyone opens this card, are
-           charged first and can never be the ones squeezed out. */
-        var used = title.Length + description.Length + 80;   // 80: the branded footer
+           charged first and can never be the ones squeezed out. A field with nothing left to
+           spend is dropped: that costs one line of a card, where letting Build() throw costs
+           the card and used to cost the rest of the log poll with it. */
+        var budget = new EmbedBudget(embed, title.Length + description.Length + EmbedBudget.FooterAllowance);
 
-        void Add(string label, string? value, bool inline = false)
-        {
-            /* An empty value is an ArgumentException from Build(), not a blank field. Every
-               caller below already substitutes "unknown", but a name that sanitizes away to
-               nothing would still get here - and one alt with an unprintable name would
-               otherwise take down the whole card. */
-            var text = string.IsNullOrWhiteSpace(value) ? "unknown" : value;
-
-            var room = Math.Min(FieldLimit, TotalBudget - used - label.Length);
-            if (room < 8)
-            {
-                /* Out of budget. Dropping a trailing field costs one line of a card;
-                   letting Build() throw costs the card, and used to cost the rest of the
-                   log poll with it. */
-                return;
-            }
-
-            if (text.Length > room) text = Truncate(text, room);
-
-            embed.AddField(label, text, inline);
-            used += label.Length + text.Length;
-        }
+        void Add(string label, string? value, bool inline = false) => budget.Add(label, value, inline);
 
         /* Address and account id in inline code so they are one tap to copy - these are the
            two things somebody reading this card is most likely to want in their clipboard. */
@@ -278,6 +247,4 @@ public static class ConnectCard
             ? known ? "**YES**" : "**No**"
             : known ? "Yes" : "No";
     }
-
-    private static string Truncate(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
 }
