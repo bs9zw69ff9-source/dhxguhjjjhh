@@ -480,7 +480,7 @@ public sealed class StripMenuCommand(
             {
                 // RemoveMenu, not "StripMenu" - RCON+ has no such verb, so revoking looked
                 // like it worked and left the menu in place.
-                foreach (var line in RconMenu.Revoke(rcon.TargetForName(player), wasHighStaff: true))
+                foreach (var line in RconMenu.Revoke(player, wasHighStaff: true))
                     await rcon.SendAsync(server, line, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

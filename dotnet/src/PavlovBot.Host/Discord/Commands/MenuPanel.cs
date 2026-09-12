@@ -205,7 +205,7 @@ public sealed class MenuPanel(
         foreach (var server in rcon.Servers)
         {
             var ok = false;
-            foreach (var line in RconMenu.Grant(rcon.TargetForName(name), tier))
+            foreach (var line in RconMenu.Grant(name, tier))
                 ok |= await TrySend(server, line, ct).ConfigureAwait(false);
             if (ok) delivered++;
         }
@@ -241,7 +241,7 @@ public sealed class MenuPanel(
     {
         foreach (var server in rcon.Servers)
         {
-            foreach (var line in RconMenu.Revoke(rcon.TargetForName(name), wasHighStaff: true))
+            foreach (var line in RconMenu.Revoke(name, wasHighStaff: true))
                 await TrySend(server, line, ct).ConfigureAwait(false);
         }
 

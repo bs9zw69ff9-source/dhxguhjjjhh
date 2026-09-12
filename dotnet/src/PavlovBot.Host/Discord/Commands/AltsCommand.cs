@@ -57,11 +57,9 @@ public sealed class AltsCommand(IpTrackingService tracking, Access access) : ISl
             return;
         }
 
-        /* WHICHEVER IDENTIFIER THEY HAVE IN FRONT OF THEM. Pavlov gives a player three, and
-           none of them looks like the others: the display name, the EOS id, and the platform
-           account id - a plain number, which is what a kill record carries and what somebody
-           ends up pasting in having found it with no name attached. */
-        var subject = tracking.Resolve(query);
+        // By id first, then by name - staff type whichever they have in front of them, and
+        // an account id looks nothing like a name so there is no ambiguity to resolve.
+        var subject = tracking.Account(query) ?? tracking.AccountByName(query);
 
         if (subject is null)
         {

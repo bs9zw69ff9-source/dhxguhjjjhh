@@ -126,7 +126,7 @@ public sealed class BanService
            The same resolution as UnbanEverywhereAsync, deliberately: a ban and its lift have
            to name the same thing, and the cheapest way to guarantee that is for both to
            resolve it the same way in one place. */
-        var source = RconTarget(name, uniqueId) ?? name;
+        var source = uniqueId ?? _evidence?.AccountIdFor(name) ?? name;
         var target = Sanitize.Id(source);
 
         if (target.Length == 0)
@@ -197,38 +197,13 @@ public sealed class BanService
     /// a player left natively banned on one of three servers is a support ticket that
     /// makes no sense to anyone unless this line is in the log.
     /// </remarks>
-    /// <summary>
-    /// The identifier to put in an RCON command for this player.
-    /// </summary>
-    /// <remarks>
-    /// THE SERVER WORKS IN PLATFORM IDS, and a command naming anything else is accepted,
-    /// answered, and enforces nothing - a ban that reports success and leaves the player on
-    /// the server. So every player-targeting command resolves through here.
-    ///
-    /// THE LIVE ROSTER FIRST. It is the server's own answer to "who is here and what do I
-    /// call them", so it beats anything inferred from a log, and the player being kicked is
-    /// by definition on it. The account registry answers for somebody offline.
-    ///
-    /// A CALLER-SUPPLIED ID IS RESOLVED, NOT TRUSTED. Stored ban records carry the EOS id -
-    /// that is what UniqueId has always held - so passing it straight through is the bug this
-    /// exists to stop. Resolving it lands on the same account and yields the platform id.
-    /// </remarks>
-    private string? RconTarget(string name, string? uniqueId)
-    {
-        if (_rcon.IdForName(name) is { Length: > 0 } online) return online;
-        if (_evidence?.RconTargetFor(uniqueId ?? name) is { Length: > 0 } known) return known;
-
-        // Nothing recorded. The caller's id is still better than the display name.
-        return uniqueId;
-    }
-
     public async Task<EnforcementResult> UnbanEverywhereAsync(string name, string? uniqueId = null, CancellationToken ct = default)
     {
         /* THE ID FIRST, ALWAYS, and fall back to looking it up rather than to the display
            name. Pavlov's Unban takes a UniqueId; a display name is accepted, answers
            normally, and lifts nothing. Every ban this bot issues against a known player is
            enforced by id, so unbanning by name could only ever have been a no-op. */
-        var resolved = RconTarget(name, uniqueId);
+        var resolved = uniqueId ?? _evidence?.AccountIdFor(name);
         var target = Sanitize.Id(resolved ?? name);
 
         if (target.Length == 0)
@@ -374,10 +349,7 @@ public sealed class BanService
                    the player stayed unbanned while the log said otherwise. */
                 try
                 {
-                    // THE SWEEP SENT THE DISPLAY NAME. The server works in platform ids, so
-                    // every re-application was accepted and enforced nothing.
-                    await _rcon.SendVerifiedAsync(server, $"Ban {Sanitize.Id(RconTarget(name, ban.UniqueId) ?? name)}", ct)
-                        .ConfigureAwait(false);
+                    await _rcon.SendVerifiedAsync(server, $"Ban {name}", ct).ConfigureAwait(false);
                     applied++;
                 }
                 catch (RconRejectedException ex)
@@ -607,17 +579,6 @@ public interface IBanEvidence
 {
     /// <summary>The account id a display name belongs to, or null if never seen.</summary>
     string? AccountIdFor(string name);
-
-    /// <summary>
-    /// The identifier RCON targets for this player - the platform id.
-    /// </summary>
-    /// <remarks>
-    /// SEPARATE FROM <see cref="AccountIdFor"/> ON PURPOSE, because they are different
-    /// identifiers for different jobs and using one where the other belongs fails silently in
-    /// both directions. The evasion flags are keyed on the EOS id; the SERVER works in
-    /// platform ids. A ban sent with an EOS id is accepted and enforces nothing.
-    /// </remarks>
-    string? RconTargetFor(string? identifier);
 
     /// <summary>Drop the address, name and id flags a ban created for one account.</summary>
     Task ClearFlagsAsync(string accountId, CancellationToken ct = default);
