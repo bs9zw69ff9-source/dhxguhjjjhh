@@ -54,7 +54,7 @@ public sealed class KickCommand(RconRegistry rcon, BanService bans, AuditLog aud
             player, command.User.Username, result.Servers, reason);
 
         await Reply(command, result.Landed
-            ? Theme.Success("Kicked", $"**{Sanitize.Code(player)}**{(reason.Length > 0 ? $" — {Sanitize.Code(reason)}" : "")}")
+            ? Theme.Success("Thrown out", $"**{Sanitize.Code(player)}**{(reason.Length > 0 ? $" — {Sanitize.Code(reason)}" : "")}")
                 .AddField("By", command.User.Username, true)
             : Theme.Failure("Not kicked",
                 $"No server accepted the command. {(online.UniqueId.Length == 0 ? "They may not be online." : "")}")).ConfigureAwait(false);
@@ -301,7 +301,7 @@ public sealed class HelpCommand(CommandCatalog catalog, Access access) : ISlashC
 
         var pages = Theme.Paginate(lines);
 
-        var embed = Theme.Notice($"{Theme.Info} Commands",
+        var embed = Theme.Notice($"{Theme.Info} Terminal — available commands",
             $"Your access: **{level}**\n\n{pages[0]}")
             .Brand(pages.Count > 1 ? $"Page 1 of {pages.Count}" : null);
 

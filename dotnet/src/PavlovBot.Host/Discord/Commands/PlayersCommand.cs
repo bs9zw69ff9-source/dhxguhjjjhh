@@ -77,12 +77,12 @@ public sealed class PlayersCommand(RconRegistry rcon, Paged paged) : ISlashComma
             }
 
             sections.Add(heading + "\n" +
-                         (roster.Players.Count > 0 ? string.Join(" ", names) : "*nobody*"));
+                         (roster.Players.Count > 0 ? string.Join(" ", names) : "*nobody out there*"));
         }
 
         var title = reported > 0
-            ? $"Online — {total} player(s){(anyStale ? " (some data is stale)" : "")}"
-            : "Online";
+            ? $"{Lore.Wastelanders(total)} out in {Lore.World}{(anyStale ? " (some data is stale)" : "")}"
+            : $"Out in {Lore.World}";
 
         /* PAGED, because a full server's roster can exceed an embed's limits and the board
            this replaces simply truncated. Paged sends a plain embed when it fits on one

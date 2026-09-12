@@ -70,11 +70,6 @@ internal static partial class PlayerBoard
     /// </remarks>
     private const int MaxColumnsPerServer = 4;
 
-    /* THE FLAVOUR LINE, which is the one thing on this board that is not a fact about the
-       server. Two forms because "1 couriers" is the sort of thing that gets noticed, and a
-       board is read far more often than it is written. Reword both together. */
-    private const string Flavour = "couriers roaming the Mojave right now.";
-    private const string FlavourOne = "courier roaming the Mojave right now.";
 
     /// <summary>
     /// The board, or null when there is nothing yet worth replacing what is already posted.
@@ -107,7 +102,7 @@ internal static partial class PlayerBoard
                 ? "No server has answered yet."
                 // A quote block, so the count reads as a caption under the title rather than
                 // as the first line of the list.
-                : $"> **{total}** *{(total == 1 ? FlavourOne : Flavour)}*";
+                : $"> **{total}** *{Lore.Roaming(total)}*";
 
         var embed = new EmbedBuilder()
             .WithColor(answered.Count == 0 ? Theme.Grey : stale || broken ? Theme.Amber : Theme.Green)

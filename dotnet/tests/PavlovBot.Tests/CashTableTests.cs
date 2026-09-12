@@ -33,15 +33,16 @@ public class CashTableTests
             ("ardacc1337", 1_000_207));
 
         var lines = Lines(block);
-        var moneyColumn = lines[0].IndexOf("Money", StringComparison.Ordinal);
+        var moneyColumn = lines[0].IndexOf("Caps", StringComparison.Ordinal);
 
-        Assert.Equal("#    Username                     Money", lines[0]);
-        Assert.Equal("1    notgg1229mm             7,747,661$", lines[1]);
-        Assert.Equal("2    TheonlyCrazyGrape9689   1,442,892$", lines[2]);
-        Assert.Equal("3    ardacc1337              1,000,207$", lines[3]);
+        Assert.Equal("#    Username                     Caps", lines[0]);
+        Assert.Equal("1    notgg1229mm             7,747,661", lines[1]);
+        Assert.Equal("2    TheonlyCrazyGrape9689   1,442,892", lines[2]);
+        Assert.Equal("3    ardacc1337              1,000,207", lines[3]);
 
-        // The header's last character sits on the money column's last character.
-        foreach (var line in lines) Assert.Equal(moneyColumn + "Money".Length, line.TrimEnd().Length);
+        // Every row ends on the same character, which is what right-alignment means here.
+        Assert.All(lines, line => Assert.Equal(lines[1].Length, line.TrimEnd().Length));
+        Assert.True(moneyColumn > 0, "the header names the caps column");
     }
 
     [Fact]
@@ -53,8 +54,8 @@ public class CashTableTests
         var (block, _) = Table(("Rich", 7_747_661), ("Poor", 12));
 
         var lines = Lines(block);
-        Assert.EndsWith("7,747,661$", lines[1], StringComparison.Ordinal);
-        Assert.EndsWith("       12$", lines[2], StringComparison.Ordinal);
+        Assert.EndsWith("7,747,661", lines[1], StringComparison.Ordinal);
+        Assert.EndsWith("       12", lines[2], StringComparison.Ordinal);
         Assert.Equal(lines[1].Length, lines[2].Length);
     }
 
@@ -132,6 +133,6 @@ public class CashTableTests
         var (block, shown) = Boards.CashTable([], Budget);
 
         Assert.Equal(0, shown);
-        Assert.Equal("```\n#    Username   Money\n```", block);
+        Assert.Equal("```\n#    Username   Caps\n```", block);
     }
 }

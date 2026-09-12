@@ -99,6 +99,13 @@ public static class Program
 
         var features = FeatureOptions.Bind(builder.Configuration);
 
+        /* THE SKIN, applied before anything can build an embed. BOT_NAME has been documented
+           as "stamped on every embed" since the port and read by nothing; Theme.Brand puts it
+           in the footer of every one. Unset keeps the default name rather than an empty
+           stamp - a blank footer is not a skin, it is a bug that looks like a skin. */
+        if (features.BotName is { Length: > 0 } botName)
+            Discord.Theme.BrandName = botName;
+
         /* THE FACTION SET, resolved before anything is registered because a bad one is a
            configuration error and belongs with the others - reported in full, then exit,
            rather than surfacing as an empty picker three subsystems later.

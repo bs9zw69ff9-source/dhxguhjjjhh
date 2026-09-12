@@ -281,15 +281,17 @@ public sealed record Booking(
         return parts.Count > 0 ? string.Join(" + ", parts) : "No jail time";
     }
 
-    /// <summary>"$250", "No bail - the sentence must be served", "Based on the associated charge".</summary>
+    /// <summary>"250 caps", "No bail - the sentence must be served", "Based on the associated charge".</summary>
     public string BailLabel()
     {
-        /* Checked FIRST, and it wins outright. A booking that shows a dollar figure the
-           player cannot actually pay is worse than showing none: they queue up at the
-           station with the money and nobody can tell them why it will not work. */
+        /* Checked FIRST, and it wins outright. A booking that shows a price the player
+           cannot actually pay is worse than showing none: they queue up at the station with
+           the caps and nobody can tell them why it will not work. */
         if (!Bailable) return "No bail - the sentence must be served";
 
-        var amount = "$" + Bail.ToString("N0", CultureInfo.GetCultureInfo("en-US"));
+        // CAPS, which is what the server's currency is called. Core cannot see Host's Lore,
+        // so the one other place that formats money is Lore.Amount - keep them in step.
+        var amount = Bail.ToString("N0", CultureInfo.InvariantCulture) + " caps";
 
         if (!AssociatedBail) return amount;
 

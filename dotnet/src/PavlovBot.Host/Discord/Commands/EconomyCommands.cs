@@ -130,14 +130,14 @@ public sealed class CapsCommand : ISlashCommand
         _logger.LogInformation("{Command} | player=\"{Player}\" | {Before} -> {After} | by={By}",
             Name, player, change.Before, change.After, command.User.Username);
 
-        await Reply(command, Theme.Success($"{Theme.Money} Balance updated",
+        await Reply(command, Theme.Success($"{Theme.Money} Caps moved",
             $"**{Sanitize.Code(player)}** — {(amount > 0 ? "+" : "")}{Money(amount)}")
             .AddField("Was", Money(change.Before), true)
             .AddField("Now", Money(change.After), true)
             .AddField("By", command.User.Username, true)).ConfigureAwait(false);
     }
 
-    private static string Money(long value) => $"${value.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}";
+    private static string Money(long value) => Lore.Amount(value);
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
         command.ModifyOriginalResponseAsync(m =>
@@ -214,7 +214,7 @@ public sealed class WagesCommand(Payroll payroll) : ISlashCommand
         await Reply(command, embed).ConfigureAwait(false);
     }
 
-    private static string Money(long value) => $"${value.ToString("N0", CultureInfo.GetCultureInfo("en-US"))}";
+    private static string Money(long value) => Lore.Amount(value);
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
         command.ModifyOriginalResponseAsync(m =>
