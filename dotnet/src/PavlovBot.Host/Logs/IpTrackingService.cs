@@ -48,30 +48,7 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
     /// id to send an Unban that actually lifts anything, and has no business with the rest of
     /// this class.
     /// </remarks>
-    /// <summary>The EOS id for a name. Keyed to the evasion flags, NOT to RCON.</summary>
     public string? AccountIdFor(string name) => AccountByName(name)?.Id;
-
-    /// <summary>
-    /// The identifier to put in an RCON command for this player.
-    /// </summary>
-    /// <remarks>
-    /// THE SERVER WORKS IN PLATFORM IDS. Pavlov targets a player by platform account id
-    /// server-side - a plain number - and a command naming anything else is ACCEPTED,
-    /// answered, and enforces nothing. That is the worst failure shape available here: a ban
-    /// that reports success and leaves the player on the server.
-    ///
-    /// So this is the one place that answers "what do I send", and it takes whichever
-    /// identifier the caller happens to hold - a display name off a command, an EOS id off a
-    /// stored ban record, or a platform id already. All three resolve to the same account and
-    /// the same target.
-    ///
-    /// FALLS BACK TO THE EOS ID rather than to null. An account seen before the platform id
-    /// was being recorded has no number yet, and the EOS id is what the bot used to send: no
-    /// worse than before, where null would turn every such ban into a no-op. The fallback
-    /// shrinks to nothing as players rejoin.
-    /// </remarks>
-    public string? RconTargetFor(string? identifier) =>
-        Resolve(identifier) is { } account ? account.PlatformId ?? account.Id : null;
 
     /* EXPLICIT, because the public method answers with a FlagOutcome and the interface must
        not: FlagOutcome lives here, and putting it on IBanEvidence would drag log-ingestion
@@ -96,9 +73,6 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 
     /// <summary>Assembled from lines that may arrive split across several.</summary>
     private readonly Dictionary<string, KillEvent> _partialKills = new(StringComparer.Ordinal);
-
-    /// <summary>A platform id seen, waiting for the Joined line that names its account.</summary>
-    private readonly Dictionary<string, string> _pendingPlatformIds = new(StringComparer.Ordinal);
 
     public IpTrackingService(
         SerializedStore store,
@@ -219,33 +193,6 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
     public AccountRecord? AccountByName(string name) =>
         LoadAccounts().Values.FirstOrDefault(a => a.Names.Contains(name, StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>Look an account up by its platform account id.</summary>
-    public AccountRecord? AccountByPlatformId(string platformId) =>
-        string.IsNullOrWhiteSpace(platformId)
-            ? null
-            : LoadAccounts().Values.FirstOrDefault(a => string.Equals(a.PlatformId, platformId, StringComparison.Ordinal));
-
-    /// <summary>
-    /// Find a player from whatever identifier somebody has in front of them.
-    /// </summary>
-    /// <remarks>
-    /// THREE IDENTIFIERS FOR ONE PERSON, and which one you hold depends on where you found
-    /// them. The display name comes off a feed, the EOS id off a ban file, and the platform
-    /// id off a kill record or a login line - and until now only the first two led anywhere.
-    /// Pasting the third into any command answered "no record of this player at all", which
-    /// is the one answer that is certainly wrong.
-    ///
-    /// Ordered by cost: the account map is keyed on the EOS id, so that is a lookup; the
-    /// other two are scans over a handful of entries.
-    /// </remarks>
-    public AccountRecord? Resolve(string? identifier)
-    {
-        if (string.IsNullOrWhiteSpace(identifier)) return null;
-
-        var text = identifier.Trim();
-        return Account(text) ?? AccountByName(text) ?? AccountByPlatformId(text);
-    }
-
     /// <summary>Every account seen on this address, CONFIRMED sightings only.</summary>
     public IReadOnlyList<AccountRecord> AccountsWithAddress(string ip) =>
         LoadAccounts().Values.Where(a => a.ConfirmedIps.Contains(ip, StringComparer.Ordinal)).ToList();
@@ -293,28 +240,6 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
         if (PavlovLog.Confirmed(line.Text) is { } pairing)
         {
             await OnConfirmedAsync(line.File, pairing, at, ct).ConfigureAwait(false);
-            return;
-        }
-
-        /* THE PLATFORM ID ARRIVES ALONE, three lines before the account it belongs to:
-
-               PavlovLog: Player login with platformid 7141175386003511
-               PavlovLog: Authenticating player sweet_tea_is_good
-               PavlovLog: Player 0002913af4f445df86da1be6a2a01728 Joined
-
-           So it is held against the FILE until the Joined line names the account - the same
-           shape the partial-kill assembly uses, and for the same reason: a log line cannot
-           see its neighbours. Two servers write two logs, hence keyed by file. */
-        if (PavlovLog.PlatformId(line.Text) is { } platform)
-        {
-            _pendingPlatformIds[line.File] = platform;
-            return;
-        }
-
-        if (PavlovLog.JoinedAccount(line.Text) is { } joined)
-        {
-            if (_pendingPlatformIds.Remove(line.File, out var pending))
-                await RecordPlatformIdAsync(joined, pending, ct).ConfigureAwait(false);
             return;
         }
 
@@ -404,28 +329,6 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
         _partialKills.Remove(file);
         if (Kill is { } handler) await handler(merged).ConfigureAwait(false);
     }
-
-    /// <summary>
-    /// Attach a platform id to the account the Joined line named.
-    /// </summary>
-    /// <remarks>
-    /// A FOURTH FIELD ON A RECORD THAT ALREADY EXISTS, rather than a second index. The
-    /// account is the thing that knows every identifier for one person - names, addresses,
-    /// the EOS id - and this is another of them. A separate map would be one more thing to
-    /// keep in step with a record that is already the answer.
-    /// </remarks>
-    private Task RecordPlatformIdAsync(string accountId, string platformId, CancellationToken ct) =>
-        _store.UpdateAsync(
-            Datasets.KnownPlayers,
-            new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase),
-            accounts =>
-            {
-                var existing = accounts.GetValueOrDefault(accountId) ?? AccountRecord.Empty(accountId);
-                if (string.Equals(existing.PlatformId, platformId, StringComparison.Ordinal)) return null;
-
-                accounts[accountId] = existing with { PlatformId = platformId };
-                return accounts;
-            }, ct);
 
     private Task RecordAsync(string id, string? name, string? guessedIp, string? confirmedIp, DateTimeOffset at, CancellationToken ct) =>
         _store.UpdateAsync(

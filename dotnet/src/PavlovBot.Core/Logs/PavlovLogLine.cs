@@ -61,12 +61,6 @@ public static partial class PavlovLog
     [GeneratedRegex(@"Login request:|Join request:", RegexOptions.IgnoreCase)]
     private static partial Regex LoginMarker { get; }
 
-    [GeneratedRegex(@"Player login with platformid\s+(\d+)", RegexOptions.IgnoreCase)]
-    private static partial Regex PlatformIdLine { get; }
-
-    [GeneratedRegex(@"PavlovLog:\s*Player\s+(\S+)\s+Joined", RegexOptions.IgnoreCase)]
-    private static partial Regex JoinedLine { get; }
-
     [GeneratedRegex(@"Rcon:\s*BanPlayer\s+(\S+)", RegexOptions.IgnoreCase)]
     private static partial Regex RconBan { get; }
 
@@ -166,34 +160,6 @@ public static partial class PavlovLog
         var name = NameOption.Match(line);
         return new LoginRequest(name.Success ? name.Groups[1].Value.Trim() : null, cleaned);
     }
-
-    /// <summary>
-    /// The platform id on a "Player login with platformid" line.
-    /// </summary>
-    /// <remarks>
-    /// A THIRD IDENTIFIER, and the one nothing in the bot could previously turn into a
-    /// person. Pavlov writes three per player and they are not interchangeable: the display
-    /// name, the EOS id (32 hex, "0002..."), and this - the platform account id, a plain
-    /// number, which is what Stats.log records against a kill and what a moderator ends up
-    /// pasting into Discord having found it somewhere with no name attached.
-    ///
-    /// This line carries the id and nothing else. The EOS id arrives three lines later on
-    /// the Joined line, which is what <see cref="JoinedAccount"/> is for - the two are
-    /// correlated by the caller, because a log line cannot see its neighbours.
-    /// </remarks>
-    public static string? PlatformId(string line) =>
-        PlatformIdLine.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
-
-    /// <summary>
-    /// The EOS id on a "Player &lt;id&gt; Joined" line.
-    /// </summary>
-    /// <remarks>
-    /// The other half of the platform-id pairing. Deliberately NOT the login line: that one
-    /// carries the id too, but it appears BEFORE the platform id and several other lines can
-    /// sit between them, whereas this one follows it immediately in every sample.
-    /// </remarks>
-    public static string? JoinedAccount(string line) =>
-        JoinedLine.Match(line) is { Success: true } m ? CleanId(m.Groups[1].Value) is { Length: > 0 } id ? id : null : null;
 
     public static string? BannedByRcon(string line) => RconBan.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
     public static string? UnbannedByRcon(string line) => RconUnban.Match(line) is { Success: true } m ? m.Groups[1].Value : null;

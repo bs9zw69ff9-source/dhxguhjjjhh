@@ -59,14 +59,6 @@ public class BanLiftTests : IAsyncDisposable
 
         public string? AccountIdFor(string name) => _accounts.GetValueOrDefault(name);
 
-        /// <summary>The platform ids the server would accept, when a test supplies any.</summary>
-        public Dictionary<string, string> RconTargets { get; } = new(StringComparer.OrdinalIgnoreCase);
-
-        public string? RconTargetFor(string? identifier) =>
-            identifier is null ? null
-            : RconTargets.TryGetValue(identifier, out var target) ? target
-            : _accounts.GetValueOrDefault(identifier);
-
         public Task ClearFlagsAsync(string accountId, CancellationToken ct = default)
         {
             Cleared.Add(accountId);
@@ -147,34 +139,6 @@ public class BanLiftTests : IAsyncDisposable
         Permanent = false,
         DurationLabel = "2d",
     };
-
-    /// <summary>
-    /// A stored EOS id is RESOLVED to the platform id, not sent as it stands.
-    /// </summary>
-    /// <remarks>
-    /// THE SERVER WORKS IN PLATFORM IDS, and a command naming anything else is accepted,
-    /// answered normally, and enforces nothing. Ban records carry the EOS id - UniqueId has
-    /// always held it - so passing the stored value straight through is exactly that silent
-    /// no-op. Asserted against the wire, because the code reads identically either way.
-    /// </remarks>
-    [Fact]
-    public async Task AnUnbanIsSentWithThePlatformIdRatherThanTheStoredEosId()
-    {
-        const string platform = "7141175386003511";
-
-        var now = DateTimeOffset.UtcNow;
-        await Seed(TempBan(now - TimeSpan.FromMinutes(5), Account));
-
-        var evidence = new FakeEvidence((Name, Account));
-        evidence.RconTargets[Account] = platform;
-        evidence.RconTargets[Name] = platform;
-
-        await Build(new RecordingMasters(), evidence).ProcessExpiredAsync();
-
-        Assert.Contains($"Unban {platform}", _server.Commands, StringComparer.Ordinal);
-        Assert.DoesNotContain($"Unban {Account}", _server.Commands, StringComparer.Ordinal);
-        Assert.DoesNotContain($"Unban {Name}", _server.Commands, StringComparer.Ordinal);
-    }
 
     /// <summary>
     /// An expired temp ban is lifted against the ACCOUNT ID it was banned under.

@@ -185,44 +185,6 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
         foreach (var client in _clients.Values) client.InvalidateReads();
     }
 
-    /// <summary>
-    /// The id RCON targets for a name, from the live rosters.
-    /// </summary>
-    /// <remarks>
-    /// AUTHORITATIVE FOR SOMEBODY ONLINE, which is exactly who a kick is aimed at. The
-    /// roster is the server's own answer to "who is here and what do I call them", so it
-    /// beats anything the bot has inferred from a log. The account registry is the fallback
-    /// for a player who is not on right now.
-    /// </remarks>
-    public string? IdForName(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return null;
-
-        foreach (var roster in _rosters.Values)
-        {
-            foreach (var player in roster.Players)
-            {
-                if (player.UniqueId.Length > 0 && string.Equals(player.Name, name, StringComparison.OrdinalIgnoreCase))
-                    return player.UniqueId;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// The RCON target for a player name, falling back to the name when nothing is known.
-    /// </summary>
-    /// <remarks>
-    /// FOR COMMANDS THAT ONLY WORK ON SOMEBODY ONLINE - the menu grants, chiefly. The roster
-    /// is the server's own answer for exactly those players, so a miss means they are not on
-    /// and the command was never going to land whatever it was addressed to.
-    ///
-    /// The name is kept as the fallback rather than refusing: it is what the bot sent before
-    /// any of this, so a miss is no worse than the old behaviour instead of a new no-op.
-    /// </remarks>
-    public string TargetForName(string name) => IdForName(name) is { Length: > 0 } id ? id : name;
-
     /// <summary>Every distinct player name across every server.</summary>
     public IReadOnlyList<string> AllOnlinePlayers() =>
         _rosters.Values

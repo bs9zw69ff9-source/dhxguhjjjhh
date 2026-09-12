@@ -11,19 +11,13 @@ namespace PavlovBot.Core.Evasion;
 /// a flag bans whoever else was connecting at that moment.
 /// </param>
 /// <param name="Names">Every display name this account has used, most recent first.</param>
-/// <param name="PlatformId">
-/// The platform account id, a plain number - Pavlov's third identifier for the same person,
-/// and the one Stats.log records against a kill. Null until a login line has paired it with
-/// this EOS id. NOT interchangeable with <paramref name="Id"/>.
-/// </param>
 public sealed record AccountRecord(
     string Id,
     IReadOnlyList<string> ConfirmedIps,
     IReadOnlyList<string> GuessedIps,
     IReadOnlyList<string> Names,
     DateTimeOffset? FirstSeen = null,
-    DateTimeOffset? LastSeen = null,
-    string? PlatformId = null)
+    DateTimeOffset? LastSeen = null)
 {
     /* EVERY LIST DEFAULTS TO EMPTY, AND THE ?? IS LOAD-BEARING.
 

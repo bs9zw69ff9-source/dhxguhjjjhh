@@ -4,7 +4,6 @@ using PavlovBot.Core.Intelligence;
 using PavlovBot.Core.Text;
 using PavlovBot.Core.Time;
 using PavlovBot.Host.Intelligence;
-using PavlovBot.Host.Logs;
 
 namespace PavlovBot.Host.Discord.Commands;
 
@@ -29,8 +28,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// EPHEMERAL, ALWAYS. Even the moderation view names a player, their bans and their warnings,
 /// and this gets run in whatever channel a moderator happens to be in.
 /// </remarks>
-public sealed class PlayerProfileCommand(
-    PlayerIntelligenceService intelligence, Access access, IpTrackingService tracking) : ISlashCommand
+public sealed class PlayerProfileCommand(PlayerIntelligenceService intelligence, Access access) : ISlashCommand
 {
     public string Name => "player";
 
@@ -87,13 +85,6 @@ public sealed class PlayerProfileCommand(
             await Reply(command, Theme.Failure("That name has nothing usable in it")).ConfigureAwait(false);
             return;
         }
-
-        /* A BARE ID BECOMES THE NAME IT BELONGS TO. Everything below this point works in
-           display names - the ban store, the warnings, the playtime are all keyed that way -
-           so an EOS id or a platform account id has to be turned into one here or the whole
-           panel comes back empty for a player the bot knows perfectly well. That empty panel
-           reads as "never seen", which is the one answer that is certainly wrong. */
-        if (tracking.Resolve(player) is { Name: { Length: > 0 } known }) player = known;
 
         /* THE SECTIONS THAT ARE ENTIRELY NETWORK DATA ARE REFUSED OUTRIGHT, rather than
            served empty. A moderator running /player security and getting a blank panel would
