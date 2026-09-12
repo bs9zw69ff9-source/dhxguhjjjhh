@@ -318,6 +318,10 @@ public static class Program
            built, exactly like the staff log sink - see SecurityAlerts. */
         builder.Services.AddSingleton<PavlovBot.Host.Moderation.SecurityAlerts>();
 
+        /* Counts the kill lines the feed already parses. Buffered in memory and flushed on
+           a timer - see KillStats for why a write per kill is not an option. */
+        builder.Services.AddSingleton<PavlovBot.Host.Stats.KillStats>();
+
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
         builder.Services.AddSingleton<FeedBridge>();
@@ -494,6 +498,7 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, FlushCommand>();
         builder.Services.AddSingleton<ISlashCommand, StaffActivityCommand>();
         builder.Services.AddSingleton<ISlashCommand, StaffLeaderboardCommand>();
+        builder.Services.AddSingleton<ISlashCommand, BotStatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
         builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();

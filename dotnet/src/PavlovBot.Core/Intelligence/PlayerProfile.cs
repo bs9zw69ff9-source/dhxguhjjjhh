@@ -66,6 +66,23 @@ public sealed record ProfileFaction(string? Name, string? Rank, ulong? DiscordId
     public static ProfileFaction None { get; } = new(null, null, null);
 }
 
+/// <param name="Suicides">Counted apart from deaths by another player, and never as kills.</param>
+/// <param name="LastAt">When they last killed or died. Null when they never have.</param>
+/// <remarks>
+/// OFF THE KILL LINES IN Pavlov.log, which name the killer and the killed and nothing else -
+/// so this is keyed by display name upstream and a rename starts a fresh record.
+/// </remarks>
+public sealed record ProfileCombat(long Kills, long Deaths, long Suicides, DateTimeOffset? LastAt)
+{
+    /// <summary>Kills per death, counting no deaths as one. See PlayerKills.Ratio.</summary>
+    public double Ratio => Kills / (double)Math.Max(1, Deaths);
+
+    /// <summary>Whether anything has ever been recorded, so "0.00 K/D" is not shown for a stranger.</summary>
+    public bool Any => Kills > 0 || Deaths > 0 || Suicides > 0;
+
+    public static ProfileCombat None { get; } = new(0, 0, 0, null);
+}
+
 /// <param name="Balance">Null when they have no ledger yet - which is not the same as zero.</param>
 /// <param name="OwedWages">Earned on duty and not yet banked.</param>
 public sealed record ProfileEconomy(long? Balance, long OwedWages, long LifetimeWages)
@@ -110,7 +127,11 @@ public sealed record PlayerProfile(
     ProfileEconomy Economy,
     IReadOnlyList<ProfileAssociation> Associations,
     RiskAssessment Risk,
-    bool Redacted = false)
+    bool Redacted = false,
+    /* LAST AND DEFAULTED, so every existing construction of this record - and there are
+       several, in tests as well as in the service - keeps compiling and keeps meaning what
+       it meant. A profile built without combat data reports none rather than zeroes. */
+    ProfileCombat? Combat = null)
 {
     /// <summary>Whether the bot has ever actually seen this player.</summary>
     /// <remarks>

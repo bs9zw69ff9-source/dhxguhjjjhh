@@ -38,6 +38,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly MasterNames _masters;
     private readonly SqliteKeyValueBackend _backend;
     private readonly Boards _boards;
+    private readonly PavlovBot.Host.Stats.KillStats _killStats;
     private readonly AutoPost _autoPost;
     private readonly ServerBanFile _modsave;
     private readonly RosterService _rosters;
@@ -92,8 +93,10 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Moderation.AuditLog audit,
         PavlovBot.Host.Events.IEventStore events,
         PavlovBot.Host.Events.PlayerEventBridge playerEvents,
+        PavlovBot.Host.Stats.KillStats killStats,
         ILogger<BackgroundServiceHost> logger)
     {
+        _killStats = killStats;
         _payroll = payroll;
         _crashRecovery = crashRecovery;
         _audit = audit;
@@ -287,6 +290,17 @@ public sealed class BackgroundServiceHost : IHostedService
            NO RunOnStart on any board. Services start BEFORE the gateway connects, so an
            immediate tick fires with no connection - and re-fires on every supervisor
            restart. The Node bot shipped a leaderboard regression exactly this way. */
+        /* ONE WRITE A MINUTE INSTEAD OF ONE PER KILL. The buffer is in memory, so the stop
+           hook matters as much as the tick: a clean shutdown must not throw away the last
+           minute of a firefight. */
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "kill-stats",
+            Interval = TimeSpan.FromMinutes(1),
+            Tick = ct => _killStats.FlushAsync(ct),
+            OnStop = () => _killStats.FlushAsync(CancellationToken.None),
+        });
+
         _registry.Register(new ServiceDefinition
         {
             Name = "playtime",
