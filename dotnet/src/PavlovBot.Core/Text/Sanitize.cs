@@ -80,6 +80,32 @@ public static partial class Sanitize
         return text.Length > 200 ? text[..200] : text;
     }
 
+    /* ONLY WHAT FORMATS MID-LINE. Every name here is printed after a bullet, so the markers
+       that need a line start - a heading's #, a list's -, a quote's > - cannot fire and
+       escaping them would litter ordinary names with backslashes for nothing. */
+    [GeneratedRegex(@"[\\*_~`|\[\]]")]
+    private static partial Regex MarkdownSpecial { get; }
+
+    /// <summary>
+    /// A name safe to print OUTSIDE a code span, where Discord would otherwise format it.
+    /// </summary>
+    /// <remarks>
+    /// THE COST OF DROPPING THE BACKTICKS. A name printed in inline code cannot format
+    /// anything around it; the same name printed plain can - <c>*Ghost*</c> renders as italic
+    /// Ghost, <c>__x__</c> underlines, and a name ending in an unclosed marker takes the rest
+    /// of the line with it. On a board that is a list of names, one such name silently
+    /// restyles every name below it.
+    ///
+    /// ESCAPING, NOT STRIPPING. The name is what the player is called in game and what an
+    /// admin has to type back into a command; deleting characters out of it would make the
+    /// board disagree with the server. A backslash escape renders invisibly and keeps the
+    /// text intact.
+    ///
+    /// Mentions are not part of this: Discord does not resolve <c>@everyone</c> inside an
+    /// embed at all, so a name containing one is text and nothing more.
+    /// </remarks>
+    public static string Markdown(string? raw) => MarkdownSpecial.Replace(Message(raw), "\\$0");
+
     [GeneratedRegex(@"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b")]
     private static partial Regex IPv4 { get; }
 

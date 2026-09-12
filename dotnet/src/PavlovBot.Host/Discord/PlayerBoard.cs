@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Discord;
 using PavlovBot.Core.Text;
 using PavlovBot.Core.Time;
@@ -32,26 +33,48 @@ internal sealed record BoardRoster(
 /// sidebar and carry no names; this answers "who is on, and are they one of ours" without
 /// anybody having to run a command.
 ///
-/// STYLED AS THE CONNECTION CARD, not as the leaderboards: one field per server rather than a
-/// fixed-width table, because the rows here are names and tags and there is no column of
-/// numbers to line up. It shares the connection card's field budget for the same reason the
-/// card has one - see <see cref="EmbedBudget"/>.
+/// ONE INLINE FIELD PER SERVER, which is what puts the servers SIDE BY SIDE: Discord lays
+/// inline fields out three to a row, so a three-server install reads as three columns of
+/// names. That is the whole shape of the board and the reason the fields are not a
+/// fixed-width table like the leaderboards - there is no column of numbers to line up, and a
+/// fenced block would not wrap inside a third of the width.
+///
+/// NAMES ARE PRINTED PLAIN, not in inline code. Three columns of backticked names is a wall
+/// of grey boxes at phone width; the cost is that a name can format the text around it, which
+/// is what <see cref="Sanitize.Markdown"/> is for.
 ///
 /// A FULL SERVER DOES NOT FIT IN A FIELD, and that is the one hazard specific to this board.
-/// Sixty players at a name, a tag and a bullet each is comfortably past Discord's 1024, so
-/// rows are dropped until the list fits and the field SAYS HOW MANY went. Silently showing
-/// the alphabetical first twenty as though they were everybody is the failure worth ruling
-/// out: "is so-and-so on" would answer no for half the server.
+/// Sixty players at a name, a tag and a bullet each is comfortably past Discord's 1024, so a
+/// list that long CONTINUES INTO ANOTHER COLUMN rather than being cut - and if it outruns
+/// even that, the last column says how many names it could not show. Silently showing the
+/// alphabetical first forty as though they were everybody is the failure worth ruling out:
+/// "is so-and-so on" would answer no for half the server.
 ///
 /// PURE. It is handed what is known and renders it, so the interesting cases - a stale
 /// roster, a server that has never answered, a roster too long for an embed - are testable
 /// without an RCON connection or a gateway. <see cref="Boards.BuildPlayerBoardAsync"/> is
 /// what gathers the inputs.
 /// </remarks>
-internal static class PlayerBoard
+internal static partial class PlayerBoard
 {
     /// <summary>Room kept back for the "and N more" line, so it always fits once needed.</summary>
     private const int TailAllowance = 28;
+
+    /// <summary>
+    /// How many columns one server's list may spill across before it is cut short.
+    /// </summary>
+    /// <remarks>
+    /// Four fields is around 170 names, well past any Pavlov server's capacity, and the real
+    /// limit is the embed's own budget long before this bites. It exists so one absurd roster
+    /// cannot take every column on the board and leave the other servers with none.
+    /// </remarks>
+    private const int MaxColumnsPerServer = 4;
+
+    /* THE FLAVOUR LINE, which is the one thing on this board that is not a fact about the
+       server. Two forms because "1 couriers" is the sort of thing that gets noticed, and a
+       board is read far more often than it is written. Reword both together. */
+    private const string Flavour = "couriers roaming the Mojave right now.";
+    private const string FlavourOne = "courier roaming the Mojave right now.";
 
     /// <summary>
     /// The board, or null when there is nothing yet worth replacing what is already posted.
@@ -77,12 +100,14 @@ internal static class PlayerBoard
         var total = answered.Sum(s => s.Players.Count);
         var stale = answered.Any(s => s.Stale);
 
-        const string title = "Players online";
+        const string title = "Live Player List";
         var description = servers.Count == 0
             ? "No servers are configured."
             : answered.Count == 0
                 ? "No server has answered yet."
-                : $"**{total}** online across {answered.Count} server(s).";
+                // A quote block, so the count reads as a caption under the title rather than
+                // as the first line of the list.
+                : $"> **{total}** *{(total == 1 ? FlavourOne : Flavour)}*";
 
         var embed = new EmbedBuilder()
             .WithColor(answered.Count == 0 ? Theme.Grey : stale || broken ? Theme.Amber : Theme.Green)
@@ -94,30 +119,61 @@ internal static class PlayerBoard
 
         foreach (var server in servers)
         {
-            var label = Label(server);
-            var notes = Notes(server);
+            /* The notes come first in the same list as the names, so a stale marker and a
+               sweep failure are never what gets squeezed out - they are what makes the list
+               underneath them believable. */
+            var columns = Columns(Lines(server));
 
-            /* The names get whatever the notes leave, so a stale marker and a sweep failure
-               are never the lines squeezed out - they are what makes the list believable. */
-            var room = budget.Room(label) - notes.Length - (notes.Length > 0 ? 1 : 0);
-            var names = server.Age is null ? "" : Roll(server.Players, room);
+            for (var column = 0; column < columns.Count; column++)
+            {
+                var label = column == 0 ? Label(server) : $"{Display(server.Server)} (cont.)";
 
-            if (!budget.Add(label, Join(notes, names))) dropped++;
+                // Out of embed budget entirely: the rest of this server's columns, and every
+                // server after it, will not fit either. Say so in the footer rather than
+                // leaving a board that is quietly short a server.
+                if (!budget.Add(label, columns[column], inline: true))
+                {
+                    dropped++;
+                    break;
+                }
+            }
         }
 
-        var footer = $"Player board — {EasternTime.Stamp(at)} Eastern" +
-                     (dropped > 0 ? $" · {dropped} server(s) would not fit" : "");
+        var footer = $"Updated {EasternTime.Stamp(at)} Eastern" +
+                     (dropped > 0 ? $" · {dropped} column(s) would not fit" : "");
 
         return embed.Brand(footer).Build();
     }
 
     private static string Label(BoardRoster server) =>
         server.Age is null
-            ? $"{Sanitize.Message(server.Server)} — no roster yet"
-            : $"{Sanitize.Message(server.Server)} — {server.Players.Count} online";
+            ? $"{Display(server.Server)} (no roster yet)"
+            : $"{Display(server.Server)} ({server.Players.Count})";
 
-    /// <summary>How old the list is and what went wrong, when either needs saying.</summary>
-    private static string Notes(BoardRoster server)
+    [GeneratedRegex(@"^server\s*(\d+)$", RegexOptions.IgnoreCase)]
+    private static partial Regex InternalName { get; }
+
+    /// <summary>
+    /// "Server 2" - what a player calls the server, not what the config calls it.
+    /// </summary>
+    /// <remarks>
+    /// The configured names are <c>server1</c>, <c>server2</c>, <c>server3</c>: a key, chosen
+    /// by BotOptions from the RCON_HOST_n index, never typed by anybody. The player-count
+    /// voice channels already spell that "Server 2" in public, and a board beside them saying
+    /// "server2" looks like two different things being named.
+    ///
+    /// ANYTHING ELSE IS PRINTED AS IT STANDS. A name that is not the generated pattern was
+    /// deliberately chosen and is not this function's to restyle.
+    /// </remarks>
+    private static string Display(string server) =>
+        InternalName.Match(server ?? "") is { Success: true } match
+            ? $"Server {match.Groups[1].Value}"
+            : Sanitize.Message(server);
+
+    /// <summary>
+    /// One server's whole column: how old the list is, what went wrong, then the names.
+    /// </summary>
+    private static List<string> Lines(BoardRoster server)
     {
         var lines = new List<string>();
 
@@ -137,51 +193,66 @@ internal static class PlayerBoard
         if (server.Problem is { Length: > 0 } problem)
             lines.Add($"{Theme.Bad} {Sanitize.Message(problem)}");
 
-        return string.Join("\n", lines);
+        if (server.Age is null) return lines;
+
+        var names = server.Players
+            .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+            .Select(p => $"{Theme.Dot} {Sanitize.Markdown(p.Name)}" +
+                         (string.IsNullOrWhiteSpace(p.Faction) ? "" : $" — {Sanitize.Markdown(p.Faction)}"))
+            .ToList();
+
+        lines.Add(names.Count == 0 ? "*nobody online*" : names[0]);
+        lines.AddRange(names.Skip(1));
+        return lines;
     }
 
     /// <summary>
-    /// The names, with a faction tag each, trimmed to the room available.
+    /// Split a column that is too long for one field across several.
     /// </summary>
-    /// <param name="room">Characters left in the field once the notes have had theirs.</param>
-    private static string Roll(IReadOnlyList<BoardPlayer> players, int room)
+    /// <remarks>
+    /// Discord caps a field at 1024 characters and THROWS from <c>Build()</c> past it, so
+    /// something has to give on a full server. Continuing into the next column keeps every
+    /// name; only a roster past <see cref="MaxColumnsPerServer"/> columns is cut, and then the
+    /// last column says how many names went rather than ending mid-list.
+    /// </remarks>
+    private static List<string> Columns(IReadOnlyList<string> lines)
     {
-        if (players.Count == 0) return "*nobody online*";
+        var columns = new List<string>();
+        var current = new StringBuilder();
+        var index = 0;
 
-        var lines = players
-            .Where(p => !string.IsNullOrWhiteSpace(p.Name))
-            .Select(p => $"{Theme.Dot} `{Sanitize.Code(p.Name)}`" +
-                         (string.IsNullOrWhiteSpace(p.Faction) ? "" : $" — {Sanitize.Message(p.Faction)}"))
-            .ToList();
-
-        if (lines.Count == 0) return "*nobody online*";
-
-        var text = new StringBuilder();
-        var shown = 0;
-
-        foreach (var line in lines)
+        while (index < lines.Count && columns.Count < MaxColumnsPerServer)
         {
-            // Hold back the tail while there is still a name after this one, so the count of
-            // what was dropped is guaranteed a place to go.
-            var reserve = shown + 1 < lines.Count ? TailAllowance : 0;
-            var needed = line.Length + (shown == 0 ? 0 : 1);
+            var last = columns.Count == MaxColumnsPerServer - 1;
+            var line = lines[index];
+            var needed = line.Length + (current.Length == 0 ? 0 : 1);
 
-            if (text.Length + needed + reserve > room) break;
+            /* On the last column allowed, hold back room for the "and N more" line while
+               there is still a name after this one, so the count of what was cut is
+               guaranteed somewhere to go. */
+            var reserve = last && index + 1 < lines.Count ? TailAllowance : 0;
 
-            if (shown > 0) text.Append('\n');
-            text.Append(line);
-            shown++;
+            if (current.Length + needed + reserve <= EmbedBudget.FieldLimit)
+            {
+                if (current.Length > 0) current.Append('\n');
+                current.Append(line);
+                index++;
+                continue;
+            }
+
+            // Nothing fits in an empty column only if one line is longer than a whole field,
+            // and Sanitize caps every one of them at 200 characters.
+            columns.Add(current.ToString());
+            current.Clear();
         }
 
-        if (shown < lines.Count)
+        if (index < lines.Count)
         {
-            if (shown > 0) text.Append('\n');
-            text.Append($"*… and {lines.Count - shown} more*");
+            if (current.Length > 0) current.Append('\n');
+            current.Append($"*… and {lines.Count - index} more*");
         }
 
-        return text.ToString();
+        if (current.Length > 0) columns.Add(current.ToString());
+        return columns;
     }
-
-    private static string Join(string notes, string names) =>
-        notes.Length == 0 ? names : names.Length == 0 ? notes : $"{notes}\n{names}";
 }
