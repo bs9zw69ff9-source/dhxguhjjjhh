@@ -313,6 +313,11 @@ public static class Program
         builder.Services.AddSingleton<IComponentHandler>(sp =>
             sp.GetRequiredService<PavlovBot.Host.Verification.VerificationService>());
 
+        /* THE ALERT HOLDER, which depends on nothing. The detectors take it; the gateway-
+           backed sink that actually sends the direct messages is attached after the host is
+           built, exactly like the staff log sink - see SecurityAlerts. */
+        builder.Services.AddSingleton<PavlovBot.Host.Moderation.SecurityAlerts>();
+
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
         builder.Services.AddSingleton<FeedBridge>();
@@ -327,7 +332,8 @@ public static class Program
             sp.GetRequiredService<FeedWebhooks>(),
             sp.GetRequiredService<MetricsRegistry>(),
             sp.GetRequiredService<ILogger<VpnResponder>>(),
-            features.VpnAutoBan));
+            features.VpnAutoBan,
+            sp.GetRequiredService<PavlovBot.Host.Moderation.SecurityAlerts>()));
         /* ---- timeline ----
            A REAL TABLE, in the same bot.db, because this is the one dataset the key-value
            document store cannot hold: it is append-heavy and its queries are all "this
@@ -539,6 +545,7 @@ public static class Program
             sp.GetRequiredService<ILogger<PlayerCountChannels>>(),
             features.DefaultServerCapacity));
         builder.Services.AddSingleton<ISlashCommand, CountsCommand>();
+        builder.Services.AddSingleton<ISlashCommand, TestAlertCommand>();
         // ...and the names half of it, on demand rather than posted.
         builder.Services.AddSingleton<ISlashCommand>(sp =>
             new PlayersCommand(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<Paged>()));
@@ -711,6 +718,33 @@ public static class Program
                 Show(features.ModLogChannel), Show(features.BanLogChannel),
                 Show(features.PoliceLogChannel), Show(features.ArrestChannel));
         }
+        /* THE SECURITY DM SINK, attached here for the same reason the staff log sink is:
+           sending a direct message needs the gateway, and the detectors are constructed long
+           before it exists. */
+        var alertRecipients = features.SecurityAlertRecipients;
+        if (alertRecipients.Count > 0)
+        {
+            host.Services.GetRequiredService<PavlovBot.Host.Moderation.SecurityAlerts>().UseSink(
+                new PavlovBot.Host.Discord.DirectMessageAlerts(
+                    host.Services.GetRequiredService<PavlovBot.Host.Discord.IGuildDirectory>(),
+                    alertRecipients,
+                    host.Services.GetRequiredService<MetricsRegistry>(),
+                    host.Services.GetRequiredService<ILogger<PavlovBot.Host.Discord.DirectMessageAlerts>>()));
+
+            logger.LogInformation(
+                "Security alerts (evasion, alts, VPN) are DM'd to {Count} recipient(s): {Recipients}. " +
+                "Run /testalert to prove delivery - a closed DM fails silently at Discord's end",
+                alertRecipients.Count, string.Join(", ", alertRecipients));
+        }
+        else
+        {
+            /* SAID OUT LOUD. "Nobody is configured" and "it is broken" look identical from
+               the outside, and this is a feature whose whole job is to speak up. */
+            logger.LogInformation(
+                "Security alert DMs are off - set SECURITY_DM_IDS (or OWNER_IDS) to have evasion, " +
+                "alt and VPN detections sent to somebody");
+        }
+
         logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
             systemd.Elevation, string.Join(", ", systemd.Units));
 

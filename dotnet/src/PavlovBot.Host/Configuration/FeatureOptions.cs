@@ -268,8 +268,30 @@ public sealed record FeatureOptions
     public string? GeoapifyKey { get; init; }
 
     /// <summary>Discord ids that hold owner powers. NOT a role - see <c>Access</c>.</summary>
+    /// <summary>
+    /// Who gets a direct message when evasion, alts or a VPN are detected.
+    /// </summary>
+    /// <remarks>
+    /// FALLS BACK TO THE OWNERS when unset, because the alternative default is "nobody",
+    /// which is indistinguishable from the feature being broken. Set it explicitly to send
+    /// the alerts to one person rather than everybody with owner rights.
+    /// </remarks>
+    public IReadOnlyList<ulong> SecurityDmIds { get; init; } = [];
+
     public IReadOnlyList<ulong> Owners { get; init; } = [];
     public IReadOnlyList<ulong> SuperOwners { get; init; } = [];
+
+    /// <summary>
+    /// Who actually receives a security alert: the explicit list, or the owners.
+    /// </summary>
+    /// <remarks>
+    /// DEDUPED, because an id in both OWNER_IDS and SUPER_OWNER_IDS is an ordinary way to
+    /// write "this person owns the bot" and must not mean two identical direct messages.
+    /// </remarks>
+    public IReadOnlyList<ulong> SecurityAlertRecipients =>
+        SecurityDmIds.Count > 0
+            ? [.. SecurityDmIds.Distinct()]
+            : [.. SuperOwners.Concat(Owners).Distinct()];
 
     /// <summary>In-game names that must never be banned by any path.</summary>
     public IReadOnlyList<string> MasterNames { get; init; } = [];
@@ -409,6 +431,7 @@ public sealed record FeatureOptions
 
             VpnCacheTtl = TimeSpan.FromDays(Int(configuration, "VPN_CACHE_TTL_DAYS", 30)),
 
+            SecurityDmIds = Snowflakes(configuration, "SECURITY_DM_IDS"),
             Owners = Snowflakes(configuration, "OWNER_IDS"),
             SuperOwners = Snowflakes(configuration, "SUPER_OWNER_IDS"),
             MasterNames = List(configuration, "MASTER_NAMES"),
@@ -533,6 +556,10 @@ public sealed record FeatureOptions
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
               (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
         $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in super owner",
+        $"security DMs: {(SecurityAlertRecipients.Count == 0
+            ? "off (SECURITY_DM_IDS is unset and no owners are configured)"
+            : $"{SecurityAlertRecipients.Count} recipient(s)" +
+              (SecurityDmIds.Count > 0 ? " (SECURITY_DM_IDS)" : " (the owners - SECURITY_DM_IDS is unset)"))}",
 
         /* Rendered THROUGH the same union the auto-ban check uses, rather than restated.
            A summary that lists the configured names alone would have said "none" on a
