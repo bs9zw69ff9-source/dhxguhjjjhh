@@ -117,6 +117,21 @@ public sealed record FeatureOptions
     /// <summary>Where the live warrant board lives. Its own channel - it is a work queue, not a leaderboard.</summary>
     public ulong? WarrantBoardChannel { get; init; }
 
+    /// <summary>
+    /// Where the live player board lives - who is on, per server, with their faction.
+    /// </summary>
+    /// <remarks>
+    /// <c>PLAYERLIST_CHANNEL</c>, which is the Node bot's name for it and the one already
+    /// sitting in every deployed <c>.env</c>. The port dropped the board and documented the
+    /// variable as dead; bringing the board back under a NEW name would have meant every
+    /// install silently keeping a board that does not post, with the id already filled in one
+    /// line above the one that matters.
+    ///
+    /// IT PUBLISHES NAMES, unlike the player-count voice channels, so point it at a channel
+    /// whose audience is meant to see who is on.
+    /// </remarks>
+    public ulong? PlayerBoardChannel { get; init; }
+
     // ---- payroll ----
 
     /// <summary>Paid to each on-duty member per period. Zero disables payroll entirely.</summary>
@@ -344,6 +359,7 @@ public sealed record FeatureOptions
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
             WarrantBoardChannel = Snowflake(configuration, "WARRANT_BOARD_CHANNEL"),
+            PlayerBoardChannel = Snowflake(configuration, "PLAYERLIST_CHANNEL"),
 
             PayrollAmount = Money(configuration, "PAYROLL_AMOUNT"),
             PayrollInterval = Minutes(configuration, "PAYROLL_INTERVAL_MINUTES", TimeSpan.FromMinutes(30)),
@@ -486,6 +502,7 @@ public sealed record FeatureOptions
         $"cash leaderboard: {(LeaderboardChannel is null ? "off (LEADERBOARD_CHANNEL not set)" : $"channel {LeaderboardChannel}, every {LeaderboardInterval.TotalSeconds:0}s")}",
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
         $"warrant board: {(WarrantBoardChannel is null ? "off (WARRANT_BOARD_CHANNEL not set)" : $"channel {WarrantBoardChannel}")}",
+        $"player board: {(PlayerBoardChannel is null ? "off (PLAYERLIST_CHANNEL not set)" : $"channel {PlayerBoardChannel}")}",
         $"payroll: {(PayrollAmount <= 0
             ? "off (PAYROLL_AMOUNT not set)"
             : $"{PayrollAmount:N0} to on-duty {PayrollFaction} every {PayrollInterval.TotalMinutes:0}m")}",

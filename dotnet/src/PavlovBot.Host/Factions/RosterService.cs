@@ -316,6 +316,51 @@ public sealed class RosterService
         return Task.FromResult<IReadOnlyList<Membership>>(seen.Values.ToList());
     }
 
+    /// <summary>
+    /// Everyone on every roster, keyed by in-game name.
+    /// </summary>
+    /// <remarks>
+    /// THE BULK FORM OF <see cref="FindAsync"/>, for a caller holding a list of names rather
+    /// than one name. A player board asking FindAsync per player re-reads every rank file of
+    /// every faction per player - a hundred-odd file reads for a full server, once a minute.
+    /// This reads each rank file exactly once and answers every name off the result.
+    ///
+    /// SAME ANSWER AS FindAsync, deliberately: the highest rank file a name appears in wins
+    /// within a faction, and the first faction in the configured order wins across them. One
+    /// faction per player is the rule, so a name in two is already a state the bot refuses to
+    /// create - but if somebody hand-edits one into existence, the two lookups must not
+    /// disagree about which faction they are in.
+    ///
+    /// A roster that cannot be READ is not an empty roster, and <see cref="Read"/> returns
+    /// null for it. Those names are simply absent here: a board shows them untagged rather
+    /// than inventing an affiliation, which is the same trade every reader of Read makes.
+    /// </remarks>
+    public Task<IReadOnlyDictionary<string, Membership>> AffiliationsAsync(CancellationToken ct = default)
+    {
+        var all = new Dictionary<string, Membership>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var faction in Factions.All.Values)
+        {
+            foreach (var rank in faction.Order)
+            {
+                foreach (var player in Read(faction.RankFiles[rank]) ?? [])
+                {
+                    // Ascending ranks, so a later one overwrites - but only within the
+                    // faction that claimed the name first.
+                    if (all.TryGetValue(player, out var held) &&
+                        !string.Equals(held.Faction.Name, faction.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    all[player] = new Membership(faction, player, rank);
+                }
+            }
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<string, Membership>>(all);
+    }
+
     /// <summary>Add a player to a faction at its default rank.</summary>
     public async Task<MembershipDecision> JoinAsync(FactionDefinition faction, string player, CancellationToken ct = default)
     {
