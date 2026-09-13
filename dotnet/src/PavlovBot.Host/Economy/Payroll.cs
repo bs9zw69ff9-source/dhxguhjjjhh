@@ -52,6 +52,9 @@ public sealed record PayrollRun(
 /// THE LAST TWO ARE NULLABLE WITH DEFAULTS so a payroll_state written before they existed
 /// still deserialises. A live server has one of those files, and a missing property that
 /// threw would take payroll down on the deploy that introduced it.
+///
+/// THE FIRST TWO ARE NOT NULLABLE AND ARRIVED NULL ANYWAY - see the guard below. Declaring
+/// a property non-nullable does not stop a deserialiser handing you null for it.
 /// </remarks>
 public sealed record PayrollState(
     Dictionary<string, DateTimeOffset> LastPaid,
@@ -59,19 +62,83 @@ public sealed record PayrollState(
     Dictionary<string, long>? OnDutySeconds = null,
     Dictionary<string, List<string>>? LastOnDuty = null)
 {
-    /* NOT `??=`. The positional properties are init-only, so they cannot be assigned after
-       construction - and a lazily-created dictionary that is thrown away on every read would
-       silently lose every write. Materialised once here instead, which also means the record
-       stays a plain data shape rather than one with hidden mutation. */
-    private readonly Dictionary<string, long> _earned =
-        OnDutySeconds ?? new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+    /* EVERY DICTIONARY IS GUARDED, AND THE FIRST TWO WERE NOT.
 
-    private readonly Dictionary<string, List<string>> _previous =
-        LastOnDuty ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+       NULLABLE REFERENCE TYPES ARE A COMPILE-TIME PROMISE. System.Text.Json does not honour
+       them: a stored payroll_state missing "owed", or carrying an explicit null, deserialises
+       with these set to null even though neither is declared nullable. The compiler then
+       cheerfully lets every consumer write `state.Owed.GetValueOrDefault(name)`.
 
+       That is not hypothetical - it is `/stats` and `/player` dying with
+       "Value cannot be null. (Parameter 'dictionary')" out of Payroll.OwedTo on a live
+       server, because its payroll row was written before this shape existed. The same
+       mistake, with the same fix, is recorded on AccountRecord and FlagSet.
+
+       THE COALESCE IS IN THE SETTER, not a property initializer. An initializer alone runs
+       only in the constructor, and `state with { Owed = whatever }` - which is how every
+       update writes - assigns straight through it, so the null comes back one layer deeper
+       where it is harder to trace.
+
+       THE COMPARER IS RESTORED AT THE SAME TIME. A dictionary's comparer is NOT serialised,
+       so a round trip through JSON hands back an ORDINAL one and "Alice" stops finding
+       "alice" - wages that silently stop reaching somebody who changed their capitalisation.
+       Rebuilt key by key rather than through the copy constructor, which throws on two keys
+       differing only by case; the later entry wins, which is what a case-insensitive store
+       would have held anyway. */
+    private readonly Dictionary<string, DateTimeOffset> _lastPaid = Rebuild(LastPaid);
+    private readonly Dictionary<string, long> _owed = Rebuild(Owed);
+    private readonly Dictionary<string, long> _earned = Rebuild(OnDutySeconds);
+    private readonly Dictionary<string, List<string>> _previous = Rebuild(LastOnDuty);
+
+    public Dictionary<string, DateTimeOffset> LastPaid
+    {
+        get => _lastPaid;
+        init => _lastPaid = Rebuild(value);
+    }
+
+    public Dictionary<string, long> Owed
+    {
+        get => _owed;
+        init => _owed = Rebuild(value);
+    }
+
+    /* THE SERIALISED PROPERTY AND THE MUTATED DICTIONARY MUST BE ONE OBJECT, and until these
+       two were declared they were not. The record's generated properties returned whatever
+       was passed to the constructor, while Earned and Previous returned the fields - which
+       used to be the SAME instance, so a write through Earned was visible to the serialiser
+       by luck. Rebuilding the dictionary broke that aliasing and every carried second was
+       written to a copy nothing saved: payroll accrued and then paid nothing.
+
+       Caught by the existing payroll tests, which is exactly what they are for. */
+    public Dictionary<string, long>? OnDutySeconds
+    {
+        get => _earned;
+        init => _earned = Rebuild(value);
+    }
+
+    public Dictionary<string, List<string>>? LastOnDuty
+    {
+        get => _previous;
+        init => _previous = Rebuild(value);
+    }
+
+    /// <summary>The same dictionary as <see cref="OnDutySeconds"/>, under the name the code uses.</summary>
     public Dictionary<string, long> Earned => _earned;
 
+    /// <summary>The same dictionary as <see cref="LastOnDuty"/>, under the name the code uses.</summary>
     public Dictionary<string, List<string>> Previous => _previous;
+
+    /// <summary>A case-insensitive copy, and never null.</summary>
+    private static Dictionary<string, TValue> Rebuild<TValue>(Dictionary<string, TValue>? stored)
+    {
+        var rebuilt = new Dictionary<string, TValue>(StringComparer.OrdinalIgnoreCase);
+        if (stored is null) return rebuilt;
+
+        // Indexer, not Add: two stored keys differing only by case are a duplicate to a
+        // case-insensitive dictionary, and Add would throw on a file somebody hand-edited.
+        foreach (var entry in stored) rebuilt[entry.Key] = entry.Value;
+        return rebuilt;
+    }
 
     public static PayrollState New() => new(
         new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase),

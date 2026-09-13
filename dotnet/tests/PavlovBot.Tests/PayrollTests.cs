@@ -495,3 +495,95 @@ public class PayrollTests : IDisposable
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 }
+
+/// <summary>
+/// A payroll row written by an older build, read by this one.
+/// </summary>
+/// <remarks>
+/// THE CRASH THIS COMES FROM. /stats and /player died on a live server with
+/// "Value cannot be null. (Parameter 'dictionary')" out of Payroll.OwedTo, because the
+/// stored payroll_state had no "owed" property and System.Text.Json handed back null for a
+/// property the type declares non-nullable. Nullable reference types are a compile-time
+/// promise; a deserialiser makes no such promise, and the compiler then lets every caller
+/// dereference it.
+///
+/// The identical mistake is recorded on AccountRecord and FlagSet, both found the same way -
+/// in production, on a row somebody else's build wrote.
+/// </remarks>
+public class PayrollStateShapeTests
+{
+    private static PayrollState Read(string json)
+    {
+        var backend = new MemoryBackend();
+        backend.Seed(Datasets.PayrollState, json);
+        return new SerializedStore(backend, new SystemTextJsonCodec())
+            .Read(Datasets.PayrollState, PayrollState.New());
+    }
+
+    [Fact]
+    public void ARowWithNoOwedPropertyDoesNotThrowOnRead()
+    {
+        // Exactly the live row: written before "owed" existed.
+        var state = Read("""{"lastPaid":{"NCR":"2026-09-01T00:00:00+00:00"}}""");
+
+        Assert.Empty(state.Owed);
+        Assert.Equal(0, state.Owed.GetValueOrDefault("Courier6"));
+        Assert.Single(state.LastPaid);
+    }
+
+    [Fact]
+    public void AnExplicitNullIsTreatedAsEmptyRatherThanAsACrash()
+    {
+        var state = Read("""{"lastPaid":null,"owed":null,"onDutySeconds":null,"lastOnDuty":null}""");
+
+        Assert.Empty(state.LastPaid);
+        Assert.Empty(state.Owed);
+        Assert.Empty(state.Earned);
+        Assert.Empty(state.Previous);
+    }
+
+    [Fact]
+    public void AnEmptyDocumentIsAWholeUsableState()
+    {
+        var state = Read("{}");
+
+        // Every path a command takes through this record, on a row with nothing in it.
+        Assert.Equal(0, state.Owed.GetValueOrDefault("Nobody"));
+        Assert.Equal(0, state.Earned.GetValueOrDefault("Nobody"));
+        Assert.Empty(state.Previous);
+        Assert.Empty(state.LastPaid);
+    }
+
+    [Fact]
+    public void NamesStillMatchCaseInsensitivelyAfterARoundTrip()
+    {
+        /* A DICTIONARY'S COMPARER IS NOT SERIALISED. Without rebuilding it, a round trip
+           hands back an ordinal one and "Alice" stops finding "alice" - wages that quietly
+           stop reaching somebody who changed their capitalisation. */
+        var state = Read("""{"lastPaid":{"ncr":"2026-09-01T00:00:00+00:00"},"owed":{"alice":250}}""");
+
+        Assert.Equal(250, state.Owed.GetValueOrDefault("Alice"));
+        Assert.True(state.LastPaid.ContainsKey("NCR"));
+    }
+
+    [Fact]
+    public void AWithExpressionCannotReintroduceTheNull()
+    {
+        /* THE REASON THE GUARD IS IN THE SETTER. An initializer alone runs only in the
+           constructor, and every update in Payroll is a `with` expression - which assigns
+           straight past it. */
+        var state = PayrollState.New() with { Owed = null! };
+
+        Assert.NotNull(state.Owed);
+        Assert.Equal(0, state.Owed.GetValueOrDefault("Courier6"));
+    }
+
+    [Fact]
+    public void TwoKeysDifferingOnlyByCaseDoNotThrow()
+    {
+        // A hand-edited file. The copy constructor would throw here; the later entry wins.
+        var state = Read("""{"owed":{"alice":10,"Alice":25}}""");
+
+        Assert.Equal(25, state.Owed.GetValueOrDefault("ALICE"));
+    }
+}
