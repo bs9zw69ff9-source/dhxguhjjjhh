@@ -314,20 +314,56 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 
     private async Task OnKillAsync(string file, KillEvent kill)
     {
-        /* Pavlov writes the record whole or split across lines. Merge into whatever is
-           already partial for this file, and only report once every field has arrived. */
-        var merged = _partialKills.TryGetValue(file, out var partial)
-            ? new KillEvent(kill.Killer ?? partial.Killer, kill.Killed ?? partial.Killed, kill.KilledBy ?? partial.KilledBy)
-            : kill;
+        /* Pavlov writes the record whole or split across lines, and the split form is what a
+           live server produces:
 
-        if (merged.Killed is null)
+             "KillData":
+             {
+                     "Killer": "afrobrofosho",
+                     "Killed": "Swagthingchunk32",
+                     "KilledBy": "obrez",
+                     "Headshot": false
+             }
+
+           REPORTING ON THE "Killed" LINE WAS TOO EARLY. KilledBy arrives on the NEXT line, so
+           the record fired without a weapon and the orphaned "KilledBy" line was then held as
+           a partial - which the NEXT kill's Killer line merged into. Every kill after the
+           first was therefore reported with the PREVIOUS kill's weapon. The feed has been
+           quietly attributing the wrong gun to every death on the server.
+
+           The record is complete once the victim AND the cause are both known; the killer is
+           optional, because a fall or a drowning has none. */
+        var partial = _partialKills.GetValueOrDefault(file);
+
+        /* A SECOND "Killer" OR "Killed" LINE MEANS A NEW BLOCK STARTED, so whatever the old
+           one managed to say is emitted rather than being merged into its successor. This is
+           what stops a log that omits KilledBy from swallowing kills entirely. */
+        if (partial is not null &&
+            ((kill.Killer is not null && partial.Killer is not null) ||
+             (kill.Killed is not null && partial.Killed is not null)))
+        {
+            _partialKills.Remove(file);
+            if (partial.Killed is not null) await RaiseKillAsync(partial).ConfigureAwait(false);
+            partial = null;
+        }
+
+        var merged = partial is null
+            ? kill
+            : new KillEvent(kill.Killer ?? partial.Killer, kill.Killed ?? partial.Killed, kill.KilledBy ?? partial.KilledBy);
+
+        if (merged.Killed is null || merged.KilledBy is null)
         {
             _partialKills[file] = merged;
             return;
         }
 
         _partialKills.Remove(file);
-        if (Kill is { } handler) await handler(merged).ConfigureAwait(false);
+        await RaiseKillAsync(merged).ConfigureAwait(false);
+    }
+
+    private async Task RaiseKillAsync(KillEvent kill)
+    {
+        if (Kill is { } handler) await handler(kill).ConfigureAwait(false);
     }
 
     private Task RecordAsync(string id, string? name, string? guessedIp, string? confirmedIp, DateTimeOffset at, CancellationToken ct) =>
