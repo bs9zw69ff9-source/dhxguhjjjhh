@@ -633,6 +633,24 @@ public static class Program
         logger.LogInformation("  factions: {Count} from {Source} - {Names}",
             factions.Names.Count, FactionSource(features.FactionsPath, features.FactionSetName),
             string.Join(", ", factions.Names));
+
+        /* THE SUB-CLASSES BY NAME, because the faction line above does not settle the question
+           anybody actually asks after adding one: does THIS bot know about it?
+
+           A themed clone loads its ladders from a FILE that is copied to the box once and is
+           not touched by any deploy, so a sub-class added in the repo reaches the binary and
+           never reaches that file. Every symptom of it is somewhere else - an empty picker, a
+           command that "did not update", an hour blamed on Discord propagation - and none of
+           them points here. One line per faction ends it. */
+        foreach (var name in factions.Names)
+        {
+            var faction = factions.Get(name)!;
+            logger.LogInformation("    {Faction}: {Ranks} rank(s), sub-classes: {Subclasses}",
+                name, faction.Order.Count,
+                faction.Subclasses.Count == 0
+                    ? "none"
+                    : string.Join(", ", faction.Subclasses.Select(s => $"{s.Key} -> {s.Value}")));
+        }
         logger.LogInformation("  whitelist bot: {State}", options.FactionBotEnabled
             ? $"on (application {options.FactionClientId}, owns /whitelist /promotion /demotion /subclass)"
             : "off (FACTION_BOT_TOKEN / FACTION_CLIENT_ID not set - those commands stay on the main bot)");
