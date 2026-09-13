@@ -74,30 +74,12 @@
         { "name": "Sentinel",      "file": "bossentinel.txt" },
         { "name": "Elder",         "file": "boselder.txt" }
       ],
-      "subclasses": [
-        { "name": "Scribe", "file": "bosscribe.txt" }
+"subclasses": [
+        { "name": "Recon",    "file": "bosrecon.txt" },
+        { "name": "Purifier", "file": "bospurifier.txt" }
       ]
     },
-    {
-      "name": "Kings",
-      "spawnFile": "kingsspawn.txt",
-      "ranks": [
-        { "name": "Member",     "file": "kingsmember.txt" },
-        { "name": "Lieutenant", "file": "kingslieutenant.txt" },
-        { "name": "The King",   "file": "kingsking.txt" }
-      ]
-    },
-    {
-      "name": "Followers",
-      "spawnFile": "followersspawn.txt",
-      "ranks": [
-        { "name": "Volunteer", "file": "followersvolunteer.txt" },
-        { "name": "Scholar",   "file": "followersscholar.txt" },
-        { "name": "Physician", "file": "followersphysician.txt" },
-        { "name": "Director",  "file": "followersdirector.txt" }
-      ]
-    },
-    {
+            {
       "name": "Enclave",
       "spawnFile": "enclavespawn.txt",
       "ranks": [

@@ -246,42 +246,14 @@ public static class FactionRegistry
                     ["Sentinel"] = "bossentinel.txt",
                     ["Elder"] = "boselder.txt",
                 },
-                Subclasses = new Dictionary<string, string> { ["Scribe"] = "bosscribe.txt" },
-            },
-            /* KINGS AND FOLLOWERS WERE DROPPED FROM THIS SET IN #41 and are back, because the
-               live server never dropped them: its roster directory has kingsspawn.txt and
-               followersspawn.txt with members in them, and the bot has been whitelisting into
-               both for months - out of a JSON file, which is the only reason they survived the
-               removal.
-
-               Their ladders are exactly what that file has, filenames included. Getting one
-               wrong does not fail: it writes a brand new file the game never opens, reports
-               success, and leaves somebody unable to spawn. */
-            ["Kings"] = new()
-            {
-                Name = "Kings",
-                Order = ["Member", "Lieutenant", "The King"],
-                Default = "Member",
-                SpawnFile = "kingsspawn.txt",
-                RankFiles = new Dictionary<string, string>
+                /* SCRIBE IS GONE AND ITS FILE IS NOT. bosscribe.txt stays on disk with whatever
+                   is in it - the bot does not delete a game file to express a config change,
+                   and the game reads that directory whatever this set says. Nobody is removed
+                   from anything by this; the class simply stops being offered. */
+                Subclasses = new Dictionary<string, string>
                 {
-                    ["Member"] = "kingsmember.txt",
-                    ["Lieutenant"] = "kingslieutenant.txt",
-                    ["The King"] = "kingsking.txt",
-                },
-            },
-            ["Followers"] = new()
-            {
-                Name = "Followers",
-                Order = ["Volunteer", "Scholar", "Physician", "Director"],
-                Default = "Volunteer",
-                SpawnFile = "followersspawn.txt",
-                RankFiles = new Dictionary<string, string>
-                {
-                    ["Volunteer"] = "followersvolunteer.txt",
-                    ["Scholar"] = "followersscholar.txt",
-                    ["Physician"] = "followersphysician.txt",
-                    ["Director"] = "followersdirector.txt",
+                    ["Recon"] = "bosrecon.txt",
+                    ["Purifier"] = "bospurifier.txt",
                 },
             },
             ["Enclave"] = new()
