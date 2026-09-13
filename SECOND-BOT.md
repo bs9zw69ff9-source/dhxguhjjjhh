@@ -14,15 +14,23 @@ copy quietly rots. The clone is the same build with a different `.env`.
 Two things: the **faction roster** and **which commands exist**. Everything else — bans,
 RCON, economy, the intelligence commands — is the same code behaving the same way.
 
-`FACTIONS_PATH` points at a JSON file that **replaces** the built-in set. Unset, you get
-Gambino / Colombo / NYPD exactly as before, which is why the normal bots need no change at
-all.
+`FACTION_SET=fallout` loads the Fallout ladders, which are **built into the binary** — NCR,
+Legion, Brotherhood of Steel and Enclave, with their ranks, sub-classes and roster filenames.
+Unset, you get Gambino / Colombo / NYPD exactly as before, which is why the normal bots need
+no change at all.
 
 ```bash
-cp factions.fallout.example.json /root/pavlov-bot-fallout/factions.json
+FACTION_SET=fallout
 ```
 
-Ranks and caps live in that file. Editing it needs a restart, not a deploy.
+`FACTIONS_PATH` is the other way to do it: a JSON file that replaces the built-in set, for
+ladders that are genuinely your own. It wins over `FACTION_SET` when both are set.
+
+**NO DEPLOY UPDATES THAT FILE.** It is a copy on the box, outside the repo, so a faction or
+sub-class added in the repo reaches the binary and never reaches it — the picker keeps the
+old list through deploy after deploy and nothing says why. `scripts/deploy.sh` warns when the
+file is older than the repo's example. The built-in set has no such gap, which is why it is
+the default advice now.
 
 ### Roles name your factions, not somebody else's
 
@@ -277,7 +285,6 @@ Assumes the clone owns `pavlovserver2`. Adjust the paths if yours differ.
 mkdir -p /root/pavlov-bot-fallout/data
 cd /root/pavlov-bot
 cp .env /root/pavlov-bot-fallout/.env
-cp factions.fallout.example.json /root/pavlov-bot-fallout/factions.json
 ```
 
 ### 2. The roster directory must already exist
@@ -329,7 +336,11 @@ BOT_NAME=Mojave Authority
 COMMANDS_DISABLED=arrest,warrant,bail,backgroundcheck
 
 # ── its own factions and state ──
-FACTIONS_PATH=/root/pavlov-bot-fallout/factions.json
+# The Fallout ladders are BUILT INTO THE BINARY, so there is no file to copy and
+# nothing to keep in step: a faction or sub-class added in the repo is live on the
+# next deploy. Use FACTIONS_PATH instead only for ladders that are genuinely your
+# own - and then remember that no deploy updates that file.
+FACTION_SET=fallout
 DATA_DIR=/root/pavlov-bot-fallout/data
 
 # ── its own game server ──
@@ -401,7 +412,7 @@ truncates a whitelist the game is reading. The same rule applies to restarts —
 pm2 restart /root/pavlov-bot/ecosystem.fallout.config.js --update-env
 ```
 
-`cwd` is what makes it a second bot: the binary reads `.env`, `factions.json` and `data/`
+`cwd` is what makes it a second bot: the binary reads `.env` and `data/`
 from its working directory, and the ecosystem file points that at
 `/root/pavlov-bot-fallout`. Set `FALLOUT_HOME` if it lives somewhere else.
 
@@ -429,12 +440,15 @@ pm2 logs pavlov-bot-fallout --nostream --lines 60 | grep -E "factions|whitelists
 The faction line is printed at every start and names the set that is loaded:
 
 ```
-factions: /root/pavlov-bot-fallout/factions.json - NCR, Legion, Brotherhood of Steel, Enclave
+factions: 4 from the built-in "fallout" set (no FACTIONS_PATH) - NCR, Legion, Brotherhood of Steel, Enclave
+  NCR: 7 rank(s), sub-classes: Veteran Ranger -> ncrranger.txt, ...
+  Enclave: 5 rank(s), sub-classes: Hellfire -> enclavehellfire.txt, Demolition -> enclavedemolition.txt
 ```
 
-If it says `built in (FACTIONS_PATH not set)`, the clone is running the police roster and
-would write the other bot's files. That line is the check worth glancing at after every
-deploy.
+If it says `built in (neither FACTION_SET nor FACTIONS_PATH set)`, the clone is running the
+police roster and would write the other bot's files - set `FACTION_SET=fallout`. That line
+is the check worth glancing at after every deploy, and the sub-class lines under it answer
+"does this bot know about the one I just added" without guessing from an empty picker.
 
 A faction file that cannot be used **stops the bot** with the problems listed, rather than
 falling back to the built-ins — a Fallout bot silently running the NYPD roster looks exactly

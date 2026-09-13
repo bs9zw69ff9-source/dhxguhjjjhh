@@ -140,25 +140,55 @@ public static class Program
             var loaded = PavlovBot.Host.Factions.FactionsFile.Load(factionsPath);
             if (loaded.Set is null)
             {
-                await Console.Error.WriteLineAsync($"FACTIONS_PATH is set but unusable ({factionsPath}):").ConfigureAwait(false);
-                foreach (var problem in loaded.Problems)
-                    await Console.Error.WriteLineAsync($"  - {problem}").ConfigureAwait(false);
-                return 78;   // EX_CONFIG
-            }
-            factions = loaded.Set;
+                /* A FILE THAT WAS DELETED ON PURPOSE IS NOT A TYPO, when a valid FACTION_SET
+                   is sitting right there. Refusing to start in that case is a themed bot down
+                   over a line somebody forgot to remove - and the symptom is not "bad config",
+                   it is a picker that never updates again, because a dead bot re-registers
+                   nothing and Discord keeps showing the commands it registered when it was
+                   last alive.
 
-            /* A CAP THAT NO LONGER DOES ANYTHING IS SAID OUT LOUD. Rank caps were removed, and
-               an old file is still a perfectly good file - but a setting that is read, kept and
-               quietly ignored is how "why is the cap not working" becomes an afternoon. Written
-               to stderr with the other configuration notes rather than the log, because this is
-               about the file the operator is holding, not about the run. */
-            if (loaded.IgnoredRankCaps > 0)
+                   Only for a MISSING file, and only when the set name resolves. A malformed file
+                   still stops the bot: that is a typo in ladders somebody is actively editing,
+                   and quietly running something else is how the wrong rosters get written. */
+                if (MayFallBackToSet(factionsPath, features.FactionSetName))
+                {
+                    await Console.Error.WriteLineAsync(
+                        $"FACTIONS_PATH points at {factionsPath}, which does not exist - using the " +
+                        $"built-in \"{features.FactionSetName}\" set instead. Delete the FACTIONS_PATH " +
+                        "line from .env to silence this.").ConfigureAwait(false);
+                }
+                else
+                {
+                    await Console.Error.WriteLineAsync($"FACTIONS_PATH is set but unusable ({factionsPath}):").ConfigureAwait(false);
+                    foreach (var problem in loaded.Problems)
+                        await Console.Error.WriteLineAsync($"  - {problem}").ConfigureAwait(false);
+
+                    await Console.Error.WriteLineAsync(
+                        "Restore the file, or delete the FACTIONS_PATH line and set FACTION_SET to a " +
+                        $"built-in set instead: {string.Join(", ", PavlovBot.Core.Factions.FactionRegistry.PresetNames)}.")
+                        .ConfigureAwait(false);
+
+                    return 78;   // EX_CONFIG
+                }
+            }
+            else
             {
-                await Console.Error.WriteLineAsync(
-                    $"{factionsPath} sets a cap on {loaded.IgnoredRankCaps} rank(s). Rank caps were " +
-                    "removed - ranks and factions now take as many members as they are given, and " +
-                    "these values do nothing. The file loads either way; delete them when convenient.")
-                    .ConfigureAwait(false);
+                factions = loaded.Set;
+
+                /* A CAP THAT NO LONGER DOES ANYTHING IS SAID OUT LOUD. Rank caps were removed,
+                   and an old file is still a perfectly good file - but a setting that is read,
+                   kept and quietly ignored is how "why is the cap not working" becomes an
+                   afternoon. Written to stderr with the other configuration notes rather than
+                   the log, because this is about the file the operator is holding, not about
+                   the run. */
+                if (loaded.IgnoredRankCaps > 0)
+                {
+                    await Console.Error.WriteLineAsync(
+                        $"{factionsPath} sets a cap on {loaded.IgnoredRankCaps} rank(s). Rank caps were " +
+                        "removed - ranks and factions now take as many members as they are given, and " +
+                        "these values do nothing. The file loads either way; delete them when convenient.")
+                        .ConfigureAwait(false);
+                }
             }
         }
 
@@ -1099,6 +1129,24 @@ public static class Program
     /// built from, so a set here that disagrees with what Discord shows is Discord's cache,
     /// not this file.
     /// </remarks>
+    /// <summary>
+    /// Whether a FACTIONS_PATH that does not resolve may fall back to FACTION_SET.
+    /// </summary>
+    /// <remarks>
+    /// ONLY A MISSING FILE, and only when a built-in set is named and real. Deleting the file
+    /// and leaving the line behind is what happens when a themed bot moves onto the built-in
+    /// ladders, and dying over it takes the bot down - which shows up as a command picker that
+    /// never updates again, because a process that is not running re-registers nothing.
+    ///
+    /// A MALFORMED file still stops the bot. That is ladders somebody is actively editing, and
+    /// quietly running a different set writes the wrong roster files.
+    /// </remarks>
+    internal static bool MayFallBackToSet(string? path, string? setName) =>
+        path is { Length: > 0 } &&
+        !File.Exists(path) &&
+        setName is { Length: > 0 } &&
+        PavlovBot.Core.Factions.FactionRegistry.Preset(setName) is not null;
+
     internal static string FactionSource(string? path, string? setName = null)
     {
         // The file wins when both are set, so it is named first or the line would lie.
@@ -1113,10 +1161,15 @@ public static class Program
         {
             var full = Path.GetFullPath(path);
 
-            // Startup has already refused a path that does not resolve, so this is belt and
-            // braces - but a missing file must not turn the summary into an exception.
-            return File.Exists(full)
-                ? $"{full} (last edited {File.GetLastWriteTimeUtc(full):yyyy-MM-dd HH:mm}Z)"
+            if (File.Exists(full))
+                return $"{full} (last edited {File.GetLastWriteTimeUtc(full):yyyy-MM-dd HH:mm}Z)";
+
+            /* A PATH THAT IS NOT THERE MUST NOT BE NAMED AS THE SOURCE. Startup falls back to
+               FACTION_SET when the file is missing and a set is named, and this line is the
+               one place anybody checks which ladders are loaded - reporting the file that was
+               NOT read is the same lie the built-in fallback used to tell. */
+            return setName is { Length: > 0 }
+                ? $"the built-in \"{setName}\" set ({full} does not exist)"
                 : full;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException

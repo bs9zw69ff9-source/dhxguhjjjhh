@@ -114,3 +114,68 @@ public class FactionSourceTests
         Assert.Equal(Path.GetFullPath(missing), described);
     }
 }
+
+/// <summary>
+/// What happens when FACTIONS_PATH names a file that is not there.
+/// </summary>
+/// <remarks>
+/// THE FAILURE THIS COMES FROM. A themed clone moved off its faction file onto the built-in
+/// set, deleted the file, and left the FACTIONS_PATH line in .env. The bot then refused to
+/// start - correct on its own terms, and invisible: a process that is not running registers
+/// no commands, so Discord kept serving the list from the last time it was alive and every
+/// change to the factions looked like it had never shipped.
+/// </remarks>
+public class MissingFactionFileTests
+{
+    [Fact]
+    public void TheSummaryNamesTheSetItFellBackTo()
+    {
+        /* THE LINE EVERYBODY CHECKS. Naming a file that was not read is the same lie the
+           silent built-in fallback used to tell - "factions: /root/.../factions.json" while
+           the ladders came from somewhere else entirely. */
+        var absent = Path.Combine(Path.GetTempPath(), "pavlovbot-absent-" + Guid.NewGuid().ToString("N") + ".json");
+
+        var line = PavlovBot.Host.Program.FactionSource(absent, "fallout");
+
+        Assert.Contains("fallout", line, StringComparison.Ordinal);
+        Assert.Contains("does not exist", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMissingFileFallsBackToTheSetWhenOneIsNamed()
+    {
+        var absent = Path.Combine(Path.GetTempPath(), "pavlovbot-absent-" + Guid.NewGuid().ToString("N") + ".json");
+
+        Assert.True(PavlovBot.Host.Program.MayFallBackToSet(absent, "fallout"));
+    }
+
+    [Fact]
+    public void WithNoSetNamedItIsStillAFatalMisconfiguration()
+    {
+        /* Nothing to fall back TO. Starting on the built-in police ladders would have a
+           Fallout bot writing policecadet.txt, which is worse than not starting. */
+        var absent = Path.Combine(Path.GetTempPath(), "pavlovbot-absent-" + Guid.NewGuid().ToString("N") + ".json");
+
+        Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, null));
+        Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, ""));
+        Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, "falout"));   // a typo is not a set
+    }
+
+    [Fact]
+    public void AFileTHATEXISTSIsNeverSkipped()
+    {
+        // A malformed file must still stop the bot: those are ladders somebody is editing,
+        // and running a different set writes the wrong roster files.
+        var present = Path.Combine(Path.GetTempPath(), "pavlovbot-present-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(present, "{}");
+
+        try
+        {
+            Assert.False(PavlovBot.Host.Program.MayFallBackToSet(present, "fallout"));
+        }
+        finally
+        {
+            File.Delete(present);
+        }
+    }
+}
