@@ -57,6 +57,34 @@ public class FalloutPresetTests
     }
 
     [Fact]
+    public void TheEnclaveSubclassesAreCrossedOnPurpose()
+    {
+        /* THIS LOOKS LIKE A SWAP AND IT IS NOT ONE. The server asked for Hellfire to be
+           whitelisted in enclavedemolition.txt and Demolition in enclavehellfire.txt, because
+           the FILE is what the game reads and what their config maps to a class - the name is
+           only what staff type into /subclass.
+
+           Pinned because the obvious "fix" is silent and expensive: pointing a sub-class at a
+           different file takes the class away from everybody already listed in the old one,
+           in game, with the command still reporting success. */
+        var enclave = FactionRegistry.FalloutSet.Get("Enclave")!;
+
+        Assert.Equal("enclavedemolition.txt", enclave.Subclasses["Hellfire"]);
+        Assert.Equal("enclavehellfire.txt", enclave.Subclasses["Demolition"]);
+    }
+
+    [Fact]
+    public void BothEnclaveSubclassFilesAreCreatedAtStartup()
+    {
+        // A sub-class whose file the bot does not know about is one nobody can be added to:
+        // EnsureRosterFiles only creates what RosterFilesOf lists.
+        var files = RosterService.RosterFilesOf(FactionRegistry.FalloutSet);
+
+        Assert.Contains("enclavedemolition.txt", files);
+        Assert.Contains("enclavehellfire.txt", files);
+    }
+
+    [Fact]
     public void ThePresetIsAValidSetInItsOwnRight()
     {
         // Same validation startup runs: a rank with no file, a default that is not a rank.

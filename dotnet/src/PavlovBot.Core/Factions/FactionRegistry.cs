@@ -248,6 +248,19 @@ public static class FactionRegistry
                     ["Officer"] = "enclaveofficer.txt",
                     ["Colonel"] = "enclavecolonel.txt",
                 },
+                /* CROSSED ON PURPOSE, AS THE SERVER ASKED FOR: Hellfire writes to
+                   enclavedemolition.txt and Demolition writes to enclavehellfire.txt.
+
+                   It reads like a swap and it is not one to "fix" here. The FILE is what the
+                   game reads and what the server's own config maps to a class; the name is
+                   only what staff type. Pointing a sub-class at a different file silently
+                   takes the class away from everybody already listed in the old one, so this
+                   pairing changes when the server's config changes and not before. */
+                Subclasses = new Dictionary<string, string>
+                {
+                    ["Hellfire"] = "enclavedemolition.txt",
+                    ["Demolition"] = "enclavehellfire.txt",
+                },
             },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
