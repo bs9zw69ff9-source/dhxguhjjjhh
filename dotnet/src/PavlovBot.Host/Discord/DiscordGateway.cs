@@ -215,6 +215,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _client.Ready += OnReady;
         _client.SlashCommandExecuted += OnSlashCommand;
         _client.AutocompleteExecuted += OnAutocomplete;
+        _client.JoinedGuild += OnJoinedGuildAsync;
         _client.ButtonExecuted += OnComponent;
         _client.SelectMenuExecuted += OnComponent;
         _client.ModalSubmitted += OnComponent;
@@ -397,11 +398,44 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Whether the last registration was global.
+    /// </summary>
+    /// <remarks>
+    /// Read by <see cref="OnJoinedGuildAsync"/>: registering into a guild while the set is
+    /// global would put every command in that one server's picker twice.
+    /// </remarks>
+    private bool _registeredGlobally = true;
+
+    /// <summary>A guild joined while the bot is running gets the commands without a restart.</summary>
+    private async Task OnJoinedGuildAsync(SocketGuild guild)
+    {
+        // Global commands are already everywhere, and a configured GUILD_ID means somebody
+        // chose exactly one server on purpose.
+        if (_registeredGlobally || _options.GuildId is not null) return;
+
+        try
+        {
+            var (properties, _) = SlashCommandValidation.Partition(_commands.Values
+                .Where(c => !_options.FactionBotEnabled || !FactionCommands.Contains(c.Name))
+                .Select(c => c.Build()));
+
+            await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
+            _logger.LogInformation("Registered {Count} command(s) in {Guild}, which the bot just joined",
+                properties.Count, guild.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Joined {Guild} but could not register commands there - restart to retry", guild.Name);
+        }
+    }
+
     private async Task OnReady()
     {
         try
         {
             var registeredGlobally = await RegisterCommandsAsync().ConfigureAwait(false);
+            _registeredGlobally = registeredGlobally;
             _ready.TrySetResult();
             _logger.LogInformation("Logged in as {User}", _client.CurrentUser?.Username ?? "?");
 
@@ -529,6 +563,50 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
             _logger.LogInformation("Registered {Count} command(s) in guild {Guild}", properties.Count, guild.Name);
 
             return false;
+        }
+
+        /* NO GUILD_ID, SO EVERY GUILD THE BOT IS IN. Falling back to global here is what made
+           an unset GUILD_ID cost an hour per deploy, and that hour is indistinguishable from
+           the change not having shipped - which is exactly how it gets reported.
+
+           The ids do not need configuring: Discord.Net raises Ready only once every guild in
+           the READY payload has arrived, so this list is complete by the time it is read.
+
+           A GUILD THAT REFUSES SENDS THE WHOLE THING GLOBAL. Half a set of guild commands and
+           no global fallback means the guilds that failed have nothing, which is an outage
+           rather than a delay - and the cleanup below then strips the guild copies, so the
+           picker never shows anything twice. Slow beats missing. */
+        var guilds = _client.Guilds.ToList();
+        if (guilds.Count > 0)
+        {
+            var failures = 0;
+
+            foreach (var guild in guilds)
+            {
+                try
+                {
+                    await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    failures++;
+                    _logger.LogError(ex, "Could not register commands in {Guild} ({GuildId})", guild.Name, guild.Id);
+                }
+            }
+
+            if (ClearGlobals(guilds.Count - failures, failures))
+            {
+                _logger.LogInformation(
+                    "Registered {Count} command(s) in {Guilds} guild(s) - they appear immediately. " +
+                    "Set GUILD_ID to pin registration to one server instead",
+                    properties.Count, guilds.Count);
+                return false;
+            }
+
+            _logger.LogWarning(
+                "{Failed} of {Guilds} guild(s) refused the command registration, so all {Count} are being " +
+                "registered GLOBALLY instead - propagation can take up to an hour, but every server gets them",
+                failures, guilds.Count, properties.Count);
         }
 
         await _client.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
