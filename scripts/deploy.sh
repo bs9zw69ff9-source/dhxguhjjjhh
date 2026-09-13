@@ -146,6 +146,37 @@ if [ "$START" = true ] && command -v pm2 >/dev/null; then
   else
     echo "No pavlov-bot-fallout under pm2 on this host - nothing else to restart."
   fi
+
+  # ---- the clone's faction FILE, which no deploy has ever updated -------------
+  # THE GAP THIS CLOSES. The clone loads its ladders from FACTIONS_PATH, a copy
+  # made by hand at setup time and living outside the repo. The build reaches it,
+  # the restart reaches it, and a faction or sub-class added in the repo does NOT
+  # - so the picker keeps the old list through deploy after deploy with nothing
+  # saying why. That cost a whole evening once.
+  #
+  # SAID, NOT DONE. The file is meant to be edited by hand (ranks, caps, file
+  # names), so overwriting it would throw away somebody's ladders to fix a
+  # staleness they may not care about. The copy is one command and it is printed.
+  FALLOUT_HOME="${FALLOUT_HOME:-/root/pavlov-bot-fallout}"
+  if [ -f "$FALLOUT_HOME/.env" ]; then
+    clone_factions=$(grep -E '^[[:space:]]*FACTIONS_PATH=' "$FALLOUT_HOME/.env" | tail -1 | cut -d= -f2- | tr -d '"' | xargs || true)
+
+    if [ -n "${clone_factions:-}" ] && [ -f "$clone_factions" ] && [ factions.fallout.example.json -nt "$clone_factions" ]; then
+      echo
+      echo "WARNING: the fallout bot's faction file is OLDER than this deploy's example." >&2
+      echo "  it reads:  $clone_factions" >&2
+      echo "  repo has:  $(pwd)/factions.fallout.example.json" >&2
+      echo "  Ladders, sub-classes and roster file names come from ITS file, not from the" >&2
+      echo "  build - so anything added to the factions since that copy was made is not" >&2
+      echo "  live on the clone. If you have not hand-edited it:" >&2
+      echo >&2
+      echo "    cp factions.fallout.example.json $clone_factions" >&2
+      echo "    pm2 restart ecosystem.fallout.config.js --update-env" >&2
+      echo >&2
+      echo "  Or drop FACTIONS_PATH from $FALLOUT_HOME/.env and set FACTION_SET=fallout," >&2
+      echo "  which takes the ladders from the build and keeps them in step from then on." >&2
+    fi
+  fi
 fi
 
 # ---- proof it is the new binary that is running -----------------------------
