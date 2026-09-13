@@ -248,6 +248,42 @@ public static class FactionRegistry
                 },
                 Subclasses = new Dictionary<string, string> { ["Scribe"] = "bosscribe.txt" },
             },
+            /* KINGS AND FOLLOWERS WERE DROPPED FROM THIS SET IN #41 and are back, because the
+               live server never dropped them: its roster directory has kingsspawn.txt and
+               followersspawn.txt with members in them, and the bot has been whitelisting into
+               both for months - out of a JSON file, which is the only reason they survived the
+               removal.
+
+               Their ladders are exactly what that file has, filenames included. Getting one
+               wrong does not fail: it writes a brand new file the game never opens, reports
+               success, and leaves somebody unable to spawn. */
+            ["Kings"] = new()
+            {
+                Name = "Kings",
+                Order = ["Member", "Lieutenant", "The King"],
+                Default = "Member",
+                SpawnFile = "kingsspawn.txt",
+                RankFiles = new Dictionary<string, string>
+                {
+                    ["Member"] = "kingsmember.txt",
+                    ["Lieutenant"] = "kingslieutenant.txt",
+                    ["The King"] = "kingsking.txt",
+                },
+            },
+            ["Followers"] = new()
+            {
+                Name = "Followers",
+                Order = ["Volunteer", "Scholar", "Physician", "Director"],
+                Default = "Volunteer",
+                SpawnFile = "followersspawn.txt",
+                RankFiles = new Dictionary<string, string>
+                {
+                    ["Volunteer"] = "followersvolunteer.txt",
+                    ["Scholar"] = "followersscholar.txt",
+                    ["Physician"] = "followersphysician.txt",
+                    ["Director"] = "followersdirector.txt",
+                },
+            },
             ["Enclave"] = new()
             {
                 Name = "Enclave",

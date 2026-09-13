@@ -90,13 +90,26 @@ public class FalloutPresetTests
     }
 
     [Fact]
-    public void NeitherKingsNorFollowersExists()
+    public void KingsAndFollowersAreInTheSetBecauseTheServerNeverDroppedThem()
     {
-        // The point of the change: they are gone from the pickers because they are gone
-        // from the set, with no file to edit for it.
-        Assert.Null(FactionRegistry.FalloutSet.Get("Kings"));
-        Assert.Null(FactionRegistry.FalloutSet.Get("Followers"));
-        Assert.Equal(4, FactionRegistry.FalloutSet.Names.Count);
+        /* THEY WERE REMOVED FROM THIS SET IN #41 AND THE SERVER KEPT THEM. Its roster
+           directory has kingsspawn.txt and followersspawn.txt with members in them, and the
+           bot went on whitelisting into both - out of a JSON file, which is the only reason
+           they survived. Taking the file away without these would delete two live factions
+           from every picker and leave their members unmanageable. */
+        var kings = FactionRegistry.FalloutSet.Get("Kings");
+        var followers = FactionRegistry.FalloutSet.Get("Followers");
+
+        Assert.NotNull(kings);
+        Assert.NotNull(followers);
+        Assert.Equal(6, FactionRegistry.FalloutSet.Names.Count);
+
+        // The ladders the live file has, filenames included - a wrong one does not fail, it
+        // writes a file the game never opens and leaves somebody unable to spawn.
+        Assert.Equal(["Member", "Lieutenant", "The King"], kings!.Order);
+        Assert.Equal("kingsspawn.txt", kings.SpawnFile);
+        Assert.Equal(["Volunteer", "Scholar", "Physician", "Director"], followers!.Order);
+        Assert.Equal("followersspawn.txt", followers.SpawnFile);
     }
 
     [Fact]
@@ -116,7 +129,8 @@ public class FalloutPresetTests
            between working and a bot quietly writing the police roster.
 
            The police ladders are still shipped whole, one name away. */
-        Assert.Equal(["NCR", "Legion", "Brotherhood of Steel", "Enclave"], FactionRegistry.Default.Names);
+        Assert.Equal(["NCR", "Legion", "Brotherhood of Steel", "Kings", "Followers", "Enclave"],
+            FactionRegistry.Default.Names);
         Assert.Equal(["Gambino", "Colombo", "NYPD"], FactionRegistry.Police.Names);
         Assert.Same(FactionRegistry.FalloutSet, FactionRegistry.Preset("default"));
         Assert.Same(FactionRegistry.Police, FactionRegistry.Preset("police"));
