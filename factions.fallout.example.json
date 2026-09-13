@@ -79,6 +79,25 @@
       ]
     },
     {
+      "name": "Kings",
+      "spawnFile": "kingsspawn.txt",
+      "ranks": [
+        { "name": "Member",     "file": "kingsmember.txt" },
+        { "name": "Lieutenant", "file": "kingslieutenant.txt" },
+        { "name": "The King",   "file": "kingsking.txt" }
+      ]
+    },
+    {
+      "name": "Followers",
+      "spawnFile": "followersspawn.txt",
+      "ranks": [
+        { "name": "Volunteer", "file": "followersvolunteer.txt" },
+        { "name": "Scholar",   "file": "followersscholar.txt" },
+        { "name": "Physician", "file": "followersphysician.txt" },
+        { "name": "Director",  "file": "followersdirector.txt" }
+      ]
+    },
+    {
       "name": "Enclave",
       "spawnFile": "enclavespawn.txt",
       "ranks": [

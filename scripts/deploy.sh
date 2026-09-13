@@ -114,6 +114,31 @@ else
   echo "Built and verified. NOT restarted, because --no-start was given."
 fi
 
+# ---- the fallout bot --------------------------------------------------------
+# IT RUNS THE SAME PUBLISHED OUTPUT as anything else on this box, so the build
+# above is already its build - but it keeps serving the OLD binary until its own
+# process is replaced. Forgetting that step is exactly what "the fix is deployed
+# and the bot is not doing it" looks like, and it has cost days.
+#
+# THE ECOSYSTEM FILE, NOT THE APP NAME. `pm2 restart pavlov-bot-fallout` restarts
+# the process without re-reading the config, so a change to kill_timeout or the
+# env block would deploy and never apply - the same trap deploy-csharp.sh
+# documents for the other app.
+if [ "$START" = true ] && command -v pm2 >/dev/null; then
+  if pm2 describe pavlov-bot-fallout >/dev/null 2>&1; then
+    echo "==> Restarting pavlov-bot-fallout"
+
+    # Not fatal: a restart that fails is worth saying loudly and not worth
+    # undoing a good deploy over.
+    if pm2 restart ecosystem.fallout.config.js --update-env; then
+      pm2 save >/dev/null 2>&1 || true
+    else
+      echo "WARNING: pavlov-bot-fallout did not restart. It is still serving the OLD binary." >&2
+      echo "  Retry with:  pm2 restart ecosystem.fallout.config.js --update-env" >&2
+    fi
+  fi
+fi
+
 echo "Deployed $(git log --oneline -1)"
 
 

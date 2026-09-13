@@ -36,7 +36,7 @@ public class FactionSetTests : IDisposable
            validation, every bot would be one strict-mode change away from refusing to start. */
         Assert.Empty(FactionRegistry.Default.Problems());
         Assert.Contains("Enclave", FactionRegistry.Default.Names, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(4, FactionRegistry.Default.All.Count);
+        Assert.Equal(6, FactionRegistry.Default.All.Count);
 
         // Still shipped, still valid, now chosen by name.
         Assert.Empty(FactionRegistry.Police.Problems());
