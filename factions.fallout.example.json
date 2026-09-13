@@ -88,12 +88,9 @@
         { "name": "Officer",  "file": "enclaveofficer.txt" },
         { "name": "Colonel",  "file": "enclavecolonel.txt" }
       ],
-      // CROSSED ON PURPOSE: Hellfire is whitelisted in enclavedemolition.txt and
-      // Demolition in enclavehellfire.txt, which is how this server's config maps
-      // them. The file is what the game reads; the name is only what staff type.
       "subclasses": [
-        { "name": "Hellfire",   "file": "enclavedemolition.txt" },
-        { "name": "Demolition", "file": "enclavehellfire.txt" }
+        { "name": "Hellfire",   "file": "enclavehellfire.txt" },
+        { "name": "Demolition", "file": "enclavedemolition.txt" }
       ]
     }
   ]
