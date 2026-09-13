@@ -90,26 +90,28 @@ public class FalloutPresetTests
     }
 
     [Fact]
-    public void KingsAndFollowersAreInTheSetBecauseTheServerNeverDroppedThem()
+    public void KingsAndFollowersAreGoneAndTheirFilesAreNot()
     {
-        /* THEY WERE REMOVED FROM THIS SET IN #41 AND THE SERVER KEPT THEM. Its roster
-           directory has kingsspawn.txt and followersspawn.txt with members in them, and the
-           bot went on whitelisting into both - out of a JSON file, which is the only reason
-           they survived. Taking the file away without these would delete two live factions
-           from every picker and leave their members unmanageable. */
-        var kings = FactionRegistry.FalloutSet.Get("Kings");
-        var followers = FactionRegistry.FalloutSet.Get("Followers");
+        /* REMOVED ON REQUEST. The rosters stay on disk - the bot does not delete a game file
+           to express a config change, and the game reads that directory whatever this set
+           says. What changes is that neither appears in a picker and neither can be
+           whitelisted into from here. */
+        Assert.Null(FactionRegistry.FalloutSet.Get("Kings"));
+        Assert.Null(FactionRegistry.FalloutSet.Get("Followers"));
+        Assert.Equal(4, FactionRegistry.FalloutSet.Names.Count);
+    }
 
-        Assert.NotNull(kings);
-        Assert.NotNull(followers);
-        Assert.Equal(6, FactionRegistry.FalloutSet.Names.Count);
+    [Fact]
+    public void TheBrotherhoodHasReconAndPurifierRatherThanScribe()
+    {
+        var bos = FactionRegistry.FalloutSet.Get("Brotherhood of Steel")!;
 
-        // The ladders the live file has, filenames included - a wrong one does not fail, it
-        // writes a file the game never opens and leaves somebody unable to spawn.
-        Assert.Equal(["Member", "Lieutenant", "The King"], kings!.Order);
-        Assert.Equal("kingsspawn.txt", kings.SpawnFile);
-        Assert.Equal(["Volunteer", "Scholar", "Physician", "Director"], followers!.Order);
-        Assert.Equal("followersspawn.txt", followers.SpawnFile);
+        Assert.Equal("bosrecon.txt", bos.Subclasses["Recon"]);
+        Assert.Equal("bospurifier.txt", bos.Subclasses["Purifier"]);
+
+        // Scribe is not offered any more. bosscribe.txt is untouched on disk.
+        Assert.False(bos.HasSubclass("Scribe"));
+        Assert.DoesNotContain("bosscribe.txt", bos.Subclasses.Values, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -129,8 +131,7 @@ public class FalloutPresetTests
            between working and a bot quietly writing the police roster.
 
            The police ladders are still shipped whole, one name away. */
-        Assert.Equal(["NCR", "Legion", "Brotherhood of Steel", "Kings", "Followers", "Enclave"],
-            FactionRegistry.Default.Names);
+        Assert.Equal(["NCR", "Legion", "Brotherhood of Steel", "Enclave"], FactionRegistry.Default.Names);
         Assert.Equal(["Gambino", "Colombo", "NYPD"], FactionRegistry.Police.Names);
         Assert.Same(FactionRegistry.FalloutSet, FactionRegistry.Preset("default"));
         Assert.Same(FactionRegistry.Police, FactionRegistry.Preset("police"));
