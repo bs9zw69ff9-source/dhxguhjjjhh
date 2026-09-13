@@ -110,11 +110,21 @@ public sealed class GiveMenuCommand(
         var commands = RconMenu.Grant(requested, tier);
 
         var delivered = 0;
+        var attempts = new List<(string Server, string? Problem)>();
+
         foreach (var server in rcon.Servers)
         {
             var ok = false;
-            foreach (var line in commands) ok |= await TrySend(server, line, ct).ConfigureAwait(false);
-            if (ok) delivered++;
+            string? problem = null;
+
+            foreach (var line in commands)
+            {
+                var sent = await TrySend(server, line, ct).ConfigureAwait(false);
+                ok |= sent.Ok;
+                problem ??= sent.Problem;
+            }
+
+            if (ok) delivered++; else attempts.Add((server, problem));
         }
 
         if (delivered == 0)
@@ -122,7 +132,8 @@ public sealed class GiveMenuCommand(
             /* Nothing is recorded when nothing landed. Recording a grant the server never
                received leaves the bot believing they have access they do not, and the next
                claim reads as a release. */
-            await Reply(command, Theme.Failure("Not granted", "No server accepted the command. Nothing was recorded.")).ConfigureAwait(false);
+            await Reply(command, RconFailure.Explain("Not granted",
+                "No server accepted the command. Nothing was recorded.", rcon, attempts)).ConfigureAwait(false);
             return;
         }
 
@@ -157,17 +168,23 @@ public sealed class GiveMenuCommand(
                 return grants;
             }, ct);
 
-    private async Task<bool> TrySend(string server, string rconCommand, CancellationToken ct)
+    /// <param name="Problem">Why it failed, for the reply. Null when it worked.</param>
+    private readonly record struct SendResult(bool Ok, string? Problem);
+
+    private async Task<SendResult> TrySend(string server, string rconCommand, CancellationToken ct)
     {
         try
         {
             await rcon.SendAsync(server, rconCommand, ct).ConfigureAwait(false);
-            return true;
+            return new SendResult(true, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            /* CARRIED BACK, not just logged. The reply used to say "no server accepted the
+               command" while the reason sat in a log file somebody would have to go and
+               find - and the reasons need four different actions. */
             logger.LogWarning("{Command} failed on {Server}: {Message}", rconCommand.Split(' ')[0], server, ex.Message);
-            return false;
+            return new SendResult(false, ex.Message);
         }
     }
 
