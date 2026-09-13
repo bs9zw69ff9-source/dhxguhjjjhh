@@ -87,7 +87,7 @@ if command -v pm2 >/dev/null; then
   for app in $(pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | sort -u); do
     echo "--- $app"
     pm2 logs "$app" --nostream --lines 400 2>/dev/null \
-      | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:" \
+      | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:|Pavlov log|Tailing .* Pavlov log|CANNOT READ|Kill stats: recorded" \
       | tail -15
     echo
   done
@@ -111,6 +111,35 @@ for env in .env /root/pavlov-bot-fallout/.env; do
   done
   echo
 done
+
+line "the kill log, and whether anything has happened since the bot started"
+# THE BENIGN EXPLANATION, CHECKED FIRST. The tailer positions at the END of the file on its
+# first pass - deliberately, so a restart does not replay thousands of old joins - so kills
+# written BEFORE the process started are not counted and never will be. "Nothing recorded"
+# and "nobody has died since the restart" are the same picture, and only this tells them
+# apart.
+for log in /home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log \
+           /home/steam/pavlovserver2/Pavlov/Saved/Logs/Pavlov.log; do
+  [ -f "$log" ] || continue
+  echo "--- $log"
+  echo "    last written:  $(date -r "$log" '+%Y-%m-%d %H:%M:%S')"
+  echo "    KillData blocks in the file: $(grep -c '"KillData"' "$log" 2>/dev/null || echo '?')"
+
+  # The last one, with the line the game wrote just before it - which carries the timestamp.
+  last=$(grep -n '"KillData"' "$log" 2>/dev/null | tail -1 | cut -d: -f1)
+  if [ -n "${last:-}" ]; then
+    echo "    last block at line $last:"
+    sed -n "$((last)),$((last + 5))p" "$log" | sed 's/^/      /'
+  fi
+done
+
+if command -v pm2 >/dev/null; then
+  echo
+  echo "  Compare that against when each bot started:"
+  pm2 list 2>/dev/null | grep -E "pavlov|uptime" | sed 's/^/    /' | head -6
+  echo "    A kill written BEFORE the uptime above was never seen: the tailer starts at the"
+  echo "    end of the file, on purpose. Play a round, then look again."
+fi
 
 line "roster files on disk"
 ROSTERS=$(grep -hE "^[[:space:]]*FACTION_ROLES_PATH=" .env /root/pavlov-bot-fallout/.env 2>/dev/null \

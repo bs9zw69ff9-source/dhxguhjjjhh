@@ -200,8 +200,28 @@ public sealed class LogTailer
                 .Where(File.Exists).ToList();
 
             if (paths.Count == 0)
+            {
                 logger?.LogWarning("PAVLOV_LOGS is set to \"{Configured}\" but none of those files exist - " +
                                    "log-derived features (ban evasion, join feed, kill stats) will do nothing", configured);
+            }
+            else
+            {
+                /* SAID ON THE SUCCESS PATH TOO, which it was not. Auto-discovery announced
+                   what it found and a configured path announced only its failures, so the
+                   commonest question - WHICH log is this bot reading - had no answer in the
+                   log at all on the deployments most likely to have it wrong: the ones with
+                   two installs and one PAVLOV_LOGS between them. */
+                logger?.LogInformation("Tailing {Count} Pavlov log(s) from PAVLOV_LOGS: {Paths}",
+                    paths.Count, string.Join(", ", paths));
+
+                foreach (var skipped in configured
+                             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                             .Where(p => !File.Exists(p)))
+                {
+                    logger?.LogWarning("PAVLOV_LOGS names {Path}, which does not exist - it is being skipped", skipped);
+                }
+            }
+
             return paths;
         }
 
