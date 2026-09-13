@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Discord;
 using Discord.WebSocket;
 using PavlovBot.Core.Moderation;
@@ -10,12 +12,35 @@ using PavlovBot.Core.Factions;
 namespace PavlovBot.Host.Discord;
 
 /// <summary>Which Discord roles map to which powers. Set at runtime by <c>/setroles</c>.</summary>
+/// <remarks>
+/// READS TWO KEY SHAPES, WRITES ONE. The Node bot stored this dataset as
+/// <c>{"modRoleId":"123","adminRoleId":"...","gambinoRoleId":"...", ...}</c> - suffixed
+/// names, and ids as STRINGS because that is what discord.js hands you. Those files are
+/// still the files this bot reads: startup imports <c>roles.json</c> verbatim into the
+/// store. Against the unsuffixed names below, every one of those keys is an UNKNOWN
+/// PROPERTY, so the whole mapping deserialised to null and every role-gated command refused
+/// everybody - while owners, matched by user id, kept working and made it look like one
+/// tier misbehaving rather than the mapping being gone. See the legacy properties.
+///
+/// New writes use the unsuffixed names only. The suffixed ones are read-only aliases: they
+/// fill a slot the canonical key did not, and they are never written back, so the first
+/// <c>/setroles</c> after an upgrade normalises the dataset for good.
+/// </remarks>
 public sealed record RoleMap
 {
-    public ulong? ModRole { get; init; }
-    public ulong? AdminRole { get; init; }
-    public ulong? FactionLeaderRole { get; init; }
-    public ulong? PoliceRole { get; init; }
+    private readonly ulong? _mod;
+    private readonly ulong? _admin;
+    private readonly ulong? _leader;
+    private readonly ulong? _police;
+    private readonly ulong? _mafia;
+    private readonly ulong? _nypd;
+
+    private readonly Dictionary<string, ulong> _factionRoles = New();
+
+    public ulong? ModRole { get => _mod; init => _mod = value; }
+    public ulong? AdminRole { get => _admin; init => _admin = value; }
+    public ulong? FactionLeaderRole { get => _leader; init => _leader = value; }
+    public ulong? PoliceRole { get => _police; init => _police = value; }
 
     /// <summary>
     /// Faction name -> the Discord role that may edit THAT faction's roster.
@@ -26,20 +51,100 @@ public sealed record RoleMap
     /// configured faction set had neither. Those slots granted nothing, so its only way to
     /// delegate a roster was the leader role, which manages EVERY roster. The separation rule
     /// was failing open on exactly the deployments that most needed it.
+    ///
+    /// REBUILT IN THE SETTER, NOT AN INITIALIZER. A dictionary's comparer is not serialised,
+    /// so the value handed back by the deserializer is ORDINAL however this was built; and
+    /// <c>record with { ... }</c> bypasses initializers, so an initializer cannot guarantee
+    /// non-null either - System.Text.Json ignores the nullable annotation and will happily
+    /// assign null from <c>"factionRoles": null</c>.
     /// </remarks>
-    public IReadOnlyDictionary<string, ulong> FactionRoles { get; init; } =
-        new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, ulong> FactionRoles
+    {
+        get => _factionRoles;
+        init => _factionRoles = New(value);
+    }
 
     /// <summary>Manages BOTH mafia whitelists. Superseded by <see cref="FactionRoles"/>.</summary>
     /// <remarks>
-    /// KEPT SO A LIVE roles.json STILL READS. Deleting these two would deserialise every
-    /// existing deployment's faction roles as null - the whitelist delegation silently
-    /// vanishing on upgrade, with the file on disk still holding the ids that used to work.
-    /// They are a fallback only: anything set through <see cref="FactionRoles"/> wins.
+    /// KEPT SO A ROLES DATASET WRITTEN BY AN OLDER C# BUILD STILL READS. Node never had this
+    /// key - it held Gambino and Colombo separately - so a file from that era arrives through
+    /// <see cref="GambinoRoleId"/> and <see cref="ColomboRoleId"/> instead, which land in
+    /// <see cref="FactionRoles"/> where per-faction delegation actually lives.
     /// </remarks>
-    public ulong? MafiaRole { get; init; }
+    public ulong? MafiaRole { get => _mafia; init => _mafia = value; }
 
-    public ulong? NypdRole { get; init; }
+    public ulong? NypdRole { get => _nypd; init => _nypd = value; }
+
+    // ---- the Node bot's key names. Read-only aliases; see the type remarks. ----
+
+    /// <summary>
+    /// Fill a canonical slot from the Node bot's suffixed key, if nothing filled it already.
+    /// </summary>
+    /// <remarks>
+    /// SET-ONLY, SO IT IS NEVER SERIALISED. System.Text.Json writes only properties it can
+    /// read, so a getterless property is deserialise-in, never write-out - which is the whole
+    /// contract these aliases need: understand the old shape, emit the new one.
+    ///
+    /// The guard is "only if the canonical key did not set it". In a file holding just the
+    /// old keys - every Node-era install - the alias is the only source and always applies.
+    /// In one holding both, the canonical name wins, which is the name this bot writes.
+    /// </remarks>
+    [JsonPropertyName("modRoleId")]
+    public JsonElement ModRoleId { init => _mod ??= Id(value); }
+
+    [JsonPropertyName("adminRoleId")]
+    public JsonElement AdminRoleId { init => _admin ??= Id(value); }
+
+    [JsonPropertyName("factionLeaderRoleId")]
+    public JsonElement FactionLeaderRoleId { init => _leader ??= Id(value); }
+
+    [JsonPropertyName("policeRoleId")]
+    public JsonElement PoliceRoleId { init => _police ??= Id(value); }
+
+    [JsonPropertyName("nypdRoleId")]
+    public JsonElement NypdRoleId { init => _nypd ??= Id(value); }
+
+    /// <summary>
+    /// Node held the two mafia rosters as SEPARATE roles, so they land as separate entries.
+    /// </summary>
+    /// <remarks>
+    /// Collapsing them into <see cref="MafiaRole"/> would hand each family's leader the other
+    /// family's whitelist - the exact separation <see cref="FactionRoles"/> exists to keep.
+    /// </remarks>
+    [JsonPropertyName("gambinoRoleId")]
+    public JsonElement GambinoRoleId { init => Adopt("Gambino", value); }
+
+    [JsonPropertyName("colomboRoleId")]
+    public JsonElement ColomboRoleId { init => Adopt("Colombo", value); }
+
+    /// <summary>Take a legacy per-faction role, unless <see cref="FactionRoles"/> named it.</summary>
+    private void Adopt(string faction, JsonElement value)
+    {
+        if (Id(value) is { } id && !_factionRoles.ContainsKey(faction)) _factionRoles[faction] = id;
+    }
+
+    /// <summary>
+    /// One role id out of the old file, whatever JSON shape it was stored in.
+    /// </summary>
+    /// <remarks>
+    /// STRINGS, BECAUSE DISCORD.JS IDS ARE STRINGS - a snowflake does not survive a double,
+    /// so every JS library hands them out as text and the Node bot stored them that way.
+    /// Numbers are accepted too for a file somebody has hand-edited. Anything else, and the
+    /// empty string the old seed used for "unset", is no role rather than an exception: this
+    /// runs while deserialising a dataset, and throwing here would turn one malformed key
+    /// into every permission in the bot reading as unset.
+    /// </remarks>
+    private static ulong? Id(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => ulong.TryParse(value.GetString(), out var id) && id != 0 ? id : null,
+        JsonValueKind.Number => value.TryGetUInt64(out var id) && id != 0 ? id : null,
+        _ => null,
+    };
+
+    private static Dictionary<string, ulong> New(IReadOnlyDictionary<string, ulong>? from = null) =>
+        from is null
+            ? new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, ulong>(from, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The role that manages one faction's roster, or null for none.
@@ -49,12 +154,12 @@ public sealed record RoleMap
     /// an admin who sets Gambino's role explicitly must not keep getting the old shared
     /// mafia role, or the new setting would appear to do nothing.
     ///
-    /// THE SCAN IS NOT LAZINESS. A dictionary's comparer is NOT serialised: however this map
-    /// was built, it comes back from the store ordinal, so TryGetValue alone matches "NCR"
-    /// and misses "ncr". That failure only appears after a restart - case matching works
-    /// perfectly in memory, then a role stops granting anything once the process cycles,
-    /// which is the worst shape a permissions bug can have. The map holds one entry per
-    /// faction, so the scan is over a handful of items on a path that already reads a file.
+    /// THE SCAN IS NOT LAZINESS, even with the comparer now rebuilt in the setter. That
+    /// rebuild covers every path through this type; the scan covers the one it cannot - a
+    /// map that reached here some other way - and the failure it guards has the worst shape
+    /// a permissions bug can have: case matching works in memory, then a role stops granting
+    /// anything once the process cycles. The map holds one entry per faction, so this is a
+    /// scan over a handful of items on a path that already reads a file.
     /// </remarks>
     public ulong? RoleFor(string? faction)
     {
@@ -72,6 +177,36 @@ public sealed record RoleMap
             var f when Same(f, "NYPD") => NypdRole,
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// One line for the startup summary: which tiers a role actually resolved for.
+    /// </summary>
+    /// <remarks>
+    /// A METHOD, NOT A PROPERTY, so the serialiser does not write it back into the dataset.
+    ///
+    /// Said at startup because "the mapping is stored" and "the mapping was read" are
+    /// different facts and only the second one grants anything. A roles dataset written in a
+    /// shape this type does not understand reads as entirely unset, and from outside that is
+    /// indistinguishable from nobody having run /setroles - which is a week of looking at
+    /// the wrong thing. IDS, NOT NAMES: resolving a name needs the guild, this runs before
+    /// the gateway is up, and the id is what an operator matches against the file anyway.
+    /// </remarks>
+    public string Describe()
+    {
+        var tiers = new List<string>();
+        void Add(string label, ulong? id) => tiers.Add($"{label} {(id is { } value ? value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unset")}");
+
+        Add("mod", ModRole);
+        Add("admin", AdminRole);
+        Add("whitelist leader", FactionLeaderRole);
+        Add("police", PoliceRole);
+
+        var factions = _factionRoles.Count == 0
+            ? "no per-faction roles"
+            : $"{_factionRoles.Count} per-faction role(s): {string.Join(", ", _factionRoles.Keys.Order(StringComparer.OrdinalIgnoreCase))}";
+
+        return $"{string.Join(", ", tiers)}; {factions}";
     }
 
     private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);

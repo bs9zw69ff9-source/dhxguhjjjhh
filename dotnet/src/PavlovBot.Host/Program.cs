@@ -742,6 +742,12 @@ public static class Program
         logger.LogInformation(
             "  staff roles outside a server: read from {Source}", homeGuild.Describe());
 
+        /* WHAT THE ROLE MAPPING ACTUALLY RESOLVED TO. See RoleMap.Describe: a dataset in a
+           shape the type cannot read comes back entirely unset, and that looks exactly like
+           nobody having run /setroles. This is the line that tells the two apart. */
+        logger.LogInformation("  staff roles: {Roles}",
+            host.Services.GetRequiredService<PavlovBot.Host.Discord.Access>().Roles.Describe());
+
         /* STAFF LOG CHANNELS, attached here for the same reason as the lifecycle above:
            posting to a channel needs the gateway, the gateway is built from every command,
            and nearly every command needs AuditLog. A constructor dependency closes that loop
