@@ -109,12 +109,17 @@ public class FalloutPresetTests
     }
 
     [Fact]
-    public void TheBuiltInDefaultIsUntouched()
+    public void TheFalloutSetIsWhatABotRunsWithNoConfigurationAtAll()
     {
-        /* ONE BINARY RUNS BOTH BOTS. The other one sets no FACTION_SET and no FACTIONS_PATH,
-           and expects the mafias and the police. Swapping the default out from under it would
-           be a roster outage, not a rename. */
-        Assert.Equal(["Gambino", "Colombo", "NYPD"], FactionRegistry.Default.Names);
+        /* THE DEFAULT MOVED. There is one bot now and it is the Fallout one, so the ladders
+           nothing is configured for are that server's - a line in a .env no longer stands
+           between working and a bot quietly writing the police roster.
+
+           The police ladders are still shipped whole, one name away. */
+        Assert.Equal(["NCR", "Legion", "Brotherhood of Steel", "Enclave"], FactionRegistry.Default.Names);
+        Assert.Equal(["Gambino", "Colombo", "NYPD"], FactionRegistry.Police.Names);
+        Assert.Same(FactionRegistry.FalloutSet, FactionRegistry.Preset("default"));
+        Assert.Same(FactionRegistry.Police, FactionRegistry.Preset("police"));
     }
 
     [Theory]

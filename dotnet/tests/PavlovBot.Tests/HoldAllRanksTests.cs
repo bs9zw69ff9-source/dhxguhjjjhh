@@ -28,7 +28,7 @@ public class HoldAllRanksTests : IDisposable
     public HoldAllRanksTests() => Directory.CreateDirectory(_directory);
 
     private RosterService Service(bool holding) => new(
-        _directory, NullLogger<RosterService>.Instance, backupDirectory: _directory,
+        _directory, NullLogger<RosterService>.Instance, backupDirectory: _directory, factions: FactionRegistry.Police,
         holdsAllRanks: holding ? _ => true : null);
 
     private IReadOnlyList<string> Contents(string file)

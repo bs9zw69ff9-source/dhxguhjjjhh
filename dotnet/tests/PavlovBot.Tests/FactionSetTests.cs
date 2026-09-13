@@ -30,12 +30,17 @@ public class FactionSetTests : IDisposable
     [Fact]
     public void TheBuiltInSetIsTheDefaultAndIsValid()
     {
-        /* An existing deployment configures nothing and must get exactly what it has today.
-           If the built-in set could not pass its own validation, every normal bot would be
-           one strict-mode change away from refusing to start. */
+        /* THE DEFAULT IS THE FALLOUT SET. It was the police one, which every themed
+           deployment then had to override - and forgetting that line was not an error but a
+           Fallout bot quietly writing policecadet.txt. If the default could not pass its own
+           validation, every bot would be one strict-mode change away from refusing to start. */
         Assert.Empty(FactionRegistry.Default.Problems());
-        Assert.Contains("NYPD", FactionRegistry.Default.Names, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(3, FactionRegistry.Default.All.Count);
+        Assert.Contains("Enclave", FactionRegistry.Default.Names, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(4, FactionRegistry.Default.All.Count);
+
+        // Still shipped, still valid, now chosen by name.
+        Assert.Empty(FactionRegistry.Police.Problems());
+        Assert.Contains("NYPD", FactionRegistry.Police.Names, StringComparer.OrdinalIgnoreCase);
     }
 
     // ---- loading ----
@@ -250,7 +255,10 @@ public class FactionSetTests : IDisposable
         static IEnumerable<string> FilesOf(FactionSet set) => set.All.Values
             .SelectMany(f => f.RankFiles.Values.Concat(f.Subclasses.Values).Append(f.SpawnFile));
 
-        var builtIn = FilesOf(FactionRegistry.Default).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // AGAINST THE POLICE LADDERS, which is the other set that could be running against
+        // one game install. The default IS this file's set now, so comparing with it would be
+        // comparing the file to itself.
+        var builtIn = FilesOf(FactionRegistry.Police).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var themed = FilesOf(loaded.Set).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         Assert.Empty(themed.Intersect(builtIn, StringComparer.OrdinalIgnoreCase));

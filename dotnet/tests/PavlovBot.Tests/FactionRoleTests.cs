@@ -118,7 +118,7 @@ public class FactionRoleTests
     [Fact]
     public void TheOldMafiaSlotStillManagesBothMafias()
     {
-        var access = Build(FactionRegistry.Default, new RoleMap { MafiaRole = LegacyMafiaRoleId }, out _);
+        var access = Build(FactionRegistry.Police, new RoleMap { MafiaRole = LegacyMafiaRoleId }, out _);
 
         var member = new FakeMember(MemberId, LegacyMafiaRoleId);
 
@@ -130,7 +130,7 @@ public class FactionRoleTests
     [Fact]
     public void TheOldNypdSlotStillManagesTheNypd()
     {
-        var access = Build(FactionRegistry.Default, new RoleMap { NypdRole = LegacyNypdRoleId }, out _);
+        var access = Build(FactionRegistry.Police, new RoleMap { NypdRole = LegacyNypdRoleId }, out _);
 
         var member = new FakeMember(MemberId, LegacyNypdRoleId);
 
@@ -143,7 +143,7 @@ public class FactionRoleTests
     {
         /* Otherwise setting Gambino's role would appear to do nothing: the old shared mafia
            role would keep answering and the new setting would be stored and ignored. */
-        var access = Build(FactionRegistry.Default, new RoleMap
+        var access = Build(FactionRegistry.Police, new RoleMap
         {
             MafiaRole = LegacyMafiaRoleId,
             FactionRoles = new Dictionary<string, ulong> { ["Gambino"] = NcrRoleId },

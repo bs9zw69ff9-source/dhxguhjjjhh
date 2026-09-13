@@ -23,7 +23,11 @@ public class RosterServiceTests : IDisposable
     {
         Directory.CreateDirectory(_directory);
         _backups = Path.Combine(_directory, "_bak");
-        _rosters = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups);
+        /* THE POLICE LADDERS, NAMED. They stopped being the default when the Fallout server
+           became the only one this bot runs; these tests are about Gambino, Colombo and NYPD,
+           so they ask for that set rather than whatever the default happens to be. */
+        _rosters = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups,
+            factions: FactionRegistry.Police);
     }
 
     private void Seed(string file, params string[] names) =>
@@ -252,7 +256,7 @@ public class RosterServiceTests : IDisposable
     [Fact]
     public void AnUnconfiguredDirectoryDisablesEverythingSafely()
     {
-        var disabled = new RosterService(null, NullLogger<RosterService>.Instance);
+        var disabled = new RosterService(null, NullLogger<RosterService>.Instance, factions: FactionRegistry.Police);
         Assert.False(disabled.Enabled);
         Assert.Null(disabled.Read("policecadet.txt"));
     }

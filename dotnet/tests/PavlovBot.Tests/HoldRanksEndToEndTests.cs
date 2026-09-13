@@ -33,7 +33,7 @@ public class HoldRanksEndToEndTests : IDisposable
         _members = new FactionMembers(_store);
 
         // Exactly how Program wires it: resolved on each call, by name, off the index.
-        _rosters = new RosterService(_directory, NullLogger<RosterService>.Instance,
+        _rosters = new RosterService(_directory, NullLogger<RosterService>.Instance, factions: FactionRegistry.Police,
             backupDirectory: null, holdsAllRanks: name => _members.HoldsAllRanks(name));
     }
 
