@@ -27,7 +27,8 @@ namespace PavlovBot.Host.Discord.Commands;
 /// and the name people type when they want to know their own K/D is not it.
 /// </remarks>
 public sealed class BotStatsCommand(
-    MetricsRegistry metrics, PluginHost plugins, ServiceControl services, Access access) : ISlashCommand
+    MetricsRegistry metrics, PluginHost plugins, ServiceControl services, Access access,
+    PavlovBot.Host.Stats.KillStats? kills = null) : ISlashCommand
 {
     public string Name => "botstats";
     public bool Ephemeral => true;
@@ -61,6 +62,22 @@ public sealed class BotStatsCommand(
             // A non-zero drop count is a label explosion, which is a memory leak with extra
             // steps - worth surfacing rather than leaving in a counter nobody reads.
             (stats.Dropped > 0 ? $", **{stats.Dropped} dropped** (label explosion)" : ""), true);
+
+        /* WHETHER THE KILL PARSER IS MATCHING ANYTHING, which is otherwise only answerable by
+           reading the database. Zero here on a server that has been played on means the kill
+           lines in Pavlov.log are not the shape PavlovLog.Kill expects - which produces no
+           error and looks exactly like a quiet server. */
+        if (kills is not null)
+        {
+            var all = kills.All();
+            var recorded = all.Sum(k => k.Kills);
+            var last = all.Select(k => k.LastAt).Where(a => a is not null).DefaultIfEmpty(null).Max();
+
+            embed.AddField("Kill stats", all.Count == 0
+                ? "**nothing recorded** — either nobody has died yet, or the kill lines are not being parsed"
+                : $"{all.Count} player(s), {recorded.ToString("N0", CultureInfo.InvariantCulture)} kill(s)" +
+                  (last is { } when ? $", last {Theme.Relative(when)}" : ""), inline: true);
+        }
 
         var loaded = plugins.Status();
         if (loaded.Count > 0)

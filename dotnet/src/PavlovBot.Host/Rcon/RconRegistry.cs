@@ -185,6 +185,38 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
         foreach (var client in _clients.Values) client.InvalidateReads();
     }
 
+    /// <summary>
+    /// The display name behind a unique id, or null when nobody online has it.
+    /// </summary>
+    /// <remarks>
+    /// OFF THE CACHED ROSTER, so this costs no round trip - RefreshList already returns both
+    /// halves for everybody online, and this is the only place the pairing exists without
+    /// storing one.
+    ///
+    /// ONLINE ONLY, deliberately. A stored id-to-name map is the thing that was built and
+    /// reverted: it goes stale, it disagrees with the server, and it has to be maintained.
+    /// The caller here is the kill counter, and a kill is by definition a thing two people
+    /// who are ON THE SERVER just did.
+    /// </remarks>
+    public string? NameOf(string? uniqueId)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueId)) return null;
+
+        foreach (var roster in _rosters.Values)
+        {
+            foreach (var player in roster.Players)
+            {
+                if (string.Equals(player.UniqueId, uniqueId, StringComparison.OrdinalIgnoreCase) &&
+                    player.Name is { Length: > 0 })
+                {
+                    return player.Name;
+                }
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Every distinct player name across every server.</summary>
     public IReadOnlyList<string> AllOnlinePlayers() =>
         _rosters.Values

@@ -160,6 +160,13 @@ public sealed class KillStats(SerializedStore store, ILogger<KillStats> logger)
 
         try
         {
+            /* SAID OUT LOUD, EVERY TIME IT WRITES. "Is it counting?" had no answer short of
+               reading the database: a kill line the parser does not match produces no error,
+               no feed line and no record, and looks identical to a quiet server. This fires
+               only when something was actually counted, so it is silent on an idle box. */
+            logger.LogInformation("Kill stats: recorded {Players} player(s) - {Kills} kill(s), {Deaths} death(s)",
+                taken.Count, taken.Sum(t => t.Delta.Kills), taken.Sum(t => t.Delta.Deaths));
+
             await store.UpdateAsync(Datasets.KillStats,
                 new Dictionary<string, PlayerKills>(StringComparer.OrdinalIgnoreCase),
                 totals =>
