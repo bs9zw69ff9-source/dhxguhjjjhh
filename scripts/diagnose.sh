@@ -54,6 +54,34 @@ else
   echo "pm2 is not installed on this host."
 fi
 
+line "which binary each process is running, and from where"
+# TWO PATHS, TWO JOBS, and confusing them is invisible: the repo holds the build
+# and this config, the bot's own directory holds its .env, its data and its logs.
+# A process whose exec path is NOT this checkout's dotnet-out is running a binary
+# no deploy here ever replaces - the one failure mode that survives every other
+# check in this script.
+if command -v pm2 >/dev/null; then
+  pm2 jlist 2>/dev/null | python3 -c '
+import json, os, sys, datetime
+try:
+    apps = json.load(sys.stdin)
+except Exception:
+    print("  (could not read pm2 jlist)"); raise SystemExit
+for a in apps:
+    env = a.get("pm2_env", {})
+    exe = env.get("pm_exec_path", "?")
+    cwd = env.get("pm_cwd", "?")
+    when = "missing"
+    if os.path.exists(exe):
+        when = datetime.datetime.fromtimestamp(os.path.getmtime(exe)).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"  {a.get(\"name\",\"?\")}")
+    print(f"    runs:   {exe}   (built {when})")
+    print(f"    cwd:    {cwd}   <- its .env and data")
+' || echo "  (python3 not available to read pm2 jlist)"
+else
+  echo "pm2 is not installed on this host."
+fi
+
 line "what each bot loaded at startup"
 if command -v pm2 >/dev/null; then
   for app in $(pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | sort -u); do
