@@ -17,19 +17,33 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public static class Theme
 {
-    // ---- palette ----
-    public static readonly Color Amber = new(0xFB, 0xBF, 0x24);        // warnings, neutral highlight
-    public static readonly Color Gold = new(0xFA, 0xCC, 0x15);         // economy, balances
-    public static readonly Color Green = new(0x4A, 0xDE, 0x80);        // success, online, cleared
-    public static readonly Color Sky = new(0x38, 0xBD, 0xF8);          // neutral accent
-    public static readonly Color BanRed = new(0xF4, 0x3E, 0x5E);       // bans, blocks, denied
-    public static readonly Color ErrorRed = new(0xFB, 0x71, 0x85);     // errors, softer than a ban
-    public static readonly Color Grey = new(0x94, 0xA3, 0xB8);         // disabled, void
-    public static readonly Color Blue = new(0x60, 0xA5, 0xFA);         // information
-    public static readonly Color Purple = new(0xA7, 0x8B, 0xFA);
-    public static readonly Color Pink = new(0xF4, 0x72, 0xB6);
-    public static readonly Color Teal = new(0x2D, 0xD4, 0xBF);
-    public static readonly Color Orange = new(0xFB, 0x92, 0x3C);
+    /* ---- palette: a Pip-Boy, not a dashboard ----
+
+       THE NAMES KEEP THEIR MEANINGS AND ONLY THE VALUES MOVED. Every embed in the bot picks
+       a colour by what it MEANS - green is cleared, red is a ban, amber is a warning - and a
+       reader learns that bar before they learn the words. Rethinking the semantics to suit a
+       theme would cost the one thing the palette is for; rethinking the hues costs nothing.
+
+       PIP-BOY GREEN IS THE HOUSE COLOUR because it is the one everybody recognises: a CRT
+       phosphor green, pulled up in brightness so it survives Discord's dark background,
+       which is dark enough to eat the original.
+
+       The rest are the Fallout set pieces - Vault-Tec's blue and yellow, terminal amber,
+       radiation orange, rusted steel - chosen so no two land within a few percent of each
+       other at a glance. A palette whose warning and whose error are the same orange is a
+       palette that says nothing. */
+    public static readonly Color Green = new(0x3C, 0xF2, 0x81);        // Pip-Boy phosphor: success, online, cleared
+    public static readonly Color Amber = new(0xFF, 0xB0, 0x00);        // terminal amber: warnings
+    public static readonly Color Gold = new(0xF2, 0xC1, 0x4E);         // Vault-Tec yellow: caps, economy
+    public static readonly Color Blue = new(0x4F, 0x8F, 0xD6);         // Vault-Tec blue: information
+    public static readonly Color Sky = new(0x6F, 0xD4, 0xE0);          // cleanroom cyan: neutral accent
+    public static readonly Color BanRed = new(0xD9, 0x33, 0x2B);       // klaxon red: bans, blocks, denied
+    public static readonly Color ErrorRed = new(0xE8, 0x6A, 0x4C);     // rust: errors, softer than a ban
+    public static readonly Color Grey = new(0x8A, 0x85, 0x77);         // wasteland dust: disabled, void
+    public static readonly Color Purple = new(0x9B, 0x7E, 0xC8);
+    public static readonly Color Pink = new(0xE0, 0x7A, 0x9B);
+    public static readonly Color Teal = new(0x3F, 0xB3, 0xA0);
+    public static readonly Color Orange = new(0xE8, 0x8A, 0x2E);       // radiation orange
 
     // ---- glyphs ----
     public const string Ok = "✅";
@@ -44,7 +58,8 @@ public static class Theme
     public const string Money = Lore.Caps;
     public const string Rank = "🏅";
 
-    public const string Divider = "────────────────────────────";
+    /// <summary>A terminal rule, for the places that need a break rather than a heading.</summary>
+    public const string Divider = "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔";
 
     /// <summary>
     /// The name stamped on every branded embed. <c>BOT_NAME</c> skins the bot per server.
@@ -82,9 +97,13 @@ public static class Theme
            "Mojave Authority • Updated 14:02 Eastern" is the shape every board and card
            shares. Composed from the argument, never from the footer already set, so branding
            an embed twice cannot stack the name up. */
+        /* THE MARK GOES ON EVERYTHING. One glyph in the footer is what makes a wall of embeds
+           read as this server's bot rather than as a generic tool that happens to be in the
+           channel - and the footer is the one place it can live without competing with a
+           title somebody actually needs to read. */
         var stamp = footer is { Length: > 0 }
-            ? $"{BrandName} {Dot} {footer}"
-            : BrandName;
+            ? $"{Lore.Rads} {BrandName} {Dot} {footer}"
+            : $"{Lore.Rads} {BrandName}";
 
         if (stamp is { Length: > 0 }) embed.WithFooter(Truncate(stamp, 2048));
         embed.Timestamp = null;
@@ -146,7 +165,13 @@ public static class Theme
         return pages.Count > 0 ? pages : [""];
     }
 
-    /// <summary>A progress bar for a leaderboard row.</summary>
+    /// <summary>
+    /// A progress bar for a leaderboard row.
+    /// </summary>
+    /// <remarks>
+    /// BLOCK CHARACTERS RATHER THAN AN EMOJI RUN: they are one cell wide in every client, so
+    /// a column of them lines up, and they are what a terminal would have drawn anyway.
+    /// </remarks>
     public static string Bar(double value, double max, int width = 12)
     {
         if (max <= 0 || width <= 0) return new string('░', Math.Max(0, width));

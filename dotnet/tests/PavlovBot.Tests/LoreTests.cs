@@ -46,8 +46,8 @@ public class LoreTests
             var plain = new EmbedBuilder().WithTitle("x").Brand().Build();
             var withFooter = new EmbedBuilder().WithTitle("x").Brand("Updated 14:02 Eastern").Build();
 
-            Assert.Equal("Mojave Authority", plain.Footer!.Value.Text);
-            Assert.Equal("Mojave Authority • Updated 14:02 Eastern", withFooter.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Rads} Mojave Authority", plain.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Rads} Mojave Authority • Updated 14:02 Eastern", withFooter.Footer!.Value.Text);
         }
         finally
         {
@@ -66,12 +66,45 @@ public class LoreTests
 
             var embed = Theme.Notice("Title", "body").Brand("Updated 14:02 Eastern").Build();
 
-            Assert.Equal("Mojave Authority • Updated 14:02 Eastern", embed.Footer!.Value.Text);
+            // Branded twice: the mark and the name each appear once, not twice.
+            Assert.Equal($"{Lore.Rads} Mojave Authority • Updated 14:02 Eastern", embed.Footer!.Value.Text);
         }
         finally
         {
             Theme.BrandName = before;
         }
+    }
+
+    [Fact]
+    public void NoTwoColoursInThePaletteAreTheSame()
+    {
+        /* THE BAR IS READ BEFORE THE WORDS ARE. Every embed picks its colour by meaning -
+           cleared, warned, banned - so two entries landing on the same hue silently merges
+           two meanings, and nothing about the code would show it. Cheap to pin, and the sort
+           of thing a theme pass breaks. */
+        var palette = new Dictionary<string, Discord.Color>
+        {
+            ["Green"] = Theme.Green,
+            ["Amber"] = Theme.Amber,
+            ["Gold"] = Theme.Gold,
+            ["Blue"] = Theme.Blue,
+            ["Sky"] = Theme.Sky,
+            ["BanRed"] = Theme.BanRed,
+            ["ErrorRed"] = Theme.ErrorRed,
+            ["Grey"] = Theme.Grey,
+            ["Purple"] = Theme.Purple,
+            ["Pink"] = Theme.Pink,
+            ["Teal"] = Theme.Teal,
+            ["Orange"] = Theme.Orange,
+        };
+
+        var duplicates = palette
+            .GroupBy(entry => entry.Value.RawValue)
+            .Where(group => group.Count() > 1)
+            .Select(group => string.Join(" = ", group.Select(entry => entry.Key)))
+            .ToList();
+
+        Assert.Empty(duplicates);
     }
 
     [Fact]
