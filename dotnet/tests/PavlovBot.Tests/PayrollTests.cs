@@ -40,7 +40,9 @@ public class PayrollTests : IDisposable
         Directory.CreateDirectory(_ledgers);
 
         _store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        _rosterService = new RosterService(_rosters, NullLogger<RosterService>.Instance);
+        // NYPD is a police-set faction, and that set is a preset now rather than the default.
+        _rosterService = new RosterService(_rosters, NullLogger<RosterService>.Instance,
+            factions: FactionRegistry.Police);
     }
 
     /// <summary>The online roster, with freshness the test controls.</summary>

@@ -239,7 +239,7 @@ public class PlayerBoardTests : IAsyncDisposable
             rcon,
             ledgerDirectory: null,
             new RosterService(_directory, NullLogger<RosterService>.Instance,
-                Path.Combine(_directory, "_bak")));
+                Path.Combine(_directory, "_bak"), factions: FactionRegistry.Police));
 
         var board = await boards.BuildPlayerBoardAsync(CancellationToken.None);
 
@@ -281,7 +281,7 @@ public class PlayerBoardTests : IAsyncDisposable
         /* The bulk lookup exists so the board does not re-read every rank file per player.
            It is only worth having while it answers what FindAsync answers. */
         var rosters = new RosterService(_directory, NullLogger<RosterService>.Instance,
-            Path.Combine(_directory, "_bak"));
+            Path.Combine(_directory, "_bak"), factions: FactionRegistry.Police);
 
         await rosters.JoinAsync(Nypd, "Alice");
         await rosters.ChangeRankAsync(Nypd, "Alice", +1);

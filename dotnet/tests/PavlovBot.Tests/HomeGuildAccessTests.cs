@@ -1,6 +1,7 @@
 using PavlovBot.Core.Data;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Storage;
+using PavlovBot.Core.Factions;
 using Xunit;
 
 namespace PavlovBot.Tests;
@@ -28,7 +29,7 @@ public class HomeGuildAccessTests
     private static Access WithRoles()
     {
         var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var access = new Access(store, owners: []);
+        var access = new Access(store, owners: [], factions: FactionRegistry.Police);
         store.WriteAsync(Datasets.Roles, new RoleMap { ModRole = ModRoleId, AdminRole = AdminRoleId })
             .GetAwaiter().GetResult();
         return access;
@@ -108,7 +109,7 @@ public class HomeGuildAccessTests
            to work in a DM too - otherwise the commands they exist for are the ones that
            still refuse them. */
         var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var access = new Access(store, owners: []);
+        var access = new Access(store, owners: [], factions: FactionRegistry.Police);
         await store.WriteAsync(Datasets.Roles, new RoleMap
         {
             FactionRoles = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { ["NYPD"] = 777 },

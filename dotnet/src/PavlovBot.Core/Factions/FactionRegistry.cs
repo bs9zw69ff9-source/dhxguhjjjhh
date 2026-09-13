@@ -142,14 +142,28 @@ public static class FactionRegistry
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The built-in factions as a set, and the default when nothing is configured.
+    /// The police ladders - Gambino, Colombo and NYPD. A preset, not the default any more.
     /// </summary>
     /// <remarks>
-    /// Lazy so it is built once, on first use, rather than in a static initialiser that runs
-    /// before configuration has been read. An existing deployment gets exactly this and needs
-    /// no configuration at all, which is the whole point of it being the default.
+    /// THIS USED TO BE THE DEFAULT. The bot it was written for is gone: the Fallout server is
+    /// the only one this runs now, so the ladders nothing is configured for are that server's.
+    /// Kept whole and reachable as <c>FACTION_SET=police</c>, because deleting a working set
+    /// of ladders to express a deployment change would be throwing away data to make a point.
     /// </remarks>
-    public static FactionSet Default { get; } = FactionSet.Of(All.Values);
+    public static FactionSet Police { get; } = FactionSet.Of(All.Values);
+
+    /// <summary>
+    /// What a bot runs when nothing is configured: the Fallout ladders.
+    /// </summary>
+    /// <remarks>
+    /// THE DEFAULT IS THE SERVER THAT EXISTS. This was the police set, which every themed
+    /// deployment then had to override - and the cost of forgetting was not an error but a bot
+    /// quietly writing policecadet.txt on a Fallout server. One line in one .env stood between
+    /// working and silently wrong, and that line went missing more than once.
+    ///
+    /// The police ladders are still here as <see cref="Police"/>, chosen by name.
+    /// </remarks>
+    public static FactionSet Default => FalloutSet;
 
     /// <summary>
     /// The Fallout set, built in so a themed server needs no configuration file.
@@ -273,18 +287,31 @@ public static class FactionRegistry
     /// </remarks>
     public static FactionSet? Preset(string? name) => name?.Trim().ToLowerInvariant() switch
     {
-        "fallout" => FalloutSet,
-        "default" or "builtin" or "built-in" => Default,
+        "fallout" or "default" or "builtin" or "built-in" => FalloutSet,
+        "police" or "nypd" => Police,
         _ => null,
     };
 
     /// <summary>Every preset name, for the error message when one does not match.</summary>
-    public static IReadOnlyList<string> PresetNames { get; } = ["fallout", "default"];
+    public static IReadOnlyList<string> PresetNames { get; } = ["fallout", "police"];
 
 
 
+    /// <summary>
+    /// One faction by name, from either built-in set.
+    /// </summary>
+    /// <remarks>
+    /// BOTH SETS, because this is a lookup helper rather than an authority on what a bot is
+    /// running - that is the loaded <see cref="FactionSet"/>, which every caller with a real
+    /// question already holds. Searching the live ladders first and the police ones after
+    /// means neither a Fallout name nor an NYPD one comes back null for want of knowing which
+    /// preset to ask.
+    /// </remarks>
     public static FactionDefinition? Get(string? faction) =>
-        faction is not null && All.TryGetValue(faction, out var def) ? def : null;
+        faction is null ? null
+            : Fallout.TryGetValue(faction, out var themed) ? themed
+            : All.TryGetValue(faction, out var def) ? def
+            : null;
 
     public static IReadOnlyCollection<string> Names => All.Keys;
 }

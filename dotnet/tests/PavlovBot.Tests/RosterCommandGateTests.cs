@@ -1,6 +1,7 @@
 using PavlovBot.Core.Data;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Storage;
+using PavlovBot.Core.Factions;
 using Xunit;
 
 namespace PavlovBot.Tests;
@@ -34,7 +35,7 @@ public class RosterCommandGateTests
     private static Access WithFactionRoles(out SerializedStore store)
     {
         store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var access = new Access(store, owners: []);
+        var access = new Access(store, owners: [], factions: FactionRegistry.Police);
         store.WriteAsync(Datasets.Roles, new RoleMap
         {
             FactionLeaderRole = LeaderRole,
@@ -93,7 +94,7 @@ public class RosterCommandGateTests
         /* Owners are matched by user id, so the gate must not lock out the one account that
            can fix a broken role configuration. */
         var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var access = new Access(store, owners: [Stranger]);
+        var access = new Access(store, owners: [Stranger], factions: FactionRegistry.Police);
 
         Assert.True(access.Allows(RequiredAccess.FactionLeader, new FakeUser(Stranger)));
     }
