@@ -241,6 +241,17 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     /// <summary>What is wrong with this server's roster feed, or null when nothing is.</summary>
     public string? RosterProblem(string server) => _rosterProblem.GetValueOrDefault(server);
 
+    /// <summary>
+    /// Why a server's last health probe failed, or null while it is answering.
+    /// </summary>
+    /// <remarks>
+    /// For the commands that have to tell somebody WHY nothing landed. The probe runs every
+    /// minute against every server, so this is a current answer rather than a stale one, and
+    /// it is the difference between "no server accepted the command" and "connection refused
+    /// on 127.0.0.1:9102" - which is the whole of the diagnosis.
+    /// </remarks>
+    public string? LastError(string server) => _lastError.GetValueOrDefault(server);
+
     /// <summary>True when the roster is recent enough to be evidence of anything.</summary>
     public bool RosterIsFresh(string server) =>
         Roster(server) is { TakenAt: var at } && at != DateTimeOffset.MinValue &&

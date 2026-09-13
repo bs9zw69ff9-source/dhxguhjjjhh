@@ -202,12 +202,21 @@ public sealed class MenuPanel(
            bit code and "GiveMod"/"GiveAccessManager", none of which RCON+ acts on - so a
            claim reported success and granted nothing. */
         var delivered = 0;
+        var attempts = new List<(string Server, string? Problem)>();
+
         foreach (var server in rcon.Servers)
         {
             var ok = false;
+            string? problem = null;
+
             foreach (var line in RconMenu.Grant(name, tier))
-                ok |= await TrySend(server, line, ct).ConfigureAwait(false);
-            if (ok) delivered++;
+            {
+                var sent = await TrySend(server, line, ct).ConfigureAwait(false);
+                ok |= sent.Ok;
+                problem ??= sent.Problem;
+            }
+
+            if (ok) delivered++; else attempts.Add((server, problem));
         }
 
         if (delivered == 0)
@@ -215,8 +224,8 @@ public sealed class MenuPanel(
             /* Nothing recorded when nothing landed. A grant the server never received leaves
                the bot believing they have access they do not - and the NEXT claim then reads
                as a release, silently stripping the menu they never got. */
-            await Followup(modal, Theme.Failure("Not granted",
-                "No server accepted the command. Nothing was recorded — try again shortly.")).ConfigureAwait(false);
+            await Followup(modal, RconFailure.Explain("Not granted",
+                "No server accepted the command. Nothing was recorded.", rcon, attempts)).ConfigureAwait(false);
             return;
         }
 
@@ -260,17 +269,22 @@ public sealed class MenuPanel(
             "your account stays linked to that name.")).ConfigureAwait(false);
     }
 
-    private async Task<bool> TrySend(string server, string command, CancellationToken ct)
+    /// <param name="Problem">Why it failed, for the reply. Null when it worked.</param>
+    private readonly record struct SendResult(bool Ok, string? Problem);
+
+    private async Task<SendResult> TrySend(string server, string command, CancellationToken ct)
     {
         try
         {
             await rcon.SendAsync(server, command, ct).ConfigureAwait(false);
-            return true;
+            return new SendResult(true, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // Carried back to the reply rather than left in a log: the person who just
+            // pressed the button is the one who needs to know why it did nothing.
             logger.LogWarning(ex, "{Server} rejected {Command}", server, command);
-            return false;
+            return new SendResult(false, ex.Message);
         }
     }
 
