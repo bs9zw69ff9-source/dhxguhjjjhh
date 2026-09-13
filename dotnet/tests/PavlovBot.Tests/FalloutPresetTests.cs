@@ -1,4 +1,5 @@
 using PavlovBot.Core.Factions;
+using PavlovBot.Host.Discord;
 using PavlovBot.Host.Factions;
 using Xunit;
 
@@ -135,5 +136,36 @@ public class FalloutPresetTests
         /* Null rather than a fallback. Quietly running the built-in factions because the name
            was misspelled is a themed bot writing the other bot's roster files. */
         Assert.Null(FactionRegistry.Preset(name));
+    }
+}
+
+/// <summary>
+/// Where the whitelist bot's commands are registered, which decides how long a change to
+/// them takes to appear.
+/// </summary>
+/// <remarks>
+/// GLOBAL COMMANDS TAKE UP TO AN HOUR. The whitelist bot registered globally and nowhere
+/// else, so adding a sub-class looked exactly like the bot ignoring it - the picker kept the
+/// old list for the rest of the hour with nothing saying why. Guild-scoped registration is
+/// immediate, and the client already knows which guilds it is in.
+/// </remarks>
+public class WhitelistCommandScopeTests
+{
+    [Fact]
+    public void TheGlobalFallbackIsClearedOnlyWhenEveryGuildTookTheUpdate()
+    {
+        /* THE OUTAGE THIS AVOIDS. Clearing the global set while one guild failed leaves that
+           faction's staff with no /whitelist at all - and a guild-scoped registration that
+           never happened leaves nothing behind to fall back to. */
+        Assert.True(DiscordGateway.ClearGlobals(registered: 3, failed: 0));
+        Assert.False(DiscordGateway.ClearGlobals(registered: 2, failed: 1));
+    }
+
+    [Fact]
+    public void WithNoGuildsAtAllTheGlobalSetIsLeftAlone()
+    {
+        // Guild scoping has nothing to aim at, so global registration is still the only way
+        // the commands exist anywhere.
+        Assert.False(DiscordGateway.ClearGlobals(registered: 0, failed: 0));
     }
 }

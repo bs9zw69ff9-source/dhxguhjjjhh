@@ -254,6 +254,9 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         // it shares every command implementation and all state with the main one.
         _factionClient.Log += OnLog;
         _factionClient.Ready += OnFactionReadyAsync;
+        // A guild joined AFTER startup gets the commands too, rather than waiting for the
+        // next restart - which is the one gap guild-scoped registration has over global.
+        _factionClient.JoinedGuild += OnFactionJoinedGuildAsync;
         _factionClient.SlashCommandExecuted += OnSlashCommand;
         _factionClient.AutocompleteExecuted += OnAutocomplete;
         _factionClient.ButtonExecuted += OnComponent;
@@ -303,16 +306,94 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                     problem.Command, problem.Problem);
             }
 
-            /* Global, matching the Node bot: this application is invited to each faction's
-               guild, and guild-scoped registration would need every guild id listed here. */
-            await _factionClient!.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
+            /* GUILD-SCOPED WHEREVER IT CAN BE, because global commands take UP TO AN HOUR to
+               propagate - long enough that every sub-class or faction change looks like the
+               bot ignoring it. The guild ids do not have to be configured: Discord.Net raises
+               Ready only once every guild in the READY payload has arrived, so the client
+               knows exactly which guilds this application is in.
 
-            _logger.LogInformation("Whitelist bot logged in as {User} with {Count} command(s)",
-                _factionClient.CurrentUser?.Username ?? "?", properties.Count);
+               THE GLOBAL SET IS ONLY CLEARED WHEN EVERY GUILD TOOK THE UPDATE. A guild whose
+               registration failed would otherwise be left with nothing at all - no /whitelist
+               for that faction's staff, which is an outage. Duplicated entries in the picker
+               for one cycle are the lesser failure, and the log says which guild caused it. */
+            var guilds = _factionClient!.Guilds.ToList();
+            var registered = 0;
+            var failed = 0;
+
+            foreach (var guild in guilds)
+            {
+                try
+                {
+                    await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
+                    registered++;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    _logger.LogError(ex,
+                        "Whitelist bot could not register its commands in {Guild} ({GuildId}) - that " +
+                        "server keeps whatever it had", guild.Name, guild.Id);
+                }
+            }
+
+            if (ClearGlobals(registered, failed))
+            {
+                // Emptied rather than left alongside: a global and a guild command of the
+                // same name both show in the picker, and whichever is clicked answers once
+                // while the other sits there looking broken.
+                await _factionClient.BulkOverwriteGlobalApplicationCommandsAsync([]).ConfigureAwait(false);
+            }
+            else if (registered == 0)
+            {
+                // In no guild the client can see, so guild scoping has nothing to aim at.
+                await _factionClient.BulkOverwriteGlobalApplicationCommandsAsync([.. properties]).ConfigureAwait(false);
+            }
+
+            _logger.LogInformation(
+                "Whitelist bot logged in as {User} with {Count} command(s) - {Registered} of {Guilds} guild(s) " +
+                "updated{Global}",
+                _factionClient.CurrentUser?.Username ?? "?", properties.Count, registered, guilds.Count,
+                registered == 0
+                    ? ", registered globally (propagation can take up to an hour)"
+                    : failed > 0 ? ", global commands kept because one or more guilds failed" : "");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Whitelist bot command registration failed");
+        }
+    }
+
+    /// <summary>
+    /// Whether the global fallback may be emptied.
+    /// </summary>
+    /// <remarks>
+    /// PURE, because the wrong answer is invisible until a faction's staff report that every
+    /// whitelist command has vanished from their server. Only when the guild-scoped set is
+    /// known to cover everywhere: at least one guild took it and none refused.
+    /// </remarks>
+    internal static bool ClearGlobals(int registered, int failed) => registered > 0 && failed == 0;
+
+    /// <summary>A guild joined while the bot is running gets the commands immediately.</summary>
+    private async Task OnFactionJoinedGuildAsync(SocketGuild guild)
+    {
+        if (_factionClient is null) return;
+
+        try
+        {
+            var (properties, _) = SlashCommandValidation.Partition(_commands.Values
+                .Where(c => FactionCommands.Contains(c.Name))
+                .Select(c => c.Build()));
+
+            await guild.BulkOverwriteApplicationCommandAsync([.. properties]).ConfigureAwait(false);
+
+            _logger.LogInformation("Whitelist bot registered {Count} command(s) in {Guild}, which it just joined",
+                properties.Count, guild.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Whitelist bot joined {Guild} but could not register its commands there - restart to retry",
+                guild.Name);
         }
     }
 
