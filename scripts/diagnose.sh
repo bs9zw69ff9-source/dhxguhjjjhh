@@ -87,7 +87,7 @@ if command -v pm2 >/dev/null; then
   for app in $(pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | sort -u); do
     echo "--- $app"
     pm2 logs "$app" --nostream --lines 400 2>/dev/null \
-      | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:|Pavlov log|Tailing .* Pavlov log|CANNOT READ|Kill stats: recorded" \
+      | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:|Pavlov log|Tailing .* Pavlov log|CANNOT READ|Kill stats: recorded|staff roles" \
       | tail -15
     echo
   done
@@ -159,4 +159,6 @@ Paste the whole output. The three things it settles:
   a process is errored or stopped         -> read its log; it is failing to start
   "sub-classes: ... " does not list yours -> the running bot loaded different ladders,
                                              and the "factions:" line above says from where
+  "staff roles: mod unset, ..."           -> no role grants that tier, whatever /setroles
+                                             showed; only owners (matched by user id) pass
 EOF

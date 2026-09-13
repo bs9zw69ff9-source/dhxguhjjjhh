@@ -196,7 +196,13 @@ public static class Datasets
         [MenuRoles] = "{}",
         [MenuLinks] = "{}",
 
-        [Roles] = """{"modRoleId":"","adminRoleId":"","factionLeaderRoleId":"","policeRoleId":"","gambinoRoleId":"","colomboRoleId":"","nypdRoleId":""}""",
+        /* THE SHAPE THIS BOT READS, which the Node bot's shape was not: it wrote modRoleId,
+           adminRoleId, gambinoRoleId and the rest, and every one of those is an unknown
+           property to RoleMap. Seeding a fresh install in the old shape put a file on disk
+           whose keys the bot silently ignored. RoleMap still READS the old names - see its
+           remarks - so an imported roles.json keeps working; nothing should still WRITE
+           them. */
+        [Roles] = """{"modRole":null,"adminRole":null,"factionLeaderRole":null,"policeRole":null,"factionRoles":{}}""",
         [AutoRotate] = "{}",
         [ServerStats] = "{}",
         [AutopostState] = "{}",
