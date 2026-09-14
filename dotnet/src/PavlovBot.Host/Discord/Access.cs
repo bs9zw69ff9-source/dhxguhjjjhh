@@ -454,6 +454,29 @@ public sealed class Access
         {
             lines.Add("No admin role is configured. An owner can set one with `/setroles`.");
         }
+        else if (VisibleRoles(user) is { Count: 0 })
+        {
+            /* SEEN, BUT WITH NO ROLES TO READ - a third state, distinct again from lacking
+               the one role. A staff member who swears they have the role and still reads as
+               PUBLIC is THIS case, not "could not read your roles" above: the bot resolved
+               them to a member and that member carries nothing. AFTER the unconfigured-role
+               checks on purpose - if nothing is mapped for the tier, "run /setroles" is the
+               fix whatever roles the caller has, so it must not be preempted by this.
+
+               For a USER-INSTALLED APP this is the ordinary shape, not an edge one. Run a
+               command in a server the bot itself is not a member of and Discord hands it the
+               caller with no roles attached - there is no guild membership for it to read
+               them from - and from the refusal alone that is indistinguishable from the
+               Server Members intent being off. Both point the same way: the roles that
+               should grant this are somewhere the bot is not looking, and naming both is
+               what turns "it says I'm public" into something the operator can act on. */
+            lines.Add(
+                "The bot can see you but reads no roles on you at all. If you do hold a staff " +
+                "role, either the bot is not a member of THIS server - a user-installed app " +
+                "cannot read roles in a server it was only carried into - or the **Server " +
+                "Members** intent is off in the developer portal. When your staff roles live " +
+                "in another server, set `HOME_GUILD_ID` to it so they can be read from there.");
+        }
 
         if (required is RequiredAccess.Owner && _configuredOwnerCount == 0)
             lines.Add("No owners are configured at all - set `OWNER_IDS` in the bot's `.env`.");
