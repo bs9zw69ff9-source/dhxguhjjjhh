@@ -191,6 +191,41 @@ public class AccessTests
     }
 
     [Fact]
+    public void ARefusalTellsAResolvedMemberWithNoRolesWhereToLook()
+    {
+        /* The screenshot case: a moderator, resolved to a member, reading as PUBLIC because
+           the member the bot sees carries no roles. Distinct from "cannot read your roles"
+           (no member at all) and from "no role configured" (the tier IS mapped, as here) -
+           and the one a user-installed app produces when it is not a member of the server
+           the command was run in. The refusal has to name that, or it is a week of looking
+           at the storage that is working fine. */
+        var access = WithRoles(out _);
+
+        var refusal = access.ExplainRefusal(new FakeMember(StrangerId), RequiredAccess.Mod);
+
+        Assert.Contains("reads no roles on you", refusal, StringComparison.Ordinal);
+        Assert.Contains("HOME_GUILD_ID", refusal, StringComparison.Ordinal);
+        // NOT the unresolved-member line - it IS resolved, just empty.
+        Assert.DoesNotContain("could not read your roles", refusal, StringComparison.Ordinal);
+        // NOT the unconfigured-role line - the mod role is mapped in WithRoles.
+        Assert.DoesNotContain("No moderator role is configured", refusal, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ARefusalStillSaysUnconfiguredWhenTheMemberHasRolesButNoneMapped()
+    {
+        /* The zero-roles branch must not swallow the unconfigured-role case: a member WITH
+           roles, refused a tier that maps to nothing, still needs to hear that nothing is
+           mapped rather than a lecture about intents. */
+        var access = Build(out _);   // no roles configured
+
+        var refusal = access.ExplainRefusal(new FakeMember(StrangerId, 999), RequiredAccess.Mod);
+
+        Assert.Contains("No moderator role is configured", refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("reads no roles on you", refusal, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ARefusalSaysWhenNoOwnersExistAtAll()
     {
         var access = new Access(new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec()), []);
