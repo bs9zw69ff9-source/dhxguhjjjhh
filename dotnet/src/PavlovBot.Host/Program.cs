@@ -501,7 +501,13 @@ public static class Program
             sp.GetRequiredService<PavlovBot.Host.Factions.FactionMembers>(),
             sp.GetService<PavlovBot.Core.Economy.IBalanceStore>(),
             sp.GetRequiredService<PavlovBot.Host.Economy.Payroll>(),
-            sp.GetService<PavlovBot.Host.Vpn.VpnScreeningService>()));
+            sp.GetService<PavlovBot.Host.Vpn.VpnScreeningService>(),
+            /* THE KILL COUNTER, and its absence was the whole "K/D never shows" bug. This is
+               a hand-written factory, so a constructor parameter it does not list defaults to
+               null - and this one is the singleton /stats reads combat from. It was recording
+               fine (FeedBridge is auto-wired and gets it); the profile just never asked it,
+               so every card read "nothing recorded" whatever the log held. */
+            sp.GetRequiredService<PavlovBot.Host.Stats.KillStats>()));
 
         builder.Services.AddSingleton<ISlashCommand, PlayerProfileCommand>();
 
