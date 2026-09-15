@@ -187,7 +187,19 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     /// </remarks>
     private async Task PrimeAccessAsync(SocketInteraction interaction, CancellationToken ct)
     {
-        if (_homeGuild is null || interaction.User is IGuildUser) return;
+        if (_homeGuild is null) return;
+
+        /* PRIME WHEN THERE IS NO MEMBER, OR A MEMBER WITH NO ROLES. The second half is the
+           user-installed-app-in-a-guild case: Discord hands over a guild member whose role
+           set is empty because the roles live on the guild-install context and this came
+           through the user-install one, so the member reads as PUBLIC however much the
+           person holds. A member that already carries roles is trusted as-is - it is the
+           guild they are standing in, needs no lookup, and is the common path.
+
+           The cost is a REST lookup for a role-less caller, but HomeGuildMembers caches the
+           miss too, so it is one request per person per window however many commands they
+           run - and only for someone the checks would otherwise have to refuse anyway. */
+        if (interaction.User is IGuildUser { RoleIds.Count: > 0 }) return;
         await _homeGuild.PrimeAsync(interaction.User, ct).ConfigureAwait(false);
     }
 

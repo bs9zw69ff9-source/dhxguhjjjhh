@@ -92,6 +92,61 @@ public class HomeGuildAccessTests
     }
 
     [Fact]
+    public void AHollowMemberWithNoRolesFallsBackToTheHomeGuild()
+    {
+        /* THE USER-APP-IN-A-GUILD CASE. The bot is a full member of the guild, the person
+           holds the mod role, but the interaction came through their own user-install and
+           Discord attached the roles to the OTHER context - so the member handed over is
+           real but empty, and reads as PUBLIC. The staff guild sees the same person with the
+           role, and that is the authoritative view. */
+        var access = WithRoles();
+        access.UseHomeGuild(id => new FakeMember(id, ModRoleId));
+
+        Assert.True(access.IsMod(new FakeMember(StrangerId)));   // empty interaction member
+        Assert.True(access.Allows(RequiredAccess.Mod, new FakeMember(StrangerId)));
+    }
+
+    [Fact]
+    public void AGenuinelyRolelessMemberStaysRolelessWhenTheHomeGuildAgrees()
+    {
+        /* The fallback must not invent access. A member with no roles whose home-guild view
+           also has none is simply public, and the wasted lookup changes nothing - it must
+           not fail open just because it looked. */
+        var access = WithRoles();
+        access.UseHomeGuild(id => new FakeMember(id));   // also role-less
+
+        Assert.False(access.IsMod(new FakeMember(StrangerId)));
+        Assert.False(access.Allows(RequiredAccess.Mod, new FakeMember(StrangerId)));
+    }
+
+    [Fact]
+    public void AHollowMemberWithNoHomeGuildMatchStaysPublic()
+    {
+        // The home lookup answering null is a stranger; a hollow member plus no match is
+        // still nothing, and a permission check must not fail open.
+        var access = WithRoles();
+        access.UseHomeGuild(_ => null);
+
+        Assert.False(access.IsMod(new FakeMember(StrangerId)));
+    }
+
+    [Fact]
+    public void AMemberThatAlreadyHasRolesIsNeverSecondGuessedByTheHomeGuild()
+    {
+        /* The fallback triggers ONLY on an empty role set. A member the interaction handed
+           over WITH roles is the guild they are standing in and is used as-is - reaching for
+           the home guild there would be a wasted lookup and, for anyone whose roles differ
+           between the two, the wrong answer. A member with a role that is not the mod role is
+           still not a mod, and the home guild is not consulted to change that. */
+        var access = WithRoles();
+        access.UseHomeGuild(_ => throw new InvalidOperationException(
+            "the interaction member already had roles; the home guild should not have been asked"));
+
+        Assert.True(access.IsMod(new FakeMember(StrangerId, ModRoleId)));
+        Assert.False(access.IsMod(new FakeMember(StrangerId, 9999)));
+    }
+
+    [Fact]
     public void DiscordsOwnAdministratorPermissionCarriesOverToo()
     {
         /* An administrator who loses admin by messaging the bot is the same bug in a
