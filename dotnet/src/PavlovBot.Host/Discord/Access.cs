@@ -310,12 +310,38 @@ public sealed class Access
     /// staff guild. That is the point, and it is also the whole of the widening: no role is
     /// granted that the guild has not granted.
     /// </remarks>
-    private IGuildUser? Member(IUser? user) => user switch
+    private IGuildUser? Member(IUser? user)
     {
-        null => null,
-        IGuildUser member => member,
-        _ => _homeMember?.Invoke(user.Id),
-    };
+        switch (user)
+        {
+            case null:
+                return null;
+
+            case IGuildUser member:
+                /* A MEMBER WITH NO ROLES MAY BE A HOLLOW ONE. Inside a guild the interaction
+                   carries the caller's member and its roles, and that is authoritative - it
+                   is the guild they are standing in. But a USER-INSTALLED app invoked through
+                   the user's own installation is handed a member with an EMPTY role set even
+                   in a guild the bot is a full member of: Discord attaches the roles to the
+                   guild-install context, and this interaction came through the user-install
+                   one. That member reads as PUBLIC no matter what the person actually holds.
+
+                   So when the interaction's member carries no roles, and the staff guild can
+                   see the SAME person WITH roles, the staff guild is the authoritative view.
+                   A genuinely role-less member costs one lookup that finds nothing and is
+                   then used as-is, which is the same answer it would have given anyway - the
+                   Administrator permission on it is still honoured by the callers above. */
+                if (member.RoleIds.Count == 0 &&
+                    _homeMember?.Invoke(user.Id) is { RoleIds.Count: > 0 } fuller)
+                {
+                    return fuller;
+                }
+                return member;
+
+            default:
+                return _homeMember?.Invoke(user.Id);
+        }
+    }
 
     private bool Has(IUser? user, ulong? roleId) =>
         roleId is { } id && Member(user) is { } member && member.RoleIds.Contains(id);
