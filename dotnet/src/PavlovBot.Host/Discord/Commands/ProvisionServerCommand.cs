@@ -278,11 +278,7 @@ public sealed class ProvisionServerCommand(
 
         embed
             .AddField("Ports", $"game `{spec.GamePort}/udp` • query `{spec.QueryPort}/udp` • rcon `{spec.RconPort}/tcp`", inline: false)
-            .AddField("Install dir", $"`{Sanitize.Code(spec.InstallDir)}`", inline: false)
-            .AddField($"{Theme.Warn} Port collisions",
-                "Defaults step per server (game +1, RCON +100), so they do not collide on their own. " +
-                "Only RCON ports can be checked against other servers though - if you named the game or " +
-                "query port yourself, make sure it is unique on this box.", inline: false);
+            .AddField("Install dir", $"`{Sanitize.Code(spec.InstallDir)}`", inline: false);
 
         if (generatedPassword)
             embed.AddField("RCON password (generated - save it)", $"||`{spec.RconPassword}`||", inline: false);

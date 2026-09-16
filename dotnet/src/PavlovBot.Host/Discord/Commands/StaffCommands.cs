@@ -496,8 +496,7 @@ public sealed class StripMenuCommand(
         logger.LogInformation("stripmenu | member={Member} | player=\"{Player}\" | by={By}", id, player, command.User.Username);
 
         await Reply(command, Theme.Success("Menu access removed",
-            $"{member.Mention} no longer has menu access.")
-            .AddField("Name binding", "Unchanged - releasing frees the ACCESS, never the name. Use `/unlinkname` for that.")).ConfigureAwait(false);
+            $"{member.Mention} no longer has menu access.")).ConfigureAwait(false);
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

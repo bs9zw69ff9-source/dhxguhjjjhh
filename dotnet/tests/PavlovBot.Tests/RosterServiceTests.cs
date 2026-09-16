@@ -183,6 +183,20 @@ public class RosterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SubclassesAsyncReportsWhoHoldsWhat()
+    {
+        // Feeds the roster listing: a member with a sub-class is tagged, one without is absent.
+        await _rosters.JoinAsync(Nypd, "Alice");
+        await _rosters.JoinAsync(Nypd, "Bob");
+        await _rosters.ChangeSubclassAsync(Nypd, "Alice", "Detective", removing: false);
+
+        var held = await _rosters.SubclassesAsync(Nypd);
+
+        Assert.Equal("Detective", held["Alice"]);
+        Assert.False(held.ContainsKey("Bob"));   // no sub-class, no entry
+    }
+
+    [Fact]
     public async Task OnlyOneSubClassAtATime()
     {
         await _rosters.ChangeSubclassAsync(Nypd, "Alice", "Detective", removing: false);

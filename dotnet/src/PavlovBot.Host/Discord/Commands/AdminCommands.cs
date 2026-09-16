@@ -112,8 +112,7 @@ public sealed partial class SetPinCommand(RconRegistry rcon, Access access, ILog
         await Reply(command, applied.Count == 0
             ? Theme.Failure("Could not lock the server", "No server accepted the command.")
             : Theme.Success($"{Theme.Deny} Locked",
-                $"**{string.Join(", ", applied)}** now requires the PIN **{pin}**.\n" +
-                "Only you can see this message. Clear it with `/removepin`.")).ConfigureAwait(false);
+                $"**{string.Join(", ", applied)}** now requires the PIN **{pin}**.")).ConfigureAwait(false);
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>

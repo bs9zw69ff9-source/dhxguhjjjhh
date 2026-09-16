@@ -242,8 +242,7 @@ public sealed class MenuPanel(
             modal.User.Username, name, tier, delivered);
 
         await Followup(modal, Theme.Success("Menu granted",
-            $"`{Sanitize.Code(name)}` now has the **{tier}** menu on **{delivered}** server(s).\n\n" +
-            "Your account is permanently linked to that name. Enter it again here to remove the menu.")).ConfigureAwait(false);
+            $"`{Sanitize.Code(name)}` now has the **{tier}** menu on **{delivered}** server(s).")).ConfigureAwait(false);
     }
 
     private async Task ReleaseAsync(SocketModal modal, string selfId, string name, CancellationToken ct)
@@ -265,8 +264,7 @@ public sealed class MenuPanel(
         logger.LogInformation("menu released | member={Member} | player=\"{Player}\"", modal.User.Username, name);
 
         await Followup(modal, Theme.Success("Menu removed",
-            $"Removed the menu from `{Sanitize.Code(name)}`. Press **Get menu** again to re-claim it — " +
-            "your account stays linked to that name.")).ConfigureAwait(false);
+            $"Removed the menu from `{Sanitize.Code(name)}`.")).ConfigureAwait(false);
     }
 
     /// <param name="Problem">Why it failed, for the reply. Null when it worked.</param>

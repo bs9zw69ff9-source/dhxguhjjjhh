@@ -154,9 +154,6 @@ public sealed class PlayerProfileCommand(PlayerIntelligenceService intelligence,
             $"({p.Risk.Confidence.ToString().ToLowerInvariant()} confidence)\n" +
             $"{p.Risk.Assessment}");
 
-        if (p.Risk.Signals.Count > 0)
-            embed.AddField("Why", "Run `/player risk` for the individual signals.");
-
         return Footnote(embed, p);
     }
 

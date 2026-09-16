@@ -154,9 +154,6 @@ public sealed class FactionStatsCommand(
                 "play under another name. **Not** the same as inactive.");
         }
 
-        embed.AddField("Nothing was changed",
-            "Just a list. Use `/demotion` or `/whitelist remove` if you decide to act on it.");
-
         return embed;
     }
 
