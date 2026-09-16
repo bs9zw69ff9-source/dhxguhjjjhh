@@ -106,8 +106,7 @@ public sealed class RotateMapCommand(
 
         await Reply(command, Theme.Notice($"{Theme.Warn} Rotating {targets.Count} server(s)",
             $"Broadcast `{Warning}` to {warned} of {targets.Count} server(s). " +
-            $"Restarting in {PlayerNotice.Grace.TotalSeconds:0}s…\n\n" +
-            "This message will update when every unit has finished.")).ConfigureAwait(false);
+            $"Restarting in {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
 
         /* THE PAUSE IS THE POINT. The broadcast has to reach the client and render before
            the process it is warning about disappears - sent and restarted in the same

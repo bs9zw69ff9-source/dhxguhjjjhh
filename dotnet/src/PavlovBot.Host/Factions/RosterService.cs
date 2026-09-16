@@ -316,6 +316,31 @@ public sealed class RosterService
         return Task.FromResult<IReadOnlyList<Membership>>(seen.Values.ToList());
     }
 
+    /// <summary>Which sub-class each member holds, keyed by in-game name.</summary>
+    /// <remarks>
+    /// THE BULK FORM of the per-member lookup in <see cref="ChangeSubclassAsync"/>, and for
+    /// the same reason <see cref="RosterAsync"/> is bulk: the roster listing wants every
+    /// member's sub-class at once, and reading each sub-class file once and answering off the
+    /// result beats re-reading all of them per member. One player holds at most one sub-class,
+    /// so a name found in two files (a hand-edit) resolves to the last read rather than
+    /// throwing - the listing shows one tag, not a crash.
+    ///
+    /// A file that cannot be READ contributes nobody rather than an error: a member simply
+    /// shows untagged, the same trade every reader of <see cref="Read"/> makes.
+    /// </remarks>
+    public Task<IReadOnlyDictionary<string, string>> SubclassesAsync(FactionDefinition faction, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(faction);
+
+        var held = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, file) in faction.Subclasses)
+        {
+            foreach (var player in Read(file) ?? [])
+                held[player] = name;
+        }
+        return Task.FromResult<IReadOnlyDictionary<string, string>>(held);
+    }
+
     /// <summary>
     /// Everyone on every roster, keyed by in-game name.
     /// </summary>

@@ -185,12 +185,9 @@ public sealed class ServerBrowser(MasterServerList master, RconRegistry rcon, Bo
 
     private Embed Card(ServerListing server, Session session)
     {
-        var mine = IsOurs(server);
-
-        var builder = Theme.Notice(Trim(server.Name, 240),
+        var builder = Theme.Notice(Trim(server.Name, 240) + (IsOurs(server) ? " · yours" : ""),
                 $"**{server.Players}/{server.MaxPlayers}** playing **{Sanitize.Message(server.GameModeLabel)}** " +
-                $"on **{Sanitize.Message(server.MapLabel)}**." +
-                (mine ? "\n\n*This is one of your configured servers.*" : ""))
+                $"on **{Sanitize.Message(server.MapLabel)}**.")
             .AddField("Connect", $"`{server.Ip}:{server.Port}`", inline: true)
             .AddField("Players", server.Full ? $"{server.Players}/{server.MaxPlayers} (full)" : $"{server.Players}/{server.MaxPlayers}", inline: true)
             .AddField("Game mode", Describe(server.GameModeLabel, server.GameMode), inline: true)

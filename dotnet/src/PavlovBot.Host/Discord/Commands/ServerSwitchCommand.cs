@@ -134,8 +134,8 @@ public sealed class ServerSwitchCommand(
             warned = await notice.WarnAsync(number, message, ct).ConfigureAwait(false);
 
             await Reply(command, Theme.Notice($"{Theme.Warn} {Verb(action)} Server {number}",
-                $"`{unit}` — {(warned.Delivered ? $"broadcast `{message}`" : $"could not warn players: {warned.Detail}")}." +
-                $"\n\nRunning `systemctl {ServiceControl.Verb(action)} {unit}` in {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
+                $"`{unit}` — {(warned.Delivered ? $"broadcast `{message}`" : $"could not warn players: {warned.Detail}")}. " +
+                $"In {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
 
             /* THE PAUSE IS THE POINT. The broadcast has to reach the client and render
                before the process it is warning about disappears - sent and acted on in the

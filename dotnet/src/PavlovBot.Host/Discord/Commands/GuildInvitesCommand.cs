@@ -92,8 +92,7 @@ public sealed class GuildInvitesCommand(
         if (delivered == pages.Count)
         {
             await Reply(command, Theme.Success($"Sent {invites.Count} server(s)",
-                $"DM'd to <@{OwnerGuard.SuperOwnerId}>. The invites are single-use and expire in " +
-                $"{InviteLifetime.TotalHours:0} hours.")
+                $"DM'd to <@{OwnerGuard.SuperOwnerId}>. Single-use, expire in {InviteLifetime.TotalHours:0}h.")
                 .AddField("Made an invite for", $"{invites.Count(i => i.Url is not null)} of {invites.Count}", inline: true))
                 .ConfigureAwait(false);
             return;

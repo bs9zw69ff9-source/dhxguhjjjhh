@@ -592,6 +592,10 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
         if (roster.Count == 0)
             return Theme.Notice($"{faction.Name} whitelist", "Nobody is on this roster.");
 
+        // Their sub-classes, read once for the whole roster. A member with one is tagged; a
+        // member without shows as before, so the list stays legible for factions with none.
+        var subclasses = await rosters.SubclassesAsync(faction, ct).ConfigureAwait(false);
+
         /* Grouped by rank, HIGHEST FIRST. A flat alphabetical list of eighty names answers
            "is X whitelisted" and nothing else; grouped by rank it also answers "who runs
            this faction", which is the question people actually ask. */
@@ -603,7 +607,10 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
             if (members.Count == 0) continue;
 
             lines.Add($"**{rank}** ({members.Count})");
-            lines.Add(string.Join(", ", members.Select(m => $"`{Sanitize.Code(m.Player)}`")));
+            lines.Add(string.Join(", ", members.Select(m =>
+                subclasses.TryGetValue(m.Player, out var subclass)
+                    ? $"`{Sanitize.Code(m.Player)}` ({Sanitize.Markdown(subclass)})"
+                    : $"`{Sanitize.Code(m.Player)}`")));
         }
 
         var pages = Theme.Paginate(lines);
