@@ -278,6 +278,18 @@ public static class Program
            and it is invisible if nothing ever says how many were found. */
         var installs = PavlovInstalls.Discover(
             builder.Configuration["PAVLOV_BASES"], builder.Configuration["PAVLOV_BASE_1"]);
+
+        /* CROSS-INSTALL ModSave SYNC. Keeps caps ledgers, faction roles and gamemode saves
+           identical across every install - the Node feature the C# port dropped, which is why
+           a player's balance could differ between servers. Takes the online roster for its
+           guard, so it never mirrors a ledger whose player is still moving it in memory. */
+        builder.Services.AddSingleton(sp => new ModSaveSync(
+            installs,
+            sp.GetRequiredService<RconRegistry>(),
+            features.ModSaveSync,
+            sp.GetRequiredService<ILogger<ModSaveSync>>(),
+            features.ModSaveSyncSkipExtra));
+
         builder.Services.AddSingleton<IpTrackingService>();
         builder.Services.AddSingleton(sp => new LogTailer(sp.GetRequiredService<ILoggerFactory>().CreateLogger<LogTailer>()));
 
@@ -833,6 +845,13 @@ public static class Program
            `/feeds` shows the same thing on demand. */
         logger.LogInformation("Pavlov installs: {Installs}",
             string.Join(", ", installs.Select(Path.GetFileName)));
+
+        /* CROSS-INSTALL ModSave SYNC, reported at startup for the same reason as everything
+           else here: its failure modes are all silent no-ops - one install, a MODSAVE_PATH
+           outside every install, a ModSave dir the bot cannot write - and balances that never
+           converge look exactly like a sync that is running fine. Diagnose says which. */
+        foreach (var line in host.Services.GetRequiredService<ModSaveSync>().Diagnose(features.LedgerDirectory))
+            logger.LogInformation("  ModSave sync: {Line}", line);
 
         /* Every path the bot WRITES INTO A GAME INSTALL, resolved and checked. These were
            only ever visible by their effects, and the effect of a wrong one used to be a
