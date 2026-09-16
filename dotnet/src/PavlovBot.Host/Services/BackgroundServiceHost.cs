@@ -41,6 +41,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Stats.KillStats _killStats;
     private readonly AutoPost _autoPost;
     private readonly ServerBanFile _modsave;
+    private readonly PavlovBot.Host.Storage.ModSaveSync _modSaveSync;
     private readonly RosterService _rosters;
     private readonly PavlovBot.Core.Data.SerializedStore _store;
     /// <summary>
@@ -81,6 +82,7 @@ public sealed class BackgroundServiceHost : IHostedService
         Boards boards,
         AutoPost autoPost,
         ServerBanFile modsave,
+        PavlovBot.Host.Storage.ModSaveSync modSaveSync,
         RosterService rosters,
         PavlovBot.Core.Data.SerializedStore store,
         PavlovBot.Host.Logs.FeedBridge bridge,
@@ -116,6 +118,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _boards = boards;
         _autoPost = autoPost;
         _modsave = modsave;
+        _modSaveSync = modSaveSync;
         _rosters = rosters;
         _store = store;
         _bridge = bridge;
@@ -429,6 +432,31 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
+        /* ---- cross-install ModSave sync ----
+           The blanket newest-wins sweep that keeps every install's ModSave tree identical.
+           One minute, as in the Node bot: it is the safety net for OFFLINE players (it skips
+           online ledgers), and the join hook below is the fast path for the ones still on. */
+        if (_modSaveSync.CanSync)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "modsave-sync",
+                Interval = TimeSpan.FromMinutes(1),
+                /* NOT RunOnStart, deliberately. The online guard needs a fresh RCON roster to
+                   know who to skip, and on the very first tick after boot there is none - it
+                   would fail open and mirror a ledger whose player is online. Waiting one
+                   interval lets player-cache populate first; a minute of extra drift on a bot
+                   that was just restarted is nothing next to a clobbered live balance. */
+                Tick = async ct => await _modSaveSync.SweepAsync(ct).ConfigureAwait(false),
+            });
+
+            /* THE FAST PATH. On the interval alone a server-hopper loads a stale balance on
+               the destination before the sweep gets to it; syncing their ledger the moment
+               they join copies the newest one in first. Fire-and-forget on purpose - a join
+               must not wait on a file sweep - and its own failures are logged, not raised. */
+            _tracking.Joined += OnJoinedSyncLedgerAsync;
+        }
+
         /* ---- verification panel ----
            An autopost board, so a restart EDITS the existing message instead of leaving an
            orphan with a dead button behind it. Slow, because the panel's content never
@@ -544,6 +572,29 @@ public sealed class BackgroundServiceHost : IHostedService
                 foreach (var suspension in due) current.Remove(suspension.Player);
                 return current;
             }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A player joined, so push their newest caps ledger to every install before this server
+    /// reads it. See <see cref="Storage.ModSaveSync.SyncPlayerLedgerAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// NEVER THROWS INTO THE EVENT. This is one subscriber among several on a hot path, and an
+    /// exception here would break the join handling the others do. A name the join could not
+    /// resolve is simply nothing to sync.
+    /// </remarks>
+    private async Task OnJoinedSyncLedgerAsync(PlayerJoined join)
+    {
+        if (join?.Name is not { Length: > 0 } name) return;
+
+        try
+        {
+            await _modSaveSync.SyncPlayerLedgerAsync(name).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ModSave sync on join failed for {Player}", name);
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => _registry.StopAllAsync();

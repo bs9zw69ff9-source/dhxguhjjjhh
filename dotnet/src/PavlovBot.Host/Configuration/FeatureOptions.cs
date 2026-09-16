@@ -56,6 +56,19 @@ public sealed record FeatureOptions
     /// </summary>
     public string? IgnoredBanFilePath { get; init; }
 
+    /// <summary>
+    /// Whether the ModSave tree is kept identical across every install. On unless turned off.
+    /// </summary>
+    /// <remarks>
+    /// Defaults ON, and disabled only by an explicit <c>MODSAVE_SYNC=off</c> - the same switch
+    /// the Node bot used. It is opt-OUT rather than opt-in because a multi-install box that is
+    /// NOT syncing is the surprising, money-losing state, not the safe default.
+    /// </remarks>
+    public bool ModSaveSync { get; init; } = true;
+
+    /// <summary>Extra path fragments never mirrored, beyond the built-in menu-access ones.</summary>
+    public IReadOnlyList<string> ModSaveSyncSkipExtra { get; init; } = [];
+
     /// <summary>Where plugin assemblies live. Null uses ./plugins.</summary>
     public string? PluginDirectory { get; init; }
 
@@ -370,6 +383,10 @@ public sealed record FeatureOptions
                         "Pavlov", "Saved", "Config", "blacklist.txt"),
 
             IgnoredBanFilePath = Text(configuration, "MODSAVE_BLACKLIST_PATH"),
+
+            // Opt-out: only an explicit MODSAVE_SYNC=off disables cross-install ModSave sync.
+            ModSaveSync = OptionalFlag(configuration, "MODSAVE_SYNC") != false,
+            ModSaveSyncSkipExtra = List(configuration, "MODSAVE_SYNC_SKIP_EXTRA"),
 
             /* Two DIFFERENT webhooks. CONNECT carries addresses and belongs in a private
                channel; JOIN is the plain public log. The port read CONNECT into the join

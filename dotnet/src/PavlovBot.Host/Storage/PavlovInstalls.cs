@@ -71,6 +71,14 @@ public static class PavlovInstalls
         Path.Combine(installRoot, "Pavlov", "Saved", "Config", "whitelist.txt");
 
     /// <summary>
+    /// The <c>ModSave</c> tree inside an install - caps ledgers, faction roles, gamemode
+    /// saves, the mod ban-message file: everything the servers write per install and that the
+    /// cross-install sync keeps identical across them.
+    /// </summary>
+    public static string ModSavePath(string installRoot) =>
+        Path.Combine(installRoot, "Pavlov", "Saved", "Config", "ModSave");
+
+    /// <summary>
     /// The server's own <c>Game.ini</c>.
     /// </summary>
     /// <remarks>
