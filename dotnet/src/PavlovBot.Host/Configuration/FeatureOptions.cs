@@ -23,6 +23,14 @@ public sealed record FeatureOptions
     /// <summary>Pavlov.log paths, comma separated. Empty means auto-detect.</summary>
     public string? LogPaths { get; init; }
 
+    /// <summary>
+    /// Pavlov's Stats.log files, comma separated. Blank derives them from the log paths.
+    /// </summary>
+    /// <remarks>
+    /// The better source for kills: structured JSON, a headshot flag, the game's own
+    /// timestamp, and no dependency on bVerboseLogging. See <c>StatsLogService</c>.
+    /// </remarks>
+    public string? StatsLogPaths { get; init; }
 
     /// <summary>Where the game keeps its whitelist .txt rosters. Null disables the faction commands.</summary>
     public string? RosterDirectory { get; init; }
@@ -346,6 +354,7 @@ public sealed record FeatureOptions
         {
             LedgerDirectory = Text(configuration, "MODSAVE_PATH"),
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
+            StatsLogPaths = Text(configuration, "STATS_LOGS"),
             PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
             FactionsPath = Text(configuration, "FACTIONS_PATH"),

@@ -117,6 +117,38 @@ public sealed class FeedBridge
     }
 
     /// <summary>
+    /// Take kills from Stats.log instead of from the Pavlov.log scrape.
+    /// </summary>
+    /// <remarks>
+    /// Attached after the host is built, like the other late wiring here: whether a Stats.log
+    /// exists is a discovery result, not something known at construction. The tracker is told
+    /// to stop scraping Pavlov.log at the same moment (see IpTrackingService.UseStatsLogKills),
+    /// so exactly one of the two sources is ever live and no kill is counted twice.
+    /// </remarks>
+    public void UseStatsLog(StatsLogService stats)
+    {
+        ArgumentNullException.ThrowIfNull(stats);
+        stats.Killed += OnStatsKillAsync;
+    }
+
+    /// <summary>
+    /// A kill from Stats.log: counted for K/D and posted, with the headshot flag and the
+    /// game's own timestamp the Pavlov.log scrape could never supply.
+    /// </summary>
+    /// <remarks>
+    /// COUNTED THE SAME WAY the Pavlov.log kill is - see <see cref="OnKillAsync"/> - so K/D is
+    /// identical whichever source is live, but keyed off the timestamp the GAME wrote rather
+    /// than the clock at read time, and outside the feed guard so the scoreboard does not
+    /// depend on a kill webhook being configured.
+    /// </remarks>
+    private Task OnStatsKillAsync(PavlovBot.Core.Logs.StatsKill kill)
+    {
+        _killStats?.Record(new PavlovBot.Core.Logs.KillEvent(kill.Killer, kill.Killed, kill.Weapon), kill.At);
+
+        return Safe(() => _feeds.PostKillAsync(kill.Killer, kill.Killed, kill.Weapon, kill.At, kill.Headshot));
+    }
+
+    /// <summary>
     /// The public join line, and the first chance to act on a VPN.
     /// </summary>
     /// <remarks>

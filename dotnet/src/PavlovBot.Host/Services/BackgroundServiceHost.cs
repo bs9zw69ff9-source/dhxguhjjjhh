@@ -42,6 +42,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly AutoPost _autoPost;
     private readonly ServerBanFile _modsave;
     private readonly PavlovBot.Host.Storage.ModSaveSync _modSaveSync;
+    private readonly PavlovBot.Host.Logs.StatsLogService _statsLog;
     private readonly RosterService _rosters;
     private readonly PavlovBot.Core.Data.SerializedStore _store;
     /// <summary>
@@ -83,6 +84,7 @@ public sealed class BackgroundServiceHost : IHostedService
         AutoPost autoPost,
         ServerBanFile modsave,
         PavlovBot.Host.Storage.ModSaveSync modSaveSync,
+        PavlovBot.Host.Logs.StatsLogService statsLog,
         RosterService rosters,
         PavlovBot.Core.Data.SerializedStore store,
         PavlovBot.Host.Logs.FeedBridge bridge,
@@ -119,6 +121,7 @@ public sealed class BackgroundServiceHost : IHostedService
         _autoPost = autoPost;
         _modsave = modsave;
         _modSaveSync = modSaveSync;
+        _statsLog = statsLog;
         _rosters = rosters;
         _store = store;
         _bridge = bridge;
@@ -215,6 +218,20 @@ public sealed class BackgroundServiceHost : IHostedService
                             }
                         }
                 },
+            });
+        }
+
+        /* ---- stats log ----
+           The same cadence as the main tail. It is the same kind of work against a file the
+           same server is writing, and a kill feed running a different interval to the join
+           feed puts the two out of order in a channel where they are read together. */
+        if (_statsLog.Enabled)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "stats-log",
+                Interval = _features.LogPollInterval,
+                Tick = ct => _statsLog.TickAsync(ct),
             });
         }
 

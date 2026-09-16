@@ -367,6 +367,22 @@ public static class Program
         builder.Services.AddSingleton<FeedWebhooks>();
         builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
         builder.Services.AddSingleton<FeedBridge>();
+
+        /* KILLS FROM Stats.log, the better source. DISCOVERED ONCE, at registration, so the
+           paths the tick polls and the paths the wiring decision is made from cannot disagree.
+           The logger is passed to Discover here and not to the LogTailer.Discover call feeding
+           it, because that one also runs inside the background host and would say it twice.
+
+           NO ID RESOLVER. The reader passes each Killer/Killed field through as-is; on this
+           server the game writes the player NAME there, not the numeric id it once did, which
+           is the whole reason bringing Stats.log back is right again - the wall-of-numbers
+           that retired it in #105 is gone. */
+        builder.Services.AddSingleton(sp => new StatsLogService(
+            StatsLogService.Discover(features.StatsLogPaths, LogTailer.Discover(features.LogPaths),
+                sp.GetRequiredService<ILogger<StatsLogService>>()),
+            sp.GetRequiredService<LogTailer>(),
+            sp.GetRequiredService<MetricsRegistry>(),
+            sp.GetRequiredService<ILogger<StatsLogService>>()));
         builder.Services.AddSingleton<EvasionResponder>();
         /* Acts on a VPN verdict. Without it the screening ran on every connection, decided
            a ban, and nothing read the decision. */
@@ -1003,7 +1019,28 @@ public static class Program
         /* RESOLVED, not just registered. The bridge subscribes to the tracker's events in
            its constructor, and a service nobody asks for is never constructed - which is
            exactly how the join, connect and kill feeds came to be silent. */
-        host.Services.GetRequiredService<FeedBridge>();
+        var bridge = host.Services.GetRequiredService<FeedBridge>();
+
+        /* KILLS COME FROM Stats.log WHEN THERE IS ONE, for K/D and the kill feed both. Both
+           sources describe the same kill, so this SWITCHES rather than adds - the tracker
+           stops scraping Pavlov.log for kills at the same moment the bridge starts listening
+           to the stats reader, so nothing is counted twice. Wired here because it depends on
+           discovery having found a file, which is not known when either service is built. */
+        var statsLog = host.Services.GetRequiredService<StatsLogService>();
+        if (statsLog.Enabled)
+        {
+            bridge.UseStatsLog(statsLog);
+            host.Services.GetRequiredService<IpTrackingService>().UseStatsLogKills();
+            logger.LogInformation(
+                "Kills and K/D are coming from Stats.log ({Count} file(s)) - with headshots and the " +
+                "game's own timestamps, and no dependency on bVerboseLogging", statsLog.Paths.Count);
+        }
+        else
+        {
+            logger.LogInformation(
+                "No Stats.log found - kills and K/D come from Pavlov.log, which needs bVerboseLogging=true " +
+                "and carries no headshot flag. Set STATS_LOGS to point at your Stats.log files");
+        }
 
         /* Same reason, and this one matters more: the responder subscribes to the tracker's
            Flagged event in its constructor. Registered but never resolved, ban-evasion
