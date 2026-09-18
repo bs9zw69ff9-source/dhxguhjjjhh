@@ -170,6 +170,9 @@ public class PavlovLogTests
         Assert.Equal("Holosight1", warp.Instigator);
         Assert.Equal("ricely", warp.Argument);
         Assert.Equal("Warp ricely", warp.Command);
+        // Full rejoins everything - it is what a sent command is confirmed against.
+        Assert.Equal("Warp Holosight1 ricely", warp.Full);
+        Assert.Equal("BanPlayer hhhhhhhhhh", ban.Full);   // base RCON: no instigator to rejoin
 
         // Self-service menu action: instigator gives THEMSELVES cash.
         var cash = PavlovLog.Rcon("[t][0]LogTemp: Warning: Rcon Plus Command Executed: SetCash Rickythegamer1001 9999999");

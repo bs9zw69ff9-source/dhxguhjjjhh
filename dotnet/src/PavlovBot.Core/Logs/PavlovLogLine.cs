@@ -188,6 +188,13 @@ public static partial class PavlovLog
     {
         /// <summary>The command as it reads: the verb and its argument, without the instigator.</summary>
         public string Command => Argument is { Length: > 0 } a ? $"{Verb} {a}" : Verb;
+
+        /// <summary>
+        /// The whole command exactly as it was executed - verb, instigator and argument
+        /// rejoined - for matching a log line against a command the bot sent.
+        /// </summary>
+        public string Full => string.Join(' ',
+            new[] { Verb, Instigator, Argument }.Where(p => !string.IsNullOrEmpty(p)));
     }
 
     /// <summary>
