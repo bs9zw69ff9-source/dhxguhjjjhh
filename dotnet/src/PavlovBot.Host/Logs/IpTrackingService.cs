@@ -101,6 +101,9 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 
     public event Func<KillEvent, Task>? Kill;
 
+    /// <summary>An RCON or RCON+ command the game logged, with the log file it came from.</summary>
+    public event Func<string, PavlovLog.RconAction, Task>? Rcon;
+
     /// <summary>Whether Stats.log is supplying kills, making this class's scraping redundant.</summary>
     private bool _statsLogKills;
 
@@ -260,6 +263,15 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
         if (PavlovLog.Login(line.Text) is { } login)
         {
             await OnLoginAsync(line.File, login, at, ct).ConfigureAwait(false);
+            return;
+        }
+
+        /* RCON AND RCON+ COMMANDS -> the audit feed. Before the stats-kill gate below, so it
+           runs whichever kill source is live: an RCON line is neither a kill nor a login, so
+           this returns once it matches rather than falling through to the kill parse. */
+        if (PavlovLog.Rcon(line.Text) is { } rconAction)
+        {
+            if (Rcon is { } onRcon) await onRcon(line.File, rconAction).ConfigureAwait(false);
             return;
         }
 

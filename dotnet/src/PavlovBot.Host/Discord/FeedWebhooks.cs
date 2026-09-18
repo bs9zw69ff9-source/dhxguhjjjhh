@@ -229,6 +229,17 @@ public sealed class FeedWebhooks : IAsyncDisposable
     public const string Kill = "kill";
 
     /// <summary>
+    /// RCON and RCON+ commands as the game logs them. A private admin channel.
+    /// </summary>
+    /// <remarks>
+    /// PRIVATE, and for two reasons. The arguments carry account ids and player names - a
+    /// <c>KickPlayer 0002…</c> is personal data the same as the connect feed's addresses. And
+    /// it is a moderation audit: who ran <c>Godmode</c>, <c>SetCash</c> or a ban, which is not
+    /// something to publish to the room those actions are taken in.
+    /// </remarks>
+    public const string Rcon = "rcon";
+
+    /// <summary>
     /// Staff actions, as they happen. A private staff channel.
     /// </summary>
     /// <remarks>
@@ -312,6 +323,30 @@ public sealed class FeedWebhooks : IAsyncDisposable
     public Task PostKillAsync(string? killer, string killed, string? weapon, DateTimeOffset at,
         bool headshot = false, CancellationToken ct = default) =>
         PostAsync(Kill, KillLine(killer, killed, weapon, at, headshot), ct);
+
+    /// <summary>
+    /// One RCON or RCON+ command, as the audit feed shows it.
+    /// </summary>
+    /// <remarks>
+    /// PURE and tested. The tag says which channel the command came through - RCON+ is the menu
+    /// mod, RCON is the base protocol - because the same verb means different things
+    /// (<c>Kick</c> by id from the bot vs <c>Kick</c> from the menu) and telling them apart is
+    /// half the point of the audit. The argument is a player name or id and is
+    /// attacker-influenced, so it is sanitised like every other line here: a newline in it must
+    /// not forge a second entry, and an @everyone in a name must not ping.
+    /// </remarks>
+    public static string RconLine(bool plus, string verb, string? argument, string? server, DateTimeOffset at)
+    {
+        var tag = plus ? "RCON+" : "RCON";
+        var line = $"[{Stamp(at)}] {tag}  {Sanitize.Message(verb)}";
+        if (argument is { Length: > 0 }) line += $" {Sanitize.Message(argument)}";
+        line += $"  ·  {Where(server)}";
+        return line;
+    }
+
+    public Task PostRconAsync(bool plus, string verb, string? argument, string? server, DateTimeOffset at,
+        CancellationToken ct = default) =>
+        PostAsync(Rcon, RconLine(plus, verb, argument, server, at), ct);
 
     /// <summary>
     /// One kill, as the feed shows it.

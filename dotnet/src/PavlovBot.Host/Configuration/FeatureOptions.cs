@@ -104,6 +104,7 @@ public sealed record FeatureOptions
 
     public string? JoinWebhook { get; init; }
     public string? KillWebhook { get; init; }
+    public string? RconWebhook { get; init; }
 
     /// <summary>The address-bearing connection feed. Private channels only.</summary>
     public string? ConnectWebhook { get; init; }
@@ -409,6 +410,7 @@ public sealed record FeatureOptions
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
+            RconWebhook = Text(configuration, "RCON_WEBHOOK_URL"),
 
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
@@ -554,6 +556,7 @@ public sealed record FeatureOptions
         $"systemd units: {string.Join(", ", PavlovUnits)}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
+        $"rcon feed: {(RconWebhook is null ? "off" : "on")}",
         $"cash leaderboard: {(LeaderboardChannel is null ? "off (LEADERBOARD_CHANNEL not set)" : $"channel {LeaderboardChannel}, every {LeaderboardInterval.TotalSeconds:0}s")}",
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
         $"warrant board: {(WarrantBoardChannel is null ? "off (WARRANT_BOARD_CHANNEL not set)" : $"channel {WarrantBoardChannel}")}",

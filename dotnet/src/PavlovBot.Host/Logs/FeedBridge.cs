@@ -114,7 +114,16 @@ public sealed class FeedBridge
         tracking.Joined += OnJoinedAsync;
         tracking.Confirmed += OnConfirmedAsync;
         tracking.Kill += OnKillAsync;
+        tracking.Rcon += OnRconAsync;
     }
+
+    /// <summary>
+    /// An RCON or RCON+ command the game logged -> the audit feed, tagged with the server it
+    /// hit. The parser has already dropped the connection lifecycle and the read-only polls,
+    /// so anything reaching here is a command worth a line.
+    /// </summary>
+    private Task OnRconAsync(string file, PavlovBot.Core.Logs.PavlovLog.RconAction action) =>
+        Safe(() => _feeds.PostRconAsync(action.Plus, action.Verb, action.Argument, _servers.Of(file), DateTimeOffset.UtcNow));
 
     /// <summary>
     /// Take kills from Stats.log instead of from the Pavlov.log scrape.

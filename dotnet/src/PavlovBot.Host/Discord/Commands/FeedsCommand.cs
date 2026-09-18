@@ -118,6 +118,8 @@ public sealed class FeedsCommand(FeedWebhooks feeds, FeatureOptions features, Ac
         new(FeedWebhooks.Join, "JOIN_WEBHOOK_URL", "Public join and leave lines. No addresses - safe in a public channel."),
         new(FeedWebhooks.Connect, "CONNECT_WEBHOOK_URL", "Connection cards WITH IP ADDRESSES, plus auto-ban notices. Private channel only."),
         new(FeedWebhooks.Kill, "KILL_WEBHOOK_URL", "Kill lines."),
+        new(FeedWebhooks.Rcon, "RCON_WEBHOOK_URL",
+            "Every RCON and RCON+ command from Pavlov.log - bans, kicks, mod changes, Godmode, GiveItem. Private channel only."),
         new(FeedWebhooks.Staff, "STAFF_WEBHOOK_URL",
             "Every staff action as it happens - bans, kicks, menu grants, /serverswitch. Private channel only."),
     ];
