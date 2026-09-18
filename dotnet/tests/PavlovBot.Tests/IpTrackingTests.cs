@@ -239,6 +239,54 @@ public class IpTrackingServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AManualBlockCatchesTheAddressOnTheCertainPairing()
+    {
+        /* The bug this covers. On a live server connects arrive in bursts, so the join-time
+           address is almost never a confident guess and the login check sees no address at
+           all. The id+address pairing is the only place a manual block can match, and nothing
+           was checking it - so `/configure blacklist <ip>` did nothing. */
+        PavlovBot.Host.Logs.FlaggedJoin? flagged = null;
+        _service.Flagged += j => { flagged = j; return Task.CompletedTask; };
+
+        await _service.FlagAddressManuallyAsync("203.0.113.5");
+        await Feed(Close);   // UChannel::Close: UniqueId + RemoteAddr on one line - certain
+
+        Assert.NotNull(flagged);
+        Assert.Equal("0002abc", flagged!.AccountId);
+        Assert.Equal("203.0.113.5", flagged.Ip);
+        Assert.Equal(PavlovBot.Core.Evasion.FlagMatch.Ip, flagged.Verdict.Match);
+        Assert.True(flagged.Verdict.Manual);
+    }
+
+    [Fact]
+    public async Task ABanDerivedAddressFlagIsNotActedOnFromACertainPairing()
+    {
+        /* Scoped on purpose. A ban-derived address flag exists because ONE account was banned
+           from it; acting on it for every certain disconnect would auto-ban whoever else
+           shares the address. Only a manual block - a human's deliberate call - fires here. */
+        var hits = 0;
+        _service.Flagged += _ => { hits++; return Task.CompletedTask; };
+
+        await Feed(Close);                                                // confirms the address
+        await _service.RequestFlagAsync("0002abc", flagAccountId: false); // ban-derived Ips flag
+
+        await Feed("[2026.07.15-13.00.00:000]LogNet: UChannel::Close: UniqueId: EOS:0002abc RemoteAddr: 203.0.113.5:7777");
+        Assert.Equal(0, hits);
+    }
+
+    [Fact]
+    public async Task AManualBlockIsDebouncedAcrossRepeatedDisconnects()
+    {
+        var hits = 0;
+        _service.Flagged += _ => { hits++; return Task.CompletedTask; };
+
+        await _service.FlagAddressManuallyAsync("203.0.113.5");
+        await Feed(Close);
+        await Feed("[2026.07.15-12.31.00:000]LogNet: UChannel::Close: UniqueId: EOS:0002abc RemoteAddr: 203.0.113.5:7777");
+        Assert.Equal(1, hits);
+    }
+
+    [Fact]
     public async Task AKillRecordSplitAcrossLinesIsAssembled()
     {
         KillEventCapture? captured = null;
