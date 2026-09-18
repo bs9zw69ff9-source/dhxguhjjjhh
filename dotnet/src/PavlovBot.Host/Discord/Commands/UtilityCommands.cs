@@ -57,7 +57,10 @@ public sealed class KickCommand(RconRegistry rcon, BanService bans, AuditLog aud
             ? Theme.Success("Thrown out", $"**{Sanitize.Code(player)}**{(reason.Length > 0 ? $" — {Sanitize.Code(reason)}" : "")}")
                 .AddField("By", command.User.Username, true)
             : Theme.Failure("Not kicked",
-                $"No server accepted the command. {(online.UniqueId.Length == 0 ? "They may not be online." : "")}")).ConfigureAwait(false);
+                // online is a default PavlovPlayer when nobody matched - its UniqueId is null,
+                // not "", so guard with IsNullOrEmpty rather than .Length (which would NRE on
+                // the exact "not online" case this line is trying to describe).
+                $"No server accepted the command. {(string.IsNullOrEmpty(online.UniqueId) ? "They may not be online." : "")}")).ConfigureAwait(false);
     }
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
