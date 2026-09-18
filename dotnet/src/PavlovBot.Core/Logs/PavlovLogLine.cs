@@ -177,12 +177,25 @@ public static partial class PavlovLog
     /// </summary>
     /// <param name="Plus">True for an RCON+ menu command (Warp, Godmode, GiveItem, …), false for a base RCON verb (Ban, Kick, …).</param>
     /// <param name="Verb">The command word, e.g. "BanPlayer" or "Godmode".</param>
-    /// <param name="Argument">Everything after the verb, or null when the verb stands alone.</param>
-    public sealed record RconAction(bool Plus, string Verb, string? Argument)
+    /// <param name="Instigator">
+    /// The player who ran it, for RCON+ commands - the menu logs the acting player as the
+    /// first argument, so <c>SetCash Bob 999</c> is Bob giving himself cash. Null for base RCON,
+    /// where the line records no issuer (the caller is the RCON password holder - the bot, or a
+    /// console).
+    /// </param>
+    /// <param name="Argument">The rest of the command after the verb and instigator, or null.</param>
+    public sealed record RconAction(bool Plus, string Verb, string? Instigator, string? Argument)
     {
-        /// <summary>The command as it reads, verb and argument rejoined.</summary>
+        /// <summary>The command as it reads: the verb and its argument, without the instigator.</summary>
         public string Command => Argument is { Length: > 0 } a ? $"{Verb} {a}" : Verb;
     }
+
+    /// <summary>
+    /// RCON+ verbs that act on the server, not a player, so their first argument is not an
+    /// instigator. <c>CleanUp Items</c> is a cleanup of items, not something "Items" did.
+    /// </summary>
+    private static readonly HashSet<string> RconPlusServerVerbs =
+        new(StringComparer.OrdinalIgnoreCase) { "CleanUp" };
 
     /// <summary>
     /// Verbs that are not audit-worthy actions: RCON connection lifecycle, and the read-only
@@ -217,14 +230,21 @@ public static partial class PavlovLog
     {
         if (RconPlus.Match(line) is { Success: true } plus)
         {
-            var (verb, arg) = SplitVerb(plus.Groups[1].Value);
-            return verb.Length == 0 ? null : new RconAction(true, verb, arg);
+            var (verb, rest) = SplitVerb(plus.Groups[1].Value);
+            if (verb.Length == 0) return null;
+
+            // <verb> <instigator> <args>: the menu logs the acting player first. A server-wide
+            // verb (CleanUp) has no player, so its argument stays the argument.
+            if (RconPlusServerVerbs.Contains(verb)) return new RconAction(true, verb, null, rest);
+
+            var (instigator, arg) = SplitVerb(rest ?? "");
+            return new RconAction(true, verb, instigator.Length > 0 ? instigator : null, arg);
         }
 
         if (RconBase.Match(line) is { Success: true } bas)
         {
             var (verb, arg) = SplitVerb(bas.Groups[1].Value);
-            return verb.Length == 0 || RconNoise.Contains(verb) ? null : new RconAction(false, verb, arg);
+            return verb.Length == 0 || RconNoise.Contains(verb) ? null : new RconAction(false, verb, null, arg);
         }
 
         return null;

@@ -101,8 +101,8 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 
     public event Func<KillEvent, Task>? Kill;
 
-    /// <summary>An RCON or RCON+ command the game logged, with the log file it came from.</summary>
-    public event Func<string, PavlovLog.RconAction, Task>? Rcon;
+    /// <summary>An RCON or RCON+ command the game logged: the log file, the line's own time, and the action.</summary>
+    public event Func<string, DateTimeOffset, PavlovLog.RconAction, Task>? Rcon;
 
     /// <summary>Whether Stats.log is supplying kills, making this class's scraping redundant.</summary>
     private bool _statsLogKills;
@@ -271,7 +271,7 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
            this returns once it matches rather than falling through to the kill parse. */
         if (PavlovLog.Rcon(line.Text) is { } rconAction)
         {
-            if (Rcon is { } onRcon) await onRcon(line.File, rconAction).ConfigureAwait(false);
+            if (Rcon is { } onRcon) await onRcon(line.File, at, rconAction).ConfigureAwait(false);
             return;
         }
 

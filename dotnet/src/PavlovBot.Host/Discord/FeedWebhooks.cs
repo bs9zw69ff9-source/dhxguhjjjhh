@@ -325,28 +325,39 @@ public sealed class FeedWebhooks : IAsyncDisposable
         PostAsync(Kill, KillLine(killer, killed, weapon, at, headshot), ct);
 
     /// <summary>
-    /// One RCON or RCON+ command, as the audit feed shows it.
+    /// One RCON or RCON+ command as the audit feed shows it: a basic embed carrying the
+    /// command, who ran it, and when.
     /// </summary>
     /// <remarks>
-    /// PURE and tested. The tag says which channel the command came through - RCON+ is the menu
-    /// mod, RCON is the base protocol - because the same verb means different things
-    /// (<c>Kick</c> by id from the bot vs <c>Kick</c> from the menu) and telling them apart is
-    /// half the point of the audit. The argument is a player name or id and is
-    /// attacker-influenced, so it is sanitised like every other line here: a newline in it must
-    /// not forge a second entry, and an @everyone in a name must not ping.
+    /// PURE and tested. The colour and title say which channel the command came through -
+    /// RCON+ is the menu mod, RCON the base protocol - because the same verb means different
+    /// things (a <c>Kick</c> by id from the bot vs from the menu) and telling them apart is
+    /// half the audit. The instigator is only ever known for RCON+, where the menu logs the
+    /// acting player; base RCON records no issuer, so it reads "console". Every field is
+    /// sanitised - a name is attacker-influenced, and a newline in one must not break the
+    /// embed, nor an @everyone ping (the post also forces <see cref="AllowedMentions.None"/>).
     /// </remarks>
-    public static string RconLine(bool plus, string verb, string? argument, string? server, DateTimeOffset at)
+    public static EmbedBuilder RconEmbed(bool plus, string verb, string? instigator, string? argument,
+        string? server, DateTimeOffset at)
     {
-        var tag = plus ? "RCON+" : "RCON";
-        var line = $"[{Stamp(at)}] {tag}  {Sanitize.Message(verb)}";
-        if (argument is { Length: > 0 }) line += $" {Sanitize.Message(argument)}";
-        line += $"  ·  {Where(server)}";
-        return line;
+        var command = argument is { Length: > 0 } a
+            ? $"{Sanitize.Message(verb)} {Sanitize.Message(a)}"
+            : Sanitize.Message(verb);
+
+        return new EmbedBuilder()
+            .WithColor(plus ? Theme.Amber : Theme.Blue)
+            .WithAuthor(plus ? "RCON+ command" : "RCON command")
+            .AddField("Command", $"`{command}`", inline: true)
+            .AddField("By", instigator is { Length: > 0 } who ? Sanitize.Message(who) : "console", inline: true)
+            .AddField("Server", Where(server), inline: true)
+            // Discord renders this in the reader's own timezone; it is the line's own time,
+            // not the clock when the tail happened to read it.
+            .WithTimestamp(at);
     }
 
-    public Task PostRconAsync(bool plus, string verb, string? argument, string? server, DateTimeOffset at,
-        CancellationToken ct = default) =>
-        PostAsync(Rcon, RconLine(plus, verb, argument, server, at), ct);
+    public Task PostRconAsync(bool plus, string verb, string? instigator, string? argument, string? server,
+        DateTimeOffset at, CancellationToken ct = default) =>
+        PostEmbedAsync(Rcon, RconEmbed(plus, verb, instigator, argument, server, at).Build(), ct);
 
     /// <summary>
     /// One kill, as the feed shows it.
