@@ -368,6 +368,11 @@ public static class Program
         builder.Services.AddSingleton<PavlovBot.Host.Logs.ServerLabels>();
         builder.Services.AddSingleton<FeedBridge>();
 
+        /* Confirms an RCON command actually ran by watching for it in Pavlov.log, so a menu
+           grant is not reported failed just because the RCON reply was unreadable. Attached to
+           the tracker's tail below, once it exists. */
+        builder.Services.AddSingleton<RconConfirmations>();
+
         /* KILLS FROM Stats.log, the better source. DISCOVERED ONCE, at registration, so the
            paths the tick polls and the paths the wiring decision is made from cannot disagree.
            The logger is passed to Discover here and not to the LogTailer.Discover call feeding
@@ -1021,6 +1026,11 @@ public static class Program
            its constructor, and a service nobody asks for is never constructed - which is
            exactly how the join, connect and kill feeds came to be silent. */
         var bridge = host.Services.GetRequiredService<FeedBridge>();
+
+        /* Start watching the tail for executed RCON commands, so /givemenu and the menu panel
+           can confirm a grant landed even when the RCON reply did not say so. */
+        host.Services.GetRequiredService<RconConfirmations>()
+            .Watch(host.Services.GetRequiredService<IpTrackingService>());
 
         /* KILLS COME FROM Stats.log WHEN THERE IS ONE, for K/D and the kill feed both. Both
            sources describe the same kill, so this SWITCHES rather than adds - the tracker

@@ -30,6 +30,7 @@ public sealed class MenuPanel(
     FeatureOptions features,
     AuditLog audit,
     Access access,
+    PavlovBot.Host.Logs.RconConfirmations confirmations,
     ILogger<MenuPanel> logger) : IComponentHandler
 {
     public const string Id = "menu";
@@ -201,6 +202,7 @@ public sealed class MenuPanel(
         /* The exact RCON+ verbs, from one place. This used to send "GiveMenu <name>" with no
            bit code and "GiveMod"/"GiveAccessManager", none of which RCON+ acts on - so a
            claim reported success and granted nothing. */
+        var sentAt = DateTimeOffset.UtcNow;
         var delivered = 0;
         var attempts = new List<(string Server, string? Problem)>();
 
@@ -221,12 +223,23 @@ public sealed class MenuPanel(
 
         if (delivered == 0)
         {
-            /* Nothing recorded when nothing landed. A grant the server never received leaves
-               the bot believing they have access they do not - and the NEXT claim then reads
-               as a release, silently stripping the menu they never got. */
-            await Followup(modal, RconFailure.Explain("Not granted",
-                "No server accepted the command. Nothing was recorded.", rcon, attempts)).ConfigureAwait(false);
-            return;
+            // The RCON reply is not the only witness - the server logs what it ran. Give the
+            // tail a moment to confirm the menu command before calling the claim a failure.
+            var confirm = $"GiveMenu {name} {RconMenu.MenuId(tier)}";
+            if (await confirmations.ConfirmedAsync(confirm, sentAt, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false))
+            {
+                logger.LogInformation("menu-claim | no RCON ack but Pavlov.log confirms it ran | player=\"{Player}\"", name);
+            }
+            else
+            {
+                /* Nothing recorded when nothing landed. A grant the server never received leaves
+                   the bot believing they have access they do not - and the NEXT claim then reads
+                   as a release, silently stripping the menu they never got. */
+                await Followup(modal, RconFailure.Explain("Not granted",
+                    "No server accepted the command, and Pavlov.log never showed it run. Nothing was recorded.",
+                    rcon, attempts)).ConfigureAwait(false);
+                return;
+            }
         }
 
         await store.UpdateAsync(Datasets.MenuLinks,

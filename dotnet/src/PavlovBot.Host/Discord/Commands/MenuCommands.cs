@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Moderation;
 using PavlovBot.Core.Text;
+using PavlovBot.Host.Logs;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Storage;
 
@@ -23,7 +24,8 @@ public sealed record MenuBinding(string DiscordId, string InGameName, DateTimeOf
 /// name. Only <c>/unlinkname</c> breaks one, for a genuine Pavlov name change.
 /// </remarks>
 public sealed class GiveMenuCommand(
-    RconRegistry rcon, SerializedStore store, Access access, ILogger<GiveMenuCommand> logger) : ISlashCommand
+    RconRegistry rcon, SerializedStore store, Access access, RconConfirmations confirmations,
+    ILogger<GiveMenuCommand> logger) : ISlashCommand
 {
     public string Name => "givemenu";
 
@@ -109,6 +111,10 @@ public sealed class GiveMenuCommand(
 
         var commands = RconMenu.Grant(requested, tier);
 
+        // For confirming against Pavlov.log if the RCON replies are unreadable - the instant
+        // the send began, so an older identical log line does not count as this grant.
+        var sentAt = DateTimeOffset.UtcNow;
+
         var delivered = 0;
         var attempts = new List<(string Server, string? Problem)>();
 
@@ -129,12 +135,27 @@ public sealed class GiveMenuCommand(
 
         if (delivered == 0)
         {
-            /* Nothing is recorded when nothing landed. Recording a grant the server never
-               received leaves the bot believing they have access they do not, and the next
-               claim reads as a release. */
-            await Reply(command, RconFailure.Explain("Not granted",
-                "No server accepted the command. Nothing was recorded.", rcon, attempts)).ConfigureAwait(false);
-            return;
+            /* THE RCON REPLY IS NOT THE ONLY WITNESS. RCON+ answers over a channel the bot
+               cannot always read, so "no server accepted" can be a grant that in fact landed.
+               The server LOGS what it ran - `Rcon Plus Command Executed: GiveMenu …` - so give
+               the tail a moment to confirm the menu command before calling it a failure. */
+            var confirm = $"GiveMenu {requested} {RconMenu.MenuId(tier)}";
+            if (await confirmations.ConfirmedAsync(confirm, sentAt, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false))
+            {
+                logger.LogInformation(
+                    "givemenu | no RCON ack but Pavlov.log confirms it ran | player=\"{Player}\" | by={By}",
+                    requested, command.User.Username);
+            }
+            else
+            {
+                /* Nothing is recorded when nothing landed. Recording a grant the server never
+                   received leaves the bot believing they have access they do not, and the next
+                   claim reads as a release. */
+                await Reply(command, RconFailure.Explain("Not granted",
+                    "No server accepted the command, and Pavlov.log never showed it run. Nothing was recorded.",
+                    rcon, attempts)).ConfigureAwait(false);
+                return;
+            }
         }
 
         await SetGrantAsync(selfId, requested, ct).ConfigureAwait(false);
