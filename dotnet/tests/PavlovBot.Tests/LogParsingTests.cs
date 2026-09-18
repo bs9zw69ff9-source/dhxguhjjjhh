@@ -1,5 +1,6 @@
 using PavlovBot.Core.Evasion;
 using PavlovBot.Core.Logs;
+using PavlovBot.Host.Discord;
 using Xunit;
 
 namespace PavlovBot.Tests;
@@ -134,6 +135,68 @@ public class PavlovLogTests
         // The Error level is just how the mod prints, not a failure.
         Assert.Equal("Ban Bob",
             PavlovLog.RconPlusCommand("LogTemp: Error: Rcon Plus Command Executed: Ban Bob"));
+    }
+
+    /// <summary>
+    /// The unified audit parser, pinned to real lines from a live Pavlov.log.
+    /// </summary>
+    [Fact]
+    public void TheRconAuditParserClassifiesRealLines()
+    {
+        // Base RCON command, verb + argument.
+        var ban = PavlovLog.Rcon("[2026.09.16-04.08.14:875][471]LogTemp: Rcon: BanPlayer hhhhhhhhhh");
+        Assert.NotNull(ban);
+        Assert.False(ban!.Plus);
+        Assert.Equal("BanPlayer", ban.Verb);
+        Assert.Equal("hhhhhhhhhh", ban.Argument);
+        Assert.Equal("BanPlayer hhhhhhhhhh", ban.Command);
+
+        // Base RCON command against an account id.
+        var kick = PavlovLog.Rcon("[2026.09.16-05.00.00:000][ 10]LogTemp: Rcon: KickPlayer 0002980854f84fbcbc37a8f948a79c3a");
+        Assert.Equal("KickPlayer", kick!.Verb);
+        Assert.Equal("0002980854f84fbcbc37a8f948a79c3a", kick.Argument);
+
+        // A verb with no argument still parses.
+        var mods = PavlovLog.Rcon("[t][0]LogTemp: Rcon: ModeratorList");
+        Assert.Null(mods);   // ...but ModeratorList is a read-only poll -> dropped
+
+        // RCON+ menu command, checked before the base branch.
+        var warp = PavlovLog.Rcon("[2026.09.16-20.37.50:372][ 16]LogTemp: Warning: Rcon Plus Command Executed: Warp Holosight1 ricely");
+        Assert.NotNull(warp);
+        Assert.True(warp!.Plus);
+        Assert.Equal("Warp", warp.Verb);
+        Assert.Equal("Holosight1 ricely", warp.Argument);
+    }
+
+    [Theory]
+    // the connection lifecycle the RCON server narrates - not commands
+    [InlineData("[t][0]LogTemp: Rcon: User authenticated 216.21.5.196:55846")]
+    [InlineData("[t][0]LogTemp: Rcon: Connection is blocked due to failed login attempts!")]
+    // the read-only polls the bot and menu issue constantly
+    [InlineData("[t][0]LogTemp: Rcon: RefreshList")]
+    [InlineData("[t][0]LogTemp: Rcon: ServerInfo")]
+    [InlineData("[t][0]LogTemp: Rcon: UGCModList")]
+    // not an RCON line at all
+    [InlineData("[t][0]LogNet: NotifyAcceptingConnection accepted from: 47.13.242.106:34870")]
+    public void RconNoiseAndNonRconLinesAreDropped(string line)
+    {
+        Assert.Null(PavlovLog.Rcon(line));
+    }
+
+    [Fact]
+    public void TheRconFeedLineTagsTheSourceAndCannotForgeAnEntry()
+    {
+        var line = FeedWebhooks.RconLine(plus: false, "KickPlayer", "0002abc", "Server 2",
+            new DateTimeOffset(2026, 9, 16, 4, 8, 14, TimeSpan.Zero));
+        Assert.Contains("RCON  KickPlayer 0002abc", line, StringComparison.Ordinal);
+        Assert.Contains("Server 2", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("RCON+", line, StringComparison.Ordinal);
+
+        // A newline in the argument must not become a second line in the channel.
+        var forged = FeedWebhooks.RconLine(true, "Godmode", "Bob\nRCON  Ban Alice", null,
+            DateTimeOffset.UnixEpoch);
+        Assert.DoesNotContain("\n", forged, StringComparison.Ordinal);
+        Assert.Contains("RCON+", forged, StringComparison.Ordinal);
     }
 
     [Fact]

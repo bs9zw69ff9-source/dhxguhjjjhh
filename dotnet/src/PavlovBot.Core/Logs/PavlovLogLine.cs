@@ -74,6 +74,13 @@ public static partial class PavlovLog
     [GeneratedRegex(@"Rcon Plus Command Executed:\s*(.+?)\s*$", RegexOptions.IgnoreCase)]
     private static partial Regex RconPlus { get; }
 
+    /* The base RCON channel: `LogTemp: Rcon: <verb> [args]`. Anchored on the LogTemp prefix
+       so a chat line or a name that happens to contain "Rcon:" cannot forge one, and it must
+       NOT swallow the RCON+ line, which reads "Rcon Plus Command Executed:" - the ": " after
+       the bare word Rcon is what separates them. */
+    [GeneratedRegex(@"LogTemp:\s*Rcon:\s*(.+?)\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex RconBase { get; }
+
     [GeneratedRegex(@"""Killer"":\s*""([^""]*)""", RegexOptions.IgnoreCase)]
     private static partial Regex Killer { get; }
 
@@ -164,6 +171,74 @@ public static partial class PavlovLog
     public static string? BannedByRcon(string line) => RconBan.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
     public static string? UnbannedByRcon(string line) => RconUnban.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
     public static string? RconPlusCommand(string line) => RconPlus.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
+
+    /// <summary>
+    /// One RCON action the game logged - a base RCON verb or an RCON+ menu command.
+    /// </summary>
+    /// <param name="Plus">True for an RCON+ menu command (Warp, Godmode, GiveItem, …), false for a base RCON verb (Ban, Kick, …).</param>
+    /// <param name="Verb">The command word, e.g. "BanPlayer" or "Godmode".</param>
+    /// <param name="Argument">Everything after the verb, or null when the verb stands alone.</param>
+    public sealed record RconAction(bool Plus, string Verb, string? Argument)
+    {
+        /// <summary>The command as it reads, verb and argument rejoined.</summary>
+        public string Command => Argument is { Length: > 0 } a ? $"{Verb} {a}" : Verb;
+    }
+
+    /// <summary>
+    /// Verbs that are not audit-worthy actions: RCON connection lifecycle, and the read-only
+    /// polls the bot and the menu tool issue constantly.
+    /// </summary>
+    /// <remarks>
+    /// WITHOUT THIS THE FEED IS UNREADABLE. RefreshList alone is one line every ~70 seconds
+    /// for as long as the bot runs, and "User authenticated &lt;ip&gt;" fires on every RCON
+    /// reconnect - thousands of lines that say nothing changed and bury the ban that did. A
+    /// state-changing command is never in this set, so nothing an operator would want to see
+    /// is dropped; the lifecycle words "User" and "Connection" are the RCON server narrating
+    /// its own socket, not verbs anybody sent.
+    /// </remarks>
+    private static readonly HashSet<string> RconNoise = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "User", "Connection",
+        "RefreshList", "ServerInfo", "ItemList", "MapList", "Banlist",
+        "ModeratorList", "UGCModList", "InspectList", "InspectAll",
+    };
+
+    /// <summary>
+    /// The RCON action a line records, or null when it is not one worth surfacing.
+    /// </summary>
+    /// <remarks>
+    /// RCON+ FIRST, because its line ("Rcon Plus Command Executed: …") is checked by its own
+    /// marker and never reaches the base branch. A base line is dropped when its verb is
+    /// <see cref="RconNoise"/>; an RCON+ command is always kept, since the menu only logs
+    /// deliberate actions. Both are already parsed elsewhere in this type - this is the one
+    /// entry point that classifies and de-noises them for the audit feed.
+    /// </remarks>
+    public static RconAction? Rcon(string line)
+    {
+        if (RconPlus.Match(line) is { Success: true } plus)
+        {
+            var (verb, arg) = SplitVerb(plus.Groups[1].Value);
+            return verb.Length == 0 ? null : new RconAction(true, verb, arg);
+        }
+
+        if (RconBase.Match(line) is { Success: true } bas)
+        {
+            var (verb, arg) = SplitVerb(bas.Groups[1].Value);
+            return verb.Length == 0 || RconNoise.Contains(verb) ? null : new RconAction(false, verb, arg);
+        }
+
+        return null;
+    }
+
+    /// <summary>Split "BanPlayer Alice" into ("BanPlayer", "Alice"); a lone verb has no argument.</summary>
+    private static (string Verb, string? Argument) SplitVerb(string command)
+    {
+        var text = command.Trim();
+        var space = text.IndexOf(' ', StringComparison.Ordinal);
+        return space < 0
+            ? (text, null)
+            : (text[..space], text[(space + 1)..].Trim() is { Length: > 0 } a ? a : null);
+    }
 
     /// <summary>
     /// A kill record. Requires <c>bVerboseLogging=true</c> in Game.ini.

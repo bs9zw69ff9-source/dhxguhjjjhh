@@ -853,6 +853,7 @@ public static class Program
         feeds.Register(FeedWebhooks.Join, features.JoinWebhook);
         feeds.Register(FeedWebhooks.Connect, features.ConnectWebhook);
         feeds.Register(FeedWebhooks.Kill, features.KillWebhook);
+        feeds.Register(FeedWebhooks.Rcon, features.RconWebhook);
         feeds.Register(FeedWebhooks.Staff, features.StaffWebhook);
 
         /* Said out loud at startup, at INFORMATION. A feed with no URL is a choice and a
