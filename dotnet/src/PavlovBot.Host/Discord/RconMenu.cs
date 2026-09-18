@@ -4,66 +4,69 @@ namespace PavlovBot.Host.Discord;
 /// The exact RCON+ commands that grant and revoke an in-game menu.
 /// </summary>
 /// <remarks>
-/// ONE PLACE, because the port got every one of them wrong and got them wrong in three
-/// files independently. The verbs are RCON+'s, not names that read sensibly:
+/// ONE COMMAND GRANTS A MENU: <c>GiveMenu &lt;name&gt; &lt;bitcode&gt;</c>, and the bitcode is
+/// the whole of it. The permissions a tier gets - including moderator and access-manager
+/// powers for High Staff - are encoded in the bitcode itself, so the two tiers are two
+/// DIFFERENT codes and nothing more.
 ///
-///   <c>GiveMenu &lt;name&gt; &lt;bitcode&gt;</c> - the BIT CODE IS NOT OPTIONAL. The port
-///   sent <c>GiveMenu &lt;name&gt;</c> with no code at all, so the command was accepted and
-///   granted nothing. That is why staff got a menu with no permissions in it.
+/// IT DOES NOT NEED AddMod/AddAccessManager. Those were carried over from the Node bot, which
+/// ran them alongside GiveMenu for High Staff; the server's own menu grants (see the codes
+/// below, both read off a live Pavlov.log) do not, because the fuller bitcode already carries
+/// those powers. Sending them was extra commands that could be refused and a grant that
+/// reported on the wrong one.
 ///
-///   <c>AddMod</c> and <c>AddAccessManager</c>, not "GiveMod" and "GiveAccessManager". The
-///   port invented the Give- forms by analogy with GiveMenu; RCON+ does not have them, so
-///   high staff silently never received moderator powers.
+/// <c>RemoveMenu</c>, not "StripMenu", takes a menu back. The revoke still clears AddMod and
+/// AddAccessManager for a former High Staff - harmless when they were never set, and the one
+/// thing that cleans up a grant made under the old three-command path.
 ///
-///   <c>RemoveMenu</c>, not "StripMenu". Same mistake in the other direction: revoking
-///   appeared to work and left the menu in place.
-///
-/// None of these fail loudly. RCON accepts an unknown command and answers, so every one of
-/// these looked successful from Discord while doing nothing on the server.
+/// THE BITCODES ARE POSITIONAL: a changed character silently grants a DIFFERENT set of buttons
+/// rather than failing, which is why each is copied verbatim from a working grant and pinned
+/// by a test rather than typed by hand.
 /// </remarks>
 public static class RconMenu
 {
     /// <summary>
-    /// The staff menu bit code, exactly as the Node bot sends it - spaces included.
+    /// The Staff menu bitcode - two segments (31 + 14 bits) with the space between them, as
+    /// the server logs it. Verbatim from a working <c>GiveMenu</c> on a live server.
+    /// </summary>
+    public const string StaffMenuId = "0010010000000000101000000000000 10001000000000";
+
+    /// <summary>
+    /// The High Staff menu bitcode - the fuller set, carrying the moderator and access-manager
+    /// powers in the mask itself.
     /// </summary>
     /// <remarks>
-    /// It is a positional bitmask, so a changed character silently grants a different set of
-    /// buttons rather than failing. Copied verbatim and pinned by a test for that reason.
-    /// High Staff uses the SAME code: the difference is the extra AddMod and
-    /// AddAccessManager, not the menu.
+    /// READ OFF THE WIRE, from this server's own <c>GiveMenu &lt;admin&gt; 0111… 1111…</c> - not
+    /// typed by hand, because a positional mask cannot be guessed. If a deployment's High Staff
+    /// menu differs, this is the one line to change; the test pins exactly this string so the
+    /// change is deliberate.
     /// </remarks>
-    public const string StaffMenuId = "0010010000000000101000000000000 10001000000000";
+    public const string HighStaffMenuId = "0111110000000001101000000000010 11111111000010";
 
     public const string Staff = "staff";
     public const string HighStaff = "highstaff";
 
-    /// <summary>Whether a tier gets moderator and access-manager powers on top of the menu.</summary>
+    /// <summary>Whether a tier is the fuller High Staff menu.</summary>
     public static bool IsHighStaff(string? tier) =>
         string.Equals(tier, HighStaff, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Every command needed to grant a tier, in order.
-    /// </summary>
-    /// <remarks>
-    /// The menu comes LAST for high staff, matching the Node bot: it is the command whose
-    /// success the caller reports on, so it should be the one that ran most recently.
-    /// </remarks>
-    public static IReadOnlyList<string> Grant(string player, string tier)
-    {
-        var menu = $"GiveMenu {player} {StaffMenuId}";
+    /// <summary>The bitcode for a tier.</summary>
+    public static string MenuId(string? tier) => IsHighStaff(tier) ? HighStaffMenuId : StaffMenuId;
 
-        return IsHighStaff(tier)
-            ? [$"AddMod {player}", $"AddAccessManager {player}", menu]
-            : [menu];
-    }
+    /// <summary>
+    /// The command that grants a tier. One line: <c>GiveMenu &lt;player&gt; &lt;bitcode&gt;</c>.
+    /// </summary>
+    public static IReadOnlyList<string> Grant(string player, string tier) =>
+        [$"GiveMenu {player} {MenuId(tier)}"];
 
     /// <summary>
     /// Every command needed to revoke, in order.
     /// </summary>
     /// <param name="wasHighStaff">
-    /// Revoke the extras too. AddMod was run at grant time, so skipping this leaves the
-    /// player with in-game moderator powers after losing the menu - which is the worse half
-    /// of the two, and invisible from Discord.
+    /// Also clear AddMod and AddAccessManager. New grants do not set them, but one made under
+    /// the old three-command path did, and skipping this would leave that player with in-game
+    /// moderator powers after losing the menu - the worse half of the two, invisible from
+    /// Discord. Harmless when they were never set.
     /// </param>
     public static IReadOnlyList<string> Revoke(string player, bool wasHighStaff) =>
         wasHighStaff
