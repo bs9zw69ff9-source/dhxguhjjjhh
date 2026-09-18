@@ -335,11 +335,19 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
         // A ban issued while they were online has been waiting for exactly this line.
         await ResolvePendingFlagAsync(pairing.Id, pairing.Ip, at, ct).ConfigureAwait(false);
 
+        var confirmedName = Account(pairing.Id)?.Name ?? known;
+
+        /* THE ONLY CERTAIN-ADDRESS FLAG CHECK. CheckFlagsAsync runs at login, where the
+           address is a CORRELATED GUESS - and that guess is confident only when exactly one
+           connection is pending. On a live server connects arrive in bursts (the log shows
+           dozens of accepts in one millisecond), so the guess is almost never confident and
+           the login check is handed a null address. The pairing here is the ONE place the
+           address is known for certain, and nothing was checking it, so an admin's
+           `/configure blacklist <ip>` matched nothing in practice. */
+        await CheckManualAddressAsync(pairing.Id, confirmedName, pairing.Ip, at).ConfigureAwait(false);
+
         if (Confirmed is { } confirmed)
-        {
-            var name = Account(pairing.Id)?.Name ?? known;
-            await confirmed(new PlayerConfirmed(file, pairing.Id, name, pairing.Ip, at)).ConfigureAwait(false);
-        }
+            await confirmed(new PlayerConfirmed(file, pairing.Id, confirmedName, pairing.Ip, at)).ConfigureAwait(false);
 
         _metrics.Increment("ip_confirmations_total", help: "Addresses confirmed against an account");
     }
@@ -457,6 +465,40 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 
         _logger.LogWarning("FLAGGED JOIN - {Name} [{Id}] from {Ip}: {Detail}",
             name ?? "unknown", accountId, ip ?? "unknown", verdict.Detail);
+        _metrics.Increment("flagged_joins_total", MetricLabels.Of("match", verdict.Match.ToString()),
+            help: "Joins that matched a standing flag");
+
+        if (Flagged is { } handler)
+            await handler(new FlaggedJoin(accountId, name, ip, verdict, at)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Auto-ban on a manually blacklisted address, matched against a CERTAIN pairing.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately narrow: it matches ONLY admin-set address blocks
+    /// (<see cref="FlagSet.ManualIps"/>), never ban-derived ones. A ban-derived address flag
+    /// exists because ONE account was banned from that address; acting on it here - where
+    /// every disconnect brings a certain address - would auto-ban whoever else shares it, the
+    /// household-and-shared-ISP collateral this whole system is built to avoid. A manual block
+    /// is the one address flag a human sets on purpose: exact-match, documented to survive an
+    /// unban, and its collateral is one the admin chose. The verdict wording is identical to
+    /// <see cref="FlagMatching.Check"/>'s manual-ip branch, so <c>BanRules.AutoBanDecision</c>
+    /// classifies it the same way.
+    /// </remarks>
+    private async Task CheckManualAddressAsync(string accountId, string? name, string ip, DateTimeOffset at)
+    {
+        if (!LoadFlags().ManualIps.Contains(ip)) return;
+
+        /* Debounced per account, sharing the login check's window: a reconnect loop or a
+           burst of disconnects must not fire a ban, an audit entry and a feed message each. */
+        if (_recentlyAutoBanned.TryGetValue(accountId, out var last) && at - last < AutoBanDebounce) return;
+        _recentlyAutoBanned[accountId] = at;
+
+        var verdict = new FlagVerdict(FlagMatch.Ip, $"blacklisted ip {ip}", Manual: true);
+
+        _logger.LogWarning("FLAGGED (manual block) - {Name} [{Id}] on {Ip}: {Detail}",
+            name ?? "unknown", accountId, ip, verdict.Detail);
         _metrics.Increment("flagged_joins_total", MetricLabels.Of("match", verdict.Match.ToString()),
             help: "Joins that matched a standing flag");
 
