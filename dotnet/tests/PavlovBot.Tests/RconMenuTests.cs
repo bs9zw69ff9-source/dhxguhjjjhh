@@ -15,42 +15,41 @@ namespace PavlovBot.Tests;
 public class RconMenuTests
 {
     [Fact]
-    public void GrantingSendsTheBitCode()
+    public void GrantingIsTheSingleGiveMenuCommand()
     {
-        /* THE BUG. "GiveMenu <name>" with no bit code is accepted and grants nothing - and
-           the bit code is positional, so it cannot be omitted or abbreviated. */
+        /* ALL IT NEEDS IS `GiveMenu <player> <bitcode>`. The bitcode is positional and cannot
+           be omitted or abbreviated; the AddMod/AddAccessManager the Node bot bolted on are
+           NOT sent - the fuller bitcode carries those powers itself. */
         var commands = RconMenu.Grant("Pkdestroy", RconMenu.Staff);
 
         Assert.Equal([$"GiveMenu Pkdestroy {RconMenu.StaffMenuId}"], commands);
-        Assert.Contains(" ", RconMenu.StaffMenuId, StringComparison.Ordinal);   // the space is part of it
+        Assert.Contains(" ", RconMenu.StaffMenuId, StringComparison.Ordinal);   // the space is part of the code
     }
 
     [Fact]
-    public void TheBitCodeIsTheOneTheNodeBotSends()
+    public void TheBitCodesAreTheOnesTheServerItselfSends()
     {
         // Positional: a changed character silently grants a DIFFERENT set of buttons rather
-        // than failing, so it is pinned verbatim.
+        // than failing, so each is pinned verbatim from a working grant on a live server.
         Assert.Equal("0010010000000000101000000000000 10001000000000", RconMenu.StaffMenuId);
+        Assert.Equal("0111110000000001101000000000010 11111111000010", RconMenu.HighStaffMenuId);
     }
 
     [Fact]
-    public void HighStaffAlsoGetsModAndAccessManager()
+    public void HighStaffIsTheFullerCode_NotExtraCommands()
     {
-        /* AddMod and AddAccessManager - NOT "GiveMod"/"GiveAccessManager", which the port
-           invented by analogy with GiveMenu. RCON+ has no such verbs, so high staff silently
-           never received moderator powers. */
+        // High Staff is one command too, just a different (fuller) bitcode - the mod and
+        // access-manager powers live in the mask, not in separate AddMod/AddAccessManager runs.
         var commands = RconMenu.Grant("Pkdestroy", RconMenu.HighStaff);
 
-        Assert.Equal(
-            ["AddMod Pkdestroy", "AddAccessManager Pkdestroy", $"GiveMenu Pkdestroy {RconMenu.StaffMenuId}"],
-            commands);
+        Assert.Equal([$"GiveMenu Pkdestroy {RconMenu.HighStaffMenuId}"], commands);
     }
 
     [Fact]
-    public void HighStaffUsesTheSameMenuAsStaff()
+    public void TheTwoTiersUseDifferentMenus()
     {
-        // The difference is the extra powers, not a different menu.
-        Assert.Contains(RconMenu.StaffMenuId, RconMenu.Grant("X", RconMenu.HighStaff)[^1], StringComparison.Ordinal);
+        Assert.NotEqual(RconMenu.StaffMenuId, RconMenu.HighStaffMenuId);
+        Assert.Contains(RconMenu.HighStaffMenuId, RconMenu.Grant("X", RconMenu.HighStaff)[0], StringComparison.Ordinal);
         Assert.Contains(RconMenu.StaffMenuId, RconMenu.Grant("X", RconMenu.Staff)[0], StringComparison.Ordinal);
     }
 
