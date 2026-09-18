@@ -143,29 +143,43 @@ public class PavlovLogTests
     [Fact]
     public void TheRconAuditParserClassifiesRealLines()
     {
-        // Base RCON command, verb + argument.
+        // Base RCON command: verb + argument, NO instigator (the line records no issuer).
         var ban = PavlovLog.Rcon("[2026.09.16-04.08.14:875][471]LogTemp: Rcon: BanPlayer hhhhhhhhhh");
         Assert.NotNull(ban);
         Assert.False(ban!.Plus);
         Assert.Equal("BanPlayer", ban.Verb);
+        Assert.Null(ban.Instigator);
         Assert.Equal("hhhhhhhhhh", ban.Argument);
         Assert.Equal("BanPlayer hhhhhhhhhh", ban.Command);
 
         // Base RCON command against an account id.
         var kick = PavlovLog.Rcon("[2026.09.16-05.00.00:000][ 10]LogTemp: Rcon: KickPlayer 0002980854f84fbcbc37a8f948a79c3a");
         Assert.Equal("KickPlayer", kick!.Verb);
+        Assert.Null(kick.Instigator);
         Assert.Equal("0002980854f84fbcbc37a8f948a79c3a", kick.Argument);
 
-        // A verb with no argument still parses.
         var mods = PavlovLog.Rcon("[t][0]LogTemp: Rcon: ModeratorList");
-        Assert.Null(mods);   // ...but ModeratorList is a read-only poll -> dropped
+        Assert.Null(mods);   // ModeratorList is a read-only poll -> dropped
 
-        // RCON+ menu command, checked before the base branch.
+        // RCON+ menu command: the acting player is logged first, so it is the instigator and
+        // the command reads without them - "Holosight1 ran Warp ricely".
         var warp = PavlovLog.Rcon("[2026.09.16-20.37.50:372][ 16]LogTemp: Warning: Rcon Plus Command Executed: Warp Holosight1 ricely");
         Assert.NotNull(warp);
         Assert.True(warp!.Plus);
         Assert.Equal("Warp", warp.Verb);
-        Assert.Equal("Holosight1 ricely", warp.Argument);
+        Assert.Equal("Holosight1", warp.Instigator);
+        Assert.Equal("ricely", warp.Argument);
+        Assert.Equal("Warp ricely", warp.Command);
+
+        // Self-service menu action: instigator gives THEMSELVES cash.
+        var cash = PavlovLog.Rcon("[t][0]LogTemp: Warning: Rcon Plus Command Executed: SetCash Rickythegamer1001 9999999");
+        Assert.Equal("Rickythegamer1001", cash!.Instigator);
+        Assert.Equal("SetCash 9999999", cash.Command);
+
+        // A server-wide RCON+ verb has no acting player: "Items" is the argument, not an instigator.
+        var clean = PavlovLog.Rcon("[t][0]LogTemp: Warning: Rcon Plus Command Executed: CleanUp Items");
+        Assert.Null(clean!.Instigator);
+        Assert.Equal("CleanUp Items", clean.Command);
     }
 
     [Theory]
@@ -184,19 +198,36 @@ public class PavlovLogTests
     }
 
     [Fact]
-    public void TheRconFeedLineTagsTheSourceAndCannotForgeAnEntry()
+    public void TheRconEmbedCarriesCommandInstigatorAndTime()
     {
-        var line = FeedWebhooks.RconLine(plus: false, "KickPlayer", "0002abc", "Server 2",
-            new DateTimeOffset(2026, 9, 16, 4, 8, 14, TimeSpan.Zero));
-        Assert.Contains("RCON  KickPlayer 0002abc", line, StringComparison.Ordinal);
-        Assert.Contains("Server 2", line, StringComparison.Ordinal);
-        Assert.DoesNotContain("RCON+", line, StringComparison.Ordinal);
+        var at = new DateTimeOffset(2026, 9, 16, 4, 8, 14, TimeSpan.Zero);
+        var embed = FeedWebhooks.RconEmbed(plus: true, "SetCash", "Rickythegamer1001", "9999999", "Server 2", at)
+            .Build();
 
-        // A newline in the argument must not become a second line in the channel.
-        var forged = FeedWebhooks.RconLine(true, "Godmode", "Bob\nRCON  Ban Alice", null,
-            DateTimeOffset.UnixEpoch);
-        Assert.DoesNotContain("\n", forged, StringComparison.Ordinal);
-        Assert.Contains("RCON+", forged, StringComparison.Ordinal);
+        Assert.Equal("RCON+ command", embed.Author?.Name);
+        Assert.Equal(at, embed.Timestamp);
+
+        var fields = embed.Fields.ToDictionary(f => f.Name, f => f.Value, StringComparer.Ordinal);
+        Assert.Equal("`SetCash 9999999`", fields["Command"]);   // instigator stripped from the command
+        Assert.Equal("Rickythegamer1001", fields["By"]);
+        Assert.Equal("Server 2", fields["Server"]);
+    }
+
+    [Fact]
+    public void ABaseRconEmbedReadsAsConsoleAndAName_CannotForgeContent()
+    {
+        var embed = FeedWebhooks.RconEmbed(plus: false, "KickPlayer", instigator: null, "0002abc", null,
+            DateTimeOffset.UnixEpoch).Build();
+
+        Assert.Equal("RCON command", embed.Author?.Name);
+        var fields = embed.Fields.ToDictionary(f => f.Name, f => f.Value, StringComparer.Ordinal);
+        Assert.Equal("console", fields["By"]);                  // base RCON records no issuer
+        Assert.Equal("the server", fields["Server"]);           // unknown server named unspecifically
+
+        // A newline in a name must not survive into the embed.
+        var forged = FeedWebhooks.RconEmbed(true, "Godmode", "Bob\nInjected", "True", null, DateTimeOffset.UnixEpoch)
+            .Build();
+        Assert.DoesNotContain("\n", forged.Fields.Single(f => f.Name == "By").Value, StringComparison.Ordinal);
     }
 
     [Fact]
