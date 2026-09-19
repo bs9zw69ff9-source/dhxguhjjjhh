@@ -229,7 +229,19 @@ public static class FactionRegistry
                     ["Centurion"] = "legioncenturion.txt",
                     ["Legate"] = "legionlegate.txt",
                 },
-                Subclasses = new Dictionary<string, string> { ["Frumentarius"] = "legionfrumentarius.txt" },
+                /* File names are EXACT, as given: the game reads that directory by name, so the
+                   sub-class file has to be spelled the way the server config expects it, typo and
+                   all (legionassasin). The display label is the same word capitalised; it is what a
+                   Whitelist Leader picks in /subclass, and the bot creates each file empty on the
+                   next start via RosterService.EnsureRosterFiles. */
+                Subclasses = new Dictionary<string, string>
+                {
+                    ["Frumentarius"] = "legionfrumentarius.txt",
+                    ["Vex"] = "legionvex.txt",
+                    ["Praetorian"] = "legionpraetorian.txt",
+                    ["Slavemaster"] = "legionslavemaster.txt",
+                    ["Assasin"] = "legionassasin.txt",
+                },
             },
             ["Brotherhood of Steel"] = new()
             {
