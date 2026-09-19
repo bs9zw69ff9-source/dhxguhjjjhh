@@ -62,6 +62,13 @@ public sealed class UfwFirewall(ILogger<UfwFirewall> logger) : IFirewall
     {
         if (!Canonical(ip, out var canonical)) return NotAnAddress(ip);
 
+        /* DELETE ANY EXISTING DENY FIRST, wherever it sits. ufw will NOT move a rule it already
+           has: `insert 1` on a duplicate prints "Skipping adding existing rule" and leaves the
+           old one in place - so a deny an earlier build appended at the bottom, behind the port
+           allows, would stay there doing nothing. Removing it first makes the insert actually
+           land at position 1. Deleting a rule that is not there is a harmless no-op. */
+        await RunUfw(DeleteDenyArgv(canonical), ct).ConfigureAwait(false);
+
         var inserted = await RunUfw(InsertDenyArgv(canonical), ct).ConfigureAwait(false);
         if (inserted.Ok) return inserted;
 
