@@ -107,10 +107,12 @@ git clean -fd
 # refuse-to-double-run check, so none of that is duplicated here.
 # ${CS_ARGS[@]+...} because `set -u` treats an unset empty array as an error on
 # older bash, and this runs on whatever bash the game host happens to ship.
-if [ "$START" = true ]; then
-  bash scripts/deploy-csharp.sh --start ${CS_ARGS[@]+"${CS_ARGS[@]}"}
-else
-  bash scripts/deploy-csharp.sh ${CS_ARGS[@]+"${CS_ARGS[@]}"}
+# BUILD AND VERIFY ONLY - this box runs the bot as pavlov-bot-fallout, so
+# pavlov-bot-cs is never started here. A second process on the same Discord token
+# answers every command twice and posts every feed line twice; the fallout restart
+# below is the one and only thing that puts the new binary live.
+bash scripts/deploy-csharp.sh ${CS_ARGS[@]+"${CS_ARGS[@]}"}
+if [ "$START" != true ]; then
   echo "Built and verified. NOT restarted, because --no-start was given."
 fi
 
@@ -148,7 +150,7 @@ echo "Deployed $(git log --oneline -1)"
 # the new build serving, so print what is actually up and where to confirm it.
 if [ "$START" = true ]; then
   if command -v pm2 >/dev/null; then
-    for app in pavlov-bot-cs pavlov-bot-fallout; do
+    for app in pavlov-bot-fallout; do
       if pm2 describe "$app" >/dev/null 2>&1; then
         echo "--- $app"
         pm2 describe "$app" 2>/dev/null \
