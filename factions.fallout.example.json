@@ -60,7 +60,11 @@
         { "name": "Legate",    "file": "legionlegate.txt" }
       ],
       "subclasses": [
-        { "name": "Frumentarius", "file": "legionfrumentarius.txt" }
+        { "name": "Frumentarius", "file": "legionfrumentarius.txt" },
+        { "name": "Vex", "file": "legionvex.txt" },
+        { "name": "Praetorian", "file": "legionpraetorian.txt" },
+        { "name": "Slavemaster", "file": "legionslavemaster.txt" },
+        { "name": "Assasin", "file": "legionassasin.txt" }
       ]
     },
     {
