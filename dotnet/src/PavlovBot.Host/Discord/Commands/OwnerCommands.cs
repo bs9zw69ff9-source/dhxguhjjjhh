@@ -289,7 +289,7 @@ public sealed class ManualCommand(
 ///   into even if the validation were wrong.
 ///   ONLY THREE VERBS are possible, and they are compiled in rather than composed.
 /// </remarks>
-public sealed partial class FirewallCommand(AuditLog audit, Access access, ILogger<FirewallCommand> logger) : ISlashCommand
+public sealed partial class FirewallCommand(IFirewall firewall, AuditLog audit, Access access, ILogger<FirewallCommand> logger) : ISlashCommand
 {
     public string Name => "firewall";
     public bool Ephemeral => true;
@@ -318,81 +318,50 @@ public sealed partial class FirewallCommand(AuditLog audit, Access access, ILogg
         var action = command.Data.Options.First(o => o.Name == "action").Value as string ?? "status";
         var rawIp = (command.Data.Options.FirstOrDefault(o => o.Name == "ip")?.Value as string ?? "").Trim();
 
-        string[] argv;
         if (action == "status")
         {
-            argv = ["status", "numbered"];
-        }
-        else
-        {
-            // PARSED, not pattern-matched. Only something the framework accepts as an
-            // address is ever passed on.
-            if (!IPAddress.TryParse(rawIp, out var address))
-            {
-                await Reply(command, Theme.Failure("Not an IP address",
-                    $"`{Sanitize.Code(rawIp)}` could not be parsed. Nothing was run.")).ConfigureAwait(false);
-                return;
-            }
-
-            var canonical = address.ToString();
-            argv = action == "block"
-                ? ["deny", "from", canonical]
-                : ["delete", "deny", "from", canonical];
-
-            await audit.RecordAsync($"firewall-{action}", command.User.Username, canonical, ct: ct).ConfigureAwait(false);
-            logger.LogWarning("FIREWALL {Action} | ip={Ip} | by={By}", action.ToUpperInvariant(), canonical, command.User.Username);
-        }
-
-        var (ok, output) = await RunUfwAsync(argv, ct).ConfigureAwait(false);
-
-        if (!ok)
-        {
-            await Reply(command, Theme.Failure("ufw did not run",
-                $"```\n{Truncate(output)}\n```\nThis usually means ufw is not installed, or the bot is not running as root.")).ConfigureAwait(false);
+            var status = await firewall.StatusAsync(ct).ConfigureAwait(false);
+            await Reply(command, status.Ok
+                ? Theme.Notice("Firewall status", $"```\n{Truncate(status.Detail)}\n```")
+                : Theme.Failure("ufw did not run",
+                    $"```\n{Truncate(status.Detail)}\n```\nThis usually means ufw is not installed, or the bot is not running as root.")).ConfigureAwait(false);
             return;
         }
 
-        var embed = action switch
+        // PARSED, not pattern-matched. Only something the framework accepts as an address is
+        // ever passed on - the service parses it again, but this gives the friendlier message
+        // and keeps a typo out of the audit log.
+        if (!IPAddress.TryParse(rawIp, out var address))
         {
-            "block" => Theme.Warning($"{Theme.Deny} Blocked at the firewall", $"`{Sanitize.Code(rawIp)}` is now denied.")
+            await Reply(command, Theme.Failure("Not an IP address",
+                $"`{Sanitize.Code(rawIp)}` could not be parsed. Nothing was run.")).ConfigureAwait(false);
+            return;
+        }
+
+        var canonical = address.ToString();
+        await audit.RecordAsync($"firewall-{action}", command.User.Username, canonical, ct: ct).ConfigureAwait(false);
+        logger.LogWarning("FIREWALL {Action} | ip={Ip} | by={By}", action.ToUpperInvariant(), canonical, command.User.Username);
+
+        // The deny is inserted at rule 1 by the service, ahead of the allow rules - a plain
+        // append lands after them and never fires. See UfwFirewall.
+        var result = action == "block"
+            ? await firewall.DenyAsync(canonical, ct).ConfigureAwait(false)
+            : await firewall.UndenyAsync(canonical, ct).ConfigureAwait(false);
+
+        if (!result.Ok)
+        {
+            await Reply(command, Theme.Failure("ufw did not run",
+                $"```\n{Truncate(result.Detail)}\n```\nThis usually means ufw is not installed, or the bot is not running as root.")).ConfigureAwait(false);
+            return;
+        }
+
+        var embed = action == "block"
+            ? Theme.Warning($"{Theme.Deny} Blocked at the firewall", $"`{Sanitize.Code(rawIp)}` is now denied (rule 1, ahead of the port allows).")
                 .AddField($"{Theme.Warn} That is an address, not an account",
-                    "On a shared or CGNAT connection it hits everyone behind it. Only `/firewall unblock` undoes it."),
-            "unblock" => Theme.Success("Firewall block removed", $"`{Sanitize.Code(rawIp)}` is no longer denied."),
-            _ => Theme.Notice("Firewall status", $"```\n{Truncate(output)}\n```"),
-        };
+                    "On a shared or CGNAT connection it hits everyone behind it. Only `/firewall unblock` undoes it.")
+            : Theme.Success("Firewall block removed", $"`{Sanitize.Code(rawIp)}` is no longer denied.");
 
         await Reply(command, embed).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Run ufw with an ARGV ARRAY. There is no shell here, so there is nothing to inject
-    /// into even if the address validation above were wrong.
-    /// </summary>
-    private async Task<(bool Ok, string Output)> RunUfwAsync(string[] argv, CancellationToken ct)
-    {
-        try
-        {
-            // Bounded: a ufw that hangs must not hold the interaction open past its token,
-            // and must not be left running once we stop waiting for it.
-            var run = await ProcessRunner.RunAsync(
-                "ufw", argv, TimeSpan.FromSeconds(10), logger, ct).ConfigureAwait(false);
-
-            if (!run.Started) return (false, "could not start ufw");
-            if (run.TimedOut) return (false, "`ufw` did not answer within 10s and was stopped.");
-
-            var output = run.Combined;
-            return (run.ExitCode == 0, output.Length > 0 ? output : "(no output)");
-        }
-        /* The filter used to read `|| ct.IsCancellationRequested`, which is the inverse of
-           what every sibling call site does and of what this needed. It meant the 10s
-           deadline threw straight out of /firewall instead of being reported, while a
-           shutdown was caught and logged as a ufw failure. Both are now the right way round -
-           and the timeout no longer arrives as an exception at all. */
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "ufw invocation failed");
-            return (false, ex.Message);
-        }
     }
 
     private static string Truncate(string text) => text.Length > 1500 ? text[..1500] + "\n…" : text;

@@ -103,6 +103,9 @@ public class OwnerActionsTests : IDisposable
             Undenied.Add(ip);
             return Task.FromResult(new FirewallResult(!Fail, Fail ? "ufw not found" : "ok"));
         }
+
+        public Task<FirewallResult> StatusAsync(CancellationToken ct = default) =>
+            Task.FromResult(new FirewallResult(!Fail, "Status: active"));
     }
 
     private OwnerActions WithFirewall(FakeFirewall firewall) =>
