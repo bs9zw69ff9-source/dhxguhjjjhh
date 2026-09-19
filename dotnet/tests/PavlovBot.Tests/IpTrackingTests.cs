@@ -287,6 +287,54 @@ public class IpTrackingServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnRconPlusCommandIsEmittedWithItsResultLineFlag()
+    {
+        /* The mod logs the command and its pass/fail on two lines, the result immediately
+           after. The command is held until that result arrives, so the audit feed can say
+           whether it took effect - the command line alone must not emit yet. */
+        var events = new List<PavlovBot.Core.Logs.PavlovLog.RconAction>();
+        _service.Rcon += (_, _, action) => { events.Add(action); return Task.CompletedTask; };
+
+        await Feed("[2026.09.16-21.39.59:249][906]LogTemp: Warning: Rcon Plus Command Executed: GiveMenu Holosight1 Bob");
+        Assert.Empty(events);   // buffered, waiting for the result line
+
+        await Feed("Successful: true        Instigated By: Holosight1");
+        var emitted = Assert.Single(events);
+        Assert.True(emitted.Plus);
+        Assert.Equal("GiveMenu", emitted.Verb);
+        Assert.Equal(true, emitted.Successful);
+    }
+
+    [Fact]
+    public async Task AFailedRconPlusCommandCarriesSuccessfulFalse()
+    {
+        PavlovBot.Core.Logs.PavlovLog.RconAction? emitted = null;
+        _service.Rcon += (_, _, action) => { emitted = action; return Task.CompletedTask; };
+
+        await Feed("[t][906]LogTemp: Error: Rcon Plus Command Executed: RemoveAccessManager DontFuccnKnowMe");
+        await Feed("Successful: false        Instigated By: Console");
+
+        Assert.NotNull(emitted);
+        Assert.Equal(false, emitted!.Successful);
+    }
+
+    [Fact]
+    public async Task ABaseRconCommandEmitsAtOnceWithNoResult()
+    {
+        /* Base RCON has no result line, so it must not wait for one - it emits immediately,
+           and its outcome is unknown (null), never a false that would read as a failure. */
+        PavlovBot.Core.Logs.PavlovLog.RconAction? emitted = null;
+        _service.Rcon += (_, _, action) => { emitted = action; return Task.CompletedTask; };
+
+        await Feed("[2026.09.16-04.08.14:875][471]LogTemp: Rcon: BanPlayer hhhhhhhhhh");
+
+        Assert.NotNull(emitted);
+        Assert.False(emitted!.Plus);
+        Assert.Equal("Ban", emitted.Verb);   // engine label mapped back to the sent verb
+        Assert.Null(emitted.Successful);
+    }
+
+    [Fact]
     public async Task AKillRecordSplitAcrossLinesIsAssembled()
     {
         KillEventCapture? captured = null;

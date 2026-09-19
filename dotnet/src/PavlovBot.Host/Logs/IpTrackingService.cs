@@ -74,6 +74,17 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
     /// <summary>Assembled from lines that may arrive split across several.</summary>
     private readonly Dictionary<string, KillEvent> _partialKills = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// An RCON+ command awaiting its result line, per log file.
+    /// </summary>
+    /// <remarks>
+    /// The mod logs a command and its pass/fail on two lines, the result immediately after, so
+    /// the command is held here until that next line resolves it - then the audit feed can say
+    /// whether it took effect. Base RCON has no result line and is never buffered.
+    /// </remarks>
+    private readonly Dictionary<string, (DateTimeOffset At, PavlovLog.RconAction Action)> _pendingRconPlus =
+        new(StringComparer.Ordinal);
+
     public IpTrackingService(
         SerializedStore store,
         MetricsRegistry metrics,
@@ -266,12 +277,31 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
             return;
         }
 
+        /* AN RCON+ RESULT LINE resolves the command buffered on the previous line: the mod
+           logs "Successful: true/false" on its own next line, with no timestamp, so it is not
+           an event of its own but the verdict on the one before it. */
+        if (PavlovLog.RconResult(line.Text) is { } success)
+        {
+            await ResolveRconPlusAsync(line.File, success).ConfigureAwait(false);
+            return;
+        }
+
         /* RCON AND RCON+ COMMANDS -> the audit feed. Before the stats-kill gate below, so it
            runs whichever kill source is live: an RCON line is neither a kill nor a login, so
            this returns once it matches rather than falling through to the kill parse. */
         if (PavlovLog.Rcon(line.Text) is { } rconAction)
         {
-            if (Rcon is { } onRcon) await onRcon(line.File, at, rconAction).ConfigureAwait(false);
+            /* An RCON+ command waits for its result line before it is emitted, so the feed can
+               report whether it took effect; base RCON has no result line and emits at once.
+               Anything still buffered when the next command arrives is flushed unresolved -
+               the result line always immediately follows in practice, so this covers only a
+               truncated tail. */
+            await FlushPendingRconPlusAsync(line.File).ConfigureAwait(false);
+
+            if (rconAction.Plus)
+                _pendingRconPlus[line.File] = (at, rconAction);
+            else
+                await EmitRconAsync(line.File, at, rconAction).ConfigureAwait(false);
             return;
         }
 
@@ -285,6 +315,26 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
         {
             await OnKillAsync(line.File, kill).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Raise the audit event for one RCON action, if anything is listening.</summary>
+    private Task EmitRconAsync(string file, DateTimeOffset at, PavlovLog.RconAction action) =>
+        Rcon is { } handler ? handler(file, at, action) : Task.CompletedTask;
+
+    /// <summary>Pair a result line with the RCON+ command it belongs to and emit the two together.</summary>
+    private async Task ResolveRconPlusAsync(string file, bool success)
+    {
+        // A result with nothing buffered - the tail started mid-pair, or it was already
+        // flushed - is not an error; there is simply no command to attach it to.
+        if (!_pendingRconPlus.Remove(file, out var pending)) return;
+        await EmitRconAsync(file, pending.At, pending.Action with { Successful = success }).ConfigureAwait(false);
+    }
+
+    /// <summary>Emit a buffered RCON+ command whose result line never came, its outcome unknown.</summary>
+    private async Task FlushPendingRconPlusAsync(string file)
+    {
+        if (_pendingRconPlus.Remove(file, out var pending))
+            await EmitRconAsync(file, pending.At, pending.Action).ConfigureAwait(false);
     }
 
     private async Task OnLoginAsync(string file, LoginRequest login, DateTimeOffset at, CancellationToken ct)

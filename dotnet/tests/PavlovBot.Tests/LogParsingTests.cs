@@ -194,6 +194,18 @@ public class PavlovLogTests
         Assert.Equal("CleanUp Items", clean.Command);
     }
 
+    [Fact]
+    public void TheRconResultLineParsesPassAndFail()
+    {
+        // The mod writes the outcome on its own next line, no timestamp, padded with spaces.
+        Assert.True(PavlovLog.RconResult("Successful: true        Instigated By: Holosight1"));
+        Assert.False(PavlovLog.RconResult("Successful: false        Instigated By: Console"));
+
+        // Anything that is not a result line is null - including the command line itself.
+        Assert.Null(PavlovLog.RconResult("[t][0]LogTemp: Warning: Rcon Plus Command Executed: Warp Bob ricely"));
+        Assert.Null(PavlovLog.RconResult("[t][0]LogTemp: Rcon: BanPlayer Alice"));
+    }
+
     [Theory]
     // the connection lifecycle the RCON server narrates - not commands
     [InlineData("[t][0]LogTemp: Rcon: User authenticated 216.21.5.196:55846")]
@@ -213,8 +225,8 @@ public class PavlovLogTests
     public void TheRconEmbedCarriesCommandInstigatorAndTime()
     {
         var at = new DateTimeOffset(2026, 9, 16, 4, 8, 14, TimeSpan.Zero);
-        var embed = FeedWebhooks.RconEmbed(plus: true, "SetCash", "Rickythegamer1001", "9999999", "Server 2", at)
-            .Build();
+        var embed = FeedWebhooks.RconEmbed(plus: true, "SetCash", "Rickythegamer1001", "9999999", "Server 2", at,
+            successful: true).Build();
 
         Assert.Equal("RCON+ command", embed.Author?.Name);
         Assert.Equal(at, embed.Timestamp);
@@ -223,6 +235,23 @@ public class PavlovLogTests
         Assert.Equal("`SetCash 9999999`", fields["Command"]);   // instigator stripped from the command
         Assert.Equal("Rickythegamer1001", fields["By"]);
         Assert.Equal("Server 2", fields["Server"]);
+        Assert.Equal("✅ true", fields["Went through"]);
+    }
+
+    [Fact]
+    public void TheRconEmbedShowsTheOutcomeAndRedNsForAFailure()
+    {
+        var at = DateTimeOffset.UnixEpoch;
+
+        var failed = FeedWebhooks.RconEmbed(true, "RemoveAccessManager", "Console", "DontFuccnKnowMe", "Server 1", at,
+            successful: false).Build();
+        Assert.Equal("❌ false", failed.Fields.Single(f => f.Name == "Went through").Value);
+        Assert.Equal(Theme.BanRed, failed.Color);   // a failure overrides the channel colour
+
+        // Base RCON reports no result: it shows "executed", not a false that would read as failure.
+        var baseRcon = FeedWebhooks.RconEmbed(false, "Ban", null, "Alice", "Server 1", at).Build();
+        Assert.Equal("☑️ executed", baseRcon.Fields.Single(f => f.Name == "Went through").Value);
+        Assert.Equal(Theme.Blue, baseRcon.Color);
     }
 
     [Fact]
