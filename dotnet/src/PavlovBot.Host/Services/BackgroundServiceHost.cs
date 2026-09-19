@@ -68,6 +68,8 @@ public sealed class BackgroundServiceHost : IHostedService
     /// </summary>
     private readonly PavlovBot.Host.Events.PlayerEventBridge _playerEvents;
 
+    private readonly PavlovBot.Host.Monitoring.ServerMonitor _monitor;
+
     public BackgroundServiceHost(
         ServiceRegistry registry,
         RconRegistry rcon,
@@ -97,9 +99,11 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Moderation.AuditLog audit,
         PavlovBot.Host.Events.IEventStore events,
         PavlovBot.Host.Events.PlayerEventBridge playerEvents,
+        PavlovBot.Host.Monitoring.ServerMonitor monitor,
         PavlovBot.Host.Stats.KillStats killStats,
         ILogger<BackgroundServiceHost> logger)
     {
+        _monitor = monitor;
         _killStats = killStats;
         _payroll = payroll;
         _crashRecovery = crashRecovery;
@@ -151,6 +155,20 @@ public sealed class BackgroundServiceHost : IHostedService
             // actually layers, and so a future RCON-owning service can be stopped last.
             DependsOn = ["rcon-health"],
         });
+
+        if (_features.MonitoringEnabled)
+        {
+            // The health monitor is itself a registered service, so if IT fails to run the
+            // registry marks it Failed and surfaces it in /health - monitoring that stops
+            // monitoring can never masquerade as "everything is fine".
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "server-monitor",
+                Interval = _features.MonitorSettings.CheckInterval,
+                Tick = ct => _monitor.TickAsync(ct),
+                DependsOn = ["rcon-health"],
+            });
+        }
 
         _registry.Register(new ServiceDefinition
         {

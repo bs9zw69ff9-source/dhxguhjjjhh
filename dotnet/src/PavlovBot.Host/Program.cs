@@ -663,6 +663,36 @@ public static class Program
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
 
+        // ---- server monitoring: probe -> state machine -> alerts + history, on the background timer ----
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.MonitorHistory(
+            sp.GetRequiredService<SerializedStore>(), TimeProvider.System));
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.ServerLogActivity(
+            sp.GetRequiredService<PavlovBot.Host.Logs.ServerLabels>(),
+            PavlovBot.Host.Logs.LogTailer.Discover(features.LogPaths)));
+        builder.Services.AddSingleton<PavlovBot.Host.Monitoring.IServerProbe>(sp =>
+            new PavlovBot.Host.Monitoring.RconServerProbe(
+                sp.GetRequiredService<RconRegistry>(), features.MonitorSettings, TimeProvider.System,
+                // ServiceControl is the lifecycle - it tells the probe when a server was stopped on
+                // purpose, which is how an expected restart is told from a crash.
+                sp.GetService<PavlovBot.Host.Servers.ServiceControl>(),
+                // Log-inactivity: the server's log file mtime, when it can be matched to a server.
+                sp.GetRequiredService<PavlovBot.Host.Monitoring.ServerLogActivity>().For));
+        builder.Services.AddSingleton<PavlovBot.Host.Monitoring.IMonitorAlertSink>(sp =>
+            new PavlovBot.Host.Monitoring.DiscordMonitorAlertSink(
+                sp.GetRequiredService<DiscordGateway>(), features.MonitorAlertChannel, features.MonitorAlertRole,
+                sp.GetRequiredService<ILogger<PavlovBot.Host.Monitoring.DiscordMonitorAlertSink>>()));
+        builder.Services.AddSingleton<PavlovBot.Host.Monitoring.IMonitorTargets>(sp =>
+            new PavlovBot.Host.Monitoring.RconMonitorTargets(sp.GetRequiredService<RconRegistry>()));
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.ServerMonitor(
+            sp.GetRequiredService<PavlovBot.Host.Monitoring.IServerProbe>(),
+            sp.GetRequiredService<PavlovBot.Host.Monitoring.IMonitorAlertSink>(),
+            sp.GetRequiredService<PavlovBot.Host.Monitoring.MonitorHistory>(),
+            features.MonitorSettings,
+            sp.GetRequiredService<PavlovBot.Host.Monitoring.IMonitorTargets>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Monitoring.ServerMonitor>>(),
+            TimeProvider.System));
+        builder.Services.AddSingleton<ISlashCommand, ServerStatusCommand>();
+
         /* Resolves the gateway ON USE rather than taking it here, so a command depending on this
            does not close the DiscordGateway -> every ISlashCommand -> command -> gateway cycle. */
         builder.Services.AddSingleton<IGuildDirectory, GatewayGuildDirectory>();
