@@ -1,4 +1,5 @@
 using Discord;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Monitoring;
 using PavlovBot.Core.Text;
@@ -71,10 +72,17 @@ public static class MonitorEmbeds
 /// tick that produced it, so a Discord failure is logged and swallowed - the state has already been
 /// recorded, and the next transition will try again. A missing channel disables alerting quietly;
 /// that is a configuration choice, not a fault.
+///
+/// THE GATEWAY IS RESOLVED ON USE, not taken in the constructor, for the same reason
+/// <see cref="Discord.GatewayGuildDirectory"/> does: DiscordGateway depends on every ISlashCommand,
+/// this sink is reached from one (via the monitor), and injecting the gateway here would close a
+/// DiscordGateway -> command -> monitor -> sink -> DiscordGateway cycle that deadlocks graph build.
 /// </remarks>
 public sealed class DiscordMonitorAlertSink(
-    DiscordGateway gateway, ulong? channelId, ulong? roleId, ILogger<DiscordMonitorAlertSink> logger) : IMonitorAlertSink
+    IServiceProvider services, ulong? channelId, ulong? roleId, ILogger<DiscordMonitorAlertSink> logger) : IMonitorAlertSink
 {
+    private DiscordGateway Gateway => services.GetRequiredService<DiscordGateway>();
+
     public async Task PostAsync(string server, MonitorSignal signal, ServerHealth health, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(signal);
@@ -83,7 +91,7 @@ public sealed class DiscordMonitorAlertSink(
 
         try
         {
-            if (await gateway.GetChannelAsync(channel).ConfigureAwait(false) is not IMessageChannel target)
+            if (await Gateway.GetChannelAsync(channel).ConfigureAwait(false) is not IMessageChannel target)
             {
                 logger.LogWarning("Monitor alert channel {Channel} is not a message channel - alert dropped", channel);
                 return;

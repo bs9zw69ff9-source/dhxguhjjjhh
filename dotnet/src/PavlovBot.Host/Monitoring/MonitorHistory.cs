@@ -4,7 +4,7 @@ using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Monitoring;
 
-/// <summary>One recorded reading, kept so /server health can look back.</summary>
+/// <summary>One recorded reading, kept so /monitor health can look back.</summary>
 public sealed record MonitorSample(
     DateTimeOffset At,
     HealthState State,
@@ -13,7 +13,7 @@ public sealed record MonitorSample(
     bool RconOk,
     bool UnexpectedRestart);
 
-/// <summary>Aggregate health over a window, for the /server health card.</summary>
+/// <summary>Aggregate health over a window, for the /monitor health card.</summary>
 public sealed record HealthStats(
     double UptimePercent,
     int RconFailures,
