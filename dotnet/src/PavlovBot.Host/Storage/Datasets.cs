@@ -70,6 +70,9 @@ public static class Datasets
 
     public const string BanReconcileState = "ban_reconcile_state";
 
+    /// <summary>Server -> recent monitoring samples, for /server health. Pruned to ~24h on write.</summary>
+    public const string MonitorHistory = "monitor_history";
+
     /// <summary>
     /// Players deliberately unbanned, and when. Name -> lift instant.
     /// </summary>
@@ -165,6 +168,7 @@ public static class Datasets
         [NeverBan] = "{}",
         [Warnings] = "{}",
         [BanReconcileState] = "{}",
+        [MonitorHistory] = "{}",
         [UnbanTombstones] = "{}",
         [VpnChecks] = "{}",
         [ServerLock] = "{}",

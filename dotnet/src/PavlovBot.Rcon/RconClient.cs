@@ -251,6 +251,21 @@ public sealed class RconClient : IAsyncDisposable
     public void InvalidateReads() => _readCache.Clear();
 
     /// <summary>
+    /// Send a command as a real round trip, never from or into the read cache.
+    /// </summary>
+    /// <remarks>
+    /// FOR HEALTH PROBES. <see cref="SendAsync"/> serves a read-only verb like ServerInfo from a
+    /// 2.5s cache, which is right for a dashboard and wrong for a monitor: a cached reply reports
+    /// no round-trip time and, worse, a success for a server that has just gone down. The monitor
+    /// needs the wire, so this bypasses the cache in both directions.
+    /// </remarks>
+    public Task<string> SendUncachedProbeAsync(string command, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        return SendUncachedAsync(command, ct);
+    }
+
+    /// <summary>
     /// Drop the session so the next command reconnects.
     /// </summary>
     /// <remarks>

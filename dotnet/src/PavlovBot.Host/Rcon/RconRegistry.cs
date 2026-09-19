@@ -132,6 +132,27 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     }
 
     /// <summary>
+    /// An uncached round trip, for a health probe that must measure real latency and real reach.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SendAsync"/> caches read-only verbs, so a monitor timing ServerInfo through it
+    /// would measure a cache hit and could read a cached success for a server that just died. This
+    /// forces the wire. See <see cref="RconClient.SendUncachedProbeAsync"/>.
+    /// </remarks>
+    public Task<string> ProbeAsync(string server, string command, CancellationToken ct = default)
+    {
+        if (!_clients.TryGetValue(server, out var client))
+            throw new InvalidOperationException($"unknown server \"{server}\"");
+
+        var verb = RconClient.MetricVerb(command);
+        return _metrics.TimeAsync(
+            "rcon_command_duration_ms",
+            MetricLabels.Of("server", server, "command", verb),
+            () => client.SendUncachedProbeAsync(command, ct),
+            "RCON command duration in milliseconds");
+    }
+
+    /// <summary>
     /// Send a command and refuse to call it done when the server said it was not.
     /// </summary>
     /// <remarks>

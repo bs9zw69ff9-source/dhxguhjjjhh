@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
+using PavlovBot.Core.Monitoring;
 using PavlovBot.Core.Security;
 using PavlovBot.Core.Vpn;
 using PavlovBot.Host.Vpn;
@@ -347,6 +348,22 @@ public sealed record FeatureOptions
     public TimeSpan BanExpiryInterval { get; init; } = TimeSpan.FromMinutes(1);
     public TimeSpan BanReconcileInterval { get; init; } = TimeSpan.FromMinutes(5);
 
+    // ---- server monitoring ----
+
+    /// <summary>Whether the automatic server-health monitor runs at all.</summary>
+    public bool MonitoringEnabled { get; init; } = true;
+
+    /// <summary>Where monitoring alerts are posted. Unset disables alerting (state is still tracked).</summary>
+    public ulong? MonitorAlertChannel { get; init; }
+
+    /// <summary>Role pinged on WARNING/CRITICAL monitoring alerts. Unset pings nobody.</summary>
+    public ulong? MonitorAlertRole { get; init; }
+
+    /// <summary>
+    /// Every monitoring threshold, in one record so none of them is a magic number in the loop.
+    /// </summary>
+    public MonitorSettings MonitorSettings { get; init; } = MonitorSettings.Default;
+
     /// <summary>
     /// Also deny a manually blacklisted ADDRESS at the OS firewall (ufw), not just in the bot.
     /// </summary>
@@ -467,6 +484,25 @@ public sealed record FeatureOptions
             // Defaults ON, like VPN_AUTOBAN: a plain switch, not something discovered by
             // deleting a key. Off keeps a manual blacklist bot-only, touching no ufw rule.
             FirewallBlacklistedIps = OptionalFlag(configuration, "FIREWALL_BLACKLIST") != false,
+
+            // ---- server monitoring: every threshold overridable, sane defaults otherwise ----
+            MonitoringEnabled = OptionalFlag(configuration, "MONITORING") != false,
+            MonitorAlertChannel = Snowflake(configuration, "MONITOR_ALERT_CHANNEL"),
+            MonitorAlertRole = Snowflake(configuration, "MONITOR_ALERT_ROLE"),
+            MonitorSettings = new MonitorSettings(
+                CheckInterval: TimeSpan.FromSeconds(Int(configuration, "MONITOR_CHECK_INTERVAL_SECONDS", 30)),
+                FailureThreshold: Int(configuration, "MONITOR_FAILURE_THRESHOLD", 3),
+                RecoveryThreshold: Int(configuration, "MONITOR_RECOVERY_THRESHOLD", 2),
+                RconTimeout: TimeSpan.FromSeconds(Int(configuration, "MONITOR_RCON_TIMEOUT_SECONDS", 5)),
+                RetryBaseDelay: TimeSpan.FromSeconds(Int(configuration, "MONITOR_RETRY_BASE_SECONDS", 2)),
+                RetryMaxDelay: TimeSpan.FromSeconds(Int(configuration, "MONITOR_RETRY_MAX_SECONDS", 120)),
+                LatencyWarn: TimeSpan.FromMilliseconds(Int(configuration, "MONITOR_LATENCY_WARN_MS", 250)),
+                LatencyCritical: TimeSpan.FromMilliseconds(Int(configuration, "MONITOR_LATENCY_CRITICAL_MS", 750)),
+                PlayerAnomalyDropFraction: Math.Clamp(Int(configuration, "MONITOR_PLAYER_DROP_PERCENT", 80) / 100.0, 0.0, 1.0),
+                PlayerAnomalyWindow: TimeSpan.FromSeconds(Int(configuration, "MONITOR_PLAYER_WINDOW_SECONDS", 90)),
+                LogInactivityThreshold: TimeSpan.FromMinutes(Int(configuration, "MONITOR_LOG_INACTIVITY_MINUTES", 5)),
+                EscalationEvery: Int(configuration, "MONITOR_ESCALATION_EVERY", 20),
+                RecoveryMessagesEnabled: OptionalFlag(configuration, "MONITOR_RECOVERY_MESSAGES") != false),
 
             VpnThresholds = new VpnThresholds(
                 Int(configuration, "VPN_SCREEN_MIN", 1),
