@@ -20,7 +20,7 @@ namespace PavlovBot.Host.Monitoring;
 /// monitor's snapshots and, best-effort, systemd's CPU/RAM, and returns a value.
 ///
 /// CPU/RAM IS SAMPLED ONCE PER BUILD, not per server: <see cref="ServiceControl.StatsAsync"/>
-/// costs a ~600ms sampling window, so it is read a single time for the whole board and any server
+/// costs a ~1s sampling window, so it is read a single time for the whole board and any server
 /// it cannot be matched to simply shows no CPU/RAM rather than failing the board.
 /// </remarks>
 public sealed class MonitorBoard(ServerMonitor monitor, ServiceControl service)
