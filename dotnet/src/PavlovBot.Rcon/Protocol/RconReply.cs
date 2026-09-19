@@ -101,11 +101,13 @@ public static class RconReply
     }
 }
 
-/// <param name="Name">Display name. May be empty if the server only reported an id.</param>
+/// <param name="Name">
+/// Display name. On Pavlov Shack this is what Ban, Kick and Unban target on the wire - the
+/// account id is accepted and does nothing (see PavlovBot.Host.Moderation.BanService). May be
+/// empty if the server only reported an id.
+/// </param>
 /// <param name="UniqueId">
-/// The id RCON actually targets. Ban, Kick and Unban take a UniqueId, NOT a display name -
-/// passing the name silently does nothing, which is how a "ban" appears to succeed and the
-/// player stays on the server.
+/// The EOS account id. Recorded for evasion flags and evidence; NOT the RCON target on Shack.
 /// </param>
 public readonly record struct PavlovPlayer(string Name, string UniqueId);
 

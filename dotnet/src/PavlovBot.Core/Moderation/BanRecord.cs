@@ -26,19 +26,18 @@ public sealed record BanRecord
     public required string PlayerId { get; init; }
 
     /// <summary>
-    /// The account id the ban was enforced against. Null on records written before this
-    /// existed, and on bans issued for a player the bot has never seen connect.
+    /// The account id recorded for the ban. Null on records written before this existed, and
+    /// on bans issued for a player the bot has never seen connect.
     /// </summary>
     /// <remarks>
-    /// THE BAN AND THE UNBAN HAVE TO NAME THE SAME THING. Pavlov's Ban and Unban take a
-    /// UniqueId; a display name is accepted and does nothing. Enforcement already preferred
-    /// the id, but the record only ever remembered the display name - so a ban landed
-    /// against an EOS id and every lift sent that name instead. The server took the command,
-    /// answered normally, and left the player banned.
+    /// NOT THE RCON TARGET. On Shack the Ban, Kick and Unban that enforce this record all key
+    /// on <see cref="PlayerId"/> (the display name) - the account id is accepted on the wire
+    /// and does nothing. The id is kept because the EVASION system keys on it: it survives a
+    /// display-name change, so a banned player who renames is still caught by their flags even
+    /// though the name-based ban no longer matches them.
     ///
-    /// Captured at BAN time rather than looked up at lift time on purpose. A player who
-    /// changes their display name after being banned cannot be found by the old name at all,
-    /// and that is exactly the player most likely to be arguing about a ban.
+    /// Captured at BAN time rather than looked up at lift time on purpose, for that same
+    /// evasion correlation - the address/account evidence a lift must clear is filed under it.
     /// </remarks>
     public string? UniqueId { get; init; }
 

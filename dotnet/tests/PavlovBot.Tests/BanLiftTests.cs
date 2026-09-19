@@ -18,11 +18,11 @@ namespace PavlovBot.Tests;
 /// TWO REPORTED FAILURES, one root cause each, and they stacked into "unbans do not apply and
 /// they are re-banned on join".
 ///
-///   THE UNBAN NAMED THE WRONG THING. Pavlov's Ban and Unban take a UniqueId; a display name
-///   is accepted, answers normally, and does nothing. Enforcement already preferred the id,
-///   but BanRecord only ever remembered the display name - so the ban landed on an EOS id and
-///   the lift sent the name. The expiry sweep did not even try to look one up. Every temp ban
-///   that ran out stayed natively banned forever, with a log line saying it had been lifted.
+///   THE UNBAN NAMED THE WRONG THING. The ban and its lift have to name the SAME identifier,
+///   and once they did not: the expiry sweep sent an Unban that did not match the Ban. On
+///   Shack the identifier is the display NAME (Ban/Kick/Unban against the EOS id are accepted
+///   and do nothing - verified on the wire), which is what the record, the sweep, the reconcile
+///   and the ban file all already use. These tests pin that both ends name the same thing.
 ///
 ///   THE EVIDENCE OUTLIVED THE BAN. A ban flags the player's address and account id. The
 ///   expiry path never cleared them, and the one-hour exemption that covered the gap was
@@ -141,15 +141,15 @@ public class BanLiftTests : IAsyncDisposable
     };
 
     /// <summary>
-    /// An expired temp ban is lifted against the ACCOUNT ID it was banned under.
+    /// An expired temp ban is lifted against the NAME it was banned under, not the account id.
     /// </summary>
     /// <remarks>
-    /// The exact bug. The old expiry path called UnbanEverywhereAsync(ban.PlayerId) with no id
-    /// argument at all, so this asserted "Unban Evader" against a ban issued as
-    /// "Ban 0002a1...". The server takes it, answers, and lifts nothing.
+    /// The exact bug, corrected for Shack. The ban is issued as "Ban Evader" (Shack keys on the
+    /// name), so the lift has to be "Unban Evader". Sending "Unban 0002a1..." against it is
+    /// accepted, answers, and lifts nothing - the same silent no-op the id-based enforcement was.
     /// </remarks>
     [Fact]
-    public async Task AnExpiredTempBanIsLiftedByAccountIdNotDisplayName()
+    public async Task AnExpiredTempBanIsLiftedByNameNotAccountId()
     {
         var now = DateTimeOffset.UtcNow;
         await Seed(TempBan(now - TimeSpan.FromMinutes(5), Account));
@@ -158,27 +158,27 @@ public class BanLiftTests : IAsyncDisposable
         var lifted = await service.ProcessExpiredAsync();
 
         Assert.Single(lifted);
-        Assert.Contains($"Unban {Account}", _server.Commands, StringComparer.Ordinal);
-        Assert.DoesNotContain($"Unban {Name}", _server.Commands, StringComparer.Ordinal);
+        Assert.Contains($"Unban {Name}", _server.Commands, StringComparer.Ordinal);
+        Assert.DoesNotContain($"Unban {Account}", _server.Commands, StringComparer.Ordinal);
     }
 
     /// <summary>
-    /// A record with no id falls back to LOOKING ONE UP, not to the display name.
+    /// A record is lifted by its filed NAME even when an account id is also recorded.
     /// </summary>
     /// <remarks>
-    /// Every ban already on a live server predates BanRecord.UniqueId, so the fallback is not
-    /// a corner case - it is what happens to the entire existing ban list on the deploy that
-    /// ships this.
+    /// The id is bookkeeping (evasion flags, evidence); it is never the RCON target on Shack.
+    /// The lift names what the ban named - the display name - so the two match by construction.
     /// </remarks>
     [Fact]
-    public async Task ARecordWithNoIdIsLiftedByTheIdTheTrackerKnows()
+    public async Task ARecordIsLiftedByNameNotTheRecordedId()
     {
         await Seed(TempBan(DateTimeOffset.UtcNow - TimeSpan.FromMinutes(5), uniqueId: null));
 
         var service = Build(new RecordingMasters(), new FakeEvidence((Name, Account)));
         await service.ProcessExpiredAsync();
 
-        Assert.Contains($"Unban {Account}", _server.Commands, StringComparer.Ordinal);
+        Assert.Contains($"Unban {Name}", _server.Commands, StringComparer.Ordinal);
+        Assert.DoesNotContain($"Unban {Account}", _server.Commands, StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -221,7 +221,7 @@ public class BanLiftTests : IAsyncDisposable
         Assert.Equal([Account], evidence.Cleared);              // flags gone
         Assert.Equal([Name], masters.Exempted);                 // exempt while anything lingers
         Assert.True(result.Landed);
-        Assert.Contains($"Unban {Account}", _server.Commands, StringComparer.Ordinal);
+        Assert.Contains($"Unban {Name}", _server.Commands, StringComparer.Ordinal);
     }
 
     /// <summary>A ban that is still in force is not lifted by the expiry sweep.</summary>
@@ -265,34 +265,29 @@ public class BanLiftTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// A ban with no id is ENFORCED against the id the tracker knows, not the display name.
+    /// A ban is ENFORCED against the display name, not the recorded account id.
     /// </summary>
     /// <remarks>
-    /// The other end of the same bug, and the reason the resolution lives in BanService rather
-    /// than at each call site. VpnResponder bans by address and has no account id to pass, so
-    /// it called HardEnforceAsync with the display name - accepted by the server, enforcing
-    /// nothing, until the sweep happened to catch them online and re-issue it properly.
-    ///
-    /// The property that matters is not "the ban lands" on its own: it is that the ban and its
-    /// lift name the SAME identifier. Resolving both the same way in one place is what makes
-    /// that true by construction rather than by two call sites agreeing.
+    /// Shack keys Ban/Kick on the name; the account id is accepted and removes nobody. Sending
+    /// the name is also what makes the ban and its lift name the SAME identifier, since the lift
+    /// resolves the name the same way. That both ends agree is the property this pins - the id
+    /// is bookkeeping, never the RCON target.
     /// </remarks>
     [Fact]
-    public async Task ABanWithNoIdIsEnforcedAgainstTheIdTheTrackerKnows()
+    public async Task ABanIsEnforcedAgainstTheNameNotTheRecordedId()
     {
         var service = Build(new RecordingMasters(), new FakeEvidence((Name, Account)));
 
-        await service.HardEnforceAsync(Name);
+        await service.HardEnforceAsync(Name, Account);
 
-        Assert.Contains($"Ban {Account}", _server.Commands, StringComparer.Ordinal);
-        Assert.DoesNotContain($"Ban {Name}", _server.Commands, StringComparer.Ordinal);
+        Assert.Contains($"Ban {Name}", _server.Commands, StringComparer.Ordinal);
+        Assert.DoesNotContain($"Ban {Account}", _server.Commands, StringComparer.Ordinal);
     }
 
-    /// <summary>An unknown player is still enforced, by the only identifier there is.</summary>
+    /// <summary>An unknown player is still enforced by the name given.</summary>
     /// <remarks>
-    /// The control on the lookup. Refusing to act without an id would mean a player the bot
-    /// has never seen connect could not be banned at all - which is precisely the player a
-    /// pre-emptive ban is for.
+    /// The control. A player the bot has never seen has no recorded name/id mapping, and a
+    /// pre-emptive ban of them must still send something - the name it was handed.
     /// </remarks>
     [Fact]
     public async Task AnUnknownPlayerIsStillEnforcedByName()

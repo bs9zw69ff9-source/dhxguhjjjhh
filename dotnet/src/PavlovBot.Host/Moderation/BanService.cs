@@ -20,11 +20,18 @@ public readonly record struct EnforcementResult(int Servers, string? Target)
 /// Applying and lifting bans against the game servers.
 /// </summary>
 /// <remarks>
-/// The rule that governs everything here: <b>Pavlov's Ban, Kick and Unban take a UniqueId,
-/// not a display name.</b> Passing a display name does not error - the server accepts the
-/// command and does nothing, so the ban "succeeds" and the player stays on the server. That
-/// silent no-op is why every path prefers a UniqueId from RefreshList and logs loudly when
-/// the identifier it sent differs from the one it was given.
+/// The rule that governs everything here: <b>Pavlov Shack's Ban, Kick and Unban target the
+/// DISPLAY NAME, not the EOS UniqueId.</b> This was verified against the live server: a Ban or
+/// Kick issued against the 32-hex account id is accepted and removes nobody, while the same
+/// command against the name removes them. It is also the identifier every OTHER path here
+/// already uses - the ban record files under <see cref="BanRecord.PlayerId"/> (the name), the
+/// sweep matches it against the live roster's names, the reconcile re-bans by it, and the ban
+/// file exports it - so enforcing by name is what makes a ban and its lift, the sweep and the
+/// file all name the SAME thing. The account id is still RECORDED (it keys the evasion flags
+/// and the evidence store); it is simply not the RCON target.
+///
+/// This is the opposite of stock PC Pavlov, whose RCON keys on the UniqueId. If this bot is
+/// ever pointed at a non-Shack server, this is the one assumption to revisit.
 ///
 /// The OS firewall is deliberately NEVER touched from here. A ufw rule is an owner-managed
 /// manual action through <c>/firewall</c>; automating it means a false-positive ban can cut
@@ -111,22 +118,19 @@ public sealed class BanService
     /// Ban and kick one player on every server.
     /// </summary>
     /// <param name="uniqueId">
-    /// The UniqueId from RefreshList when known. Strongly preferred over the display name:
-    /// a display name can contain spaces, which the sanitizer strips, producing a target
-    /// the server has never heard of and a ban that silently does nothing.
+    /// The account id from RefreshList when known. RECORDED, not used as the RCON target -
+    /// Shack keys Ban/Kick on the name (see the class remarks). It is the last-resort fallback
+    /// only when there is no name at all to send.
     /// </param>
     public async Task<EnforcementResult> HardEnforceAsync(
         string name, string? uniqueId = null, bool ban = true, bool kick = true, CancellationToken ct = default)
     {
-        /* LOOK THE ID UP when the caller has none, rather than falling straight to the display
-           name. VpnResponder called this with the name alone, so a VPN auto-ban was issued as
-           "Ban SomeName" - accepted, answered, and enforcing nothing until the sweep happened
-           to catch them online and re-issue it against a real id.
-
-           The same resolution as UnbanEverywhereAsync, deliberately: a ban and its lift have
-           to name the same thing, and the cheapest way to guarantee that is for both to
-           resolve it the same way in one place. */
-        var source = uniqueId ?? _evidence?.AccountIdFor(name) ?? name;
+        /* THE NAME IS THE TARGET. Shack's Ban/Kick act on the display name; the account id is
+           accepted and removes nobody (verified on the wire - see the class remarks). This is
+           the same identifier the sweep, the reconcile and the ban file already use, so a ban
+           and its lift name the same thing by construction. The id is a fallback only when a
+           caller has no name to give - a pre-emptive ban of an account nobody has yet seen. */
+        var source = name is { Length: > 0 } ? name : uniqueId ?? "";
         var target = Sanitize.Id(source);
 
         if (target.Length == 0)
@@ -199,25 +203,17 @@ public sealed class BanService
     /// </remarks>
     public async Task<EnforcementResult> UnbanEverywhereAsync(string name, string? uniqueId = null, CancellationToken ct = default)
     {
-        /* THE ID FIRST, ALWAYS, and fall back to looking it up rather than to the display
-           name. Pavlov's Unban takes a UniqueId; a display name is accepted, answers
-           normally, and lifts nothing. Every ban this bot issues against a known player is
-           enforced by id, so unbanning by name could only ever have been a no-op. */
-        var resolved = uniqueId ?? _evidence?.AccountIdFor(name);
-        var target = Sanitize.Id(resolved ?? name);
+        /* THE NAME IS THE TARGET, to match the Ban it lifts. Shack's Unban acts on the name
+           the ban was filed under; every ban this bot issues is enforced by name, so lifting
+           by name is what names the same thing. The id is a fallback only when a caller has no
+           name at all to give. */
+        var source = name is { Length: > 0 } ? name : uniqueId ?? "";
+        var target = Sanitize.Id(source);
 
         if (target.Length == 0)
         {
             _logger.LogError("unban for \"{Name}\" has NO usable RCON target - the native server ban was NOT lifted", name);
             return new EnforcementResult(0, null);
-        }
-
-        if (resolved is null)
-        {
-            _logger.LogWarning(
-                "unban for \"{Name}\" is being sent BY DISPLAY NAME - no account id is recorded for them. " +
-                "Pavlov unbans by UniqueId, so this may lift nothing. Check the ban record and the tracked accounts",
-                name);
         }
 
         var accepted = 0;

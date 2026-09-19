@@ -36,9 +36,10 @@ public sealed class KickCommand(RconRegistry rcon, BanService bans, AuditLog aud
         var player = Sanitize.Id(command.Data.Options.First(o => o.Name == "playerid").Value as string ?? "");
         var reason = Sanitize.Message(command.Data.Options.FirstOrDefault(o => o.Name == "reason")?.Value as string ?? "");
 
-        /* Prefer the UniqueId from the live roster. Kick against a display name is a silent
-           no-op - the server accepts the command and does nothing - which is how a kick
-           "works" and the player stays in the game. */
+        /* Look the player up in the live roster to tell "not online" from "kick failed" in the
+           reply below. The kick itself targets the NAME - Shack keys Kick on the display name,
+           not the account id (see BanService remarks) - so the id here is only recorded, not the
+           target. */
         var online = rcon.Servers
             .SelectMany(s => rcon.Roster(s).Players)
             .FirstOrDefault(p => string.Equals(p.Name, player, StringComparison.OrdinalIgnoreCase));
