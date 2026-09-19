@@ -93,6 +93,11 @@ public class SanitizeTests
     [InlineData("user 123456789012345678 joined", "user [id redacted] joined")]
     [InlineData("read /home/pavlov/Saved/x", "read [path redacted]/Saved/x")]
     [InlineData("read /root/secrets", "read [path redacted]/secrets")]
+    // The auto-ban reason shapes /checkban and the ban lists surface. A ban reason must never
+    // publish the address or account id that triggered the ban.
+    [InlineData("Ban evasion - blacklisted ip 73.164.223.3", "Ban evasion - blacklisted ip [ip redacted]")]
+    [InlineData("Ban evasion - blacklisted account 00020322e7bc4c6a9b5f83ae6e6b1ed5",
+        "Ban evasion - blacklisted account [id redacted]")]
     public void PrivateDetailIsScrubbedFromPublicText(string input, string expected)
     {
         Assert.Equal(expected, Sanitize.RedactPrivate(input));
