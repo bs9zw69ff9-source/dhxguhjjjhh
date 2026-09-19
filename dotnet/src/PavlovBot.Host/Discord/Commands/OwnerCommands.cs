@@ -355,13 +355,29 @@ public sealed partial class FirewallCommand(IFirewall firewall, AuditLog audit, 
             return;
         }
 
-        var embed = action == "block"
-            ? Theme.Warning($"{Theme.Deny} Blocked at the firewall", $"`{Sanitize.Code(rawIp)}` is now denied (rule 1, ahead of the port allows).")
+        if (action == "unblock")
+        {
+            await Reply(command, Theme.Success("Firewall block removed", $"`{Sanitize.Code(rawIp)}` is no longer denied.")).ConfigureAwait(false);
+            return;
+        }
+
+        /* VERIFIED AGAINST THE ACTUAL TABLE, not trusted from the exit code. ufw can exit 0
+           having changed nothing - it prints "Skipping adding existing rule" and returns
+           success, and a rule can fail to land for reasons the add command does not surface.
+           "It said blocked but the address still connected" is the whole reason this exists, so
+           the block is confirmed by reading `ufw status` back and checking the address is in it. */
+        var table = await firewall.StatusAsync(ct).ConfigureAwait(false);
+        var present = table.Ok && table.Detail.Contains(canonical, StringComparison.Ordinal);
+
+        await Reply(command, present
+            ? Theme.Warning($"{Theme.Deny} Blocked at the firewall", $"`{Sanitize.Code(rawIp)}` is now denied, ahead of the port allows.")
                 .AddField($"{Theme.Warn} That is an address, not an account",
                     "On a shared or CGNAT connection it hits everyone behind it. Only `/firewall unblock` undoes it.")
-            : Theme.Success("Firewall block removed", $"`{Sanitize.Code(rawIp)}` is no longer denied.");
-
-        await Reply(command, embed).ConfigureAwait(false);
+            : Theme.Failure("ufw accepted it, but the rule is not in the table",
+                    $"`{Sanitize.Code(rawIp)}` did not appear in `ufw status` afterwards, so it is NOT actually blocked. " +
+                    "The most likely cause is the bot not having permission to change the live ruleset - it must run as root, " +
+                    "or with a sudoers grant for `ufw`.")
+                .AddField("ufw said", $"```\n{Truncate(result.Detail)}\n```")).ConfigureAwait(false);
     }
 
     private static string Truncate(string text) => text.Length > 1500 ? text[..1500] + "\n…" : text;
