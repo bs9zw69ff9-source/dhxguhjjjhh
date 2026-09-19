@@ -4,6 +4,14 @@ using PavlovBot.Core.Monitoring;
 
 namespace PavlovBot.Host.Monitoring;
 
+/// <summary>One thing the monitor decided happened, kept for the live board's event log.</summary>
+/// <param name="Server">Which server it was about.</param>
+/// <param name="Kind">The signal that fired.</param>
+/// <param name="Severity">How loud it was, for colour.</param>
+/// <param name="Detail">The one-line human description the state machine wrote.</param>
+/// <param name="At">When it happened.</param>
+public sealed record MonitorEvent(string Server, SignalKind Kind, Severity Severity, string Detail, DateTimeOffset At);
+
 /// <summary>
 /// Drives the health state machine for every server: probe, decide, record, alert, reconnect.
 /// </summary>
@@ -28,16 +36,27 @@ namespace PavlovBot.Host.Monitoring;
 /// </remarks>
 public sealed class ServerMonitor
 {
+    /// <summary>How many recent events the board keeps. Bounded so the ring never grows.</summary>
+    private const int EventBufferSize = 20;
+
     private readonly IServerProbe _probe;
     private readonly IMonitorAlertSink _alerts;
     private readonly MonitorHistory _history;
     private readonly MonitorSettings _settings;
     private readonly IMonitorTargets _targets;
     private readonly TimeProvider _time;
+    private readonly bool _postIndividualAlerts;
     private readonly ILogger<ServerMonitor> _logger;
 
     private readonly ConcurrentDictionary<string, ServerHealth> _state = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The last few things that happened, newest last. A plain queue under a lock: a tick folds
+    /// several servers in parallel, so the writes race, and the read the board makes is a snapshot.
+    /// </summary>
+    private readonly Queue<MonitorEvent> _events = new(EventBufferSize);
+    private readonly object _eventsLock = new();
 
     public ServerMonitor(
         IServerProbe probe,
@@ -46,7 +65,8 @@ public sealed class ServerMonitor
         MonitorSettings settings,
         IMonitorTargets targets,
         ILogger<ServerMonitor> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        bool postIndividualAlerts = true)
     {
         _probe = probe;
         _alerts = alerts;
@@ -55,6 +75,7 @@ public sealed class ServerMonitor
         _targets = targets;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _postIndividualAlerts = postIndividualAlerts;
     }
 
     public MonitorSettings Settings => _settings;
@@ -65,6 +86,12 @@ public sealed class ServerMonitor
     public ServerHealth Snapshot(string server) => _state.GetValueOrDefault(server) ?? ServerHealth.Initial;
 
     public HealthStats Stats(string server, TimeSpan window) => _history.Stats(server, window);
+
+    /// <summary>The most recent events, oldest first, for the live board's log. A copy, so it is safe to enumerate.</summary>
+    public IReadOnlyList<MonitorEvent> RecentEvents()
+    {
+        lock (_eventsLock) return _events.ToArray();
+    }
 
     /// <summary>One monitoring pass over every server. Registered on the background timer.</summary>
     public Task TickAsync(CancellationToken ct = default) =>
@@ -97,10 +124,19 @@ public sealed class ServerMonitor
             var (next, signals) = current.Observe(probe, _settings);
             _state[server] = next;
 
-            // Alerts first: they are the time-critical output, and must not be lost to a slow or
-            // failing history write. The sink never throws.
+            // Every signal is recorded for the live board's event log, whether or not it is also
+            // posted as its own message. Alerts come first: they are the time-critical output and
+            // must not be lost to a slow or failing history write. The sink never throws.
+            //
+            // WHEN THE BOARD IS ON, individual alerts are suppressed - the board is the single
+            // surface, so a stream of one-off messages beside it is exactly what was asked to go
+            // away. The events still land in the buffer, so the board shows them.
             foreach (var signal in signals)
-                await _alerts.PostAsync(server, signal, next, ct).ConfigureAwait(false);
+            {
+                RecordEvent(new MonitorEvent(server, signal.Kind, signal.Severity, signal.Detail, probe.At));
+                if (_postIndividualAlerts)
+                    await _alerts.PostAsync(server, signal, next, ct).ConfigureAwait(false);
+            }
 
             await _history.RecordAsync(server, new MonitorSample(
                 At: probe.At,
@@ -123,6 +159,16 @@ public sealed class ServerMonitor
         finally
         {
             gate.Release();
+        }
+    }
+
+    /// <summary>Push one event onto the bounded ring, dropping the oldest when it is full.</summary>
+    private void RecordEvent(MonitorEvent evt)
+    {
+        lock (_eventsLock)
+        {
+            _events.Enqueue(evt);
+            while (_events.Count > EventBufferSize) _events.Dequeue();
         }
     }
 }

@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using Discord;
 using Microsoft.Extensions.Logging.Abstractions;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Monitoring;
 using PavlovBot.Host.Monitoring;
+using PavlovBot.Host.Servers;
 using PavlovBot.Host.Storage;
 using Xunit;
 
@@ -34,8 +36,8 @@ public sealed class ServerMonitorTests : IDisposable
         _targets = new FakeTargets("Server 1", "Server 2");
     }
 
-    private ServerMonitor Monitor(IServerProbe probe) =>
-        new(probe, _sink, _history, Settings, _targets, NullLogger<ServerMonitor>.Instance, _clock);
+    private ServerMonitor Monitor(IServerProbe probe, bool postIndividualAlerts = true) =>
+        new(probe, _sink, _history, Settings, _targets, NullLogger<ServerMonitor>.Instance, _clock, postIndividualAlerts);
 
     private HealthProbe Ok(int players = 20) =>
         new(true, TimeSpan.FromMilliseconds(50), players, 50, "Datacenter", null, false, _clock.GetUtcNow(), null, _clock.GetUtcNow());
@@ -143,6 +145,119 @@ public sealed class ServerMonitorTests : IDisposable
         _clock.Advance(Settings.RetryMaxDelay);
         await monitor.TickAsync();
         Assert.Equal(before + 1, probe.Count("Server 1"));
+    }
+
+    // ---- the live board: event log + alert suppression --------------------------------------
+
+    [Fact]
+    public async Task EverySignalIsAlsoRecordedAsAnEventForTheBoard()
+    {
+        // Drive Server 1 offline: the ServerOffline signal must land in the board's event log,
+        // not only go out as an alert.
+        var monitor = Monitor(new ScriptedProbe(server => server == "Server 1" ? Fail() : Ok()));
+
+        for (var i = 0; i < Settings.FailureThreshold; i++)
+        {
+            await monitor.TickAsync();
+            _clock.Advance(Settings.RetryMaxDelay);
+        }
+
+        var events = monitor.RecentEvents();
+        Assert.Contains(events, e => e.Server == "Server 1" && e.Kind == SignalKind.ServerOffline);
+        // The alert also went out, because this monitor posts individual alerts.
+        Assert.Contains(_sink.Signals, s => s == ("Server 1", SignalKind.ServerOffline));
+    }
+
+    [Fact]
+    public async Task WithTheBoardOnIndividualAlertsAreSuppressedButEventsAreStillRecorded()
+    {
+        // postIndividualAlerts:false is board mode. The sink must stay silent; the buffer must not.
+        var monitor = Monitor(new ScriptedProbe(server => server == "Server 1" ? Fail() : Ok()),
+            postIndividualAlerts: false);
+
+        for (var i = 0; i < Settings.FailureThreshold; i++)
+        {
+            await monitor.TickAsync();
+            _clock.Advance(Settings.RetryMaxDelay);
+        }
+
+        Assert.Empty(_sink.Signals);   // the one board is the only surface
+        Assert.Contains(monitor.RecentEvents(), e => e.Server == "Server 1" && e.Kind == SignalKind.ServerOffline);
+    }
+
+    [Fact]
+    public async Task TheEventBufferIsBoundedAndKeepsTheNewest()
+    {
+        // Flap Server 1 repeatedly so it emits far more than the buffer holds, and confirm the
+        // ring is capped and holding the most recent events, not the first ones.
+        var up = false;
+        var monitor = Monitor(new ScriptedProbe(server => server == "Server 1" ? (up ? Ok() : Fail()) : Ok()));
+
+        for (var cycle = 0; cycle < 15; cycle++)
+        {
+            up = false;
+            for (var i = 0; i < Settings.FailureThreshold; i++)
+            {
+                await monitor.TickAsync();
+                _clock.Advance(Settings.RetryMaxDelay);
+            }
+
+            up = true;
+            for (var i = 0; i < Settings.RecoveryThreshold; i++)
+            {
+                await monitor.TickAsync();
+                _clock.Advance(Settings.RetryMaxDelay);
+            }
+        }
+
+        var events = monitor.RecentEvents();
+        Assert.True(events.Count <= 20, $"the buffer must stay bounded, was {events.Count}");
+        // Newest last, and the last thing that happened was a recovery (server came back up).
+        Assert.Equal(SignalKind.ServerOnline, events[^1].Kind);
+    }
+
+    [Fact]
+    public async Task TheBoardShowsEveryServerAndTheRecentEvents()
+    {
+        // Server 1 down, Server 2 up. The one board must carry a field per server, take the WORST
+        // server's colour/dot in its header, and list the outage in its event log.
+        var monitor = Monitor(new ScriptedProbe(server => server == "Server 1" ? Fail() : Ok()),
+            postIndividualAlerts: false);
+
+        for (var i = 0; i < Settings.FailureThreshold; i++)
+        {
+            await monitor.TickAsync();
+            _clock.Advance(Settings.RetryMaxDelay);
+        }
+
+        // No systemd here, so ServiceControl.StatsAsync returns nothing and the board simply omits
+        // CPU/RAM - which is exactly the graceful-degrade path.
+        var board = new MonitorBoard(monitor, new ServiceControl([], null, NullLogger<ServiceControl>.Instance));
+        var embed = await board.BuildAsync();
+
+        Assert.NotNull(embed);
+        Assert.Contains("Server monitor", embed!.Title, StringComparison.Ordinal);
+        Assert.StartsWith("🔴", embed.Title, StringComparison.Ordinal);   // header takes the worst server: offline
+
+        var fields = embed.Fields;
+        Assert.Contains(fields, f => f.Name.Contains("Server 1", StringComparison.Ordinal) && f.Value.Contains("OFFLINE", StringComparison.Ordinal));
+        Assert.Contains(fields, f => f.Name.Contains("Server 2", StringComparison.Ordinal) && f.Value.Contains("ONLINE", StringComparison.Ordinal));
+
+        var eventsField = Assert.Single(fields, f => f.Name == "Recent events");
+        Assert.Contains("Server 1", eventsField.Value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheBoardStandsUpWithNoEventsAndNoServers()
+    {
+        var empty = new ServerMonitor(new ScriptedProbe(_ => Ok()), _sink, _history, Settings,
+            new FakeTargets(), NullLogger<ServerMonitor>.Instance, _clock, postIndividualAlerts: false);
+
+        var board = new MonitorBoard(empty, new ServiceControl([], null, NullLogger<ServiceControl>.Instance));
+        var embed = await board.BuildAsync();
+
+        Assert.NotNull(embed);
+        Assert.Contains("No servers", embed!.Description, StringComparison.Ordinal);
     }
 
     // ---- concurrency guard ------------------------------------------------------------------
