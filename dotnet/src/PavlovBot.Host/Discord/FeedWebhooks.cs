@@ -337,27 +337,43 @@ public sealed class FeedWebhooks : IAsyncDisposable
     /// sanitised - a name is attacker-influenced, and a newline in one must not break the
     /// embed, nor an @everyone ping (the post also forces <see cref="AllowedMentions.None"/>).
     /// </remarks>
+    /// <param name="successful">
+    /// The RCON+ mod's own pass/fail for the command, when it reported one. Null for base
+    /// RCON, which logs no result - the line's existence is the only proof it ran.
+    /// </param>
     public static EmbedBuilder RconEmbed(bool plus, string verb, string? instigator, string? argument,
-        string? server, DateTimeOffset at)
+        string? server, DateTimeOffset at, bool? successful = null)
     {
         var command = argument is { Length: > 0 } a
             ? $"{Sanitize.Message(verb)} {Sanitize.Message(a)}"
             : Sanitize.Message(verb);
 
+        var wentThrough = successful switch
+        {
+            true => "✅ true",
+            false => "❌ false",
+            null => "☑️ executed",
+        };
+
+        // A failed command is the one an operator most needs to catch, so it overrides the
+        // channel colour rather than blending in with every command that worked.
+        var color = successful == false ? Theme.BanRed : plus ? Theme.Amber : Theme.Blue;
+
         return new EmbedBuilder()
-            .WithColor(plus ? Theme.Amber : Theme.Blue)
+            .WithColor(color)
             .WithAuthor(plus ? "RCON+ command" : "RCON command")
             .AddField("Command", $"`{command}`", inline: true)
             .AddField("By", instigator is { Length: > 0 } who ? Sanitize.Message(who) : "console", inline: true)
             .AddField("Server", Where(server), inline: true)
+            .AddField("Went through", wentThrough, inline: true)
             // Discord renders this in the reader's own timezone; it is the line's own time,
             // not the clock when the tail happened to read it.
             .WithTimestamp(at);
     }
 
     public Task PostRconAsync(bool plus, string verb, string? instigator, string? argument, string? server,
-        DateTimeOffset at, CancellationToken ct = default) =>
-        PostEmbedAsync(Rcon, RconEmbed(plus, verb, instigator, argument, server, at).Build(), ct);
+        DateTimeOffset at, bool? successful = null, CancellationToken ct = default) =>
+        PostEmbedAsync(Rcon, RconEmbed(plus, verb, instigator, argument, server, at, successful).Build(), ct);
 
     /// <summary>
     /// One kill, as the feed shows it.

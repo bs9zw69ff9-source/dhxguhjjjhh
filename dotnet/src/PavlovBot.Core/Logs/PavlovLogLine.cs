@@ -81,6 +81,13 @@ public static partial class PavlovLog
     [GeneratedRegex(@"LogTemp:\s*Rcon:\s*(.+?)\s*$", RegexOptions.IgnoreCase)]
     private static partial Regex RconBase { get; }
 
+    /* The RCON+ mod writes a pass/fail on its OWN line, right after the command, with no
+       timestamp: `Successful: true        Instigated By: Holosight1`. It is the only place the
+       wire says whether an RCON+ command actually took effect - the reply and the Warning/Error
+       print level do not. Base RCON has no equivalent. */
+    [GeneratedRegex(@"^\s*Successful:\s*(true|false)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex RconResultLine { get; }
+
     [GeneratedRegex(@"""Killer"":\s*""([^""]*)""", RegexOptions.IgnoreCase)]
     private static partial Regex Killer { get; }
 
@@ -190,6 +197,14 @@ public static partial class PavlovLog
     /// <param name="Argument">The rest of the command after the verb and instigator, or null.</param>
     public sealed record RconAction(bool Plus, string Verb, string? Instigator, string? Argument)
     {
+        /// <summary>
+        /// Whether the RCON+ mod reported the command took effect. Null when no result was
+        /// seen - always for base RCON, which logs no pass/fail line, and for an RCON+ command
+        /// whose result line never arrived. Set from the line after the command, not the
+        /// command line itself, so the parser leaves it null and the ingest layer fills it in.
+        /// </summary>
+        public bool? Successful { get; init; }
+
         /// <summary>The command as it reads: the verb and its argument, without the instigator.</summary>
         public string Command => Argument is { Length: > 0 } a ? $"{Verb} {a}" : Verb;
 
@@ -284,6 +299,18 @@ public static partial class PavlovLog
 
         return null;
     }
+
+    /// <summary>
+    /// The pass/fail on an RCON+ result line, or null when the line is not one.
+    /// </summary>
+    /// <remarks>
+    /// The result line follows the command it belongs to and carries no timestamp of its own,
+    /// so it is matched separately and paired with the previous command by the ingest layer.
+    /// </remarks>
+    public static bool? RconResult(string line) =>
+        RconResultLine.Match(line) is { Success: true } m
+            ? string.Equals(m.Groups[1].Value, "true", StringComparison.OrdinalIgnoreCase)
+            : null;
 
     /// <summary>Split "BanPlayer Alice" into ("BanPlayer", "Alice"); a lone verb has no argument.</summary>
     private static (string Verb, string? Argument) SplitVerb(string command)

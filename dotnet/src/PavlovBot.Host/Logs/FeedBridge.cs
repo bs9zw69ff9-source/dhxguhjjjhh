@@ -123,7 +123,8 @@ public sealed class FeedBridge
     /// so anything reaching here is a command worth a line.
     /// </summary>
     private Task OnRconAsync(string file, DateTimeOffset at, PavlovBot.Core.Logs.PavlovLog.RconAction action) =>
-        Safe(() => _feeds.PostRconAsync(action.Plus, action.Verb, action.Instigator, action.Argument, _servers.Of(file), at));
+        Safe(() => _feeds.PostRconAsync(action.Plus, action.Verb, action.Instigator, action.Argument,
+            _servers.Of(file), at, action.Successful));
 
     /// <summary>
     /// Take kills from Stats.log instead of from the Pavlov.log scrape.
