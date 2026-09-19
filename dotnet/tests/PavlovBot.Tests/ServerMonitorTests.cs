@@ -181,6 +181,8 @@ public sealed class ServerMonitorTests : IDisposable
             lock (Signals) Signals.Add((server, signal.Kind));
             return Task.CompletedTask;
         }
+
+        public Task<string> TestAsync(CancellationToken ct = default) => Task.FromResult("test");
     }
 
     private sealed class FakeTargets(params string[] servers) : IMonitorTargets
