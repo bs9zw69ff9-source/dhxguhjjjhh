@@ -678,8 +678,10 @@ public static class Program
                 // Log-inactivity: the server's log file mtime, when it can be matched to a server.
                 sp.GetRequiredService<PavlovBot.Host.Monitoring.ServerLogActivity>().For));
         builder.Services.AddSingleton<PavlovBot.Host.Monitoring.IMonitorAlertSink>(sp =>
+            // The provider itself, not the gateway: resolving the gateway here would close the
+            // DiscordGateway -> command -> monitor -> sink -> gateway cycle. See the sink.
             new PavlovBot.Host.Monitoring.DiscordMonitorAlertSink(
-                sp.GetRequiredService<DiscordGateway>(), features.MonitorAlertChannel, features.MonitorAlertRole,
+                sp, features.MonitorAlertChannel, features.MonitorAlertRole,
                 sp.GetRequiredService<ILogger<PavlovBot.Host.Monitoring.DiscordMonitorAlertSink>>()));
         builder.Services.AddSingleton<PavlovBot.Host.Monitoring.IMonitorTargets>(sp =>
             new PavlovBot.Host.Monitoring.RconMonitorTargets(sp.GetRequiredService<RconRegistry>()));

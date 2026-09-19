@@ -8,11 +8,16 @@ using PavlovBot.Host.Monitoring;
 namespace PavlovBot.Host.Discord.Commands;
 
 /// <summary>
-/// <c>/server</c> - the monitoring dashboard: one server in detail, every server at a glance, or the health history.
+/// <c>/monitor</c> - the monitoring dashboard: one server in detail, every server at a glance, or the health history.
 /// </summary>
+/// <remarks>
+/// NAMED <c>/monitor</c>, NOT <c>/server</c>: <see cref="ServerLookupCommand"/> already owns
+/// <c>/server</c> (the public server browser). Two <see cref="ISlashCommand"/> with one name wedge
+/// command registration - it is the monitoring picture, so it is named for that.
+/// </remarks>
 public sealed class ServerStatusCommand(ServerMonitor monitor, Access access) : ISlashCommand
 {
-    public string Name => "server";
+    public string Name => "monitor";
     public bool Ephemeral => true;
 
     public ApplicationCommandProperties Build()
