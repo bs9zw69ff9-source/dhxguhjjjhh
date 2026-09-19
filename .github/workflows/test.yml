@@ -21,7 +21,9 @@ jobs:
         with:
           dotnet-version: "9.0.x"
       - run: dotnet restore
-      - run: dotnet build -c Release --no-restore
+      # FullAnalysis=true turns on the code-style and AOT/trim analyzers here, on every PR -
+      # they are off for local and deploy builds to keep those fast (see dotnet/Directory.Build.props).
+      - run: dotnet build -c Release --no-restore -p:FullAnalysis=true
       - run: dotnet test -c Release --no-build
 
       # Proves the whole object graph resolves and the configuration binds. It
