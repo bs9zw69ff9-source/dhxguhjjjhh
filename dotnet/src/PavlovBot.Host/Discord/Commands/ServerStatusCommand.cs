@@ -4,6 +4,7 @@ using Discord.WebSocket;
 using PavlovBot.Core.Monitoring;
 using PavlovBot.Core.Text;
 using PavlovBot.Host.Monitoring;
+using PavlovBot.Host.Servers;
 
 namespace PavlovBot.Host.Discord.Commands;
 
@@ -15,7 +16,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// <c>/server</c> (the public server browser). Two <see cref="ISlashCommand"/> with one name wedge
 /// command registration - it is the monitoring picture, so it is named for that.
 /// </remarks>
-public sealed class ServerStatusCommand(ServerMonitor monitor, Access access) : ISlashCommand
+public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl service, Access access) : ISlashCommand
 {
     public string Name => "monitor";
     public bool Ephemeral => true;
@@ -72,16 +73,51 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, Access access) : 
             return;
         }
 
-        var embed = sub?.Name == "health"
-            ? one is not null ? HealthCard(one) : HealthOverview(servers)
-            : one is not null ? StatusCard(one) : StatusOverview(servers);
+        EmbedBuilder embed;
+        if (sub?.Name == "health")
+        {
+            embed = one is not null ? HealthCard(one) : HealthOverview(servers);
+        }
+        else
+        {
+            // CPU/RAM comes from systemd and costs a ~600ms sampling round trip, so it is read
+            // once here, only for the status view, and never on the 30s monitor tick.
+            var usage = await UsageAsync(ct).ConfigureAwait(false);
+            embed = one is not null ? StatusCard(one, usage) : StatusOverview(servers, usage);
+        }
 
         await Reply(command, embed).ConfigureAwait(false);
     }
 
+    /// <summary>Each server's systemd-unit CPU/RAM, mapped through the same server->unit link the lifecycle uses.</summary>
+    private async Task<IReadOnlyDictionary<string, UnitStats>> UsageAsync(CancellationToken ct)
+    {
+        var map = new Dictionary<string, UnitStats>(StringComparer.Ordinal);
+        try
+        {
+            var byUnit = (await service.StatsAsync(ct).ConfigureAwait(false))
+                .ToDictionary(s => s.Unit, StringComparer.Ordinal);
+
+            foreach (var server in monitor.Servers)
+            {
+                if (ServiceControl.NumberFor(server) is { } number
+                    && service.UnitFor(number) is { } unit
+                    && byUnit.TryGetValue(unit, out var stats))
+                {
+                    map[server] = stats;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // No systemd, or it could not be read: the board simply shows no CPU/RAM.
+        }
+        return map;
+    }
+
     // ---- status ----
 
-    private EmbedBuilder StatusCard(string server)
+    private EmbedBuilder StatusCard(string server, IReadOnlyDictionary<string, UnitStats> usage)
     {
         var h = monitor.Snapshot(server);
         var embed = new EmbedBuilder()
@@ -92,26 +128,48 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, Access access) : 
             .AddField("Map", h.Map is { Length: > 0 } map ? Sanitize.Code(map) : "—", inline: true)
             .AddField("RCON", Answering(h.State) ? "Connected" : "Disconnected", inline: true)
             .AddField("Latency", h.Latency.Current is { } l ? $"{Ms(l)} (avg {Ms(h.Latency.Average ?? l)})" : "—", inline: true)
-            .AddField("Last check", h.LastProbeAt is { } at ? $"<t:{at.ToUnixTimeSeconds()}:T>" : "never", inline: true)
-            .AddField("Health",
-                $"RCON {Tick(Answering(h.State))}  ·  Logs {Tick(!h.LogInactiveReported)}  ·  " +
-                $"Players {Tick(h.Players is not null)}  ·  Process {Unknownable(h.ProcessRunning)}");
+            .AddField("Last check", h.LastProbeAt is { } at ? $"<t:{at.ToUnixTimeSeconds()}:T>" : "never", inline: true);
 
-        return embed;
+        if (usage.TryGetValue(server, out var u))
+        {
+            embed.AddField("CPU", Cpu(u), inline: true);
+            embed.AddField("RAM", Ram(u), inline: true);
+            embed.AddField("Server uptime", u.Uptime is { } up ? ServerHealth.Humanize(up) : "—", inline: true);
+        }
+
+        return embed.AddField("Health",
+            $"RCON {Tick(Answering(h.State))}  ·  Logs {Tick(!h.LogInactiveReported)}  ·  " +
+            $"Players {Tick(h.Players is not null)}  ·  Process {Unknownable(h.ProcessRunning)}");
     }
 
-    private EmbedBuilder StatusOverview(IReadOnlyList<string> servers)
+    private EmbedBuilder StatusOverview(IReadOnlyList<string> servers, IReadOnlyDictionary<string, UnitStats> usage)
     {
         var lines = servers.Select(s =>
         {
             var h = monitor.Snapshot(s);
             var players = h.Players is { } p ? $"{p}{(h.MaxPlayers is { } m ? $"/{m}" : "")}" : "—";
             var latency = h.Latency.Current is { } l ? Ms(l) : "—";
-            return $"{StateDot(h.State)} **{Sanitize.Code(s)}** — {h.State.ToString().ToUpperInvariant()} · {players} · {latency}";
+            var box = usage.TryGetValue(s, out var u)
+                ? $" · {Cpu(u)} cpu · {Ram(u)}"
+                : "";
+            return $"{StateDot(h.State)} **{Sanitize.Code(s)}** — {h.State.ToString().ToUpperInvariant()} · {players} · {latency}{box}";
         });
 
         return Theme.Notice("Server status", string.Join("\n", lines))
-            .WithFooter($"{servers.Count} server(s) · updated live");
+            .WithFooter($"{servers.Count} server(s) · 100% cpu = one core · updated live");
+    }
+
+    private static string Cpu(UnitStats u) => u.CpuPercent is { } c ? $"{c.ToString("0.0", CultureInfo.InvariantCulture)}%" : "—";
+
+    private static string Ram(UnitStats u)
+    {
+        if (u.MemoryBytes is not { } bytes) return "—";
+        var used = $"{(bytes / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB";
+        // A limit is shown only when systemd actually caps the unit; unset reads as "infinity"
+        // and comes back null, so an uncapped server shows just its usage, not "/ ∞".
+        return u.MemoryLimitBytes is { } limit && limit > 0
+            ? $"{used} / {(limit / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB"
+            : used;
     }
 
     // ---- health history ----
