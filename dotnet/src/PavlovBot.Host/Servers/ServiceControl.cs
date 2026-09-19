@@ -296,6 +296,13 @@ public sealed class ServiceControl(
     /// Not elevated: reading unit properties is allowed to any user, so this must not go
     /// through sudo even when the mutating verbs do.
     /// </remarks>
+    /// <summary>
+    /// How long the two CPU counter reads are spaced apart. One second to match systemd-cgtop's
+    /// averaging cadence, so the reported percentage tracks it rather than being a noisier
+    /// shorter-window snapshot. See the remarks on <see cref="StatsAsync"/>.
+    /// </summary>
+    private static readonly TimeSpan CpuSampleWindow = TimeSpan.FromSeconds(1);
+
     public async Task<IReadOnlyList<UnitStats>> StatsAsync(CancellationToken ct = default)
     {
         var first = new Dictionary<string, (long Cpu, long At)>(StringComparer.Ordinal);
@@ -308,10 +315,15 @@ public sealed class ServiceControl(
             if (Long(shown, "CPUUsageNSec") is { } cpu) first[unit] = (cpu, Stopwatch.GetTimestamp());
         }
 
-        /* Long enough that scheduler jitter is not most of the measurement, short enough that
-           nobody notices the command hesitating. Below roughly a quarter of a second the
-           answer is mostly noise. */
-        if (first.Count > 0) await Task.Delay(TimeSpan.FromMilliseconds(600), ct).ConfigureAwait(false);
+        /* THE WINDOW IS THE ACCURACY. CPU% is a delta over this interval, so a SHORT window is
+           a noisy estimate of a bursty workload: a Pavlov tick bursts then idles, and a 0.6s
+           sample that lands on a busy stretch reads several points above what systemd-cgtop -
+           which averages continuously over ~1s - shows for the same server. One second matches
+           cgtop's cadence, so the two track each other instead of disagreeing by chance, at the
+           cost of 400ms more latency on a command that is already deferred. It does NOT cap at
+           100%: a multi-threaded process legitimately exceeds one core, and hiding that would
+           make this disagree with top/cgtop rather than agree with them. */
+        if (first.Count > 0) await Task.Delay(CpuSampleWindow, ct).ConfigureAwait(false);
 
         var results = new List<UnitStats>();
         foreach (var unit in Units)

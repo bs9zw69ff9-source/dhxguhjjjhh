@@ -98,7 +98,7 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl se
         }
         else
         {
-            // CPU/RAM comes from systemd and costs a ~600ms sampling round trip, so it is read
+            // CPU/RAM comes from systemd and costs a ~1s sampling round trip, so it is read
             // once here, only for the status view, and never on the 30s monitor tick.
             var usage = await UsageAsync(ct).ConfigureAwait(false);
             embed = one is not null ? StatusCard(one, usage) : StatusOverview(servers, usage);
