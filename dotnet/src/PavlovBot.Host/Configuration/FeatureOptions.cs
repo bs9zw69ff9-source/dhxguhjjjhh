@@ -347,6 +347,18 @@ public sealed record FeatureOptions
     public TimeSpan BanExpiryInterval { get; init; } = TimeSpan.FromMinutes(1);
     public TimeSpan BanReconcileInterval { get; init; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Also deny a manually blacklisted ADDRESS at the OS firewall (ufw), not just in the bot.
+    /// </summary>
+    /// <remarks>
+    /// Applies to a manual address block through <c>/configure blacklist</c> only - the owner's
+    /// deliberate, exact-match decision, the same category <c>/firewall</c> serves. The auto-ban
+    /// path still never touches the firewall: a false-positive ban must not cut somebody off at
+    /// the OS level. Defaults ON because that is what was asked for; set <c>FIREWALL_BLACKLIST</c>
+    /// false to keep blacklisting bot-only, e.g. where the bot does not run as root.
+    /// </remarks>
+    public bool FirewallBlacklistedIps { get; init; } = true;
+
     public static FeatureOptions Bind(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -451,6 +463,10 @@ public sealed record FeatureOptions
                working - but it is a plain switch rather than something to be discovered by
                deleting API keys. */
             VpnAutoBan = OptionalFlag(configuration, "VPN_AUTOBAN") != false,
+
+            // Defaults ON, like VPN_AUTOBAN: a plain switch, not something discovered by
+            // deleting a key. Off keeps a manual blacklist bot-only, touching no ufw rule.
+            FirewallBlacklistedIps = OptionalFlag(configuration, "FIREWALL_BLACKLIST") != false,
 
             VpnThresholds = new VpnThresholds(
                 Int(configuration, "VPN_SCREEN_MIN", 1),
