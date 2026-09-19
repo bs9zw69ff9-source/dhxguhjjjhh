@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using Microsoft.Extensions.Logging;
 
@@ -135,13 +136,29 @@ public sealed class LogTailer
 
             stream.Seek(state.Offset, SeekOrigin.Begin);
 
-            var buffer = new byte[Math.Min(info.Length - state.Offset, 8 * 1024 * 1024)];
-            var read = stream.Read(buffer, 0, buffer.Length);
-            if (read <= 0) return [];
+            /* POOLED, not `new byte[]`, because this runs every LogPollInterval (1.5s). A busy
+               server's new bytes per poll routinely exceed the 85KB Large Object Heap threshold,
+               and a fresh LOH array every poll drives the Gen2 collections that cost the most CPU
+               and hold the most RSS. ArrayPool reuses the buffer instead; a rent larger than the
+               pool's max cap (the rare multi-MB catch-up) simply allocates, so the cap still
+               bounds the request. Same idiom as RconConnection.ExchangeAsync. */
+            var want = (int)Math.Min(info.Length - state.Offset, 8 * 1024 * 1024);
+            var buffer = ArrayPool<byte>.Shared.Rent(want);
+            int read;
+            string text;
+            try
+            {
+                read = stream.Read(buffer, 0, want);
+                if (read <= 0) return [];
 
-            state.Offset += read;
+                state.Offset += read;
+                text = state.Carry + Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
 
-            var text = state.Carry + Encoding.UTF8.GetString(buffer, 0, read);
             var lines = text.Split('\n');
 
             /* The last element is whatever followed the final newline. If the file ended
