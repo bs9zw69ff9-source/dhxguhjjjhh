@@ -3,6 +3,7 @@ using System.Net;
 using PavlovBot.Core.Data;
 using PavlovBot.Core.Evasion;
 using PavlovBot.Host.Logs;
+using PavlovBot.Host.Servers;
 using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Moderation;
@@ -34,7 +35,8 @@ public sealed class OwnerActions(
     IpTrackingService tracking,
     string? ledgerDirectory = null,
     MasterNames? masters = null,
-    Func<string, CancellationToken, Task>? liftBan = null)
+    Func<string, CancellationToken, Task>? liftBan = null,
+    IFirewall? firewall = null)
 {
     // ---- IP enforcement -----------------------------------------------------------------
 
@@ -58,6 +60,17 @@ public sealed class OwnerActions(
             : flags with { Names = Add(flags.Names, target, StringComparer.OrdinalIgnoreCase) }, ct)
             .ConfigureAwait(false);
 
+        /* THE OS FIREWALL, for a manual address block only. A blacklisted address is the
+           owner's deliberate, exact-match decision - the same category /firewall exists for -
+           so denying it at ufw as well as in the bot stops the connection before Pavlov ever
+           sees it. This is NOT the auto-ban path, which still never touches the firewall: a
+           false-positive ban must not cut somebody off at the OS level, but an address a human
+           typed in is a choice they made. A username block is not an address and never reaches
+           this. Non-fatal: the flag is written whether or not ufw could be reached. */
+        var firewallNote = isAddress && firewall is not null
+            ? await DenyAtFirewallAsync(target, ct).ConfigureAwait(false)
+            : null;
+
         /* Which accounts this already matches, so the owner knows whether it caught anybody
            or is purely forward-looking. Naming them is the difference between "done" and
            "done, and these three are affected". */
@@ -66,11 +79,22 @@ public sealed class OwnerActions(
             : tracking.AccountByName(target) is { } account ? [account.Name ?? account.Id] : new List<string>();
 
         var kind = isAddress ? "address" : "username";
+        var summary = matched.Count > 0
+            ? $"{kind} `{target}` blacklisted. It matches **{matched.Count}** known account(s), listed below - ban them with `/permban`."
+            : $"{kind} `{target}` blacklisted. No account on record matches it yet; future connections will be caught.";
+
         return OwnerActionResult.List(
-            matched.Count > 0
-                ? $"{kind} `{target}` blacklisted. It matches **{matched.Count}** known account(s), listed below - ban them with `/permban`."
-                : $"{kind} `{target}` blacklisted. No account on record matches it yet; future connections will be caught.",
+            firewallNote is null ? summary : $"{summary}\n{firewallNote}",
             matched.Select(n => $"• **{n}**").ToList());
+    }
+
+    /// <summary>Add a ufw deny for a manual address block, and phrase the outcome for the reply.</summary>
+    private async Task<string> DenyAtFirewallAsync(string ip, CancellationToken ct)
+    {
+        var result = await firewall!.DenyAsync(ip, ct).ConfigureAwait(false);
+        return result.Ok
+            ? "🧱 Also denied at the OS firewall (ufw)."
+            : $"⚠️ Blacklisted, but the firewall rule did not apply: {result.Detail}";
     }
 
     // ---- never-ban --------------------------------------------------------------------
@@ -209,13 +233,33 @@ public sealed class OwnerActions(
         var removed = before.Ips.Count(i => i == ip) + before.ManualIps.Count(i => i == ip);
         if (removed == 0) return OwnerActionResult.Done($"`{ip}` was not flagged. Nothing changed.");
 
+        var wasManual = before.ManualIps.Contains(ip);
+
         await store.UpdateAsync(Datasets.IpFlags, before, flags => flags with
         {
             Ips = flags.Ips.Where(i => i != ip).ToList(),
             ManualIps = flags.ManualIps.Where(i => i != ip).ToList(),
         }, ct).ConfigureAwait(false);
 
-        return OwnerActionResult.Done($"`{ip}` un-flagged. Anyone on that address can connect again.");
+        /* Undo the ufw deny a manual block created. Attempted whenever the firewall is wired
+           and the address was a manual block - a delete of a rule that is not there is a
+           harmless no-op, and leaving a stale OS-level block would keep the address cut off
+           after the bot said it was clear. */
+        var firewallNote = wasManual && firewall is not null
+            ? await UndenyAtFirewallAsync(ip, ct).ConfigureAwait(false)
+            : null;
+
+        var done = $"`{ip}` un-flagged. Anyone on that address can connect again.";
+        return OwnerActionResult.Done(firewallNote is null ? done : $"{done}\n{firewallNote}");
+    }
+
+    /// <summary>Remove the ufw deny for a manual address block, and phrase the outcome.</summary>
+    private async Task<string> UndenyAtFirewallAsync(string ip, CancellationToken ct)
+    {
+        var result = await firewall!.UndenyAsync(ip, ct).ConfigureAwait(false);
+        return result.Ok
+            ? "🧱 The OS firewall (ufw) rule was removed too."
+            : $"⚠️ The bot flag is gone, but the firewall rule may remain: {result.Detail}";
     }
 
     public async Task<OwnerActionResult> ClearFlaggedNamesAsync(CancellationToken ct = default)

@@ -426,7 +426,6 @@ public static class Program
 
         // ---- analytics: aggregates over the event table, computed in SQL ----
         builder.Services.AddSingleton<AnalyticsService>();
-        builder.Services.AddSingleton<ISlashCommand, ServerStatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, PluginsCommand>();
         builder.Services.AddSingleton<ISlashCommand, FactionStatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, StaffStatsCommand>();
@@ -542,8 +541,6 @@ public static class Program
                so every card read "nothing recorded" whatever the log held. */
             sp.GetRequiredService<PavlovBot.Host.Stats.KillStats>()));
 
-        builder.Services.AddSingleton<ISlashCommand, PlayerProfileCommand>();
-
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Economy.Payroll(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<Ledger>(),
@@ -632,6 +629,11 @@ public static class Program
             installs,
             sp.GetRequiredService<ILogger<TesterCommand>>()));
         builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<ConfigPanel>());
+        // The OS firewall, driven through ufw. Registered unconditionally so anything that
+        // needs it can resolve it; whether a blacklist actually uses it is the feature flag
+        // below, and a box without ufw or without root reports that per call rather than throwing.
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.IFirewall, PavlovBot.Host.Servers.UfwFirewall>();
+
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<IpTrackingService>(),
@@ -641,7 +643,12 @@ public static class Program
                reaches for it is that the ban has already landed. Resolved lazily inside the
                lambda so this does not depend on registration order. */
             liftBan: async (player, ct) =>
-                await sp.GetRequiredService<BanService>().LiftAsync(player, ct: ct).ConfigureAwait(false)));
+                await sp.GetRequiredService<BanService>().LiftAsync(player, ct: ct).ConfigureAwait(false),
+            /* Only a manual address block reaches ufw, and only when enabled - the auto-ban
+               path never gets a firewall handle at all. Off leaves a blacklist bot-only. */
+            firewall: features.FirewallBlacklistedIps
+                ? sp.GetRequiredService<PavlovBot.Host.Servers.IFirewall>()
+                : null));
         builder.Services.AddSingleton<ISlashCommand, InspectCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
         builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(

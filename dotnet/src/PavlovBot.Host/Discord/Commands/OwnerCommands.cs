@@ -272,11 +272,14 @@ public sealed class ManualCommand(
 /// <c>/firewall</c> - manual OS-level blocks through ufw.
 /// </summary>
 /// <remarks>
-/// THIS IS NEVER AUTOMATED, and that is the whole design. A ufw rule blocks an ADDRESS, not
-/// an account: on residential CGNAT or a shared household one, blocking an evader can cut
-/// off people who have done nothing, and nothing in the bot would know to undo it. So the
-/// auto-ban path deliberately never touches it, and this command exists for an owner who
-/// has decided to accept that cost themselves.
+/// THE AUTO-BAN PATH NEVER AUTOMATES THIS, and that is the whole design. A ufw rule blocks an
+/// ADDRESS, not an account: on residential CGNAT or a shared household one, blocking an evader
+/// can cut off people who have done nothing, and nothing in the bot would know to undo it. So
+/// a ban never touches it, and this command exists for an owner who has decided to accept that
+/// cost themselves. The one other route to a ufw rule is the same deliberate call in a
+/// different place - <c>/configure blacklist &lt;address&gt;</c>, an owner typing one exact
+/// address to block forever - which applies and later removes a ufw deny alongside the bot
+/// flag (see <see cref="OwnerActions"/>, gated by <c>FIREWALL_BLACKLIST</c>).
 ///
 /// The implementation is the careful part:
 ///

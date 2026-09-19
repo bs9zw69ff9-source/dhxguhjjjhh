@@ -4,6 +4,7 @@ using PavlovBot.Core.Evasion;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Observability;
+using PavlovBot.Host.Servers;
 using PavlovBot.Host.Storage;
 using Xunit;
 
@@ -81,6 +82,79 @@ public class OwnerActionsTests : IDisposable
 
         Assert.False(result.Ok);
         Assert.Empty(_tracking.LoadFlags().ManualIps);
+    }
+
+    // ---- firewall (manual address blocks only) ----
+
+    private sealed class FakeFirewall : IFirewall
+    {
+        public List<string> Denied { get; } = [];
+        public List<string> Undenied { get; } = [];
+        public bool Fail { get; init; }
+
+        public Task<FirewallResult> DenyAsync(string ip, CancellationToken ct = default)
+        {
+            Denied.Add(ip);
+            return Task.FromResult(new FirewallResult(!Fail, Fail ? "ufw not found" : "ok"));
+        }
+
+        public Task<FirewallResult> UndenyAsync(string ip, CancellationToken ct = default)
+        {
+            Undenied.Add(ip);
+            return Task.FromResult(new FirewallResult(!Fail, Fail ? "ufw not found" : "ok"));
+        }
+    }
+
+    private OwnerActions WithFirewall(FakeFirewall firewall) =>
+        new(_store, _tracking, _ledgers, firewall: firewall);
+
+    [Fact]
+    public async Task BlacklistingAnAddressAlsoDeniesItAtTheFirewall()
+    {
+        var firewall = new FakeFirewall();
+        var result = await WithFirewall(firewall).BlacklistAsync("203.0.113.9");
+
+        Assert.Equal("203.0.113.9", Assert.Single(firewall.Denied));
+        Assert.Contains("203.0.113.9", _tracking.LoadFlags().ManualIps);
+        Assert.Contains("firewall", result.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BlacklistingAUsernameNeverTouchesTheFirewall()
+    {
+        // A username is not an address. Handing "CheaterMcGee" to ufw would be meaningless
+        // at best; the firewall is only ever driven by a parsed address.
+        var firewall = new FakeFirewall();
+        await WithFirewall(firewall).BlacklistAsync("CheaterMcGee");
+
+        Assert.Empty(firewall.Denied);
+    }
+
+    [Fact]
+    public async Task ClearingAManualAddressRemovesTheFirewallRule()
+    {
+        var firewall = new FakeFirewall();
+        var actions = WithFirewall(firewall);
+
+        await actions.BlacklistAsync("203.0.113.9");
+        await actions.ClearAddressAsync("203.0.113.9");
+
+        Assert.Equal("203.0.113.9", Assert.Single(firewall.Undenied));
+        Assert.DoesNotContain("203.0.113.9", _tracking.LoadFlags().ManualIps);
+    }
+
+    [Fact]
+    public async Task AFirewallFailureDoesNotFailTheBlacklist()
+    {
+        /* The flag write is the part that must survive. A box without ufw, or a bot not
+           running as root, still gets the address blacklisted in the bot - the firewall is a
+           bonus, reported as failed, never a reason to lose the block. */
+        var firewall = new FakeFirewall { Fail = true };
+        var result = await WithFirewall(firewall).BlacklistAsync("203.0.113.9");
+
+        Assert.True(result.Ok);
+        Assert.Contains("203.0.113.9", _tracking.LoadFlags().ManualIps);
+        Assert.Contains("did not apply", result.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- alts ----

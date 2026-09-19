@@ -12,10 +12,10 @@ namespace PavlovBot.Host.Discord.Commands;
 /// <c>/stats</c> - one player's card: faction, playtime, K/D, caps.
 /// </summary>
 /// <remarks>
-/// THE PLAYER-FACING HALF OF <c>/player</c>. That command is a moderation tool - addresses,
-/// alts, risk signals, ban history - and it is gated accordingly. This is the same underlying
-/// profile with none of that in it: what somebody would ask another player, answered without
-/// needing a moderator.
+/// THE PLAYER-FACING VIEW of the intelligence profile. The profile also carries moderation
+/// detail - addresses, alts, risk signals, ban history - which this deliberately leaves out:
+/// it asks for <see cref="ProfileVisibility.Moderation"/> and renders only the player-safe
+/// fields. What somebody would ask another player, answered without needing a moderator.
 ///
 /// NO NAME NEEDED when the caller was whitelisted through <c>/whitelist add</c>: the faction
 /// index already maps their Discord account to the in-game name they play under, so the
