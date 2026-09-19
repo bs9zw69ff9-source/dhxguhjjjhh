@@ -176,7 +176,11 @@ public static partial class PavlovLog
     /// One RCON action the game logged - a base RCON verb or an RCON+ menu command.
     /// </summary>
     /// <param name="Plus">True for an RCON+ menu command (Warp, Godmode, GiveItem, …), false for a base RCON verb (Ban, Kick, …).</param>
-    /// <param name="Verb">The command word, e.g. "BanPlayer" or "Godmode".</param>
+    /// <param name="Verb">
+    /// The command word, e.g. "Ban" or "Godmode". A base-RCON verb Pavlov logs under an
+    /// internal name (BanPlayer, KickPlayer, UnbanPlayer) is mapped back to the verb that was
+    /// sent; see <see cref="Rcon"/>.
+    /// </param>
     /// <param name="Instigator">
     /// The player who ran it, for RCON+ commands - the menu logs the acting player as the
     /// first argument, so <c>SetCash Bob 999</c> is Bob giving himself cash. Null for base RCON,
@@ -224,6 +228,26 @@ public static partial class PavlovLog
     };
 
     /// <summary>
+    /// Base-RCON verbs Pavlov logs under an internal function name rather than the verb the
+    /// command uses.
+    /// </summary>
+    /// <remarks>
+    /// The RCON command is <c>Ban &lt;id&gt;</c>, but the engine echoes it as
+    /// <c>LogTemp: Rcon: BanPlayer &lt;id&gt;</c> - the internal handler's name, not what was
+    /// sent. Left as-is the audit feed shows an operator a "BanPlayer" they never typed, and a
+    /// confirmation match against the bot's own <c>Ban</c> never lines up. Mapped back to the
+    /// real verb. BASE RCON ONLY: an RCON+ menu command genuinely named BanPlayer is a
+    /// different command on a different channel and keeps its name.
+    /// </remarks>
+    private static readonly Dictionary<string, string> BaseRconVerbAliases =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["BanPlayer"] = "Ban",
+            ["KickPlayer"] = "Kick",
+            ["UnbanPlayer"] = "Unban",
+        };
+
+    /// <summary>
     /// The RCON action a line records, or null when it is not one worth surfacing.
     /// </summary>
     /// <remarks>
@@ -251,7 +275,11 @@ public static partial class PavlovLog
         if (RconBase.Match(line) is { Success: true } bas)
         {
             var (verb, arg) = SplitVerb(bas.Groups[1].Value);
-            return verb.Length == 0 || RconNoise.Contains(verb) ? null : new RconAction(false, verb, null, arg);
+            if (verb.Length == 0 || RconNoise.Contains(verb)) return null;
+
+            // `Ban Alice` is echoed as `Rcon: BanPlayer Alice`; show the verb that was sent.
+            if (BaseRconVerbAliases.TryGetValue(verb, out var canonical)) verb = canonical;
+            return new RconAction(false, verb, null, arg);
         }
 
         return null;

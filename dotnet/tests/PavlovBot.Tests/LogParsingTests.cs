@@ -144,17 +144,19 @@ public class PavlovLogTests
     public void TheRconAuditParserClassifiesRealLines()
     {
         // Base RCON command: verb + argument, NO instigator (the line records no issuer).
+        // Pavlov echoes `Ban <id>` under its internal name `BanPlayer`; the parser maps it
+        // back to the verb that was actually sent.
         var ban = PavlovLog.Rcon("[2026.09.16-04.08.14:875][471]LogTemp: Rcon: BanPlayer hhhhhhhhhh");
         Assert.NotNull(ban);
         Assert.False(ban!.Plus);
-        Assert.Equal("BanPlayer", ban.Verb);
+        Assert.Equal("Ban", ban.Verb);
         Assert.Null(ban.Instigator);
         Assert.Equal("hhhhhhhhhh", ban.Argument);
-        Assert.Equal("BanPlayer hhhhhhhhhh", ban.Command);
+        Assert.Equal("Ban hhhhhhhhhh", ban.Command);
 
-        // Base RCON command against an account id.
+        // Base RCON command against an account id - KickPlayer maps back to Kick.
         var kick = PavlovLog.Rcon("[2026.09.16-05.00.00:000][ 10]LogTemp: Rcon: KickPlayer 0002980854f84fbcbc37a8f948a79c3a");
-        Assert.Equal("KickPlayer", kick!.Verb);
+        Assert.Equal("Kick", kick!.Verb);
         Assert.Null(kick.Instigator);
         Assert.Equal("0002980854f84fbcbc37a8f948a79c3a", kick.Argument);
 
@@ -172,7 +174,14 @@ public class PavlovLogTests
         Assert.Equal("Warp ricely", warp.Command);
         // Full rejoins everything - it is what a sent command is confirmed against.
         Assert.Equal("Warp Holosight1 ricely", warp.Full);
-        Assert.Equal("BanPlayer hhhhhhhhhh", ban.Full);   // base RCON: no instigator to rejoin
+        Assert.Equal("Ban hhhhhhhhhh", ban.Full);   // base RCON: no instigator to rejoin, mapped verb
+
+        // An RCON+ command genuinely named BanPlayer is a different command on a different
+        // channel and is NOT remapped - the alias is base-RCON only.
+        var plusBan = PavlovLog.Rcon("[t][0]LogTemp: Warning: Rcon Plus Command Executed: BanPlayer Holosight1 griefer99");
+        Assert.True(plusBan!.Plus);
+        Assert.Equal("BanPlayer", plusBan.Verb);
+        Assert.Equal("Holosight1", plusBan.Instigator);
 
         // Self-service menu action: instigator gives THEMSELVES cash.
         var cash = PavlovLog.Rcon("[t][0]LogTemp: Warning: Rcon Plus Command Executed: SetCash Rickythegamer1001 9999999");
