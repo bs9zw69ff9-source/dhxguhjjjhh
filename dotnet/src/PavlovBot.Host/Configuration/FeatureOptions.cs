@@ -619,6 +619,11 @@ public sealed record FeatureOptions
         $"crash recovery: {(CrashRecovery
             ? $"on - a failed unit is restarted, up to {Servers.CrashRecovery.MaxAttempts}x per {Servers.CrashRecovery.AttemptWindow.TotalMinutes:0}m"
             : "off (CRASH_RECOVERY not set)")}",
+        $"server monitor: {(!MonitoringEnabled
+            ? "off (MONITORING=0)"
+            : MonitorAlertChannel is null
+                ? "watching, but alerts are OFF - set MONITOR_ALERT_CHANNEL to post them"
+                : $"alerts to channel {MonitorAlertChannel}{(MonitorAlertRole is null ? "" : $", pinging role {MonitorAlertRole}")}, checked every {MonitorSettings.CheckInterval.TotalSeconds:0}s")}",
         $"player-count channels: {(PlayerCountChannels.Count == 0 ? "off (PLAYER_COUNT_CHANNELS not set)" : $"{PlayerCountChannels.Count} configured")}",
         $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
