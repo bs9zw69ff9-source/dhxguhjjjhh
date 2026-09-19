@@ -199,7 +199,12 @@ public sealed class BackgroundServiceHost : IHostedService
             RunOnStart = true,   // safe here: it touches no Discord surface
             Tick = _ =>
             {
-                var process = System.Diagnostics.Process.GetCurrentProcess();
+                /* DISPOSE THE SNAPSHOT. Process.GetCurrentProcess() wraps a native
+                   SafeProcessHandle that is only released at finalization; left undisposed on a
+                   15s timer that is ~5,760 handles a day sitting on the finalizer queue for a
+                   process meant to run for weeks. The `using` releases each snapshot as the tick
+                   ends, so handle count and finalizer pressure stay flat. */
+                using var process = System.Diagnostics.Process.GetCurrentProcess();
                 _metrics.Gauge("process_resident_bytes", process.WorkingSet64, help: "Resident set size in bytes");
                 _metrics.Gauge("process_managed_heap_bytes", GC.GetTotalMemory(false), help: "Managed heap in bytes");
                 _metrics.Gauge("process_threads", process.Threads.Count, help: "OS threads");
