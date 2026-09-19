@@ -69,6 +69,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Events.PlayerEventBridge _playerEvents;
 
     private readonly PavlovBot.Host.Monitoring.ServerMonitor _monitor;
+    private readonly PavlovBot.Host.Monitoring.MonitorBoard _monitorBoard;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -100,10 +101,12 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Events.IEventStore events,
         PavlovBot.Host.Events.PlayerEventBridge playerEvents,
         PavlovBot.Host.Monitoring.ServerMonitor monitor,
+        PavlovBot.Host.Monitoring.MonitorBoard monitorBoard,
         PavlovBot.Host.Stats.KillStats killStats,
         ILogger<BackgroundServiceHost> logger)
     {
         _monitor = monitor;
+        _monitorBoard = monitorBoard;
         _killStats = killStats;
         _payroll = payroll;
         _crashRecovery = crashRecovery;
@@ -168,6 +171,25 @@ public sealed class BackgroundServiceHost : IHostedService
                 Tick = ct => _monitor.TickAsync(ct),
                 DependsOn = ["rcon-health"],
             });
+
+            /* ---- the live monitoring board ----
+               ONE message, edited in place, showing every server's stats and a running event
+               log - the "just one board that updates" surface. An AutoPost board like the
+               leaderboards, so a restart edits the existing message rather than orphaning it.
+               Same cadence as the monitor tick: the board only has new state to show once the
+               tick has produced it, and CPU/RAM is one systemd sample per refresh. No RunOnStart,
+               like every other board: the gateway is not connected yet when services start. */
+            if (_features.MonitorBoardEnabled && _features.MonitorAlertChannel is not null)
+            {
+                _registry.Register(new ServiceDefinition
+                {
+                    Name = "monitor-board",
+                    Interval = _features.MonitorSettings.CheckInterval,
+                    Tick = ct => _autoPost.PostAsync("monitor-board", _features.MonitorAlertChannel,
+                        () => _monitorBoard.BuildAsync(ct), ct),
+                    DependsOn = ["server-monitor"],
+                });
+            }
         }
 
         _registry.Register(new ServiceDefinition

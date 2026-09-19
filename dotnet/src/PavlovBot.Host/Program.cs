@@ -692,7 +692,14 @@ public static class Program
             features.MonitorSettings,
             sp.GetRequiredService<PavlovBot.Host.Monitoring.IMonitorTargets>(),
             sp.GetRequiredService<ILogger<PavlovBot.Host.Monitoring.ServerMonitor>>(),
-            TimeProvider.System));
+            TimeProvider.System,
+            // With the live board on, individual alerts are suppressed - the board is the one
+            // surface, and a stream of separate messages beside it is what was asked to go away.
+            // Events are still recorded either way, so the board's log is complete.
+            postIndividualAlerts: !features.MonitorBoardEnabled));
+        builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.MonitorBoard(
+            sp.GetRequiredService<PavlovBot.Host.Monitoring.ServerMonitor>(),
+            sp.GetRequiredService<PavlovBot.Host.Servers.ServiceControl>()));
         builder.Services.AddSingleton<ISlashCommand, ServerStatusCommand>();
 
         /* Resolves the gateway ON USE rather than taking it here, so a command depending on this

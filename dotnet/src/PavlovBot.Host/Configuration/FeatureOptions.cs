@@ -360,6 +360,14 @@ public sealed record FeatureOptions
     public ulong? MonitorAlertRole { get; init; }
 
     /// <summary>
+    /// When on (the default), the monitor posts ONE live board to <see cref="MonitorAlertChannel"/>
+    /// - a rich embed edited in place with every server's stats and a running event log - instead
+    /// of a stream of one-off alert messages. Set <c>MONITOR_BOARD</c> false to go back to the
+    /// per-event alerts.
+    /// </summary>
+    public bool MonitorBoardEnabled { get; init; } = true;
+
+    /// <summary>
     /// Every monitoring threshold, in one record so none of them is a magic number in the loop.
     /// </summary>
     public MonitorSettings MonitorSettings { get; init; } = MonitorSettings.Default;
@@ -489,6 +497,7 @@ public sealed record FeatureOptions
             MonitoringEnabled = OptionalFlag(configuration, "MONITORING") != false,
             MonitorAlertChannel = Snowflake(configuration, "MONITOR_ALERT_CHANNEL"),
             MonitorAlertRole = Snowflake(configuration, "MONITOR_ALERT_ROLE"),
+            MonitorBoardEnabled = OptionalFlag(configuration, "MONITOR_BOARD") != false,
             MonitorSettings = new MonitorSettings(
                 CheckInterval: TimeSpan.FromSeconds(Int(configuration, "MONITOR_CHECK_INTERVAL_SECONDS", 30)),
                 FailureThreshold: Int(configuration, "MONITOR_FAILURE_THRESHOLD", 3),
@@ -622,8 +631,8 @@ public sealed record FeatureOptions
         $"server monitor: {(!MonitoringEnabled
             ? "off (MONITORING=0)"
             : MonitorAlertChannel is null
-                ? "watching, but alerts are OFF - set MONITOR_ALERT_CHANNEL to post them"
-                : $"alerts to channel {MonitorAlertChannel}{(MonitorAlertRole is null ? "" : $", pinging role {MonitorAlertRole}")}, checked every {MonitorSettings.CheckInterval.TotalSeconds:0}s")}",
+                ? "watching, but nothing is posted - set MONITOR_ALERT_CHANNEL for the live board"
+                : $"{(MonitorBoardEnabled ? "live board in" : "per-event alerts to")} channel {MonitorAlertChannel}{(MonitorAlertRole is null ? "" : $", pinging role {MonitorAlertRole}")}, checked every {MonitorSettings.CheckInterval.TotalSeconds:0}s")}",
         $"player-count channels: {(PlayerCountChannels.Count == 0 ? "off (PLAYER_COUNT_CHANNELS not set)" : $"{PlayerCountChannels.Count} configured")}",
         $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",

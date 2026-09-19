@@ -139,25 +139,25 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl se
     {
         var h = monitor.Snapshot(server);
         var embed = new EmbedBuilder()
-            .WithColor(StateColour(h.State))
-            .WithTitle($"{StateDot(h.State)} {Sanitize.Code(server)}")
+            .WithColor(MonitorFormat.StateColour(h.State))
+            .WithTitle($"{MonitorFormat.StateDot(h.State)} {Sanitize.Code(server)}")
             .AddField("Status", h.State.ToString().ToUpperInvariant(), inline: true)
             .AddField("Players", h.Players is { } p ? $"{p}{(h.MaxPlayers is { } m ? $"/{m}" : "")}" : "—", inline: true)
             .AddField("Map", h.Map is { Length: > 0 } map ? Sanitize.Code(map) : "—", inline: true)
-            .AddField("RCON", Answering(h.State) ? "Connected" : "Disconnected", inline: true)
-            .AddField("Latency", h.Latency.Current is { } l ? $"{Ms(l)} (avg {Ms(h.Latency.Average ?? l)})" : "—", inline: true)
+            .AddField("RCON", MonitorFormat.Answering(h.State) ? "Connected" : "Disconnected", inline: true)
+            .AddField("Latency", h.Latency.Current is { } l ? $"{MonitorFormat.Ms(l)} (avg {MonitorFormat.Ms(h.Latency.Average ?? l)})" : "—", inline: true)
             .AddField("Last check", h.LastProbeAt is { } at ? $"<t:{at.ToUnixTimeSeconds()}:T>" : "never", inline: true);
 
         if (usage.TryGetValue(server, out var u))
         {
-            embed.AddField("CPU", Cpu(u), inline: true);
-            embed.AddField("RAM", Ram(u), inline: true);
+            embed.AddField("CPU", MonitorFormat.Cpu(u), inline: true);
+            embed.AddField("RAM", MonitorFormat.Ram(u), inline: true);
             embed.AddField("Server uptime", u.Uptime is { } up ? ServerHealth.Humanize(up) : "—", inline: true);
         }
 
         return embed.AddField("Health",
-            $"RCON {Tick(Answering(h.State))}  ·  Logs {Tick(!h.LogInactiveReported)}  ·  " +
-            $"Players {Tick(h.Players is not null)}  ·  Process {Unknownable(h.ProcessRunning)}");
+            $"RCON {MonitorFormat.Tick(MonitorFormat.Answering(h.State))}  ·  Logs {MonitorFormat.Tick(!h.LogInactiveReported)}  ·  " +
+            $"Players {MonitorFormat.Tick(h.Players is not null)}  ·  Process {MonitorFormat.Unknownable(h.ProcessRunning)}");
     }
 
     private EmbedBuilder StatusOverview(IReadOnlyList<string> servers, IReadOnlyDictionary<string, UnitStats> usage)
@@ -166,28 +166,15 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl se
         {
             var h = monitor.Snapshot(s);
             var players = h.Players is { } p ? $"{p}{(h.MaxPlayers is { } m ? $"/{m}" : "")}" : "—";
-            var latency = h.Latency.Current is { } l ? Ms(l) : "—";
+            var latency = h.Latency.Current is { } l ? MonitorFormat.Ms(l) : "—";
             var box = usage.TryGetValue(s, out var u)
-                ? $" · {Cpu(u)} cpu · {Ram(u)}"
+                ? $" · {MonitorFormat.Cpu(u)} cpu · {MonitorFormat.Ram(u)}"
                 : "";
-            return $"{StateDot(h.State)} **{Sanitize.Code(s)}** — {h.State.ToString().ToUpperInvariant()} · {players} · {latency}{box}";
+            return $"{MonitorFormat.StateDot(h.State)} **{Sanitize.Code(s)}** — {h.State.ToString().ToUpperInvariant()} · {players} · {latency}{box}";
         });
 
         return Theme.Notice("Server status", string.Join("\n", lines))
             .WithFooter($"{servers.Count} server(s) · 100% cpu = one core · updated live");
-    }
-
-    private static string Cpu(UnitStats u) => u.CpuPercent is { } c ? $"{c.ToString("0.0", CultureInfo.InvariantCulture)}%" : "—";
-
-    private static string Ram(UnitStats u)
-    {
-        if (u.MemoryBytes is not { } bytes) return "—";
-        var used = $"{(bytes / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB";
-        // A limit is shown only when systemd actually caps the unit; unset reads as "infinity"
-        // and comes back null, so an uncapped server shows just its usage, not "/ ∞".
-        return u.MemoryLimitBytes is { } limit && limit > 0
-            ? $"{used} / {(limit / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB"
-            : used;
     }
 
     // ---- health history ----
@@ -221,30 +208,8 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl se
     }
 
     // ---- helpers ----
-
-    private static bool Answering(HealthState state) => state is HealthState.Online or HealthState.Degraded;
-
-    private static string StateDot(HealthState state) => state switch
-    {
-        HealthState.Online => "🟢",
-        HealthState.Degraded => "🟡",
-        HealthState.Reconnecting => "🟠",
-        HealthState.Offline => "🔴",
-        _ => "⚪",
-    };
-
-    private static Color StateColour(HealthState state) => state switch
-    {
-        HealthState.Online => Theme.Green,
-        HealthState.Degraded => Theme.Amber,
-        HealthState.Reconnecting => Theme.Amber,
-        HealthState.Offline => Theme.BanRed,
-        _ => Theme.Grey,
-    };
-
-    private static string Tick(bool ok) => ok ? "🟢" : "🔴";
-    private static string Unknownable(bool? state) => state switch { true => "🟢", false => "🔴", null => "⚪" };
-    private static string Ms(TimeSpan t) => $"{t.TotalMilliseconds.ToString("N0", CultureInfo.InvariantCulture)}ms";
+    // The state dots, colours and CPU/RAM formatting live in MonitorFormat so this command and
+    // the live board render identical health. See PavlovBot.Host.Monitoring.MonitorFormat.
 
     private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
         command.ModifyOriginalResponseAsync(m =>
