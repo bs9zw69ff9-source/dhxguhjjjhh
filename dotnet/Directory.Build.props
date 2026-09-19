@@ -15,10 +15,35 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
-    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Eastern time is a hard requirement: every printed timestamp in the bot is
          America/New_York, DST-aware. InvariantGlobalization would strip the tzdata
          needed to resolve it, so it stays off deliberately. -->
+  </PropertyGroup>
+
+  <!--
+    FULL ANALYSIS IS CI'S JOB, NOT EVERY BUILD'S.
+
+    The code-style analyzers (EnforceCodeStyleInBuild) and, on PavlovBot.Core, the AOT/trim
+    analyzers (IsAotCompatible) roughly TRIPLE the compile time - and they check guarantees
+    that only change on a pull request: does the code match house style, is Core still
+    AOT/trim-safe. Running them on every local `dotnet build` and on every deploy build on the
+    game host is minutes of the operator's time buying nothing those builds change.
+
+    So they run when FullAnalysis is true - which CI sets (see .github/workflows/test.yml) so
+    every PR is still gated on them - and are off otherwise. What stays on EVERYWHERE is the
+    part that catches bugs rather than style: TreatWarningsAsErrors and Nullable are compiler
+    features, not analyzers, so a null-as-false or an unused result is still a build failure on
+    a plain local build. Only the extra analyzer passes are deferred to CI.
+  -->
+  <PropertyGroup>
+    <FullAnalysis Condition="'$(FullAnalysis)' == ''">false</FullAnalysis>
+    <EnforceCodeStyleInBuild>$(FullAnalysis)</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(FullAnalysis)' != 'true'">
+    <!-- Explicit false wins: the SDK only defaults these from IsAotCompatible when unset. -->
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
   </PropertyGroup>
 </Project>
