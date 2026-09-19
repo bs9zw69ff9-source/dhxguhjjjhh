@@ -11,6 +11,13 @@ namespace PavlovBot.Host.Monitoring;
 public interface IMonitorAlertSink
 {
     Task PostAsync(string server, MonitorSignal signal, ServerHealth health, CancellationToken ct = default);
+
+    /// <summary>
+    /// Post a synthetic alert to prove the channel and permissions work, returning what happened
+    /// in one line for a human. This is what <c>/monitor test</c> reports, so unlike the normal
+    /// post it does NOT swallow the outcome.
+    /// </summary>
+    Task<string> TestAsync(CancellationToken ct = default);
 }
 
 /// <summary>Turns a signal into the embed staff see. Pure, so its shape is pinned by a test.</summary>
@@ -109,6 +116,35 @@ public sealed class DiscordMonitorAlertSink(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Could not post monitor alert for {Server} ({Kind})", server, signal.Kind);
+        }
+    }
+
+    public async Task<string> TestAsync(CancellationToken ct = default)
+    {
+        if (channelId is not { } channel)
+            return "No monitoring channel is configured. Set `MONITOR_ALERT_CHANNEL` in this bot's `.env`.";
+
+        try
+        {
+            if (await Gateway.GetChannelAsync(channel).ConfigureAwait(false) is not IMessageChannel target)
+                return $"Channel `{channel}` is not a text channel this bot can see. Check the ID, and that the bot is in that server.";
+
+            var signal = new MonitorSignal(SignalKind.ServerOnline, Severity.Info,
+                "Monitoring test alert - if you can see this, the channel and permissions are working. Real alerts fire only when something changes (offline, recovery, high latency, and so on).");
+            var health = ServerHealth.Initial with { State = HealthState.Online };
+
+            var ping = roleId is { } role ? $"<@&{role}>" : null;
+            var mentions = ping is null ? AllowedMentions.None : new AllowedMentions(AllowedMentionTypes.Roles);
+
+            await target.SendMessageAsync(text: ping, embed: MonitorEmbeds.For("test", signal, health),
+                allowedMentions: mentions, options: new RequestOptions { CancelToken = ct }).ConfigureAwait(false);
+
+            return $"Posted a test alert to <#{channel}>{(roleId is { } r ? $" and pinged <@&{r}>" : "")}. If it did not appear there, the bot is missing a permission in that channel.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Monitor alert test failed for channel {Channel}", channel);
+            return $"Could not post: {ex.Message}. The bot most likely lacks **Send Messages** or **Embed Links** in <#{channel}>.";
         }
     }
 }

@@ -16,7 +16,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// <c>/server</c> (the public server browser). Two <see cref="ISlashCommand"/> with one name wedge
 /// command registration - it is the monitoring picture, so it is named for that.
 /// </remarks>
-public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl service, Access access) : ISlashCommand
+public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl service, IMonitorAlertSink alerts, Access access) : ISlashCommand
 {
     public string Name => "monitor";
     public bool Ephemeral => true;
@@ -39,6 +39,9 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl se
                 .WithName("health").WithDescription("Health statistics over the last 24 hours")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(ServerOption()))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("test").WithDescription("Admin - post a test alert to the monitoring channel")
+                .WithType(ApplicationCommandOptionType.SubCommand))
             .Build();
     }
 
@@ -53,6 +56,21 @@ public sealed class ServerStatusCommand(ServerMonitor monitor, ServiceControl se
         }
 
         var sub = command.Data.Options.FirstOrDefault();
+
+        if (sub?.Name == "test")
+        {
+            // Admin, because it pings the alert role and posts to the staff channel.
+            if (!access.Allows(RequiredAccess.Admin, command))
+            {
+                await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
+                return;
+            }
+
+            var result = await alerts.TestAsync(ct).ConfigureAwait(false);
+            await Reply(command, Theme.Notice("Monitoring alert test", result)).ConfigureAwait(false);
+            return;
+        }
+
         var wanted = Sanitize.Id(sub?.Options.FirstOrDefault(o => o.Name == "server")?.Value as string ?? "");
 
         var servers = monitor.Servers.ToList();
