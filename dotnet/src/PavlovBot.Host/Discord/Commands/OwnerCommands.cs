@@ -462,7 +462,7 @@ public sealed class InspectCommand(
         var ban = bans.ActiveBans().FirstOrDefault(b => BanRules.SamePlayer(b.PlayerId, player));
         embed.AddField("Ban", ban is null
             ? "Not banned"
-            : $"{Sanitize.Code(ban.Reason ?? "no reason")} — {(ban.Permanent ? "permanent" : $"expires {Theme.Relative(ban.Expires!.Value)}")}");
+            : $"{Sanitize.Code(Sanitize.RedactPrivate(ban.Reason ?? "no reason"))} — {(ban.Permanent ? "permanent" : $"expires {Theme.Relative(ban.Expires!.Value)}")}");
 
         var history = audit.Against(player).Take(5).ToList();
         if (history.Count > 0)

@@ -253,7 +253,7 @@ public sealed class PlayerProfileCommand(PlayerIntelligenceService intelligence,
         }
 
         embed.AddField("Linked accounts", Theme.Paginate(p.Associations.Select(a =>
-            $"{(a.Banned ? Theme.Deny : Theme.Dot)} `{Sanitize.Code(a.Name)}` — {a.Reason}" +
+            $"{(a.Banned ? Theme.Deny : Theme.Dot)} `{Sanitize.Code(a.Name)}` — {Sanitize.RedactPrivate(a.Reason)}" +
             (a.Banned ? " **(banned)**" : "")))[0]);
 
         /* THE CAVEAT IS NOT OPTIONAL. This panel is the one most likely to be screenshotted

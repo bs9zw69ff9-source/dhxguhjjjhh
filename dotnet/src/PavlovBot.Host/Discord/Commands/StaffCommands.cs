@@ -74,7 +74,7 @@ public sealed class StaffActivityCommand(AuditLog audit, Access access) : ISlash
 
         var recent = actions.Take(10)
             .Select(a => $"{Theme.Relative(a.At)} — `{a.Action}` **{Sanitize.Code(a.Player)}**" +
-                         (a.Reason is { Length: > 0 } r ? $" — {Sanitize.Code(r)}" : ""));
+                         (a.Reason is { Length: > 0 } r ? $" — {Sanitize.Code(Sanitize.RedactPrivate(r))}" : ""));
 
         await Reply(command, Theme.Notice($"{staff.Username} — {actions.Count} action(s)", string.Join("  ", byKind))
             .AddField("Most recent", string.Join("\n", recent))).ConfigureAwait(false);
@@ -153,7 +153,7 @@ public sealed class BanListCommand(BanService bans) : ISlashCommand
             .OrderByDescending(b => b.Permanent)
             .ThenBy(b => b.Expires ?? DateTimeOffset.MaxValue)
             .Select(b =>
-                $"`{Sanitize.Code(b.PlayerId)}` — {Sanitize.Code(b.Reason ?? "no reason")}\n" +
+                $"`{Sanitize.Code(b.PlayerId)}` — {Sanitize.Code(Sanitize.RedactPrivate(b.Reason ?? "no reason"))}\n" +
                 $"{Theme.Dot} {(b.Permanent ? "**Permanent**" : $"expires {Theme.Relative(b.Expires!.Value)}")}" +
                 $" · by {b.Moderator ?? "unknown"}");
 

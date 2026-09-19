@@ -43,7 +43,7 @@ internal static class BanFileReport
             BanFileStatus.Read when lookup.Entry is { } entry =>
                 $"{Theme.Deny} **The server's own ban file lists them** ({file}). Pavlov reads it " +
                 $"directly, so they are refused in game whatever this bot says.\n" +
-                $"In the file: {Sanitize.Code(entry.Reason)} — {Sanitize.Code(entry.Unban)}",
+                $"In the file: {Sanitize.Code(Sanitize.RedactPrivate(entry.Reason))} — {Sanitize.Code(entry.Unban)}",
 
             BanFileStatus.Read =>
                 $"{Theme.Ok} Not in the server's own ban file either ({file}).",
@@ -170,7 +170,7 @@ public abstract class BanCommandBase : ISlashCommand
 
         var embed = Theme.Punishment(
             permanent ? $"{Theme.Deny} Exiled from {Lore.World}" : $"{Theme.Deny} Run out of {Lore.World}",
-            $"**{Sanitize.Code(name)}** — {Sanitize.Code(record.Reason ?? "no reason given")}")
+            $"**{Sanitize.Code(name)}** — {Sanitize.Code(Sanitize.RedactPrivate(record.Reason ?? "no reason given"))}")
             .AddField("Length", permanent ? "Permanent" : $"{record.DurationLabel} (until {Theme.Relative(record.Expires!.Value)})", true)
             .AddField("Issued by", command.User.Username, true);
 
@@ -333,7 +333,7 @@ public sealed class UnbanCommand(
             await Reply(command, Theme.Success("Removed from the server's ban file",
                     $"**{Sanitize.Code(player)}** had no record with this bot. The server's own ban " +
                     $"file listed them, and that entry is now gone.")
-                .AddField("Was", $"{Sanitize.Code(listed.Entry.Reason)} — {Sanitize.Code(listed.Entry.Unban)}")
+                .AddField("Was", $"{Sanitize.Code(Sanitize.RedactPrivate(listed.Entry.Reason))} — {Sanitize.Code(listed.Entry.Unban)}")
                 .AddField("File", $"`{Sanitize.Code(listed.Path ?? "unknown")}`")
                 .AddField("Lifted by", command.User.Username, true)
                 .Brand()).ConfigureAwait(false);
@@ -361,7 +361,7 @@ public sealed class UnbanCommand(
         await Audit.RecordAsync("unban", command.User.Username, player, existing.Reason, ct).ConfigureAwait(false);
 
         var embed = Theme.Success("Exile lifted", $"**{Sanitize.Code(player)}** may walk back in.")
-            .AddField("Was", $"{Sanitize.Code(existing.Reason ?? "no reason recorded")} — by {existing.Moderator ?? "unknown"}")
+            .AddField("Was", $"{Sanitize.Code(Sanitize.RedactPrivate(existing.Reason ?? "no reason recorded"))} — by {existing.Moderator ?? "unknown"}")
             .AddField("Lifted by", command.User.Username, true);
 
         if (!result.Landed)
@@ -420,7 +420,9 @@ public sealed class CheckBanCommand(
         }
 
         var embed = Theme.Punishment($"{Theme.Deny} Exiled", $"**{Sanitize.Code(player)}**")
-            .AddField("Reason", Sanitize.Code(record.Reason ?? "none recorded"))
+            // Redacted: an auto-ban reason embeds the address or account id that triggered it
+            // ("blacklisted ip 1.2.3.4"), and /checkban is not an address-viewing command.
+            .AddField("Reason", Sanitize.Code(Sanitize.RedactPrivate(record.Reason ?? "none recorded")))
             .AddField("By", record.Moderator ?? "unknown", true)
             .AddField("Since", record.At is { } at ? Theme.Relative(at) : "unknown", true)
             .AddField("Expires", record.Permanent ? "Never" : Theme.Relative(record.Expires!.Value), true);
@@ -452,7 +454,7 @@ public sealed class CheckBanCommand(
                 n => Tracking.AccountByName(n)?.Id, account?.Names);
 
             embed.AddField("Original offence", source is not null
-                ? $"{Sanitize.Code(source.Reason!)} — by {source.Moderator}"
+                ? $"{Sanitize.Code(Sanitize.RedactPrivate(source.Reason!))} — by {source.Moderator}"
                 : "Ban evasion (no earlier record found)");
         }
 
