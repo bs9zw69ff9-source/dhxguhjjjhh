@@ -423,13 +423,11 @@ public sealed class ServerBanFile(
                        ban, and dropping it would be far worse than showing it awkwardly. */
                     PlayerId = player,
 
-                    /* THE ID IS KEPT, not spent on producing the name. Pavlov's Ban, Kick and
-                       Unban all take a UniqueId - a name is accepted and silently does nothing
-                       - so a record carrying only the resolved name relies on the account
-                       registry still knowing that name when somebody comes to lift it. This is
-                       the id straight from the file, and it is set only when resolution
-                       actually happened: an unresolved entry could be either an id or a name,
-                       and guessing is what the existing lookup fallback is for. */
+                    /* THE ID IS KEPT for the evasion flags and evidence, which key on the
+                       account id even though Shack's Ban/Kick/Unban target the NAME. It is the
+                       id straight from the file, set only when resolution actually happened: an
+                       unresolved entry could be either an id or a name, and guessing is what the
+                       existing lookup fallback is for. */
                     UniqueId = resolved ? entry.Name : null,
                     Reason = reason,
                     Moderator = "in-game",
