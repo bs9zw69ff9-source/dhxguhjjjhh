@@ -31,37 +31,38 @@ namespace PavlovBot.Host.Discord.Commands;
 /// </remarks>
 internal static class BanFileReport
 {
-    /// <summary>The line to add under "not banned by this bot".</summary>
-    public static string Describe(BanFileLookup lookup)
+    /// <summary>
+    /// An extra line to add under "not banned", or null when there is nothing worth saying.
+    /// </summary>
+    /// <remarks>
+    /// TERSE ON THE CLEAN ANSWER. "Not banned, and not in the server file either, at
+    /// /home/steam/.../blacklist.txt" is noise: the moderator asked one yes/no question and got
+    /// one yes/no answer, so the clean case returns null and the caller says only "not banned".
+    /// The line is kept ONLY where it changes the answer: the player IS in the server's own file
+    /// (still banned in game) or the file could not be read (the answer is not trustworthy).
+    /// </remarks>
+    public static string? Describe(BanFileLookup lookup)
     {
         ArgumentNullException.ThrowIfNull(lookup);
 
-        var file = lookup.Path is { Length: > 0 } p ? $"`{Sanitize.Code(p)}`" : "the server's ban file";
-
         return lookup.Status switch
         {
+            // In the server's own file but not the bot's store: still banned in game. Worth saying.
             BanFileStatus.Read when lookup.Entry is { } entry =>
-                $"{Theme.Deny} **The server's own ban file lists them** ({file}). Pavlov reads it " +
-                $"directly, so they are refused in game whatever this bot says.\n" +
-                $"In the file: {Sanitize.Code(Sanitize.RedactPrivate(entry.Reason))} — {Sanitize.Code(entry.Unban)}",
+                $"{Theme.Deny} The server's ban file still lists them, so they're banned in game: " +
+                $"{Sanitize.Code(Sanitize.RedactPrivate(entry.Reason))} — {Sanitize.Code(entry.Unban)}",
 
-            BanFileStatus.Read =>
-                $"{Theme.Ok} Not in the server's own ban file either ({file}).",
+            // Read, not listed: the clean case. Say nothing extra.
+            BanFileStatus.Read => null,
 
-            /* NOT "they are not banned". The file is the half of the answer that could not be
-               read, and saying nothing about that is how a wrong path stays invisible for
-               weeks while players insist they are still locked out. */
+            // The file could not be checked, so "not banned" is not trustworthy - kept short.
             BanFileStatus.Missing =>
-                $"{Theme.Warn} {file} **does not exist**, so this cannot say what the server is " +
-                "enforcing. Point `BLACKLIST_PATH` at the real one.",
+                $"{Theme.Warn} Couldn't check the server's ban file (missing) - set `BLACKLIST_PATH`.",
 
             BanFileStatus.Unreadable =>
-                $"{Theme.Warn} {file} **could not be read** - check its permissions. If they are " +
-                "still refused in game, that file is why.",
+                $"{Theme.Warn} Couldn't read the server's ban file - check its permissions.",
 
-            _ =>
-                $"{Theme.Warn} No ban file is configured, so this cannot see what the server " +
-                "enforces. Set `BLACKLIST_PATH`.",
+            _ => null,
         };
     }
 }
@@ -320,8 +321,9 @@ public sealed class UnbanCommand(
 
             if (!listed.Listed)
             {
+                var note = BanFileReport.Describe(listed);
                 await Reply(command, Theme.Notice("No ban to lift",
-                    $"**{Sanitize.Code(player)}** is not banned by this bot.\n\n{BanFileReport.Describe(listed)}"))
+                    $"**{Sanitize.Code(player)}** is not banned{(note is null ? "." : $".\n\n{note}")}"))
                     .ConfigureAwait(false);
                 return;
             }
@@ -400,7 +402,8 @@ public sealed class CheckBanCommand(
             /* The file is read rather than described. "Not banned by this bot" was answering a
                narrower question than the one being asked, every time. */
             var listed = await banFile.FindAsync(player, ct).ConfigureAwait(false);
-            var body = $"**{Sanitize.Code(player)}** is not banned by this bot.\n\n{BanFileReport.Describe(listed)}";
+            var note = BanFileReport.Describe(listed);
+            var body = $"**{Sanitize.Code(player)}** is not banned{(note is null ? "." : $".\n\n{note}")}";
 
             await Reply(command, listed.Listed
                 ? Theme.Punishment($"{Theme.Deny} Exiled by the server", body)
