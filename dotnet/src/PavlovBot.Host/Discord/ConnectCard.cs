@@ -52,7 +52,8 @@ public static class ConnectCard
         VpnRecord? vpn,
         bool flagged,
         bool master,
-        DateTimeOffset at)
+        DateTimeOffset at,
+        string? mapAttachment = null)
     {
         ArgumentNullException.ThrowIfNull(alts);
 
@@ -125,6 +126,12 @@ public static class ConnectCard
         Add("Location", Location(vpn, ip));
 
         Add("Recent addresses", Addresses(account));
+
+        // A location map, when one was rendered and uploaded alongside this card. The image
+        // travels as an attachment (never a URL), so this points at the file in the same
+        // message - see StaticMap for why the URL, which carries the API key, must not.
+        if (mapAttachment is { Length: > 0 })
+            embed.WithImageUrl($"attachment://{mapAttachment}");
 
         return embed.Brand($"Arrival log — {EasternTime.Stamp(at)} Eastern").Build();
     }

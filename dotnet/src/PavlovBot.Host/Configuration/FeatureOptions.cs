@@ -111,6 +111,19 @@ public sealed record FeatureOptions
     public string? ConnectWebhook { get; init; }
 
     /// <summary>
+    /// Attach a Geoapify location map image to each connection card.
+    /// </summary>
+    /// <remarks>
+    /// OPT-IN, and off by default, because it costs one Geoapify API call PER CONNECTION - a
+    /// having-a-key deployment that only wanted the map for <c>/iplookup</c> must not silently
+    /// start spending its quota on every join. Needs <c>GEOAPIFY_API_KEY</c> set (no key, no
+    /// map, and this flag does nothing). The map is rendered inline before the card is posted,
+    /// so a busy connection feed also pays the render latency; a map service outage just drops
+    /// the picture and posts the card without it.
+    /// </remarks>
+    public bool ConnectFeedMap { get; init; }
+
+    /// <summary>
     /// Staff actions as they happen. A private staff channel - these name the staffer,
     /// the target and the reason.
     /// </summary>
@@ -439,6 +452,7 @@ public sealed record FeatureOptions
                channel; JOIN is the plain public log. The port read CONNECT into the join
                feed and never read JOIN_WEBHOOK_URL at all. */
             ConnectWebhook = Text(configuration, "CONNECT_WEBHOOK_URL"),
+            ConnectFeedMap = OptionalFlag(configuration, "CONNECT_FEED_MAP") == true,
             StaffWebhook = Text(configuration, "STAFF_WEBHOOK_URL"),
             ModLogChannel = Snowflake(configuration, "MOD_LOG_CHANNEL"),
             BotName = Text(configuration, "BOT_NAME"),
@@ -635,7 +649,9 @@ public sealed record FeatureOptions
                 : $"{(MonitorBoardEnabled ? "live board in" : "per-event alerts to")} channel {MonitorAlertChannel}{(MonitorAlertRole is null ? "" : $", pinging role {MonitorAlertRole}")}, checked every {MonitorSettings.CheckInterval.TotalSeconds:0}s")}",
         $"player-count channels: {(PlayerCountChannels.Count == 0 ? "off (PLAYER_COUNT_CHANNELS not set)" : $"{PlayerCountChannels.Count} configured")}",
         $"shack total channel: {(ShackTotalChannel is null ? "off (SHACK_TOTAL_CHANNEL not set)" : $"channel {ShackTotalChannel}")}",
-        $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
+        $"connect feed: {(ConnectWebhook is null
+            ? "off (CONNECT_WEBHOOK_URL not set)"
+            : $"on{(ConnectFeedMap ? (GeoapifyKey is null ? " (CONNECT_FEED_MAP set but no GEOAPIFY_API_KEY - no map)" : " + location map") : "")}")}",
         $"staff feed: {(StaffWebhook is null ? "off (STAFF_WEBHOOK_URL not set)" : "on")}",
         $"staff log channels: {(ModLogChannel is null && BanLogChannel is null ? "off (MOD_LOG_CHANNEL / BAN_LOG_CHANNEL not set)" : $"mod {ModLogChannel?.ToString(CultureInfo.InvariantCulture) ?? "unset"}, ban {BanLogChannel?.ToString(CultureInfo.InvariantCulture) ?? "unset"}")}",
         $"menu panel: {(MenuPanelChannel is null
