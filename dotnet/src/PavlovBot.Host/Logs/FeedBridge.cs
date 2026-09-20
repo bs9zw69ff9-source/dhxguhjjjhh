@@ -342,14 +342,17 @@ public sealed class FeedBridge
         /* The location map, when it is turned on and there is a place to draw. Rendered BEFORE
            the card is built so the card can point its image at the attachment, and best-effort
            in every direction: a private/unlocatable address or a map-service failure just means
-           no picture and the card posts without one. It costs a Geoapify call per connection,
-           which is why _connectMap gates it. */
+           no picture and the card posts without one.
+
+           KEYED BY IP so the map is rendered ONCE per address and reused on every later
+           connection from it - the card still goes out each time, but Geoapify is called only
+           for an IP it has not drawn before. That keeps the per-connection feed off the quota. */
         byte[]? mapImage = null;
         const string mapFile = "location.png";
         if (_connectMap && _map is not null &&
             screening is { Local: false, Latitude: { } lat, Longitude: { } lon })
         {
-            mapImage = await _map.RenderAsync(lat, lon, CancellationToken.None).ConfigureAwait(false);
+            mapImage = await _map.RenderForAsync(confirmed.Ip, lat, lon, CancellationToken.None).ConfigureAwait(false);
         }
 
         Embed card;
