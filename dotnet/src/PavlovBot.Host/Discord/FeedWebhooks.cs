@@ -207,6 +207,41 @@ public sealed class FeedWebhooks : IAsyncDisposable
         _ = ct;
     }
 
+    /// <summary>
+    /// Post an embed with an image UPLOADED as an attachment, not linked.
+    /// </summary>
+    /// <remarks>
+    /// The connect card uses this to carry a Geoapify map. The image is uploaded as bytes and
+    /// the embed points at it with <c>attachment://</c> for the same reason the StaticMap type
+    /// spells out: the render URL holds the API key, so linking it would publish the key to
+    /// everyone who can read the message. The embed must already reference <paramref name="fileName"/>.
+    /// </remarks>
+    public async Task PostEmbedWithImageAsync(string label, Embed embed, byte[] image, string fileName, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (Client(label) is not { } client) return;
+
+        try
+        {
+            using var stream = new MemoryStream(image);
+            await client.SendFileAsync(stream, fileName, text: "", embeds: [embed],
+                allowedMentions: AllowedMentions.None).ConfigureAwait(false);
+            _metrics.Increment("feed_posts_total", MetricLabels.Of("feed", label), help: "Feed lines posted");
+
+            if (_confirmed.TryAdd(label, true))
+            {
+                _status[label] = "delivering";
+                _logger.LogInformation("{Label} feed confirmed - first line delivered", label);
+            }
+        }
+        catch (Exception ex)
+        {
+            Failed(label, ex);
+        }
+
+        _ = ct;
+    }
+
     // ---- the feeds ----
 
     /// <summary>
