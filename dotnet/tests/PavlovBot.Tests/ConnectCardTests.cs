@@ -235,23 +235,6 @@ public class ConnectCardTests
     }
 
     [Fact]
-    public void AMapAttachmentPointsTheCardImageAtTheUploadedFile()
-    {
-        // With a map, the embed image points at the attachment in the same message, never a URL
-        // (the render URL holds the API key - see StaticMap).
-        var withMap = ConnectCard.Build("Pkdestroy", "76561198000000001", "203.0.113.9", true,
-            "server1", null, [], Screened(), flagged: false, master: false, DateTimeOffset.UtcNow,
-            mapAttachment: "location.png");
-        Assert.Equal("attachment://location.png", withMap.Image?.Url);
-
-        // Without one, the card carries no image, so it never points at a file that was not
-        // uploaded (which would render as a broken image).
-        var withoutMap = ConnectCard.Build("Pkdestroy", "76561198000000001", "203.0.113.9", true,
-            "server1", null, [], Screened(), flagged: false, master: false, DateTimeOffset.UtcNow);
-        Assert.Null(withoutMap.Image);
-    }
-
-    [Fact]
     public void TheCardStaysValidWhenEveryFieldIsAtItsWorst()
     {
         /* Exceeding Discord's 6000 TOTAL is a different exception from the same Build() call

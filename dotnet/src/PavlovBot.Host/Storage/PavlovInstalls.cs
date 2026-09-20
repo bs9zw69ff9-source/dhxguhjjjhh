@@ -70,6 +70,14 @@ public static class PavlovInstalls
     public static string WhitelistPath(string installRoot) =>
         Path.Combine(installRoot, "Pavlov", "Saved", "Config", "whitelist.txt");
 
+    /// <summary>The <c>Pavlov.log</c> the server writes, inside an install.</summary>
+    /// <remarks>
+    /// Every install writes its own, so a bot that tails one install's log sees only that
+    /// server's joins, kills and connections - the others are invisible.
+    /// </remarks>
+    public static string LogPath(string installRoot) =>
+        Path.Combine(installRoot, "Pavlov", "Saved", "Logs", "Pavlov.log");
+
     /// <summary>The blacklist (ban) file the server reads, inside an install.</summary>
     /// <remarks>
     /// Config/blacklist.txt, the same file <see cref="WhitelistPath"/> sits beside - NOT the

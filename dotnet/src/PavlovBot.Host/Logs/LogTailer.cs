@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Logs;
 
@@ -209,7 +210,8 @@ public sealed class LogTailer
     /// an old install reads nothing forever - so only paths that exist are returned, and
     /// which ones were found is logged.
     /// </remarks>
-    public static IReadOnlyList<string> Discover(string? configured, ILogger? logger = null)
+    public static IReadOnlyList<string> Discover(
+        string? configured, ILogger? logger = null, IReadOnlyList<string>? installRoots = null)
     {
         if (!string.IsNullOrWhiteSpace(configured))
         {
@@ -242,13 +244,25 @@ public sealed class LogTailer
             return paths;
         }
 
+        /* ONE LOG PER INSTALL, discovered the SAME way the ban files and whitelists are - the
+           hardcoded list this replaces named pavlovserver and pavlovserver2 but not
+           pavlovserver1, so a three-server box tailed at most two of them and the middle
+           server's joins, kills and connections were silently invisible. Fall back to the old
+           fixed guesses only when no install roots were supplied (older callers, tests). */
         var tail = Path.Combine("Pavlov", "Saved", "Logs", "Pavlov.log");
-        var candidates = new[]
-        {
-            Path.Combine("/home/steam/pavlovserver", tail),
-            Path.Combine("/home/steam/pavlovserver2", tail),
-            Path.Combine("/opt/pavlovserver", tail),
-        }.Where(File.Exists).ToList();
+
+        var candidates = (installRoots is { Count: > 0 }
+                ? installRoots.Select(PavlovInstalls.LogPath)
+                : new[]
+                {
+                    Path.Combine("/home/steam/pavlovserver", tail),
+                    Path.Combine("/home/steam/pavlovserver1", tail),
+                    Path.Combine("/home/steam/pavlovserver2", tail),
+                    Path.Combine("/opt/pavlovserver", tail),
+                })
+            .Distinct(StringComparer.Ordinal)
+            .Where(File.Exists)
+            .ToList();
 
         if (candidates.Count > 0) logger?.LogInformation("Found {Count} Pavlov log(s): {Paths}", candidates.Count, string.Join(", ", candidates));
         else logger?.LogWarning("No Pavlov.log found and PAVLOV_LOGS is not set - log-derived features are off");

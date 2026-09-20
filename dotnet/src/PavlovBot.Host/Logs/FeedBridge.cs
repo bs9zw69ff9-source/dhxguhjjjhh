@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using Discord;
 using Microsoft.Extensions.Logging;
-using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Core.Vpn;
 using PavlovBot.Host.Moderation;
@@ -39,8 +38,6 @@ public sealed class FeedBridge
     private readonly IMasterNames? _masters;
     private readonly VpnResponder? _vpnBans;
     private readonly ServerLabels _servers;
-    private readonly StaticMap? _map;
-    private readonly bool _connectMap;
     private readonly ILogger<FeedBridge> _logger;
 
     /// <summary>
@@ -101,9 +98,7 @@ public sealed class FeedBridge
         IMasterNames? masters = null,
         VpnResponder? vpnBans = null,
         SecurityAlerts? alerts = null,
-        Stats.KillStats? killStats = null,
-        StaticMap? map = null,
-        FeatureOptions? options = null)
+        Stats.KillStats? killStats = null)
     {
         _alerts = alerts;
         _killStats = killStats;
@@ -113,9 +108,6 @@ public sealed class FeedBridge
         _vpnBans = vpnBans;
         _feeds = feeds;
         _servers = servers;
-        _map = map;
-        // Only render a per-connection map when explicitly asked AND a map service exists.
-        _connectMap = (options?.ConnectFeedMap ?? false) && map is not null;
         _vpn = vpn;
         _logger = logger;
 
@@ -339,22 +331,6 @@ public sealed class FeedBridge
                       flags.Ids.Contains(confirmed.AccountId) ||
                       flags.Names.Contains(name);
 
-        /* The location map, when it is turned on and there is a place to draw. Rendered BEFORE
-           the card is built so the card can point its image at the attachment, and best-effort
-           in every direction: a private/unlocatable address or a map-service failure just means
-           no picture and the card posts without one.
-
-           KEYED BY IP so the map is rendered ONCE per address and reused on every later
-           connection from it - the card still goes out each time, but Geoapify is called only
-           for an IP it has not drawn before. That keeps the per-connection feed off the quota. */
-        byte[]? mapImage = null;
-        const string mapFile = "location.png";
-        if (_connectMap && _map is not null &&
-            screening is { Local: false, Latitude: { } lat, Longitude: { } lon })
-        {
-            mapImage = await _map.RenderForAsync(confirmed.Ip, lat, lon, CancellationToken.None).ConfigureAwait(false);
-        }
-
         Embed card;
         try
         {
@@ -366,8 +342,7 @@ public sealed class FeedBridge
                 vpn: screening,
                 flagged: flagged,
                 master: _masters?.IsMaster(name) ?? false,
-                at: confirmed.At,
-                mapAttachment: mapImage is not null ? mapFile : null);
+                at: confirmed.At);
         }
         catch (Exception ex)
         {
@@ -377,9 +352,7 @@ public sealed class FeedBridge
             return;
         }
 
-        await Safe(() => mapImage is not null
-            ? _feeds.PostEmbedWithImageAsync(FeedWebhooks.Connect, card, mapImage, mapFile)
-            : _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
+        await Safe(() => _feeds.PostEmbedAsync(FeedWebhooks.Connect, card)).ConfigureAwait(false);
     }
 
     /// <summary>
