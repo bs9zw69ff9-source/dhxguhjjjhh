@@ -57,7 +57,21 @@ public sealed record FeatureOptions
     public bool? SystemctlSudo { get; init; }
 
     /// <summary>The game's own ban-list file - the message a banned player sees.</summary>
+    /// <remarks>The FIRST of <see cref="BanFilePaths"/>, kept for the startup summary and for
+    /// anything that only needs to name one file.</remarks>
     public string? BanFilePath { get; init; }
+
+    /// <summary>
+    /// Every install's ban file, so a ban or unban reaches all of them.
+    /// </summary>
+    /// <remarks>
+    /// AUTO-DISCOVERED from the installs unless <c>BLACKLIST_PATH</c> is set explicitly, in
+    /// which case that single file is honoured exactly - someone who named a path meant that
+    /// path. Multiple servers on one box each read their OWN Config/blacklist.txt, so unbanning
+    /// on one while leaving the others listed is how a lifted player is refused by server 2 and
+    /// re-banned when it restarts. Empty when <c>BLACKLIST_SYNC=false</c>.
+    /// </remarks>
+    public IReadOnlyList<string> BanFilePaths { get; init; } = [];
 
     /// <summary>
     /// A retired MODSAVE_BLACKLIST_PATH found in the environment, so startup can say it is
@@ -435,12 +449,8 @@ public sealed record FeatureOptions
                erase each other's bans every five minutes - which is why SECOND-BOT.md tells
                the clone not to manage it. Its instruction was to leave the path blank, and
                blank has never disabled anything: the default fills it in. */
-            BanFilePath = OptionalFlag(configuration, "BLACKLIST_SYNC") == false
-                ? null
-                : Text(configuration, "BLACKLIST_PATH")
-                    ?? System.IO.Path.Combine(
-                        Text(configuration, "PAVLOV_BASE_1") ?? "/home/steam/pavlovserver",
-                        "Pavlov", "Saved", "Config", "blacklist.txt"),
+            BanFilePath = BanFilePathsFor(configuration) is [var primary, ..] ? primary : null,
+            BanFilePaths = BanFilePathsFor(configuration),
 
             IgnoredBanFilePath = Text(configuration, "MODSAVE_BLACKLIST_PATH"),
 
@@ -548,6 +558,33 @@ public sealed record FeatureOptions
 
     private static string? Text(IConfiguration configuration, string key) =>
         configuration[key]?.Trim() is { Length: > 0 } value ? value : null;
+
+    /// <summary>
+    /// Every ban file to keep in sync: none when disabled, the one explicit path when set, or
+    /// one per discovered install otherwise. See <see cref="BanFilePaths"/>.
+    /// </summary>
+    private static IReadOnlyList<string> BanFilePathsFor(IConfiguration configuration)
+    {
+        if (OptionalFlag(configuration, "BLACKLIST_SYNC") == false) return [];
+
+        // An explicit BLACKLIST_PATH is honoured exactly - one file, as it always was.
+        if (Text(configuration, "BLACKLIST_PATH") is { } explicitPath) return [explicitPath];
+
+        // Otherwise every install on the box gets its own Config/blacklist.txt covered.
+        var installs = PavlovBot.Host.Storage.PavlovInstalls.Discover(
+            Text(configuration, "PAVLOV_BASES"),
+            Text(configuration, "PAVLOV_BASE_1") ?? "/home/steam/pavlovserver");
+
+        var paths = installs
+            .Select(PavlovBot.Host.Storage.PavlovInstalls.BlacklistPath)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return paths.Count > 0
+            ? paths
+            : [PavlovBot.Host.Storage.PavlovInstalls.BlacklistPath("/home/steam/pavlovserver")];
+    }
 
     /// <summary>
     /// An opt-in switch. Anything that is not affirmative is off.

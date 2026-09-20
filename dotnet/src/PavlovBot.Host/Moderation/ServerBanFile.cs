@@ -62,20 +62,33 @@ public sealed record BanFileLookup(BanFileStatus Status, string? Path, BanFileEn
 /// sync rather than only on change.
 /// </remarks>
 public sealed class ServerBanFile(
-    string? path, SerializedStore store, ILogger<ServerBanFile> logger, TimeProvider? time = null,
+    IReadOnlyList<string> paths, SerializedStore store, ILogger<ServerBanFile> logger, TimeProvider? time = null,
     Func<string, string?>? resolveName = null,
     Storage.GameFileGuard? guard = null) : IBanFileExport
 {
+    /// <summary>
+    /// Single-file constructor, kept so every existing caller and test that manages ONE
+    /// blacklist keeps compiling and behaving exactly as before. A blank path is "no file".
+    /// </summary>
+    public ServerBanFile(
+        string? path, SerializedStore store, ILogger<ServerBanFile> logger, TimeProvider? time = null,
+        Func<string, string?>? resolveName = null, Storage.GameFileGuard? guard = null)
+        : this(string.IsNullOrWhiteSpace(path) ? [] : [path], store, logger, time, resolveName, guard) { }
+
+    private readonly IReadOnlyList<string> _paths = paths ?? [];
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly Storage.GameFileGuard _guard = guard ?? Storage.GameFileGuard.None;
 
-    /// <summary>Said once. This runs on a timer, and a wrong path is wrong every tick.</summary>
-    private bool _pathWarned;
+    /// <summary>Said once PER FILE. This runs on a timer, and a wrong path is wrong every tick.</summary>
+    private readonly HashSet<string> _pathsWarned = new(StringComparer.Ordinal);
 
-    public bool Enabled => !string.IsNullOrWhiteSpace(path);
+    public bool Enabled => _paths.Count > 0;
 
-    /// <summary>The file this syncs, so a command can name it rather than describe it.</summary>
-    public string? Path => path;
+    /// <summary>Every file this syncs, so a ban or unban reaches all of them.</summary>
+    public IReadOnlyList<string> Paths => _paths;
+
+    /// <summary>The first file this syncs, so a command can name it rather than describe it.</summary>
+    public string? Path => _paths.Count > 0 ? _paths[0] : null;
 
     /// <summary>
     /// What the server's own ban file says about one player.
@@ -95,25 +108,43 @@ public sealed class ServerBanFile(
     {
         ArgumentNullException.ThrowIfNull(player);
 
-        if (!Enabled) return new BanFileLookup(BanFileStatus.Disabled, path, null);
-        if (!File.Exists(path)) return new BanFileLookup(BanFileStatus.Missing, path, null);
+        if (!Enabled) return new BanFileLookup(BanFileStatus.Disabled, null, null);
 
-        IReadOnlyList<BanFileEntry> parsed;
-        try
+        /* ACROSS EVERY SERVER'S FILE. A player listed on ANY install is refused there, so the
+           first file that names them is the answer; a status is only "Read" (trustworthy
+           "not listed") once at least one file was actually read. "Missing everywhere" and
+           "unreadable" are kept distinct, because a wrong path and a permissions problem are
+           different fixes. */
+        var best = BanFileStatus.Missing;
+        string? bestPath = _paths.Count > 0 ? _paths[0] : null;
+
+        foreach (var one in _paths)
         {
-            parsed = Parse(await File.ReadAllTextAsync(path!, ct).ConfigureAwait(false));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger.LogWarning(ex, "Could not read the server ban file {Path}", path);
-            return new BanFileLookup(BanFileStatus.Unreadable, path, null);
+            if (!File.Exists(one)) continue;
+
+            IReadOnlyList<BanFileEntry> parsed;
+            try
+            {
+                parsed = Parse(await File.ReadAllTextAsync(one, ct).ConfigureAwait(false));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(ex, "Could not read the server ban file {Path}", one);
+                if (best != BanFileStatus.Read) { best = BanFileStatus.Unreadable; bestPath = one; }
+                continue;
+            }
+
+            var match = parsed.FirstOrDefault(e =>
+                BanRules.SamePlayer(e.Name, player) ||
+                BanRules.SamePlayer(ResolveName(e.Name, resolveName), player));
+
+            if (match is not null) return new BanFileLookup(BanFileStatus.Read, one, match);
+
+            best = BanFileStatus.Read;   // read successfully, just not listed here
+            bestPath = one;
         }
 
-        var match = parsed.FirstOrDefault(e =>
-            BanRules.SamePlayer(e.Name, player) ||
-            BanRules.SamePlayer(ResolveName(e.Name, resolveName), player));
-
-        return new BanFileLookup(BanFileStatus.Read, path, match);
+        return new BanFileLookup(best, bestPath, null);
     }
 
     /// <summary>
@@ -148,31 +179,39 @@ public sealed class ServerBanFile(
                 .Append("\n\n");
         }
 
-        /* NOT CreateDirectory. This lives in a directory the game owns and already made, so
-           a missing one means the path is wrong - and building it produces a second ModSave
-           tree beside the real one that the game never reads. */
-        if (_guard.Problem(path) is { } problem)
+        // The SAME body to EVERY server's file, so a ban or unban lands on all of them and
+        // the three files stay identical. One file's failure does not stop the others.
+        var text = body.ToString();
+        var wrote = false;
+
+        foreach (var one in _paths)
         {
-            if (!_pathWarned)
+            /* NOT CreateDirectory. This lives in a directory the game owns and already made,
+               so a missing one means the path is wrong - and building it produces a second
+               ModSave tree beside the real one that the game never reads. Warned once per
+               file, because this runs on a timer and a wrong path is wrong every tick. */
+            if (_guard.Problem(one) is { } problem)
             {
-                _pathWarned = true;
-                logger.LogError("Not writing the server ban file: {Problem}", problem);
+                if (_pathsWarned.Add(one))
+                    logger.LogError("Not writing the server ban file {Path}: {Problem}", one, problem);
+                continue;
             }
-            return 0;
+
+            try
+            {
+                var temp = $"{one}.tmp";
+                await File.WriteAllTextAsync(temp, text, ct).ConfigureAwait(false);
+                File.Move(temp, one, overwrite: true);
+                wrote = true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(ex, "Could not write the server ban file {Path}", one);
+            }
         }
 
-        try
-        {
-            var temp = $"{path}.tmp";
-            await File.WriteAllTextAsync(temp, body.ToString(), ct).ConfigureAwait(false);
-            File.Move(temp, path!, overwrite: true);
-            return active.Count;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger.LogWarning(ex, "Could not write the server ban file");
-            return 0;
-        }
+        // The number of bans written, once - not multiplied by the file count.
+        return wrote ? active.Count : 0;
     }
 
     /// <summary>The username for an EOS id, or the id unchanged when it is not known.</summary>
@@ -313,16 +352,26 @@ public sealed class ServerBanFile(
     /// </remarks>
     public async Task<int> ImportAsync(CancellationToken ct = default)
     {
-        if (!Enabled || !File.Exists(path)) return 0;
+        if (!Enabled) return 0;
 
-        IReadOnlyList<BanFileEntry> parsed;
-        try
+        /* READ EVERY FILE and import the UNION. An in-game ban made on server 2 lives only in
+           server 2's file, so importing from server 1 alone would miss it - and then the
+           export below, which rewrites all three from the store, would ERASE it. Reading them
+           all first is what makes export-to-all safe. Duplicates across files (the same player
+           banned on several servers) collapse in the de-duplication further down. */
+        var parsed = new List<BanFileEntry>();
+        foreach (var one in _paths)
         {
-            parsed = Parse(await File.ReadAllTextAsync(path!, ct).ConfigureAwait(false));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return 0;
+            if (!File.Exists(one)) continue;
+            try
+            {
+                parsed.AddRange(Parse(await File.ReadAllTextAsync(one, ct).ConfigureAwait(false)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // One unreadable file must not stop the others being imported.
+                logger.LogDebug(ex, "Could not read the server ban file {Path} for import", one);
+            }
         }
         if (parsed.Count == 0) return 0;
 
