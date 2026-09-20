@@ -243,6 +243,16 @@ public sealed class ServerMonitorTests : IDisposable
         Assert.Contains(fields, f => f.Name.Contains("Server 1", StringComparison.Ordinal) && f.Value.Contains("OFFLINE", StringComparison.Ordinal));
         Assert.Contains(fields, f => f.Name.Contains("Server 2", StringComparison.Ordinal) && f.Value.Contains("ONLINE", StringComparison.Ordinal));
 
+        // Server 2 answered every probe, so its block carries the technical RCON round-trip
+        // detail - current plus the run's avg/min/max and sample count - and the last-probe time.
+        var s2 = Assert.Single(fields, f => f.Name.Contains("Server 2", StringComparison.Ordinal));
+        Assert.Contains("RTT", s2.Value, StringComparison.Ordinal);
+        Assert.Contains("avg", s2.Value, StringComparison.Ordinal);
+        Assert.Contains("min", s2.Value, StringComparison.Ordinal);
+        Assert.Contains("max", s2.Value, StringComparison.Ordinal);
+        Assert.Contains("n=", s2.Value, StringComparison.Ordinal);
+        Assert.Contains("probed <t:", s2.Value, StringComparison.Ordinal);
+
         var eventsField = Assert.Single(fields, f => f.Name == "Recent events");
         Assert.Contains("Server 1", eventsField.Value, StringComparison.Ordinal);
     }
