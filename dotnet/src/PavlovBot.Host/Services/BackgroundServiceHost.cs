@@ -221,7 +221,7 @@ public sealed class BackgroundServiceHost : IHostedService
         /* ---- log tailing ----
            1.5 seconds, because this is what catches a flagged join. A slower poll means a
            ban evader plays for that long before anything notices. */
-        var logPaths = LogTailer.Discover(_features.LogPaths, _logger);
+        var logPaths = LogTailer.Discover(_features.LogPaths, _logger, _features.InstallRoots);
 
         /* Named BEFORE the tail starts, so the very first join line already says "Server 1"
            rather than "the server" - the discovery order IS the numbering. */

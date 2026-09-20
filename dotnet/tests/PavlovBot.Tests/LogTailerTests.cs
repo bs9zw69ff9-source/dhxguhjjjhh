@@ -144,6 +144,42 @@ public class LogTailerTests : IDisposable
         Assert.Equal([_path], found);
     }
 
+    [Fact]
+    public void AutoDiscoveryFindsALogUnderEveryInstall()
+    {
+        /* THE MULTI-SERVER BUG. The old auto-detection was a hardcoded list that named
+           pavlovserver and pavlovserver2 but not pavlovserver1, so a three-server box tailed
+           at most two of them and the middle server was invisible. Discovery now takes the
+           install roots and finds one Pavlov.log under each. */
+        var roots = new List<string>();
+        foreach (var name in new[] { "pavlovserver", "pavlovserver1", "pavlovserver2" })
+        {
+            var root = Path.Combine(_directory, name);
+            var log = Path.Combine(root, "Pavlov", "Saved", "Logs", "Pavlov.log");
+            Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+            File.WriteAllText(log, "x\n");
+            roots.Add(root);
+        }
+
+        var found = LogTailer.Discover(configured: null, logger: NullLogger.Instance, installRoots: roots);
+
+        Assert.Equal(3, found.Count);
+        foreach (var root in roots)
+            Assert.Contains(Path.Combine(root, "Pavlov", "Saved", "Logs", "Pavlov.log"), found, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public void AnExplicitConfiguredPathStillWinsOverInstallDiscovery()
+    {
+        // Someone who set PAVLOV_LOGS meant it: the install roots are ignored when a path is given.
+        Append("x\n");
+        var roots = new[] { Path.Combine(_directory, "pavlovserver1") };
+
+        var found = LogTailer.Discover(_path, NullLogger.Instance, installRoots: roots);
+
+        Assert.Equal([_path], found);
+    }
+
     public void Dispose()
     {
         GC.SuppressFinalize(this);

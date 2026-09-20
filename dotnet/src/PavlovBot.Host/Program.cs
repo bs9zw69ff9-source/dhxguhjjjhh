@@ -383,7 +383,7 @@ public static class Program
            is the whole reason bringing Stats.log back is right again - the wall-of-numbers
            that retired it in #105 is gone. */
         builder.Services.AddSingleton(sp => new StatsLogService(
-            StatsLogService.Discover(features.StatsLogPaths, LogTailer.Discover(features.LogPaths),
+            StatsLogService.Discover(features.StatsLogPaths, LogTailer.Discover(features.LogPaths, installRoots: features.InstallRoots),
                 sp.GetRequiredService<ILogger<StatsLogService>>()),
             sp.GetRequiredService<LogTailer>(),
             sp.GetRequiredService<MetricsRegistry>(),
@@ -668,7 +668,7 @@ public static class Program
             sp.GetRequiredService<SerializedStore>(), TimeProvider.System));
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.ServerLogActivity(
             sp.GetRequiredService<PavlovBot.Host.Logs.ServerLabels>(),
-            PavlovBot.Host.Logs.LogTailer.Discover(features.LogPaths)));
+            PavlovBot.Host.Logs.LogTailer.Discover(features.LogPaths, installRoots: features.InstallRoots)));
         builder.Services.AddSingleton<PavlovBot.Host.Monitoring.IServerProbe>(sp =>
             new PavlovBot.Host.Monitoring.RconServerProbe(
                 sp.GetRequiredService<RconRegistry>(), features.MonitorSettings, TimeProvider.System,
