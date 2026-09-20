@@ -54,14 +54,15 @@ internal static class MonitorFormat
 
     public static string Cpu(UnitStats u) => u.CpuPercent is { } c ? $"{c.ToString("0.0", CultureInfo.InvariantCulture)}%" : "—";
 
+    /// <summary>A byte count as whole megabytes, e.g. "384 MB". The one place MB rounding lives.</summary>
+    public static string Mb(long bytes) => $"{(bytes / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB";
+
     public static string Ram(UnitStats u)
     {
         if (u.MemoryBytes is not { } bytes) return "—";
-        var used = $"{(bytes / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB";
+        var used = Mb(bytes);
         // A limit is shown only when systemd actually caps the unit; unset reads as "infinity"
         // and comes back null, so an uncapped server shows just its usage, not "/ ∞".
-        return u.MemoryLimitBytes is { } limit && limit > 0
-            ? $"{used} / {(limit / 1048576.0).ToString("0", CultureInfo.InvariantCulture)} MB"
-            : used;
+        return u.MemoryLimitBytes is { } limit && limit > 0 ? $"{used} / {Mb(limit)}" : used;
     }
 }

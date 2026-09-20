@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Discord;
 using PavlovBot.Core.Monitoring;
@@ -46,7 +47,7 @@ public sealed class MonitorBoard(ServerMonitor monitor, ServiceControl service)
         var embed = new EmbedBuilder()
             .WithColor(MonitorFormat.StateColour(worst))
             .WithTitle($"{MonitorFormat.StateDot(worst)} Server monitor")
-            .WithFooter($"{servers.Count} server(s) · 100% cpu = one core · updates live · {DateTimeOffset.UtcNow:HH:mm:ss} UTC")
+            .WithFooter($"{servers.Count} server(s) · CPU%: cgroup, 100% = 1 core · RTT: RCON round-trip · updated {DateTimeOffset.UtcNow:HH:mm:ss} UTC")
             .WithCurrentTimestamp();
 
         if (servers.Count == 0)
@@ -63,26 +64,58 @@ public sealed class MonitorBoard(ServerMonitor monitor, ServiceControl service)
         return embed.Build();
     }
 
-    /// <summary>One server's stat block: state, players, map, latency, CPU/RAM, uptime.</summary>
+    /// <summary>
+    /// One server's technical stat block: state, players, map, RCON round-trip (current plus the
+    /// run's avg/min/max), cgroup CPU%, thread count, cumulative CPU time, RAM (current/peak/limit),
+    /// wall uptime, and when RCON was last confirmed. Everything here is already collected by the
+    /// monitor tick and the systemd sample, so a richer block costs no extra round trip.
+    /// </summary>
     private string ServerLines(string server, IReadOnlyDictionary<string, UnitStats> usage)
     {
         var h = monitor.Snapshot(server);
         var sb = new StringBuilder();
 
-        sb.Append("**").Append(h.State.ToString().ToUpperInvariant()).Append("**\n");
-        sb.Append("👥 ").Append(h.Players is { } p ? $"{p}{(h.MaxPlayers is { } m ? $"/{m}" : "")}" : "—").Append('\n');
-        sb.Append("🗺️ ").Append(h.Map is { Length: > 0 } map ? Sanitize.Code(map) : "—").Append('\n');
-        sb.Append("📶 ").Append(h.Latency.Current is { } l
-            ? $"{MonitorFormat.Ms(l)} (avg {MonitorFormat.Ms(h.Latency.Average ?? l)})"
-            : "—").Append('\n');
+        // State · players · map, on one line to leave room for the technical detail below.
+        sb.Append("**").Append(h.State.ToString().ToUpperInvariant()).Append("**");
+        sb.Append(" · 👥 ").Append(h.Players is { } p ? $"{p}{(h.MaxPlayers is { } m ? $"/{m}" : "")}" : "—");
+        sb.Append(" · 🗺️ ").Append(h.Map is { Length: > 0 } map ? Sanitize.Code(map) : "—").Append('\n');
+
+        // RCON round-trip time. Current, plus the run's average/min/max and sample count when the
+        // machine has more than the first reading - that spread is the honest picture of a link
+        // whose latency is really the game server's game-thread service time.
+        var lat = h.Latency;
+        sb.Append("📶 RTT ");
+        if (lat.Current is { } cur)
+        {
+            sb.Append(MonitorFormat.Ms(cur));
+            if (lat is { Average: { } avg, Min: { } min, Max: { } max })
+                sb.Append(" (avg ").Append(MonitorFormat.Ms(avg))
+                  .Append(" / min ").Append(MonitorFormat.Ms(min))
+                  .Append(" / max ").Append(MonitorFormat.Ms(max)).Append(')');
+            if (lat.Samples > 0) sb.Append(" · n=").Append(lat.Samples.ToString(CultureInfo.InvariantCulture));
+        }
+        else sb.Append('—');
+        sb.Append('\n');
 
         if (usage.TryGetValue(server, out var u))
         {
-            sb.Append("🔥 ").Append(MonitorFormat.Cpu(u)).Append(" · 💾 ").Append(MonitorFormat.Ram(u)).Append('\n');
-            sb.Append("⏱️ ").Append(u.Uptime is { } up ? ServerHealth.Humanize(up) : "—").Append('\n');
+            // cgroup CPU% (100% = one core), thread count, and cumulative CPU time since start.
+            sb.Append("🔥 CPU ").Append(MonitorFormat.Cpu(u));
+            if (u.Tasks is { } tasks) sb.Append(" · 🧵 ").Append(tasks.ToString(CultureInfo.InvariantCulture)).Append(" thr");
+            if (u.CpuTotal is { } total) sb.Append(" · ⏳ ").Append(ServerHealth.Humanize(total)).Append(" cpu-time");
+            sb.Append('\n');
+
+            // RAM: current used, peak since start, and the limit only when systemd caps the unit.
+            sb.Append("💾 ").Append(MonitorFormat.Ram(u));
+            if (u.MemoryPeakBytes is { } peak) sb.Append(" · peak ").Append(MonitorFormat.Mb(peak));
+            sb.Append('\n');
+
+            sb.Append("⏱️ up ").Append(u.Uptime is { } up ? ServerHealth.Humanize(up) : "—").Append('\n');
         }
 
+        // RCON reachability, and when it was last confirmed on the wire.
         sb.Append("🔌 ").Append(MonitorFormat.Answering(h.State) ? "RCON up" : "RCON down");
+        if (h.LastProbeAt is { } at) sb.Append(" · probed <t:").Append(at.ToUnixTimeSeconds()).Append(":R>");
         return sb.ToString();
     }
 
