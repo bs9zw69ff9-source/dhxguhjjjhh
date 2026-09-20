@@ -70,6 +70,15 @@ public static class PavlovInstalls
     public static string WhitelistPath(string installRoot) =>
         Path.Combine(installRoot, "Pavlov", "Saved", "Config", "whitelist.txt");
 
+    /// <summary>The blacklist (ban) file the server reads, inside an install.</summary>
+    /// <remarks>
+    /// Config/blacklist.txt, the same file <see cref="WhitelistPath"/> sits beside - NOT the
+    /// mod's ModSave/banlist.txt, which the server does not enforce. Each install has its own,
+    /// so a ban or unban has to reach every one of them.
+    /// </remarks>
+    public static string BlacklistPath(string installRoot) =>
+        Path.Combine(installRoot, "Pavlov", "Saved", "Config", "blacklist.txt");
+
     /// <summary>
     /// The <c>ModSave</c> tree inside an install - caps ledgers, faction roles, gamemode
     /// saves, the mod ban-message file: everything the servers write per install and that the

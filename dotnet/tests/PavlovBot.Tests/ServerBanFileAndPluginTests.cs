@@ -179,7 +179,7 @@ public class ServerBanFileTests : IDisposable
     [Fact]
     public async Task AnUnconfiguredPathIsANoOp()
     {
-        var disabled = new ServerBanFile(null, _store, NullLogger<ServerBanFile>.Instance);
+        var disabled = new ServerBanFile((string?)null, _store, NullLogger<ServerBanFile>.Instance);
         Assert.False(disabled.Enabled);
         Assert.Equal(0, await disabled.ExportAsync());
         Assert.Equal(0, await disabled.ImportAsync());
@@ -232,7 +232,7 @@ public class ServerBanFileTests : IDisposable
         Assert.False(missing.Conclusive);
         Assert.Equal(BanFileStatus.Missing, missing.Status);
 
-        var off = await new ServerBanFile(null, _store, NullLogger<ServerBanFile>.Instance).FindAsync("Alice");
+        var off = await new ServerBanFile((string?)null, _store, NullLogger<ServerBanFile>.Instance).FindAsync("Alice");
         Assert.Equal(BanFileStatus.Disabled, off.Status);
     }
 
@@ -245,6 +245,85 @@ public class ServerBanFileTests : IDisposable
 
         Assert.Equal(0, await _modsave.ExportAsync());
         Assert.DoesNotContain("Alice", await File.ReadAllTextAsync(_path), StringComparison.Ordinal);
+    }
+
+    // ---- multiple servers, each with its own blacklist.txt --------------------------------
+
+    private (ServerBanFile Sync, string A, string B, string C) MultiServer()
+    {
+        var a = Path.Combine(_directory, "s1.txt");
+        var b = Path.Combine(_directory, "s2.txt");
+        var c = Path.Combine(_directory, "s3.txt");
+        return (new ServerBanFile(new[] { a, b, c }, _store, NullLogger<ServerBanFile>.Instance, new FixedClock()), a, b, c);
+    }
+
+    [Fact]
+    public async Task ExportWritesEveryServersFile()
+    {
+        // A ban (or, after a lift, its absence) has to land on all three files, not just one -
+        // that gap is why an unbanned player stayed listed on server 2 and 3.
+        var (sync, a, b, c) = MultiServer();
+        await _store.WriteAsync<List<BanRecord>>(Datasets.TempBans,
+            [new BanRecord { PlayerId = "Alice", Reason = "Cheating", Permanent = true }]);
+
+        Assert.Equal(1, await sync.ExportAsync());
+
+        foreach (var file in new[] { a, b, c })
+            Assert.Contains("Alice", await File.ReadAllTextAsync(file), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImportReadsBansFromEveryServersFile()
+    {
+        // An in-game ban made on server 2 lives only in server 2's file. Importing must pick it
+        // up wherever it is, and the same player banned on two servers collapses to one record.
+        var (sync, a, b, c) = MultiServer();
+        await File.WriteAllTextAsync(a, "Alice\nReason: aim\nUnban: Permanent\n\n");
+        await File.WriteAllTextAsync(b, "Bob\nReason: grief\nUnban: Permanent\n\n");
+        await File.WriteAllTextAsync(c, "Alice\nReason: aim\nUnban: Permanent\n\n");   // dup of A
+
+        Assert.Equal(2, await sync.ImportAsync());   // Alice + Bob, not 3
+
+        var stored = _store.Read<List<BanRecord>>(Datasets.TempBans, []).Select(x => x.PlayerId).ToList();
+        Assert.Contains("Alice", stored);
+        Assert.Contains("Bob", stored);
+        Assert.Equal(2, stored.Count);
+    }
+
+    [Fact]
+    public async Task FindLocatesAPlayerListedOnAnyServer()
+    {
+        var (sync, _, b, _) = MultiServer();
+        await File.WriteAllTextAsync(b, "Bob\nReason: grief\nUnban: Permanent\n\n");
+
+        var found = await sync.FindAsync("Bob");
+
+        Assert.True(found.Listed);
+        Assert.Equal(BanFileStatus.Read, found.Status);
+        Assert.Equal(b, found.Path);
+    }
+
+    [Fact]
+    public async Task SyncPreservesAnInGameBanThatOnlyExistsOnServer2()
+    {
+        /* THE PROPERTY THAT MAKES EXPORT-TO-ALL SAFE. Server 2 has an in-game ban the store
+           never saw. A naive "export the store to every file" would erase it. Because Sync
+           imports from ALL files before it exports to ALL files, the ban is captured first,
+           so it survives - and now appears on every server, which is the intended outcome. */
+        var (sync, a, b, c) = MultiServer();
+        await _store.WriteAsync<List<BanRecord>>(Datasets.TempBans,
+            [new BanRecord { PlayerId = "Alice", Reason = "known", Permanent = true }]);
+        await File.WriteAllTextAsync(b, "Bob\nReason: in-game only\nUnban: Permanent\n\n");   // server 2 only
+
+        await sync.SyncAsync();
+
+        Assert.Contains("Bob", _store.Read<List<BanRecord>>(Datasets.TempBans, []).Select(x => x.PlayerId));
+        foreach (var file in new[] { a, b, c })
+        {
+            var text = await File.ReadAllTextAsync(file);
+            Assert.Contains("Alice", text, StringComparison.Ordinal);
+            Assert.Contains("Bob", text, StringComparison.Ordinal);   // NOT erased from server 2
+        }
     }
 
     public void Dispose()

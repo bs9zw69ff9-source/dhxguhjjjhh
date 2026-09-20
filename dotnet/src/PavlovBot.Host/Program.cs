@@ -265,7 +265,7 @@ public static class Program
                Resolved lazily inside the lambda: ServerBanFile is registered just below. */
             banFile: sp.GetRequiredService<ServerBanFile>()));
         builder.Services.AddSingleton(sp => new ServerBanFile(
-            features.BanFilePath, sp.GetRequiredService<SerializedStore>(),
+            features.BanFilePaths, sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<ILogger<ServerBanFile>>(),
             time: null,
             /* Resolved lazily INSIDE the lambda, so this does not depend on IpTrackingService
@@ -926,10 +926,12 @@ public static class Program
            directory tree created beside the real one that the game never reads. */
         foreach (var (label, path) in new[]
         {
-            ("server ban file", features.BanFilePath),
             ("economy ledger", features.LedgerDirectory is { } d ? Path.Combine(d, "<player>.txt") : null),
             ("faction rosters", features.RosterDirectory is { } r ? Path.Combine(r, "<roster>.txt") : null),
-        }.Concat(installs.Select(i => ("whitelist", (string?)PavlovInstalls.WhitelistPath(i)))))
+        }
+        // One line per ban file - the whole point is that a multi-server box has several.
+        .Concat(features.BanFilePaths.Select(p => ("server ban file", (string?)p)))
+        .Concat(installs.Select(i => ("whitelist", (string?)PavlovInstalls.WhitelistPath(i)))))
         {
             if (path is null) continue;
 
