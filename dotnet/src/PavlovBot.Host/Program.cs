@@ -727,6 +727,22 @@ public static class Program
 
         var logger = host.Services.GetRequiredService<ILogger<IHost>>();
 
+        /* THE LAST-RESORT NET. Nothing should reach here - every command, feed and background
+           tick catches its own - but an exception that escaped all of them would otherwise
+           vanish silently (an unobserved Task) or take the whole process down with no line
+           saying why. These log it, loudly, with the trace. SetObserved stops a stray
+           unobserved Task from being able to terminate the process. This is diagnosis of last
+           resort, NOT a substitute for the per-layer handling: a spike in either line is a bug
+           that slipped a layer, not something this is meant to paper over. */
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            logger.LogCritical(e.ExceptionObject as Exception,
+                "UNHANDLED exception escaped every layer (terminating={Terminating})", e.IsTerminating);
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            logger.LogError(e.Exception, "Unobserved task exception - caught by the last-resort net");
+            e.SetObserved();
+        };
+
         /* WHICH BUILD IS ACTUALLY RUNNING. Without this, a deploy that published a new
            binary but left the old process alive - which is what `pm2 start` does to an app
            that is already running - is indistinguishable from a fix that did not work. The

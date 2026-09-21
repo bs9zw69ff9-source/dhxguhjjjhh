@@ -223,6 +223,18 @@ public sealed class BackgroundServiceHost : IHostedService
            ban evader plays for that long before anything notices. */
         var logPaths = LogTailer.Discover(_features.LogPaths, _logger, _features.InstallRoots);
 
+        /* SAY IT OUT LOUD when a server has no log. A box with three installs but two tailed
+           logs looks perfectly healthy: the feeds work, just not for the missing server, and
+           the only visible symptom is "server 2 never appears" weeks later. Warn once at
+           startup naming the count, so the gap is a line in the log rather than a mystery. */
+        if (_features.InstallRoots.Count > logPaths.Count)
+            _logger.LogWarning(
+                "Tailing {Tailed} log(s) but {Installs} Pavlov install(s) were found - the feeds " +
+                "(joins, kills, connections) will be blank for the {Missing} server(s) with no log. " +
+                "If a server is missing, set PAVLOV_LOGS to every install's Pavlov.log, or check that " +
+                "the missing server is running and writing its log",
+                logPaths.Count, _features.InstallRoots.Count, _features.InstallRoots.Count - logPaths.Count);
+
         /* Named BEFORE the tail starts, so the very first join line already says "Server 1"
            rather than "the server" - the discovery order IS the numbering. */
         _servers.Assign(logPaths);
