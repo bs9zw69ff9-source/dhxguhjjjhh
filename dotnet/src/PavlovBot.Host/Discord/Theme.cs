@@ -88,6 +88,22 @@ public static class Theme
     /// author header, no thumbnail, no timestamp - the clean look the help menu established.
     /// Any timestamp a call site set is stripped so every embed in the bot looks the same.
     /// </remarks>
+    /// <summary>
+    /// What a footer says besides the brand: the whole text when it was set without one, the part
+    /// after the brand when it was branded already, or null when there is nothing else.
+    /// </summary>
+    internal static string? FooterAfterBrand(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+
+        var mark = $"{Lore.Rads} {BrandName}";
+        if (!text.StartsWith(mark, StringComparison.Ordinal)) return text;
+
+        var rest = text[mark.Length..].TrimStart();
+        if (rest.StartsWith(Dot, StringComparison.Ordinal)) rest = rest[Dot.Length..].TrimStart();
+        return rest.Length > 0 ? rest : null;
+    }
+
     public static EmbedBuilder Brand(this EmbedBuilder embed, string? footer = null)
     {
         ArgumentNullException.ThrowIfNull(embed);
@@ -101,6 +117,12 @@ public static class Theme
            read as this server's bot rather than as a generic tool that happens to be in the
            channel - and the footer is the one place it can live without competing with a
            title somebody actually needs to read. */
+        /* A FOOTER THE CALLER ALREADY SET IS KEPT, after the brand. Branding used to replace it,
+           which silently threw away /health's "build <commit>" line - the one way to tell from
+           Discord whether a deploy actually replaced the running process - and /monitor's
+           legend. An explicit argument still wins. */
+        footer ??= FooterAfterBrand(embed.Footer?.Text);
+
         var stamp = footer is { Length: > 0 }
             ? $"{Lore.Rads} {BrandName} {Dot} {footer}"
             : $"{Lore.Rads} {BrandName}";
