@@ -1108,6 +1108,12 @@ public static class Program
         host.Services.GetRequiredService<RconConfirmations>()
             .Watch(host.Services.GetRequiredService<IpTrackingService>());
 
+        // Every state-changing RCON command is confirmed from its server's Pavlov.log as well as
+        // by the reply, whichever comes first - see RconRegistry.SendAsync.
+        host.Services.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>().UseLogConfirmation(
+            host.Services.GetRequiredService<RconConfirmations>(),
+            host.Services.GetRequiredService<PavlovBot.Host.Logs.ServerLabels>().LogFor);
+
         /* KILLS COME FROM Stats.log WHEN THERE IS ONE, for K/D and the kill feed both. Both
            sources describe the same kill, so this SWITCHES rather than adds - the tracker
            stops scraping Pavlov.log for kills at the same moment the bridge starts listening

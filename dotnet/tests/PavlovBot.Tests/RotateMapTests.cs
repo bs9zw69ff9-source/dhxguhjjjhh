@@ -77,7 +77,7 @@ public class RotateMapTests
         /* A player told "restarting" waits; a player told "shutting down" goes elsewhere.
            Telling them the wrong one is a small lie with a real cost either way. */
         Assert.Equal("Server shutting down...", ServerSwitchCommand.WarningFor(UnitAction.Stop));
-        Assert.Equal("Server restarting...", ServerSwitchCommand.WarningFor(UnitAction.Restart));
+        Assert.Equal("Server Rotating... Please rejoin after disconnect", ServerSwitchCommand.WarningFor(UnitAction.Restart));
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public class RotateMapTests
         /* The MESSAGE only. It used to read "All Server Rotating..." because the literal
            target was hidden in the text - the one place that happened to make the wire
            format right, while /serverswitch and /announce sent no target at all. */
-        Assert.Equal("Server Rotating...", RotateMapCommand.Warning);
+        Assert.Equal("Server Rotating... Please rejoin after disconnect", RotateMapCommand.Warning);
     }
 
     [Fact]
@@ -345,7 +345,7 @@ public class RotateMapTests
 
         await Notice(server).WarnAsync(1, RotateMapCommand.Warning, CancellationToken.None);
 
-        Assert.Equal("Notify All Server Rotating...", SentNotify(server));
+        Assert.Equal("Notify All Server Rotating... Please rejoin after disconnect", SentNotify(server));
     }
 
     // ---- the failure that will actually happen ----

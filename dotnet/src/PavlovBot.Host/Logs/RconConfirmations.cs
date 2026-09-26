@@ -50,19 +50,23 @@ public sealed partial class RconConfirmations
     public void Watch(IpTrackingService tracking)
     {
         ArgumentNullException.ThrowIfNull(tracking);
-        tracking.Rcon += (_, _, action) =>
+        tracking.Rcon += (file, _, action) =>
         {
-            Note(action.Full);
+            Note(action.Full, file);
             return Task.CompletedTask;
         };
     }
 
     /// <summary>Record that a command was seen executing, now.</summary>
-    internal void Note(string command)
+    internal void Note(string command, string? logFile = null)
     {
         if (string.IsNullOrWhiteSpace(command)) return;
 
-        _executed[Normalize(command)] = _time.GetUtcNow();
+        var now = _time.GetUtcNow();
+        _executed[Key(null, command)] = now;
+        // Also by log, so a command sent to every server is confirmed per server - one server
+        // echoing "Kick Bob" says nothing about whether the other two ran it.
+        if (logFile is { Length: > 0 }) _executed[Key(logFile, command)] = now;
 
         // Swept opportunistically rather than on a timer: the map only grows on RCON traffic,
         // so the write path is the right place to bound it, and it stays small.
@@ -75,9 +79,12 @@ public sealed partial class RconConfirmations
     }
 
     /// <summary>Whether this command has been seen executing at or after <paramref name="since"/>.</summary>
-    public bool ConfirmedSince(string command, DateTimeOffset since) =>
+    public bool ConfirmedSince(string command, DateTimeOffset since) => ConfirmedSince(null, command, since);
+
+    /// <summary>Whether <paramref name="logFile"/> (any log, when null) showed the command since then.</summary>
+    public bool ConfirmedSince(string? logFile, string command, DateTimeOffset since) =>
         !string.IsNullOrWhiteSpace(command)
-        && _executed.TryGetValue(Normalize(command), out var at)
+        && _executed.TryGetValue(Key(logFile, command), out var at)
         && at >= since;
 
     /// <summary>
@@ -86,19 +93,28 @@ public sealed partial class RconConfirmations
     /// <param name="command">The command exactly as it was sent to RCON.</param>
     /// <param name="since">The instant the command was sent; an older log entry does not count.</param>
     /// <returns>True once the executed line is seen; false if the window passes without it.</returns>
-    public async Task<bool> ConfirmedAsync(string command, DateTimeOffset since, TimeSpan within,
+    public Task<bool> ConfirmedAsync(string command, DateTimeOffset since, TimeSpan within,
+        CancellationToken ct = default) => ConfirmedAsync(null, command, since, within, ct);
+
+    /// <summary>
+    /// Wait up to <paramref name="within"/> for <paramref name="logFile"/> (any log, when null)
+    /// to show the command.
+    /// </summary>
+    public async Task<bool> ConfirmedAsync(string? logFile, string command, DateTimeOffset since, TimeSpan within,
         CancellationToken ct = default)
     {
         var deadline = _time.GetUtcNow() + within;
         while (true)
         {
-            if (ConfirmedSince(command, since)) return true;
+            if (ConfirmedSince(logFile, command, since)) return true;
             if (_time.GetUtcNow() >= deadline) return false;
 
             try { await Task.Delay(PollInterval, ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return ConfirmedSince(command, since); }
+            catch (OperationCanceledException) { return ConfirmedSince(logFile, command, since); }
         }
     }
+
+    private static string Key(string? logFile, string command) => $"{logFile ?? "*"}\n{Normalize(command)}";
 
     // The log may render an executed command with different spacing than the bot sent it; a
     // bit code carries an internal space of its own. Collapsing runs of whitespace to one lets

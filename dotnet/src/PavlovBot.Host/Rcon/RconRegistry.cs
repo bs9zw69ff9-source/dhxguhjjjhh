@@ -71,6 +71,23 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     /// </remarks>
     public void UseLifecycle(IServerLifecycle lifecycle) => _lifecycle = lifecycle;
 
+    private PavlovBot.Host.Logs.RconConfirmations? _confirmations;
+    private Func<string, string?>? _logFor;
+
+    /// <summary>
+    /// Confirm state-changing commands from each server's Pavlov.log. See <see cref="SendAsync"/>.
+    /// </summary>
+    /// <param name="logFor">The log file of an RCON server, or null when it has none.</param>
+    public void UseLogConfirmation(PavlovBot.Host.Logs.RconConfirmations confirmations, Func<string, string?> logFor)
+    {
+        _confirmations = confirmations ?? throw new ArgumentNullException(nameof(confirmations));
+        _logFor = logFor ?? throw new ArgumentNullException(nameof(logFor));
+    }
+
+    /// <summary>How long after sending the log may still confirm a command.</summary>
+    /// <remarks>The log is polled every 1.5s, so a line lands a few seconds after the command at most.</remarks>
+    internal static readonly TimeSpan LogConfirmWindow = TimeSpan.FromSeconds(10);
+
     /// <summary>A roster older than this is stale - reported, not silently served as current.</summary>
     private static readonly TimeSpan RosterFreshness = TimeSpan.FromSeconds(90);
 
@@ -130,8 +147,79 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
         return _metrics.TimeAsync(
             "rcon_command_duration_ms",
             MetricLabels.Of("server", server, "command", verb),
-            () => client.SendAsync(command, ct),
+            () => SendConfirmedAsync(server, client, command, ct),
             "RCON command duration in milliseconds");
+    }
+
+    /// <summary>
+    /// Send a command; for one that changes state, whichever comes first - the RCON reply or
+    /// the command appearing in that server's Pavlov.log - is the answer.
+    /// </summary>
+    /// <remarks>
+    /// THE LOG IS WHAT THE SERVER ACTUALLY RAN. Pavlov services RCON on the game thread, so on a
+    /// busy or map-loading server the reply can come late or not at all while the command has
+    /// already happened - a kick or a notice reported as failed that every player saw. The log
+    /// line (<c>LogTemp: Rcon: KickPlayer …</c>) is written when it runs.
+    ///
+    /// THE RCON EXCHANGE STILL FINISHES, in the background. The protocol is one ordered stream:
+    /// walking away from a reply would hand it to the next command as that command's answer. So
+    /// the caller is answered early; the connection is not.
+    ///
+    /// A REPLY THAT ARRIVES FIRST STILL WINS, refusal included - "Successful": false is the
+    /// server saying no, and a command it refused may still be echoed in the log. Reads are never
+    /// confirmed from the log: they want the reply's data, not proof it ran.
+    /// </remarks>
+    private async Task<string> SendConfirmedAsync(string server, RconClient client, string command, CancellationToken ct)
+    {
+        if (RconClient.IsReadOnlyCommand(command) ||
+            _confirmations is not { } confirmations ||
+            _logFor?.Invoke(server) is not { } log)
+        {
+            return await client.SendAsync(command, ct).ConfigureAwait(false);
+        }
+
+        var sentAt = DateTimeOffset.UtcNow;
+        var reply = client.SendAsync(command, ct);
+
+        using var stopWatching = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var logged = confirmations.ConfirmedAsync(log, command, sentAt, LogConfirmWindow, stopWatching.Token);
+
+        var first = await Task.WhenAny(reply, logged).ConfigureAwait(false);
+
+        if (first == reply && reply.IsCompletedSuccessfully)
+        {
+            await stopWatching.CancelAsync().ConfigureAwait(false);
+            return await reply.ConfigureAwait(false);
+        }
+
+        // Either the log confirmed first, or the reply failed and the log may yet confirm.
+        if (await logged.ConfigureAwait(false))
+        {
+            // Nobody else awaits it now; its outcome is logged rather than left unobserved.
+            _ = reply.ContinueWith(
+                t => _logger.LogDebug(t.Exception?.GetBaseException(),
+                    "{Server} < {Verb}: the RCON reply after the log confirmation failed", server, RconClient.MetricVerb(command)),
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+
+            _metrics.Increment("rcon_log_confirmed_total", MetricLabels.Of("server", server),
+                help: "State-changing RCON commands confirmed from Pavlov.log before (or without) an RCON reply");
+            _logger.LogInformation("{Server} < {Command}: confirmed in Pavlov.log ({Reply})", server, command,
+                reply.IsFaulted ? "the RCON reply failed" : reply.IsCompleted ? "RCON answered too" : "before the RCON reply");
+
+            return LogConfirmedReply(command);
+        }
+
+        // No sighting in the window: the RCON outcome, success or failure, is the answer.
+        return await reply.ConfigureAwait(false);
+    }
+
+    /// <summary>The reply returned for a command the log confirmed - shaped like Pavlov's own.</summary>
+    internal static string LogConfirmedReply(string command)
+    {
+        var trimmed = command.Trim();
+        var space = trimmed.IndexOf(' ', StringComparison.Ordinal);
+        var verb = space < 0 ? trimmed : trimmed[..space];
+        return $"{{\"Command\":{System.Text.Json.JsonSerializer.Serialize(verb)},\"Successful\":true,\"ConfirmedBy\":\"Pavlov.log\"}}";
     }
 
     /// <summary>

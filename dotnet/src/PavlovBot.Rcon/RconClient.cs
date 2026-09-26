@@ -94,6 +94,9 @@ public sealed class RconClient : IAsyncDisposable
 
     private static bool IsReadOnly(string command) => ReadOnlyCommands.Contains(Verb(command));
 
+    /// <summary>Whether a command only reads state (RefreshList, ServerInfo, …).</summary>
+    public static bool IsReadOnlyCommand(string command) => IsReadOnly(command);
+
     /// <summary>
     /// Refuse a command that would be more than one line on the wire.
     /// </summary>
