@@ -76,6 +76,47 @@ public class LoreTests
     }
 
     [Fact]
+    public void AFooterSetBeforeBrandingIsKept()
+    {
+        /* /health set "build <commit>" and its reply branded the embed, which replaced the
+           footer - so the build never showed, and nobody could tell from Discord whether a
+           deploy had replaced the running process. /monitor lost its legend the same way. */
+        var before = Theme.BrandName;
+        try
+        {
+            Theme.BrandName = "Mojave Authority";
+
+            var health = new EmbedBuilder().WithTitle("Health").WithFooter("build b625e1d").Brand().Build();
+            var monitor = Theme.Notice("Server status", "body").WithFooter("3 server(s)").Brand().Build();
+
+            Assert.Equal($"{Lore.Rads} Mojave Authority • build b625e1d", health.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Rads} Mojave Authority • 3 server(s)", monitor.Footer!.Value.Text);
+        }
+        finally
+        {
+            Theme.BrandName = before;
+        }
+    }
+
+    [Fact]
+    public void AKeptFooterIsNotDoubledByBrandingAgain()
+    {
+        var before = Theme.BrandName;
+        try
+        {
+            Theme.BrandName = "Mojave Authority";
+
+            var embed = new EmbedBuilder().WithTitle("x").WithFooter("build b625e1d").Brand().Brand().Build();
+
+            Assert.Equal($"{Lore.Rads} Mojave Authority • build b625e1d", embed.Footer!.Value.Text);
+        }
+        finally
+        {
+            Theme.BrandName = before;
+        }
+    }
+
+    [Fact]
     public void NoTwoColoursInThePaletteAreTheSame()
     {
         /* THE BAR IS READ BEFORE THE WORDS ARE. Every embed picks its colour by meaning -
