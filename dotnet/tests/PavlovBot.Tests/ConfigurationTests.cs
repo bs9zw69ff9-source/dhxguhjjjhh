@@ -172,6 +172,18 @@ public class BotOptionsTests
     }
 
     [Fact]
+    public void AZeroHealthIntervalFallsBackButAZeroReadCacheStaysOff()
+    {
+        // Zero means "off" for the read cache and "a timer that cannot run" for the probe.
+        var options = BotOptions.Bind(Config(
+            ("RCON_HOST_1", "a"), ("RCON_PORT_1", "1"), ("RCON_PASSWORD_1", "p"),
+            ("RCON_HEALTH_INTERVAL_MS", "0"), ("RCON_READ_CACHE_MS", "0")));
+
+        Assert.Equal(TimeSpan.FromSeconds(60), options.RconHealthInterval);
+        Assert.Equal(TimeSpan.Zero, options.Servers[0].ReadCacheDuration);
+    }
+
+    [Fact]
     public void AGapInTheIndicesIsNotAStopSignal()
     {
         // Server 2 decommissioned, 1 and 3 still running. Stopping at the first gap would
@@ -307,4 +319,14 @@ public class BotOptionsTests
             BotOptions.Bind(Config([.. Minimal, ("COMMANDS_DISABLED", "arrest,,  ,")])).DisabledCommands);
     }
 
+
+    [Fact]
+    public void AnEnvFileReadableByOthersIsFlagged()
+    {
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+        Assert.False(PavlovBot.Host.Program.EnvFileTooOpen(ownerOnly));
+        Assert.True(PavlovBot.Host.Program.EnvFileTooOpen(ownerOnly | UnixFileMode.GroupRead));
+        Assert.True(PavlovBot.Host.Program.EnvFileTooOpen(ownerOnly | UnixFileMode.OtherRead));
+    }
 }

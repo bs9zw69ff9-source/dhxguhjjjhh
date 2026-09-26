@@ -299,6 +299,13 @@ public sealed class PluginHost(IServiceProvider services, ILogger<PluginHost> lo
     /// check would silently pass, which is the failure where the feature looks present and
     /// enforces nothing.
     /// </remarks>
+    /// <summary>
+    /// Whether plugins may load in this process. Refused as root unless explicitly allowed:
+    /// <see cref="Assembly.LoadFrom(string)"/> into a root process is root code execution for
+    /// whoever can drop a file in the plugins directory.
+    /// </summary>
+    internal static bool MayLoad(bool privileged, bool allowRoot) => !privileged || allowRoot;
+
     internal static string? BotVersion() =>
         System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString();
 }
@@ -311,6 +318,19 @@ public sealed class PluginHostedService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var directory = features.PluginDirectory ?? Path.Combine(Directory.GetCurrentDirectory(), "plugins");
+
+        if (!PluginHost.MayLoad(Environment.IsPrivilegedProcess, features.PluginsAllowRoot))
+        {
+            if (Directory.Exists(directory) && Directory.EnumerateFiles(directory, "*.dll").Any())
+            {
+                logger.LogWarning(
+                    "Plugins in {Directory} were NOT loaded: the bot is running as root, and a plugin runs with " +
+                    "every right the process has - its declared permissions are not a sandbox. Run the bot as an " +
+                    "unprivileged user, or set PLUGINS_ALLOW_ROOT=1 to accept that", directory);
+            }
+            return;
+        }
+
         var discovered = plugins.Discover(
             directory,
             features.EnabledPlugins.Count > 0 ? features.EnabledPlugins : null,

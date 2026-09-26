@@ -198,8 +198,11 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
             return stored;
         }
 
-        /* Deserialising Node's ARRAY as StoredFlags fails and yields Empty, so this cannot
-           mistake the Node format for legacy C# data. */
+        /* ONLY AN OBJECT CAN BE LEGACY C# DATA. The dataset normally holds Node's ARRAY, which
+           is not an error - so it is not handed to the typed reader, which would report a
+           perfectly good array as an unreadable dataset on every join. */
+        if (_store.ReadRaw(Datasets.UserBlacklist)?.TrimStart() is not ['{', ..]) return stored;
+
         var legacy = _store.Read(Datasets.UserBlacklist, StoredFlags.Empty);
         return legacy.Ips.Count > 0 || legacy.Names.Count > 0 ||
                legacy.Ids.Count > 0 || legacy.ManualIps.Count > 0

@@ -165,8 +165,14 @@ public sealed class BanService
             {
                 try
                 {
-                    var reply = await _rcon.SendAsync(server, command, ct).ConfigureAwait(false);
-                    served = true;
+                    /* THE BAN IS VERIFIED: a refusal ("Successful": false) used to count as served, so
+                       a ban the server turned down was reported as applied. The kick is not - a
+                       refused kick almost always means the player is simply not on that server. */
+                    var reply = command.StartsWith("Ban ", StringComparison.Ordinal)
+                        ? await _rcon.SendVerifiedAsync(server, command, ct).ConfigureAwait(false)
+                        : await _rcon.SendAsync(server, command, ct).ConfigureAwait(false);
+                    // When a ban was asked for, only the BAN landing means this server enforced it.
+                    if (!ban || command.StartsWith("Ban ", StringComparison.Ordinal)) served = true;
                     _logger.LogInformation("{Server} < {Command} -> {Reply}", server, command, Summarise(reply));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)

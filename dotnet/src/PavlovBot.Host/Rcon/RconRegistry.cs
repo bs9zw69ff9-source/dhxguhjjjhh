@@ -31,6 +31,9 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     /// <summary>The live roster, as <see cref="IOnlineRoster"/>. Same data, narrower contract.</summary>
     IReadOnlyList<string> IOnlineRoster.Online => AllOnlinePlayers();
 
+    /// <summary>Only servers with a fresh roster. See <see cref="IOnlineRoster.ConfirmedOnline"/>.</summary>
+    IReadOnlyList<string> IOnlineRoster.ConfirmedOnline => ConfirmedOnlinePlayers();
+
     /// <summary>
     /// True when ANY server's roster is fresh.
     /// </summary>
@@ -239,6 +242,23 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
     }
 
     /// <summary>Every distinct player name across every server.</summary>
+    /// <summary>
+    /// Players on servers whose roster is fresh. A crashed server's frozen roster is excluded,
+    /// so nobody is credited playtime or wages for a server that is not answering.
+    /// </summary>
+    public IReadOnlyList<string> ConfirmedOnlinePlayers() =>
+        ConfirmedOnline(_rosters.Values, DateTimeOffset.UtcNow);
+
+    /// <summary>The pure part of <see cref="ConfirmedOnlinePlayers"/>, for tests.</summary>
+    internal static IReadOnlyList<string> ConfirmedOnline(IEnumerable<RosterSnapshot> rosters, DateTimeOffset now) =>
+        rosters
+            .Where(r => r.TakenAt != DateTimeOffset.MinValue && now - r.TakenAt <= RosterFreshness)
+            .SelectMany(r => r.Players)
+            .Select(p => p.Name)
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     public IReadOnlyList<string> AllOnlinePlayers() =>
         _rosters.Values
             .SelectMany(r => r.Players)
@@ -279,59 +299,62 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
         DateTimeOffset.UtcNow - at <= RosterFreshness;
 
     /// <summary>Refresh the cached roster for every server.</summary>
-    public async Task RefreshRostersAsync(CancellationToken ct)
+    public Task RefreshRostersAsync(CancellationToken ct) =>
+        /* IN PARALLEL. One at a time, a dead server cost its full retry budget - about ten
+           seconds - before the next server was even asked, so every down server made every
+           live roster later. Each server has its own connection, so nothing is shared. */
+        Task.WhenAll(_clients.Keys.Select(server => RefreshRosterAsync(server, ct)));
+
+    private async Task RefreshRosterAsync(string server, CancellationToken ct)
     {
-        foreach (var server in _clients.Keys)
+        try
         {
-            try
-            {
-                var raw = await SendAsync(server, "RefreshList", ct).ConfigureAwait(false);
+            var raw = await SendAsync(server, "RefreshList", ct).ConfigureAwait(false);
 
-                if (!RconReply.TryParse(raw, out var document) || document is null)
+            if (!RconReply.TryParse(raw, out var document) || document is null)
+            {
+                /* SAY WHAT THE SERVER ACTUALLY SENT. This message used to be the whole
+                   report, and it names the one thing nobody needed telling: the reply
+                   was not JSON. What it WAS is the entire diagnosis - an auth error, a
+                   command this build does not have, a plain-text refusal - and the bot
+                   read it, decided it could not use it, and threw it away. Three servers
+                   failing identically then looked like a bot fault rather than something
+                   the servers were saying out loud. */
+                /* AND DROP THE SESSION. A reply that arrived and made no sense leaves a
+                   connection the layer below has no reason to suspect - the exchange
+                   completed - so the same useless answer comes back on every tick and the
+                   roster ages out while this line repeats unchanged. Resetting costs a
+                   handshake on a path that is already failing, and it is the difference
+                   between a blip and being stuck. */
+                Problem(server, $"the server's reply to RefreshList was not JSON: {Excerpt(raw)}");
+                await ResetAsync(server, ct).ConfigureAwait(false);
+                return;
+            }
+
+            using (document)
+            {
+                /* Only a reply the server called SUCCESSFUL replaces the cache. An
+                   unsuccessful RefreshList is not "nobody is online" - treating it that
+                   way empties the roster on every hiccup, and anything keyed on the
+                   roster then acts as though the server cleared out. */
+                if (RconReply.Successful(document.RootElement) != true)
                 {
-                    /* SAY WHAT THE SERVER ACTUALLY SENT. This message used to be the whole
-                       report, and it names the one thing nobody needed telling: the reply
-                       was not JSON. What it WAS is the entire diagnosis - an auth error, a
-                       command this build does not have, a plain-text refusal - and the bot
-                       read it, decided it could not use it, and threw it away. Three servers
-                       failing identically then looked like a bot fault rather than something
-                       the servers were saying out loud. */
-                    /* AND DROP THE SESSION. A reply that arrived and made no sense leaves a
-                       connection the layer below has no reason to suspect - the exchange
-                       completed - so the same useless answer comes back on every tick and the
-                       roster ages out while this line repeats unchanged. Resetting costs a
-                       handshake on a path that is already failing, and it is the difference
-                       between a blip and being stuck. */
-                    Problem(server, $"the server's reply to RefreshList was not JSON: {Excerpt(raw)}");
+                    Problem(server, "the server refused RefreshList");
                     await ResetAsync(server, ct).ConfigureAwait(false);
-                    continue;
+                    return;
                 }
 
-                using (document)
-                {
-                    /* Only a reply the server called SUCCESSFUL replaces the cache. An
-                       unsuccessful RefreshList is not "nobody is online" - treating it that
-                       way empties the roster on every hiccup, and anything keyed on the
-                       roster then acts as though the server cleared out. */
-                    if (RconReply.Successful(document.RootElement) != true)
-                    {
-                        Problem(server, "the server refused RefreshList");
-                        await ResetAsync(server, ct).ConfigureAwait(false);
-                        continue;
-                    }
+                var players = RefreshList.Players(document.RootElement);
+                _rosters[server] = new RosterSnapshot(server, players, DateTimeOffset.UtcNow);
+                Recovered(server);
 
-                    var players = RefreshList.Players(document.RootElement);
-                    _rosters[server] = new RosterSnapshot(server, players, DateTimeOffset.UtcNow);
-                    Recovered(server);
-
-                    _metrics.Gauge("players_online", players.Count, MetricLabels.Of("server", server),
-                        "Players currently on a server");
-                }
+                _metrics.Gauge("players_online", players.Count, MetricLabels.Of("server", server),
+                    "Players currently on a server");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Problem(server, ex.Message);
-            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Problem(server, ex.Message);
         }
     }
 
@@ -425,7 +448,9 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
         {
             try
             {
-                await SendAsync(server, "ServerInfo", ct).ConfigureAwait(false);
+                // Uncached: a probe served from the 2.5s read cache reports a server that has just
+                // died as up.
+                await ProbeAsync(server, "ServerInfo", ct).ConfigureAwait(false);
                 _lastError[server] = null;
                 _metrics.Gauge("rcon_up", 1, MetricLabels.Of("server", server), "1 when a server answered its last probe");
             }

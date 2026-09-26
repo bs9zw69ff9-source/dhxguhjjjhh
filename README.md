@@ -67,35 +67,19 @@ way.
 
 ## Architecture
 
-`index.js` is the composition root: it validates config, opens the database,
-constructs the shared services, and wires the feature modules together by
-dependency injection (a plain `ctx` object). Each module is a factory that
-destructures what it needs from `ctx`, so there are no circular `require`s and
-no hidden globals.
+The bot is the C# solution under [`dotnet/`](dotnet/):
 
 ```
-index.js              entry point + wiring (the ctx is built here)
-ipBans.js             Pavlov.log tailer: EOS-id ↔ IP ↔ name tracking, auto-ban
-commands/             slash-command dispatcher (index.js) + domain handlers
-                      (moderation, admin, factions, economy, info)
-                      and definitions.js (every SlashCommandBuilder)
-events/               clientReady handler + ipBans join/leave/kill/auto-ban hooks
-moderation/           bans.js (RCON enforce/reconcile/unban), vpn.js (IPHub/IPQS
-                      + geolocation), firewall.js (ufw block/unblock/status)
-factions/             ranks.js (rank registry), files.js, whitelist.js
-casino/               ledger.js (atomic caps ledger)
-leaderboards/         caps board, live player list, server dashboard
-database/             SQLite (bot.db) storage layer + JSON export
-rcon/                 Pavlov RCON transport (TCP + md5 auth)
-discord/              theme.js (palette, quotes, brand, embed builders)
-utils/                pure string/time/crypto helpers
-test/                 node:test unit + wiring suites
+dotnet/src/PavlovBot.Core   pure domain logic - no Discord, sockets or files (AOT-safe)
+dotnet/src/PavlovBot.Rcon   the Pavlov RCON protocol: one persistent, serialised session per server
+dotnet/src/PavlovBot.Host   the process: Discord gateway, commands, background services,
+                            storage (SQLite), log tailing, systemd/ufw control
+dotnet/tests                the test suite, including a fake RCON server that records the wire
 ```
 
-Modules communicate only through the injected `ctx`. `test/wiring.test.js`
-statically verifies that every dependency a module destructures (or spreads)
-from `ctx` is actually provided — so a mis-wire fails the test suite, not the
-live bot.
+`Program.cs` in the host is the composition root. [`dotnet/README.md`](dotnet/README.md)
+covers the layout, the RCON design and how it is run. (`ARCHITECTURE.md` describes the
+Node bot this replaced and is kept only as history.)
 
 ## Configuration
 
@@ -103,26 +87,27 @@ All configuration is via environment variables — see [`.env.example`](.env.exa
 for the full annotated list.
 
 - **Required:** `DISCORD_TOKEN`, `CLIENT_ID`, and the `RCON_*_1` trio.
-- **Optional:** servers 2–3, ModSave/economy paths, log/leaderboard channel IDs,
+- **Optional:** servers 2–9, ModSave/economy paths, log/leaderboard channel IDs,
   role IDs, and:
-  - `BOT_NAME` — display name stamped on every embed (default `Server Authority`)
-  - `IPHUB_API_KEY` / `IPQS_API_KEY` / `IPINFO_TOKEN` — VPN/proxy detection + geo
-  - `UFW_BLOCK=1` — also deny banned/flagged IPs at the OS firewall via `sudo ufw`
-  - `DB_EXPORT_INTERVAL_MS` — how often SQLite is mirrored back to `.json` backups
+  - `BOT_NAME` — display name stamped on every embed
+  - `IPHUB_API_KEY` / `IPQS_API_KEY` / `PROXYCHECK_API_KEY` / `SENTINEL_API_KEY` — VPN/proxy detection
+  - `GEOAPIFY_API_KEY` — geolocation and the location map on connect cards
+  - `FIREWALL_BLACKLIST` — on by default: an IP an owner blacklists is also denied at ufw
+  - `HOME_GUILD_ID` — the staff guild; the only one where Discord's Administrator counts
+  - `METRICS_PORT` — `/metrics`, `/health`, `/healthz`, `/ready` on 127.0.0.1
 
 ### Owner override
 
-Owner Discord user IDs come from `OWNER_IDS` / `SUPER_OWNER_IDS` in `.env`
-(hardcoded defaults in `index.js` are the fallback).
+Owner Discord user IDs come from `OWNER_IDS` / `SUPER_OWNER_IDS` in `.env`,
+plus one super owner compiled into `PavlovBot.Core/Security/OwnerGuard.cs`.
 Owners pass every permission check, skip rate limits, and can never be
-blacklisted. Master in-game names (`MASTER_NAMES`) and a master IP allowlist
-(`MASTER_IPS`) are likewise code-only — master names are never banned/tracked,
-and master IPs are never firewall-blocked (a periodic reconcile enforces this).
+blacklisted. Master in-game names (`MASTER_NAMES`, plus one compiled in) are
+never auto-banned.
 
 ### Staff hierarchy
 
 A staff tier ladder governs who may **override** (lift/undo) whose moderation
-actions — `SUPER_OWNER_IDS` in `index.js` sits above `OWNER_IDS`:
+actions — `SUPER_OWNER_IDS` sits above `OWNER_IDS`:
 
 **Super Owner → Owner → Admin → Mod**
 
@@ -149,10 +134,12 @@ locked.
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
 | ⚔️ Whitelist Leader | `/whitelist add\|remove` `/promotion` `/demotion` `/subclass` |
 | 🚔 Police Officer | `/warrant give\|remove\|check` `/arrest` `/backgroundcheck` |
-| 🔒 Admin | `/permban` `/cleartempbans` `/setroles` `/setrconroles` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
-| 👑 Owner | `/configure` (control panel — incl. wipe money / wipe all player data) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
+| 🔒 Admin | `/permban` `/cleartempbans` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
+| 👑 Owner | `/setroles` `/setrconroles` `/configure` (control panel — incl. wipe money / wipe all player data) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
-Read-only `/whitelist list\|playtime` are public. Roles map to tiers with
+Read-only `/whitelist list\|playtime` are public. `/setroles` and `/setrconroles` are
+Owner-only: they decide who IS staff, so an admin could otherwise make access for
+themselves that outlives their own. Roles map to tiers with
 `/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`,
 `gambino_role`, `colombo_role`, `nypd_role`); an unset tier role means that tier
 is unrestricted.
@@ -220,8 +207,7 @@ feed. Nothing else changes (no whitelist/rank side effects).
 - Ban-list reconcile from the DB every **5 min**
 - Leaderboards / player list refreshed on a short interval
 - VPN check on connect (one lookup per new IP, cached); auto-ban on a confirmed hit
-- Firewall reconcile every **2 min** when `UFW_BLOCK=1` (keeps flagged IPs blocked,
-  master IPs never blocked); SQLite → JSON export every **10 min**
+- SQLite → JSON export every **15 min**
 
 ## Data
 
@@ -251,11 +237,16 @@ otherwise hide.
 
 ## Backups (off-site, via rclone)
 
-`scripts/backup.sh` takes a **consistent** snapshot of `bot.db` (WAL-safe — it
-uses the bot's own better-sqlite3 online backup, so it's fine to run while the
-bot is writing), gzips it alongside the JSON exports, uploads both to a cloud
+`scripts/backup.sh` takes a **consistent** snapshot of `bot.db` (WAL-safe via
+`sqlite3 .backup`, so it's fine to run while the bot is writing — install the
+`sqlite3` package), gzips it alongside the JSON exports, uploads both to a cloud
 remote with [`rclone`](https://rclone.org), and prunes old backups. Run it from
 system cron so it keeps working even when the bot is down.
+
+The database lives in `DATA_DIR` (default `data/`) under the directory the bot
+**runs** in, so tell the script where that is with `BOT_DIR` — for the live bot,
+`/root/pavlov-bot-fallout`. It warns if the database it finds has not been
+written for a day, which means it is looking at the wrong one.
 
 ```bash
 # 1. install rclone and configure a remote (Backblaze B2 / S3 / R2 / Drive / …)
@@ -267,18 +258,19 @@ cp scripts/backup.env.example backup.env
 # edit backup.env -> RCLONE_REMOTE=b2:my-bucket/pavlov-bot-backups
 
 # 3. schedule it (hourly)
-( crontab -l 2>/dev/null; echo "0 * * * * $(pwd)/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1" ) | crontab -
+( crontab -l 2>/dev/null; echo "0 * * * * BOT_DIR=/root/pavlov-bot-fallout $(pwd)/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1" ) | crontab -
 ```
 
 **Restore:**
 
 ```bash
-pm2 stop pavlov-bot
+pm2 stop pavlov-bot-fallout
 rclone lsf b2:my-bucket/pavlov-bot-backups                    # list, pick a file
 rclone copy b2:my-bucket/pavlov-bot-backups/botdb-YYYYMMDD-HHMMSS.db.gz /tmp/
+cd /root/pavlov-bot-fallout/data
 gunzip -c /tmp/botdb-YYYYMMDD-HHMMSS.db.gz > bot.db
 rm -f bot.db-wal bot.db-shm                                   # drop stale WAL
-pm2 start pavlov-bot
+pm2 start pavlov-bot-fallout
 ```
 
 Retention defaults to 30 days (`RETENTION_DAYS` in `backup.env`).

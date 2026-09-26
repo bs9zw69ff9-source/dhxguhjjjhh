@@ -155,10 +155,17 @@ public sealed record BotOptions
             DataDirectory = configuration["DATA_DIR"]?.Trim() is { Length: > 0 } dir
                 ? dir
                 : Path.Combine(Directory.GetCurrentDirectory(), "data"),
-            RconHealthInterval = Milliseconds(configuration, "RCON_HEALTH_INTERVAL_MS", TimeSpan.FromSeconds(60)),
+            RconHealthInterval = Interval(configuration, "RCON_HEALTH_INTERVAL_MS", TimeSpan.FromSeconds(60)),
         };
     }
 
+    /// <summary>A timer interval: must be positive, since a zero-length timer cannot run.</summary>
+    private static TimeSpan Interval(IConfiguration configuration, string key, TimeSpan fallback) =>
+        double.TryParse(configuration[key], CultureInfo.InvariantCulture, out var ms) && ms > 0
+            ? TimeSpan.FromMilliseconds(ms)
+            : fallback;
+
+    /// <summary>A duration where zero is meaningful (e.g. "no read cache").</summary>
     private static TimeSpan Milliseconds(IConfiguration configuration, string key, TimeSpan fallback) =>
         double.TryParse(configuration[key], CultureInfo.InvariantCulture, out var ms) && ms >= 0
             ? TimeSpan.FromMilliseconds(ms)

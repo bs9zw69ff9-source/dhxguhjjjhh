@@ -23,9 +23,11 @@ namespace PavlovBot.Host.Servers;
 /// SteamCMD as it and <c>ufw</c> are not covered by ServiceControl's tiny sudoers line, so a
 /// non-root bot is refused up front rather than left to fail obscurely halfway through.
 ///
-/// ONE STEP HERE - granting <c>steam</c> full sudo - IS DELIBERATELY BROAD, on explicit operator
-/// instruction, and is the opposite of the least-privilege pattern everything else follows. See
-/// <see cref="GrantFullSudoAsync"/> for why that is dangerous and why it happens anyway.
+/// <c>steam</c> GETS NO SUDO AND NO PASSWORD. Earlier versions granted it
+/// <c>ALL=(ALL) NOPASSWD: ALL</c> and a fixed password, which made the account that runs the game
+/// server and untrusted workshop content equivalent to root. Nothing here needs it: every step
+/// that acts as steam is run BY root through <c>sudo -u steam</c>, which never consults steam's
+/// own sudo rights. See <see cref="RemoveLegacySudoGrant"/>.
 /// </remarks>
 public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServerProvisioner
 {
@@ -36,12 +38,11 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     private const string SteamUser = "steam";
 
     /// <summary>
-    /// The sudoers drop-in this installs. NO DOT, NO TRAILING '~' - sudo's default
-    /// <c>#includedir /etc/sudoers.d</c> silently SKIPS a filename shaped like either (they read
-    /// as an editor backup or a package-manager artifact), which would leave this step reporting
-    /// success while granting nothing.
+    /// The full-sudo drop-in that earlier versions of this provisioner installed for steam. It is
+    /// only ever REMOVED now - the name is this bot's own, so deleting it cannot touch anything an
+    /// operator wrote.
     /// </summary>
-    private const string SudoersDropIn = "/etc/sudoers.d/pavlov-steam-full";
+    internal const string LegacySudoersDropIn = "/etc/sudoers.d/pavlov-steam-full";
 
     // Generous by necessity: SteamCMD pulls several GB on a first install.
     private static readonly TimeSpan SteamCmdTimeout = TimeSpan.FromMinutes(45);
@@ -57,7 +58,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     [
         "Pre-flight checks",
         "Steam user account",
-        "Steam sudo access (full, NOPASSWD)",
+        "Remove legacy steam sudo grant",
         "SteamCMD (locate or bootstrap)",
         "SteamCMD install",
         "Server config (RconSettings.txt, Game.ini)",
@@ -73,7 +74,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     [
         "Pre-flight checks",
         "Steam user account",
-        "Steam sudo access (full, NOPASSWD)",
+        "Remove legacy steam sudo grant",
         "Copy an existing install",
         "Server config (RconSettings.txt, Game.ini)",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -194,26 +195,6 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     internal static IReadOnlyList<string> SteamCmdExtractArgv(string tarballPath, string directory) =>
         ["-xzf", tarballPath, "-C", directory];
 
-    /// <summary>
-    /// The <c>user:password</c> line <c>chpasswd</c> reads from stdin, newline-terminated.
-    /// </summary>
-    /// <remarks>
-    /// STDIN, NOT AN ARGUMENT. A password passed on a command line sits in that process's argv
-    /// for as long as it runs, readable by anyone on the box via <c>ps</c> or <c>/proc</c>; stdin
-    /// leaves nothing there. This is the one place a colon in the password would be read as the
-    /// field separator and corrupt the line, which is why the account password is always
-    /// GENERATED here from the same alphanumeric charset as the RCON one rather than accepted
-    /// as free text.
-    /// </remarks>
-    internal static string ChpasswdStdin(string user, string password) => $"{user}:{password}\n";
-
-    /// <summary>
-    /// The full-access sudoers line, verbatim. <c>ALL=(ALL) NOPASSWD: ALL</c> is unrestricted -
-    /// every command, as every user, no password - which is the whole point of this method's
-    /// warnings: there is no narrower argument list to point to, because there isn't one here.
-    /// </summary>
-    internal static string SudoersFullAccessLine(string user) => $"{user} ALL=(ALL) NOPASSWD: ALL\n";
-
     public async Task<ProvisionOutcome> ProvisionAsync(
         ProvisionRequest request,
         Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
@@ -242,26 +223,29 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok("root, unit name and slot are usable.").ConfigureAwait(false);
 
-        // ---- the steam OS account - created here, REQUIRED to get a password if it is new ----
+        // ---- the steam OS account - created locked: no password, no sudo ----
         await run.Start("checking for the steam account…").ConfigureAwait(false);
-        var (userProblem, created) = await EnsureSteamUserAsync(request.SteamUserPassword, ct).ConfigureAwait(false);
+        var (userProblem, created) = await EnsureSteamUserAsync(ct).ConfigureAwait(false);
         if (userProblem is not null)
         {
             await run.Fail(userProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
         await run.Ok(created
-            ? "created, with the generated password from your ephemeral reply."
+            ? "created with a locked password - reachable only from root (sudo -u steam / su - steam)."
             : "already existed - left untouched.").ConfigureAwait(false);
 
-        // ---- steam's sudo access - see GrantFullSudoAsync for why this is deliberately broad ----
-        await run.Start("installing its sudoers file…").ConfigureAwait(false);
-        if (await GrantFullSudoAsync(ct).ConfigureAwait(false) is { } sudoProblem)
+        // ---- undo the full-sudo grant earlier versions installed ----
+        await run.Start($"checking for {LegacySudoersDropIn}…").ConfigureAwait(false);
+        var (sudoProblem, removed) = RemoveLegacySudoGrant();
+        if (sudoProblem is not null)
         {
             await run.Fail(sudoProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok($"{SudoersDropIn} installed - steam now has full, passwordless sudo.").ConfigureAwait(false);
+        await run.Ok(removed
+            ? $"removed {LegacySudoersDropIn} - steam no longer has sudo."
+            : "none present - steam has no sudo grant from this bot.").ConfigureAwait(false);
 
         // ---- the game files: copied from a working install, or downloaded with SteamCMD ----
         if (copying)
@@ -559,18 +543,16 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     }
 
     /// <summary>
-    /// Make sure the <c>steam</c> OS account exists, creating it - WITH A PASSWORD, never left
-    /// blank - if it does not.
+    /// Make sure the <c>steam</c> OS account exists, creating it LOCKED if it does not.
     /// </summary>
     /// <remarks>
-    /// A password is REQUIRED whenever this creates the account: an unprivileged account with no
-    /// password is not a hardened account, it is a locked door nobody has the key to yet, which
-    /// turns into "give it a password" as an out-of-band step somebody has to remember under
-    /// pressure the first time they need to log in as steam. If the account already exists, it is
-    /// left completely alone - this never resets a password an operator may already be relying on.
+    /// <c>useradd</c> leaves the password field locked, which is the point: the account runs the
+    /// game server and SteamCMD, and nothing ever needs to log in to it with a password. Root
+    /// reaches it with <c>sudo -u steam</c> or <c>su - steam</c>, neither of which asks for one.
+    /// An existing account is left completely alone.
     /// </remarks>
     /// <returns>A problem, or null with whether the account was newly created.</returns>
-    private async Task<(string? Problem, bool Created)> EnsureSteamUserAsync(string password, CancellationToken ct)
+    private async Task<(string? Problem, bool Created)> EnsureSteamUserAsync(CancellationToken ct)
     {
         var id = await RunAsync(null, "id", [SteamUser], QuickTimeout, ct).ConfigureAwait(false);
         if (id.Ok) return (null, false);
@@ -578,96 +560,27 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var add = await RunAsync(null, "useradd", UseraddArgv(SteamUser), QuickTimeout, ct).ConfigureAwait(false);
         if (!add.Ok) return ($"useradd {SteamUser} failed: {Tail(add.Combined)}", false);
 
-        // chpasswd, over STDIN - never as a command-line argument, which ps would show to
-        // every other user on the box for as long as the process runs.
-        var chpasswd = await RunAsync(null, "chpasswd", [], QuickTimeout, ct, ChpasswdStdin(SteamUser, password))
-            .ConfigureAwait(false);
-        if (!chpasswd.Ok)
-            return ($"created the \"{SteamUser}\" user but could not set its password: {Tail(chpasswd.Combined)}", false);
-
         return (null, true);
     }
 
     /// <summary>
-    /// Grant <c>steam</c> unrestricted, passwordless sudo. Runs every provision, whether or not
-    /// the account was just created.
+    /// Delete the full-sudo drop-in earlier versions installed for steam, if it is there.
     /// </summary>
-    /// <remarks>
-    /// DELIBERATELY BROAD, ON EXPLICIT OPERATOR INSTRUCTION - and the opposite of the pattern
-    /// everything else in this class follows. <see cref="ServiceControl.Advice"/> grants the
-    /// BOT'S OWN user exactly <c>systemctl start/stop/restart</c> on named units and nothing
-    /// else; this grants the account that runs SteamCMD and the game server - the single most
-    /// exposed process on the box, the one an untrusted workshop map or a Pavlov exploit reaches
-    /// first - the same access as root. A compromise of either becomes a root compromise the
-    /// instant this file exists. Kept as one small, clearly-named method rather than folded into
-    /// anything else so this decision's blast radius stays legible in exactly one place, not
-    /// scattered across the class.
-    ///
-    /// A DROP-IN, NEVER AN EDIT TO <c>/etc/sudoers</c> ITSELF. The main file is parsed as a
-    /// whole; a bad edit there breaks sudo for EVERY user on the box, root included if root
-    /// normally reaches privilege through sudo too. A drop-in under <c>/etc/sudoers.d</c> is
-    /// purely additive - this step can only ever add exactly the one file named above.
-    ///
-    /// VALIDATED BEFORE IT GOES LIVE. <c>visudo -c -f</c> checks a file's syntax without
-    /// installing it, run here against the file we are ABOUT TO install rather than the live
-    /// one - so a mistake is caught before anything is broken, not after.
-    /// </remarks>
-    /// <returns>A problem, or null on success.</returns>
-    private async Task<string?> GrantFullSudoAsync(CancellationToken ct)
+    /// <returns>A problem, or null with whether a file was removed.</returns>
+    private (string? Problem, bool Removed) RemoveLegacySudoGrant()
     {
-        var temp = $"{SudoersDropIn}.bot.tmp";
-
         try
         {
-            await File.WriteAllTextAsync(temp, SudoersFullAccessLine(SteamUser), ct).ConfigureAwait(false);
+            if (!File.Exists(LegacySudoersDropIn)) return (null, false);
+            File.Delete(LegacySudoersDropIn);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return $"could not write a temporary sudoers file: {ex.Message}";
+            return ($"could not remove {LegacySudoersDropIn}, which gives steam full root: {ex.Message}", false);
         }
 
-        var check = await RunAsync(null, "visudo", ["-c", "-f", temp], QuickTimeout, ct).ConfigureAwait(false);
-        if (!check.Ok)
-        {
-            TryDelete(temp);
-            return check.Started
-                ? $"the generated sudoers file failed validation, so nothing was installed: {Tail(check.Combined)}"
-                : "could not start visudo to validate the sudoers file - is sudo installed?";
-        }
-
-        // PavlovBot.Host is Linux-only by design (CLAUDE.md), and this guard is what tells the
-        // platform-compatibility analyzer that File.SetUnixFileMode below is reachable only on a
-        // platform it supports - the same OperatingSystem.IsLinux() idiom ProcessRunnerTests
-        // already uses to gate Unix-only behaviour.
-        if (!OperatingSystem.IsLinux())
-            return "this step needs a POSIX chmod, which is not available on this platform.";
-
-        try
-        {
-            // The rename is the same-directory atomic swap AtomicFile uses elsewhere; the mode
-            // set after it matters just as much - sudo REFUSES a drop-in that is group- or
-            // world-writable rather than silently ignoring the risk, so a wrong mode here would
-            // report success while granting nothing.
-            File.Move(temp, SudoersDropIn, overwrite: true);
-            File.SetUnixFileMode(SudoersDropIn, UnixFileMode.UserRead | UnixFileMode.GroupRead);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return $"validated but could not install {SudoersDropIn}: {ex.Message}";
-        }
-
-        logger.LogWarning(
-            "PROVISIONSERVER granted \"{User}\" full passwordless sudo via {Path} - deliberately broad and " +
-            "operator-requested, not this bot's usual least-privilege pattern", SteamUser, SudoersDropIn);
-
-        return null;
-    }
-
-    private static void TryDelete(string path)
-    {
-        try { File.Delete(path); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        logger.LogWarning("PROVISIONSERVER removed {Path} - the steam account no longer has sudo", LegacySudoersDropIn);
+        return (null, true);
     }
 
     /// <summary>The steam account's home directory, asked for rather than assumed.</summary>

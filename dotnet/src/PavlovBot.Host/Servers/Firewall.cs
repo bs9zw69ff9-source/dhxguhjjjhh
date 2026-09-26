@@ -101,16 +101,35 @@ public sealed class UfwFirewall(ILogger<UfwFirewall> logger) : IFirewall
 
     private static FirewallResult NotAnAddress(string? ip) => new(false, $"not an address: {ip}");
 
+    /// <summary>
+    /// The command line for one ufw call: direct as root, otherwise through <c>sudo -n</c>, the same
+    /// way <see cref="ServiceControl"/> reaches systemctl. <c>-n</c> fails instead of hanging on a
+    /// password prompt nobody can answer.
+    /// </summary>
+    internal static (string File, string[] Argv) Invocation(string[] ufwArgv, bool privileged) =>
+        privileged ? ("ufw", ufwArgv) : ("sudo", ["-n", "ufw", .. ufwArgv]);
+
+    /// <summary>The sudoers line an unprivileged bot needs, for the refusal message.</summary>
+    internal static string SudoersAdvice(string user) =>
+        $"The bot is not root and sudo refused ufw. Grant it with `visudo`:\n```\n{user} ALL=(root) NOPASSWD: /usr/sbin/ufw\n```";
+
     private async Task<FirewallResult> RunUfw(string[] argv, CancellationToken ct)
     {
         try
         {
-            var run = await ProcessRunner.RunAsync("ufw", argv, Timeout, logger, ct).ConfigureAwait(false);
+            var privileged = Environment.IsPrivilegedProcess;
+            var (file, args) = Invocation(argv, privileged);
+            var run = await ProcessRunner.RunAsync(file, args, Timeout, logger, ct).ConfigureAwait(false);
 
-            if (!run.Started) return new FirewallResult(false, "ufw is not installed or not on PATH");
+            if (!run.Started) return new FirewallResult(false, $"{file} is not installed or not on PATH");
             if (run.TimedOut) return new FirewallResult(false, "ufw did not answer within 10s and was stopped");
 
             var output = run.Combined.Length > 0 ? run.Combined : "(no output)";
+            if (!privileged && run.ExitCode != 0 &&
+                output.Contains("password is required", StringComparison.OrdinalIgnoreCase))
+            {
+                output = $"{output}\n{SudoersAdvice(Environment.UserName)}";
+            }
             return new FirewallResult(run.ExitCode == 0, output);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

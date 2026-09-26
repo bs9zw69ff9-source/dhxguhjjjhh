@@ -101,6 +101,13 @@ public sealed record FeatureOptions
     /// <summary>Where plugin assemblies live. Null uses ./plugins.</summary>
     public string? PluginDirectory { get; init; }
 
+    /// <summary>
+    /// Load plugins even when the bot runs as root (<c>PLUGINS_ALLOW_ROOT</c>). Off by default: a
+    /// plugin is ordinary .NET code with every right the process has, and its declared
+    /// permissions are a courtesy it chooses to honour, not a sandbox.
+    /// </summary>
+    public bool PluginsAllowRoot { get; init; }
+
     /// <summary>Plugins to load. Empty means all of them - a list is how a crashing
     /// plugin is disabled without deleting the file.</summary>
     public IReadOnlyList<string> EnabledPlugins { get; init; } = [];
@@ -543,6 +550,7 @@ public sealed record FeatureOptions
             SuperOwners = Snowflakes(configuration, "SUPER_OWNER_IDS"),
             MasterNames = List(configuration, "MASTER_NAMES"),
             PluginDirectory = Text(configuration, "PLUGIN_DIR"),
+            PluginsAllowRoot = Flag(configuration, "PLUGINS_ALLOW_ROOT"),
             EnabledPlugins = List(configuration, "PLUGINS_ENABLED"),
             DisabledPlugins = List(configuration, "PLUGINS_DISABLED"),
 

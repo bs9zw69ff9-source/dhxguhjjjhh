@@ -426,7 +426,7 @@ public class OwnerActionsTests : IDisposable
     [Fact]
     public async Task AnUnreadableFlagRowIsReportedAsUnreadable_NotAsEmpty()
     {
-        /* THE SCREENSHOT THIS EXISTS FOR. An auto-ban quoted "blacklisted ip 100.1.52.11" in
+        /* THE SCREENSHOT THIS EXISTS FOR. An auto-ban quoted "blacklisted ip <address>" in
            the same minute this panel said nothing was blacklisted. Both read the same row, so
            one was wrong - and a row that will not deserialize comes back as an empty
            StoredFlags, identical to an absent one. Asserting "nothing is blacklisted" over it

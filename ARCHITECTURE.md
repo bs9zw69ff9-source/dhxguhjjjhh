@@ -1,6 +1,12 @@
-# Architecture
+# Architecture (Node bot - historical)
 
-How the bot is put together, and how to add to it.
+> **This describes the Node.js bot, which has been removed.** The running bot is the C#
+> solution under [`dotnet/`](dotnet/); see [`dotnet/README.md`](dotnet/README.md) for its
+> layout. Kept because the Node bot's design is still the reference for the data formats
+> the C# bot reads, and `git log` before its removal is where to look when a feature "used
+> to work".
+
+How the bot was put together, and how to add to it.
 
 > **Status.** The framework described here is complete, tested and running. The
 > migration of existing features into plugins is **in progress** — see

@@ -88,14 +88,16 @@ internal sealed class RconConnection : IAsyncDisposable
             await tcp.ConnectAsync(_options.Host, _options.Port, ct).ConfigureAwait(false);
             var stream = tcp.GetStream();
 
-            // The server speaks first with the password prompt.
-            var prompt = await ReadSomeAsync(stream, ct).ConfigureAwait(false);
+            // The server speaks first with the password prompt. Read until it has all arrived:
+            // TCP may deliver "Pass" and "word: " separately, which used to fail the login.
+            var prompt = await ReadUntilAsync(stream,
+                static t => t.Contains("Password", StringComparison.OrdinalIgnoreCase), ct).ConfigureAwait(false);
             if (!prompt.Contains("Password", StringComparison.OrdinalIgnoreCase))
                 throw new RconException($"expected a password prompt from {_options.Host}:{_options.Port}, got \"{Truncate(prompt)}\"");
 
             await WriteAsync(stream, Md5Hex(_options.Password), ct).ConfigureAwait(false);
 
-            var auth = await ReadSomeAsync(stream, ct).ConfigureAwait(false);
+            var auth = await ReadUntilAsync(stream, HasAuthVerdict, ct).ConfigureAwait(false);
             if (!auth.Contains("Authenticated=1", StringComparison.Ordinal))
                 throw new RconAuthException($"{_options.Name} rejected the RCON password");
 
@@ -134,8 +136,18 @@ internal sealed class RconConnection : IAsyncDisposable
     /// Send one command and return the raw reply. Serialised: callers queue behind each
     /// other rather than corrupting the stream.
     /// </summary>
-    public async Task<string> SendAsync(string command, CancellationToken ct)
+    public Task<string> SendAsync(string command, CancellationToken ct) =>
+        SendAsync(command, idempotent: true, new ExchangeProgress(), ct);
+
+    /// <param name="idempotent">
+    /// Whether sending the command twice is harmless. A command that is not is re-sent after a
+    /// dropped connection ONLY when no reply byte came back - a dead socket cannot have
+    /// delivered it - never after the server may have acted on it.
+    /// </param>
+    /// <param name="progress">Filled in as the exchange goes, so the caller can tell the same.</param>
+    internal async Task<string> SendAsync(string command, bool idempotent, ExchangeProgress progress, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(progress);
         await _gate.WaitAsync(ct).ConfigureAwait(false);
 
         /* Whether this exchange finished cleanly. Anything else means the socket holds an
@@ -155,17 +167,18 @@ internal sealed class RconConnection : IAsyncDisposable
 
             try
             {
-                var reply = await ExchangeAsync(command, ct).ConfigureAwait(false);
+                var reply = await ExchangeAsync(command, progress, ct).ConfigureAwait(false);
                 settled = true;
                 return reply;
             }
-            catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
+            catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException &&
+                                       (idempotent || progress.ReplyBytes == 0))
             {
                 /* The session died mid-command - a server restart, a map change, an idle
                    reap. Rebuild once and retry: from the caller's side this is a transient
                    blip, not a failure worth surfacing. */
                 await ConnectAsync(ct).ConfigureAwait(false);
-                var reply = await ExchangeAsync(command, ct).ConfigureAwait(false);
+                var reply = await ExchangeAsync(command, progress, ct).ConfigureAwait(false);
                 settled = true;
                 return reply;
             }
@@ -200,10 +213,12 @@ internal sealed class RconConnection : IAsyncDisposable
         }
     }
 
-    private async Task<string> ExchangeAsync(string command, CancellationToken ct)
+    private async Task<string> ExchangeAsync(string command, ExchangeProgress progress, CancellationToken ct)
     {
         var stream = _stream ?? throw new RconException("not connected");
+        progress.ReplyBytes = 0;
         await WriteAsync(stream, command + "\n", ct).ConfigureAwait(false);
+        progress.Written = true;
 
         var sb = new StringBuilder();
         var buffer = ArrayPool<byte>.Shared.Rent(4096);
@@ -227,6 +242,7 @@ internal sealed class RconConnection : IAsyncDisposable
             {
                 var read = await stream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
                 if (read == 0) throw new IOException("connection closed while awaiting a reply");
+                progress.ReplyBytes += read;
 
                 var decoded = decoder.GetChars(buffer, 0, read, chars, 0);
                 sb.Append(chars, 0, decoded);
@@ -235,8 +251,17 @@ internal sealed class RconConnection : IAsyncDisposable
                    waiting for a close or a timeout. A truncated document does not parse, so
                    this can only fire on a whole reply. Commands that answer with something
                    other than JSON fall through to the CRLF check below. */
+                /* Parsed only when the text could END a document. Parsing every chunk of a long
+                   roster was quadratic in its size for no benefit: a document ending mid-chunk
+                   cannot be complete. */
+                var last = LastNonWhitespace(sb);
+                if (last is '}' or ']')
+                {
+                    var candidate = sb.ToString();
+                    if (LooksLikeJson(candidate) && IsCompleteJson(candidate)) return candidate;
+                }
+
                 var text = sb.ToString();
-                if (LooksLikeJson(text) && IsCompleteJson(text)) return text;
 
                 /* WHITESPACE IS NOT A REPLY, and accepting it was the whole failure.
                    This branch settles a non-JSON answer on its trailing CRLF, and a bare
@@ -268,6 +293,13 @@ internal sealed class RconConnection : IAsyncDisposable
         }
     }
 
+    private static char? LastNonWhitespace(StringBuilder sb)
+    {
+        for (var i = sb.Length - 1; i >= 0; i--)
+            if (!char.IsWhiteSpace(sb[i])) return sb[i];
+        return null;
+    }
+
     private static bool LooksLikeJson(string s)
     {
         var t = s.AsSpan().TrimStart();
@@ -291,15 +323,36 @@ internal sealed class RconConnection : IAsyncDisposable
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    private static async Task<string> ReadSomeAsync(NetworkStream stream, CancellationToken ct)
+    /// <summary>The handshake text is bounded; a peer sending more is not a Pavlov server.</summary>
+    private const int MaxHandshakeBytes = 4096;
+
+    /// <summary>Read until <paramref name="done"/> holds, the peer closes, or the cap is reached.</summary>
+    private static async Task<string> ReadUntilAsync(NetworkStream stream, Func<string, bool> done, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(1024);
+        var text = new StringBuilder();
+        var total = 0;
         try
         {
-            var read = await stream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
-            return read == 0 ? string.Empty : Encoding.UTF8.GetString(buffer, 0, read);
+            while (total < MaxHandshakeBytes)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
+                if (read == 0) break;
+                total += read;
+                text.Append(Encoding.UTF8.GetString(buffer, 0, read));
+                if (done(text.ToString())) break;
+            }
+            return text.ToString();
         }
         finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
+
+    /// <summary>The auth line has arrived far enough to read its 0 or 1.</summary>
+    private static bool HasAuthVerdict(string text)
+    {
+        const string marker = "Authenticated=";
+        var at = text.IndexOf(marker, StringComparison.Ordinal);
+        return at >= 0 && text.Length > at + marker.Length;
     }
 
     private static string Truncate(string s) =>
@@ -336,6 +389,16 @@ internal sealed class RconConnection : IAsyncDisposable
 
     // Kept for parity with the invariant culture used elsewhere in formatting.
     internal static string Fmt(int n) => n.ToString(CultureInfo.InvariantCulture);
+}
+
+/// <summary>How far one exchange got, so a failure can be judged safe to repeat or not.</summary>
+internal sealed class ExchangeProgress
+{
+    /// <summary>The command was handed to the socket (not necessarily received).</summary>
+    public bool Written { get; set; }
+
+    /// <summary>Reply bytes read on the latest attempt. Any at all means the server was listening.</summary>
+    public int ReplyBytes { get; set; }
 }
 
 /// <summary>An RCON exchange failed.</summary>

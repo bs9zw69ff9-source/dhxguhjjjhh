@@ -255,6 +255,8 @@ public sealed class ModSaveSync
         {
             foreach (var abs in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
+                // A write in flight, ours or anybody's - never something to mirror.
+                if (abs.EndsWith(".tmp", StringComparison.Ordinal)) continue;
                 if (!TryModifiedUnixMs(abs, out var modified)) continue;
                 // Store forward-slashed so the relative key is identical across installs and
                 // the planner compares like with like whatever the OS separator is.
@@ -316,12 +318,9 @@ public sealed class ModSaveSync
                game-file writes keep. */
             if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return false;
 
-            // Unique per write, not just per process: the interval sweep and the join-time
-            // fast path can both target one file at once, and a shared temp name would let
-            // them clobber each other's half-written temp before either rename.
-            var temp = $"{destPath}.modsync.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllBytes(temp, content);
-            File.Move(temp, destPath, overwrite: true);
+            // Unique temp per write (the sweep and the join-time fast path can target one file at
+            // once), flushed, and keeping the game's ownership of the file. See AtomicFile.
+            AtomicFile.Write(destPath, content);
 
             /* MTIME CARRIED FROM THE SOURCE, so the two copies now compare equal and the next
                sweep leaves them alone. Without it the fresh write is always "newer" and the

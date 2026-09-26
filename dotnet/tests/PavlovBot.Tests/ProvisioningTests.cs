@@ -582,15 +582,6 @@ public class ProvisioningTests
         Assert.Equal(["-m", "-s", "/bin/bash", "steam"], ServerProvisioner.UseraddArgv("steam"));
     }
 
-    [Fact]
-    public void ChpasswdStdinIsTheColonFormatWithATrailingNewline()
-    {
-        // The exact wire format chpasswd documents: "user:password\n". Pinned because getting
-        // this wrong either fails silently or, with no newline, leaves chpasswd waiting on more
-        // input that never comes.
-        Assert.Equal("steam:Ab1_-.!xyzZ\n", ServerProvisioner.ChpasswdStdin("steam", "Ab1_-.!xyzZ"));
-    }
-
     // ---- command helpers ----
 
     [Theory]
@@ -642,7 +633,7 @@ public class ProvisioningTests
     public async Task TheProvisionerSeamReportsProgressAndReturnsAnOutcome()
     {
         var stub = new StubServerProvisioner();
-        var request = new ProvisionRequest(Spec(), ["a", "b", "c"], ["/a", "/b", "/c"], null, "/tmp/.env", "SteamAcctPass1");
+        var request = new ProvisionRequest(Spec(), ["a", "b", "c"], ["/a", "/b", "/c"], null, "/tmp/.env");
 
         var seen = 0;
         var outcome = await stub.ProvisionAsync(request, _ => { seen++; return Task.CompletedTask; }, CancellationToken.None);
@@ -961,27 +952,28 @@ public class ProvisioningTests
         Assert.Equal(deletable, ServerProvisioner.DeletableInstallProblem(path) is null);
     }
 
-    // ---- steam's sudo grant ----
+    // ---- steam's sudo grant: only ever removed ----
 
     [Fact]
-    public void SudoersFullAccessLineIsUnrestrictedAndPasswordless()
+    public void TheLegacySudoGrantIsTheBotsOwnDropIn()
     {
-        Assert.Equal("steam ALL=(ALL) NOPASSWD: ALL\n", ServerProvisioner.SudoersFullAccessLine("steam"));
+        // The removal step deletes exactly this file. Pinned so a rename cannot point it at
+        // something an operator wrote.
+        Assert.Equal("/etc/sudoers.d/pavlov-steam-full", ServerProvisioner.LegacySudoersDropIn);
     }
 
     // ---- the checklist itself: real step list, real cursor ----
 
     [Fact]
-    public void TheRealStepListHasSteamAccountAndSudoRightAfterPreflight()
+    public void TheRealStepListRemovesTheLegacySudoGrantRightAfterTheAccount()
     {
-        // Pinned in order: this is the exact list ProvisionAsync drives, and its position matters
-        // - the sudo grant has to land after the account exists and before anything that could
-        // need it (SteamCMD, running as steam).
+        // Pinned in order: this is the exact list ProvisionAsync drives. steam is never GRANTED
+        // sudo - the step after the account only removes a grant an earlier version installed.
         Assert.Equal(
         [
             "Pre-flight checks",
             "Steam user account",
-            "Steam sudo access (full, NOPASSWD)",
+            "Remove legacy steam sudo grant",
             "SteamCMD (locate or bootstrap)",
             "SteamCMD install",
             "Server config (RconSettings.txt, Game.ini)",

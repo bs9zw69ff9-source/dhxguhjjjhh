@@ -41,9 +41,6 @@ public sealed record ProvisionOutcome(IReadOnlyList<ProvisionStep> Steps, bool R
 /// <param name="FinalPavlovBases">The full, aligned <c>PAVLOV_BASES</c> list to write.</param>
 /// <param name="FinalPlayerCountChannels">The full player-count channel list, or null to leave it.</param>
 /// <param name="EnvPath">The path to the bot's <c>.env</c> that gets the override block.</param>
-/// <param name="SteamUserPassword">
-/// The password to set IF the <c>steam</c> OS account needs to be created.
-/// </param>
 /// <param name="CopyFromInstallDir">
 /// An existing install to copy instead of downloading. Null runs SteamCMD as usual; a path copies
 /// that directory's contents into the new install, which is far quicker than fetching several GB
@@ -65,7 +62,6 @@ public sealed record ProvisionRequest(
     IReadOnlyList<string> FinalPavlovBases,
     IReadOnlyList<string>? FinalPlayerCountChannels,
     string EnvPath,
-    string SteamUserPassword,
     string RconHost = "127.0.0.1",
     string? CopyFromInstallDir = null,
     bool RebuildingExistingSlot = false);

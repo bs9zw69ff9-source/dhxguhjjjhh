@@ -102,6 +102,19 @@ public class ServiceRegistryTests
     }
 
     [Fact]
+    public async Task AZeroIntervalFailsToStartInsteadOfReportingRunning()
+    {
+        // PeriodicTimer throws on a zero period; that used to happen inside the detached loop,
+        // leaving a "Running" service whose loop had already died.
+        await using var registry = New();
+        registry.Register(Definition("broken", _ => Task.CompletedTask) with { Interval = TimeSpan.Zero });
+
+        await registry.StartAllAsync();
+
+        Assert.Equal(ServiceState.Failed, registry.Status().Single().State);
+    }
+
+    [Fact]
     public async Task AThrowingTickIsContainedAndCounted()
     {
         /* The whole point. In the Node bot this was an unhandled rejection, which can take

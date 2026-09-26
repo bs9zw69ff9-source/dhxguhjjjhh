@@ -170,7 +170,8 @@ public sealed class RosterService
                     continue;
                 }
 
-                File.WriteAllText(path, "");
+                // Through AtomicFile so a NEW roster takes its directory's owner, not the bot's.
+                PavlovBot.Host.Storage.AtomicFile.Write(path, "");
                 created++;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -234,7 +235,6 @@ public sealed class RosterService
             if (current is not null) Backup(file, current);
 
             var path = PathFor(file);
-            var temp = $"{path}.tmp";
             /* Only into a directory that already exists. The bot never creates one inside a
                game install - a missing one means the configured roster path is wrong, and
                building it produces a tree the game never reads. */
@@ -244,8 +244,7 @@ public sealed class RosterService
                 return false;
             }
 
-            await File.WriteAllTextAsync(temp, string.Join("\n", lines) + "\n", ct).ConfigureAwait(false);
-            File.Move(temp, path, overwrite: true);
+            await PavlovBot.Host.Storage.AtomicFile.WriteAsync(path, string.Join("\n", lines) + "\n", ct).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

@@ -68,20 +68,6 @@ public sealed class ProvisionServerCommand(
     /// <summary>Ephemeral: operator business, and it prints the generated RCON password.</summary>
     public bool Ephemeral => true;
 
-    /// <summary>
-    /// The password given to the <c>steam</c> OS account when this creates it.
-    /// </summary>
-    /// <remarks>
-    /// LITERALLY "1", BY EXPLICIT OPERATOR INSTRUCTION, on a box reached only by SSH key. It is
-    /// still set rather than left blank, because an account with no password at all is a different
-    /// and more awkward state to be in later. Worth knowing what this does and does not cost:
-    /// <c>sudo -u steam</c> and key-based SSH never consult it, so it is not what protects the
-    /// account - but it IS a real credential for anything that does check one (a console login,
-    /// <c>su - steam</c>), and combined with the full sudo this command grants, "1" is enough to
-    /// become root for anyone who reaches such a prompt.
-    /// </remarks>
-    private const string SteamUserPassword = "1";
-
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
@@ -207,13 +193,12 @@ public sealed class ProvisionServerCommand(
             : null;
 
         // ---- kick off, and hand the slow work to a detached task ----
-        await Reply(command, StartedEmbed(spec, generated, SteamUserPassword, copyFrom, refilling)).ConfigureAwait(false);
+        await Reply(command, StartedEmbed(spec, generated, copyFrom, refilling)).ConfigureAwait(false);
 
         var request = new ProvisionRequest(
             spec, plan.FinalUnits, plan.FinalBases,
             FinalPlayerCountChannels: null,
             Path.Combine(Directory.GetCurrentDirectory(), ".env"),
-            SteamUserPassword,
             RconHostFor(prospectiveSlot),
             copyFrom,
             refilling);
@@ -258,7 +243,7 @@ public sealed class ProvisionServerCommand(
     // ---- rendering ----
 
     private static Embed StartedEmbed(
-        ServerProvisionSpec spec, bool generatedPassword, string steamUserPassword, string? copyFrom, bool refilling)
+        ServerProvisionSpec spec, bool generatedPassword, string? copyFrom, bool refilling)
     {
         var source = copyFrom is null
             ? "SteamCMD downloads several GB, so this"
@@ -283,16 +268,6 @@ public sealed class ProvisionServerCommand(
         if (generatedPassword)
             embed.AddField("RCON password (generated - save it)", $"||`{spec.RconPassword}`||", inline: false);
 
-        /* ALWAYS shown, not conditionally: whether the "steam" OS account already exists is only
-           known deep inside the background provisioner, long after this reply is the only chance
-           to hand the operator a secret. Unused if the account turns out to already exist. */
-        embed.AddField("steam OS account password (used only if the account needs creating)",
-            $"||`{steamUserPassword}`||", inline: false);
-
-        embed.AddField($"{Theme.Warn} steam is getting FULL sudo",
-            "`/etc/sudoers.d/pavlov-steam-full` gives the `steam` account passwordless root. " +
-            "From here on, a compromised game server or a bad workshop map is a root compromise. " +
-            "Delete that file if you did not want that.", inline: false);
 
         return embed.Build();
     }

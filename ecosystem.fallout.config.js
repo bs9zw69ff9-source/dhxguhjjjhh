@@ -35,7 +35,7 @@ const path = require("path");
 
 /* Overridable so the second bot does not have to live at one blessed path:
  *   FALLOUT_HOME=/srv/other pm2 start ecosystem.fallout.config.js
- * The default is what SECOND-BOT.md tells you to create. */
+ * The default is the directory the live fallout bot has always run from. */
 const HOME = process.env.FALLOUT_HOME || "/root/pavlov-bot-fallout";
 
 module.exports = {

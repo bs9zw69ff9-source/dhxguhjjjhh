@@ -128,8 +128,25 @@ public class FeedWebhookTests
 
         Assert.Null(await Record.ExceptionAsync(() => feeds.PostAsync(FeedWebhooks.Connect, "hello")));
 
-        // ...and the failure is REPORTED rather than swallowed.
-        Assert.Contains("not delivering", feeds.Status[FeedWebhooks.Connect], StringComparison.Ordinal);
+        // ...and the failure is REPORTED rather than swallowed - by the background sender, since
+        // the caller no longer waits on Discord at all.
+        Assert.True(SpinWait.SpinUntil(
+            () => feeds.Status[FeedWebhooks.Connect].Contains("not delivering", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(30)), feeds.Status[FeedWebhooks.Connect]);
+    }
+
+    [Fact]
+    public async Task PostingNeverWaitsOnDiscord()
+    {
+        /* The log-tail tick calls this for every kill and join. It used to await the webhook,
+           including Discord's rate-limit waits, and a burst held up reading Pavlov.log. */
+        var feeds = Build();
+        feeds.Register(FeedWebhooks.Connect, PlausibleUrl);
+
+        var post = feeds.PostAsync(FeedWebhooks.Connect, "hello");
+
+        Assert.True(post.IsCompleted);
+        await post;
     }
 
     [Fact]

@@ -42,6 +42,12 @@ public sealed class LogTailer
         public string Carry = "";      // a partial final line, held until its newline arrives
         public bool Primed;            // has the initial positioning happened
 
+        /// <summary>Holds a multi-byte character split across two reads until its other half arrives.</summary>
+        public Decoder Decoder = Encoding.UTF8.GetDecoder();
+
+        /// <summary>The first bytes of the file as last seen - its identity, for rotation.</summary>
+        public byte[]? Head;
+
         /// <summary>
         /// Whether the current run of read failures has already been reported.
         /// </summary>
@@ -97,6 +103,7 @@ public sealed class LogTailer
         if (!state.Primed)
         {
             state.Primed = true;
+            RecordHead(path, state);   // the identity of THIS log, before anything replaces it
             /* Position at the END on a normal first pass. Starting at zero would re-announce
                every join in the file - on a restart during an incident, that is thousands of
                feed messages about players who left days ago. */
@@ -115,6 +122,8 @@ public sealed class LogTailer
                 path, state.Offset, info.Length);
             state.Offset = 0;
             state.Carry = "";
+            state.Decoder = Encoding.UTF8.GetDecoder();
+            state.Head = null;
         }
 
         if (info.Length == state.Offset) return [];
@@ -135,6 +144,18 @@ public sealed class LogTailer
                 _logger.LogInformation("{Path} is readable again", path);
             }
 
+            /* ROTATION BY IDENTITY, not only by size. A shrink catches most restarts, but a new
+               log that has already grown past the old offset by the next poll looked like the
+               same file, and its first N bytes - the joins right after a restart - were skipped.
+               Pavlov opens every log with a timestamped header, so its first bytes change. */
+            if (Rotated(stream, state))
+            {
+                _logger.LogInformation("{Path} was replaced by a new log - reading it from the start", path);
+                state.Offset = 0;
+                state.Carry = "";
+                state.Decoder = Encoding.UTF8.GetDecoder();
+            }
+
             stream.Seek(state.Offset, SeekOrigin.Begin);
 
             /* POOLED, not `new byte[]`, because this runs every LogPollInterval (1.5s). A busy
@@ -153,7 +174,12 @@ public sealed class LogTailer
                 if (read <= 0) return [];
 
                 state.Offset += read;
-                text = state.Carry + Encoding.UTF8.GetString(buffer, 0, read);
+
+                // A decoder, not GetString per read: a player name's multi-byte character split
+                // across two reads otherwise turns into replacement characters.
+                var chars = new char[state.Decoder.GetCharCount(buffer, 0, read)];
+                var decoded = state.Decoder.GetChars(buffer, 0, read, chars, 0);
+                text = state.Carry + new string(chars, 0, decoded);
             }
             finally
             {
@@ -193,6 +219,49 @@ public sealed class LogTailer
     }
 
     /// <summary>Forget a file's position, so the next poll re-primes.</summary>
+    /// <summary>Note the head of the log as it is now. Best effort: an unreadable file is caught later.</summary>
+    private static void RecordHead(string path, FileState state)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Rotated(stream, state);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The main read reports an unreadable log; a missing head only means no comparison yet.
+        }
+    }
+
+    /// <summary>How much of the start of a log identifies it.</summary>
+    private const int HeadBytes = 64;
+
+    /// <summary>
+    /// Whether the file now open is a different log from the one last read. Records its head
+    /// the first time, and whenever it changes.
+    /// </summary>
+    private static bool Rotated(FileStream stream, FileState state)
+    {
+        var head = new byte[(int)Math.Min(HeadBytes, stream.Length)];
+        stream.Seek(0, SeekOrigin.Begin);
+        var got = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+        if (got < head.Length) Array.Resize(ref head, got);
+
+        var previous = state.Head;
+        if (previous is null || previous.Length < HeadBytes && head.Length > previous.Length && head.AsSpan().StartsWith(previous))
+        {
+            // First sight, or the recorded head was short because the file was: extend it.
+            state.Head = head;
+            return false;
+        }
+
+        var comparable = Math.Min(previous.Length, head.Length);
+        if (head.AsSpan(0, comparable).SequenceEqual(previous.AsSpan(0, comparable))) return false;
+
+        state.Head = head;
+        return true;
+    }
+
     public void Reset(string? path = null)
     {
         if (path is null) _files.Clear();

@@ -184,7 +184,8 @@ public sealed class Boards(
     /// </remarks>
     public Task TickPlaytimeAsync(TimeSpan elapsed, CancellationToken ct = default)
     {
-        var online = rcon.AllOnlinePlayers();
+        // Fresh rosters only: a server that stopped answering must not keep accruing playtime.
+        var online = rcon.ConfirmedOnlinePlayers();
         if (online.Count == 0) return Task.CompletedTask;
 
         var now = DateTimeOffset.UtcNow;

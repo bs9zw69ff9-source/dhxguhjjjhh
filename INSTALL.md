@@ -54,6 +54,12 @@ and widens what a leaked token can reach.
 Get your own Discord user ID for `OWNER_IDS`: Settings → Advanced → Developer
 Mode on, then right-click yourself → Copy User ID.
 
+**Turn "Public Bot" OFF** (Bot page). New applications have it on, which lets anyone
+who knows the application id invite the bot to a server of their own. The bot only
+treats Discord's *Administrator* permission as bot-Admin inside your staff guild
+(`HOME_GUILD_ID`, else `GUILD_ID`, else the only guild it is in), so an invite no
+longer grants anything - but there is no reason to allow one.
+
 ---
 
 ## 3. Clone and configure
@@ -109,25 +115,51 @@ building a tree the game never reads is worse than a refusal that says so.
 
 ---
 
-## 4. File permissions
+## 4. Run it as its own user, not root
 
-The bot writes the faction rosters and the ban list, which the `steam` user owns.
-Either run it as root, or add it to the `steam` group:
+A bot running as root turns any bug in it - or in Discord.Net, or in a plugin -
+into full control of the box. It logs a warning at startup when it is root, and it
+refuses to load plugins as root unless `PLUGINS_ALLOW_ROOT=1`. Everything except
+`/provisionserver` and `/deleteserver` works unprivileged.
 
 ```bash
-usermod -aG steam <botuser>
+useradd -m -s /bin/bash pavlovbot
+usermod -aG steam pavlovbot                   # the rosters, ledgers and ban list are steam's
+chmod -R g+w /home/steam/pavlovserver*/Pavlov/Saved/Config
+chmod 600 /path/to/bot/.env                   # the token and RCON passwords
 ```
 
-Getting this wrong does not fail loudly. Reads succeed and writes fail, so
-`/whitelist add` answers "the roster could not be written" while everything else
+Then `visudo` and grant exactly what it needs - the unit names are your
+`PAVLOV_UNITS` (the bot prints this line itself if a restart is refused):
+
+```
+pavlovbot ALL=(root) NOPASSWD: /bin/systemctl start pavlovserver, /bin/systemctl stop pavlovserver, /bin/systemctl restart pavlovserver
+pavlovbot ALL=(root) NOPASSWD: /usr/sbin/ufw
+```
+
+The ufw line is only for `/firewall`. As a non-root user the bot calls both through
+`sudo -n`, so a missing grant fails with a message instead of hanging.
+
+Getting group permissions wrong does not fail loudly. Reads succeed and writes fail,
+so `/whitelist add` answers "the roster could not be written" while everything else
 looks healthy.
 
-If you want `/firewall` (manual IP blocking at the OS level, never automatic),
-the bot needs root or passwordless sudo for ufw only:
+**Game files keep their owner.** When the bot rewrites a ledger, roster or ban file
+it gives the new file the old one's owner and mode, so the game server (running as
+`steam`) can still save it. Earlier versions left such files owned by the bot's
+user - if in-game caps or bans stopped saving after an upgrade from one, fix the
+ownership once: `chown -R steam:steam /home/steam/pavlovserver*/Pavlov/Saved`.
 
+**If this box was provisioned by an older version** of `/provisionserver`, the
+`steam` account was given passwordless root and a fixed password. Remove both:
+
+```bash
+rm -f /etc/sudoers.d/pavlov-steam-full
+passwd -l steam
 ```
-<botuser> ALL=(root) NOPASSWD: /usr/sbin/ufw
-```
+
+(`/provisionserver` now removes that sudoers file itself when it runs, but only
+then.)
 
 ---
 
@@ -210,5 +242,16 @@ bash scripts/deploy.sh <older-sha>
 ## Backups
 
 `bot.db` is the source of truth; the JSON files beside it are a readable export.
-Back up the database and your `.env`. `scripts/backup.sh` handles offsite via
-rclone — see `scripts/backup.env.example`.
+Both live in `DATA_DIR` (default `data/` under the directory the bot runs in).
+`scripts/backup.sh` handles offsite via rclone — see `scripts/backup.env.example`.
+Set `BOT_DIR` to the directory the bot runs in (its pm2 cwd): the script used to
+look for `bot.db` in the repo root, which is not where the C# bot keeps it.
+Keep a copy of `.env` somewhere safe yourself; the script deliberately does not
+upload secrets.
+
+## Knowing when the bot itself is down
+
+The bot's own alerts stop when the bot does. `scripts/watchdog.sh` runs from cron,
+checks the bot's `/healthz`, and posts to a Discord webhook once when it goes down
+and once when it comes back. Set `METRICS_PORT` in `.env`, then see
+`scripts/watchdog.env.example`.

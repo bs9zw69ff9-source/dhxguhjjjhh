@@ -121,9 +121,7 @@ public sealed class LedgerFileStore(
                mid-write sees a truncated number, which Read already has to handle. A
                rename is atomic within a directory, so a reader sees either the old value or
                the new one and never half of either. */
-            var temporary = path + ".bot.tmp";
-            File.WriteAllText(temporary, balance.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            File.Move(temporary, path, overwrite: true);
+            PavlovBot.Host.Storage.AtomicFile.Write(path, balance.ToString(System.Globalization.CultureInfo.InvariantCulture));
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

@@ -152,7 +152,7 @@ public class HomeGuildAccessTests
         /* An administrator who loses admin by messaging the bot is the same bug in a
            different clause, and that clause read the cast separately from the role check. */
         var access = WithRoles();
-        access.UseHomeGuild(id => new FakeMember(id) { Administrator = true });
+        access.UseHomeGuild(id => new FakeMember(id) { Administrator = true, GuildId = 5000 }, () => 5000);
 
         Assert.True(access.IsAdmin(new FakeUser(StrangerId)));
     }
