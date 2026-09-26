@@ -121,13 +121,45 @@ public class AccessTests
         Assert.Equal(StaffTier.Mod, access.TierOf(mod));
     }
 
-    [Fact]
-    public void DiscordsOwnAdministratorPermissionCounts()
-    {
-        // Somebody who can delete the guild is not meaningfully restricted by a bot role.
-        var access = WithRoles(out _);
+    private const ulong HomeGuildId = 5000;
+    private const ulong ForeignGuildId = 6000;
 
-        Assert.True(access.IsAdmin(new FakeMember(StrangerId) { Administrator = true }));
+    [Fact]
+    public void DiscordsOwnAdministratorPermissionCountsInTheStaffGuild()
+    {
+        // Somebody who can delete the staff guild is not meaningfully restricted by a bot role.
+        var access = WithRoles(out _);
+        access.UseHomeGuild(_ => null, () => HomeGuildId);
+
+        Assert.True(access.IsAdmin(new FakeMember(StrangerId) { Administrator = true, GuildId = HomeGuildId }));
+    }
+
+    [Fact]
+    public void AdministratorOfSomeOtherServerIsNotBotAdmin()
+    {
+        /* The escalation this closes: invite the bot to a server you own, and you are
+           Administrator there. That used to make you Admin of the bot - bans, server switches,
+           /setroles - on the real Pavlov servers. */
+        var access = WithRoles(out _);
+        access.UseHomeGuild(_ => null, () => HomeGuildId);
+
+        var intruder = new FakeMember(StrangerId) { Administrator = true, GuildId = ForeignGuildId };
+
+        Assert.False(access.IsAdmin(intruder));
+        Assert.False(access.IsMod(intruder));
+        Assert.False(access.Allows(RequiredAccess.Admin, intruder));
+    }
+
+    [Fact]
+    public void AdministratorCountsForNothingWhenTheStaffGuildIsUnknown()
+    {
+        // In several guilds with neither HOME_GUILD_ID nor GUILD_ID, there is no way to tell
+        // which server's Administrator should count - so none does. Roles and owners still work.
+        var access = WithRoles(out _);
+        access.UseHomeGuild(_ => null, () => null);
+
+        Assert.False(access.IsAdmin(new FakeMember(StrangerId) { Administrator = true, GuildId = HomeGuildId }));
+        Assert.True(access.IsAdmin(new FakeMember(StrangerId, AdminRoleId) { GuildId = ForeignGuildId }));
     }
 
     [Fact]

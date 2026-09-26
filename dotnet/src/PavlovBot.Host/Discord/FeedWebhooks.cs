@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using Discord;
 using Discord.Webhook;
 using Microsoft.Extensions.Logging;
@@ -38,11 +39,71 @@ public sealed class FeedWebhooks : IAsyncDisposable
     /// <summary>How long to wait before trying to open a failed webhook again.</summary>
     private static readonly TimeSpan ReopenAfter = TimeSpan.FromMinutes(1);
 
+    /// <summary>Posts waiting to go out. Past this the OLDEST is dropped.</summary>
+    internal const int QueueCapacity = 500;
+
+    private sealed record Pending(string Label, string? Text, Embed? Embed);
+
+    private readonly Channel<Pending> _queue;
+    private readonly CancellationTokenSource _stopping = new();
+    private readonly Task _sender;
+    private long _dropped;
+
     public FeedWebhooks(ILogger<FeedWebhooks> logger, MetricsRegistry metrics, TimeProvider? time = null)
     {
         _logger = logger;
         _metrics = metrics;
         _time = time ?? TimeProvider.System;
+
+        /* POSTING IS QUEUED, NOT AWAITED BY THE CALLER. Feed posts used to be awaited inside
+           the log-tail tick, and Discord.Net waits out a 429 before returning - so a burst of
+           kills held up the reading of Pavlov.log behind Discord's rate limit. Past the tick's
+           budget the rest of that batch was abandoned, joins included, and those joins never
+           reached ban-evasion or VPN screening. A feed line is cosmetic; a join is not. So a
+           full queue drops the oldest feed line, and the log is never held up at all. */
+        _queue = Channel.CreateBounded<Pending>(
+            new BoundedChannelOptions(QueueCapacity)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+            },
+            dropped => OnDropped(dropped.Label));
+        _sender = Task.Run(() => SendLoopAsync(_stopping.Token));
+    }
+
+    /// <summary>Posts dropped because the queue was full, since start.</summary>
+    public long Dropped => Interlocked.Read(ref _dropped);
+
+    private void OnDropped(string label)
+    {
+        if (Interlocked.Increment(ref _dropped) == 1)
+        {
+            _logger.LogWarning("Feed queue is full ({Capacity}) - dropping the oldest lines. Discord is " +
+                               "rate-limiting the webhooks faster than events arrive", QueueCapacity);
+        }
+        _metrics.Increment("feed_dropped_total", MetricLabels.Of("feed", label), help: "Feed lines dropped because the queue was full");
+    }
+
+    private async Task SendLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var item in _queue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                if (item.Embed is { } embed) await SendEmbedAsync(item.Label, embed).ConfigureAwait(false);
+                else if (item.Text is { } text) await SendTextAsync(item.Label, text).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // shutting down
+        }
+    }
+
+    private void Enqueue(Pending item)
+    {
+        if (!_urls.ContainsKey(item.Label)) return;   // feed off: nothing to queue
+        _queue.Writer.TryWrite(item);
     }
 
     /// <summary>
@@ -131,10 +192,19 @@ public sealed class FeedWebhooks : IAsyncDisposable
         }
     }
 
-    /// <summary>Post one line. Never throws - a feed failure must not fail the thing being logged.</summary>
-    public async Task PostAsync(string label, string content, CancellationToken ct = default)
+    /// <summary>
+    /// Queue one line. Returns at once and never throws - a feed failure must not fail, or
+    /// slow down, the thing being logged.
+    /// </summary>
+    public Task PostAsync(string label, string content, CancellationToken ct = default)
     {
-        if (content.Length == 0 || Client(label) is not { } client) return;
+        if (content.Length > 0) Enqueue(new Pending(label, content, null));
+        return Task.CompletedTask;
+    }
+
+    private async Task SendTextAsync(string label, string content)
+    {
+        if (Client(label) is not { } client) return;
 
         try
         {
@@ -184,7 +254,13 @@ public sealed class FeedWebhooks : IAsyncDisposable
     /// <summary>
     /// Post an embed. Only the connect feed uses this - see <see cref="ConnectCard"/>.
     /// </summary>
-    public async Task PostEmbedAsync(string label, Embed embed, CancellationToken ct = default)
+    public Task PostEmbedAsync(string label, Embed embed, CancellationToken ct = default)
+    {
+        Enqueue(new Pending(label, null, embed));
+        return Task.CompletedTask;
+    }
+
+    private async Task SendEmbedAsync(string label, Embed embed)
     {
         if (Client(label) is not { } client) return;
 
@@ -203,8 +279,6 @@ public sealed class FeedWebhooks : IAsyncDisposable
         {
             Failed(label, ex);
         }
-
-        _ = ct;
     }
 
     // ---- the feeds ----
@@ -413,10 +487,16 @@ public sealed class FeedWebhooks : IAsyncDisposable
         return $"[{Stamp(at)}] KILL  {by} → {who}{detail}";
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        // Give what is already queued a moment to go out, then stop regardless.
+        _queue.Writer.TryComplete();
+        if (await Task.WhenAny(_sender, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false) != _sender)
+            await _stopping.CancelAsync().ConfigureAwait(false);
+        await _sender.ConfigureAwait(false);
+        _stopping.Dispose();
+
         foreach (var client in _clients.Values) client.Dispose();
         _clients.Clear();
-        return ValueTask.CompletedTask;
     }
 }

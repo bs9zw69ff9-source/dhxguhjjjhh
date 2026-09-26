@@ -74,10 +74,12 @@ public class FileKeyValueBackendTests : IDisposable
         var store = new SerializedStore(backend, new SystemTextJsonCodec());
         Assert.Empty(store.Read<List<string>>("bans", []));
 
-        // And an update over the corrupt file still writes a good one.
+        /* But an update is REFUSED rather than written over it. This used to "repair" the file by
+           saving [player] - which, for a real ban list with one bad byte in it, replaced every
+           ban with one. The corrupt text stays for somebody to fix or restore. */
         var result = await store.UpdateAsync<List<string>>("bans", [], current => [.. current, "player"]);
-        Assert.True(result.Ok);
-        Assert.Equal(["player"], store.Read<List<string>>("bans", []));
+        Assert.False(result.Ok);
+        Assert.Equal("{ this is not json", store.ReadRaw("bans"));
     }
 
     public void Dispose()

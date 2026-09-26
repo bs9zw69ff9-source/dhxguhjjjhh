@@ -104,6 +104,17 @@ public sealed class WhitelistWipe(
             return;
         }
 
+        /* ACKNOWLEDGE BEFORE THE WORK, and take the buttons away while doing it. The wipe
+           rewrites every roster file and records the change, which can outlast Discord's
+           three-second window; and a confirm button still pressable during that time is a
+           second wipe waiting for a double-click. */
+        await component.UpdateAsync(m =>
+        {
+            m.Embed = Theme.Notice("Wiping…", $"Clearing the **{faction.Name}** whitelist.").Brand().Build();
+            m.Components = new ComponentBuilder().Build();
+            m.AllowedMentions = AllowedMentions.None;
+        }).ConfigureAwait(false);
+
         var result = await rosters.WipeAsync(faction, ct).ConfigureAwait(false);
 
         /* THE INDEX FOLLOWS THE FILES. Cleared even on a partial wipe: the entries name people
@@ -119,7 +130,12 @@ public sealed class WhitelistWipe(
         logger.LogWarning("whitelist wipe | faction={Faction} | by={By} | removed={Removed} | records={Records} | {Outcome}",
             faction.Name, component.User.Username, result.Removed, forgotten, result.Outcome);
 
-        await Close(component, Describe(result, faction)).ConfigureAwait(false);
+        await component.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = Describe(result, faction).Brand().Build();
+            m.Components = new ComponentBuilder().Build();
+            m.AllowedMentions = AllowedMentions.None;
+        }).ConfigureAwait(false);
     }
 
     private static EmbedBuilder Describe(RosterWipe result, FactionDefinition faction) => result.Outcome switch

@@ -103,7 +103,7 @@ public sealed class SetRolesCommand : ISlashCommand
     {
         var builder = new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Admin - Map Discord roles to the bot's permission tiers")
+            .WithDescription("Owner - Map Discord roles to the bot's permission tiers")
             .AddOption("mod_role", ApplicationCommandOptionType.Role, "Moderator", isRequired: false)
             .AddOption("admin_role", ApplicationCommandOptionType.Role, "Admin", isRequired: false)
             .AddOption("whitelist_leader_role", ApplicationCommandOptionType.Role, "Manages every whitelist", isRequired: false);
@@ -126,9 +126,11 @@ public sealed class SetRolesCommand : ISlashCommand
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (!_access.Allows(RequiredAccess.Admin, command))
+        // Owner, not Admin: this decides who IS an admin, so an admin could otherwise make a
+        // role of their choosing admin and keep that access after their own is removed.
+        if (!_access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", _access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", _access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 
@@ -488,7 +490,7 @@ public sealed class SetRconRolesCommand(
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Admin - Map Discord roles to RCON menu tiers")
+            .WithDescription("Owner - Map Discord roles to RCON menu tiers")
             .AddOption("high_staff_role", ApplicationCommandOptionType.Role, "Gets the high-staff menu", isRequired: false)
             .AddOption("staff_role", ApplicationCommandOptionType.Role, "Gets the staff menu", isRequired: false)
             .AddOption("blacklist_role", ApplicationCommandOptionType.Role, "Revokes menu access outright", isRequired: false)
@@ -498,9 +500,10 @@ public sealed class SetRconRolesCommand(
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (!access.Allows(RequiredAccess.Admin, command))
+        // Owner, not Admin: the menu tiers grant in-game staff powers on every server.
+        if (!access.Allows(RequiredAccess.Owner, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
+            await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Owner, command))).ConfigureAwait(false);
             return;
         }
 

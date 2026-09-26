@@ -22,8 +22,25 @@ namespace PavlovBot.Host.Rcon;
 /// </remarks>
 public interface IOnlineRoster
 {
-    /// <summary>Every player name currently on any server, deduplicated.</summary>
+    /// <summary>
+    /// Every player name on any server, deduplicated - INCLUDING a server whose roster is stale.
+    /// </summary>
+    /// <remarks>
+    /// The conservative answer for a GUARD: "do not overwrite this player's ledger, they may be
+    /// in game" should still hold for somebody on a server RCON cannot currently reach.
+    /// </remarks>
     IReadOnlyList<string> Online { get; }
+
+    /// <summary>
+    /// Players on servers whose roster is FRESH - the only list that may be PAID against.
+    /// </summary>
+    /// <remarks>
+    /// The opposite of <see cref="Online"/>'s bias. <see cref="IsTrustworthy"/> is true when ANY
+    /// server is fresh, and <see cref="Online"/> still carries the frozen roster of one that
+    /// crashed - so payroll kept paying everybody who was on it for as long as it stayed down.
+    /// Defaults to <see cref="Online"/> for implementations with no notion of staleness.
+    /// </remarks>
+    IReadOnlyList<string> ConfirmedOnline => Online;
 
     /// <summary>
     /// Whether at least one server's roster is recent enough to act on.

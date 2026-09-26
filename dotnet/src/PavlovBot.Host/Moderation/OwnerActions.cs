@@ -182,7 +182,7 @@ public sealed class OwnerActions(
         if (lines.Count > 0) return OwnerActionResult.List($"**{lines.Count}** blacklist entr(ies).", lines);
 
         /* EMPTY IS TWO DIFFERENT ANSWERS AND THIS USED TO GIVE ONE. An auto-ban quoted
-           "blacklisted ip 100.1.52.11" in the same minute this panel said nothing was
+           "blacklisted ip <address>" in the same minute this panel said nothing was
            blacklisted - both read the same row, so one of them was wrong, and the panel
            asserting "nothing" is what made that impossible to see.
 
@@ -439,11 +439,11 @@ public sealed class OwnerActions(
     public async Task<OwnerActionResult> WipePlayerDataAsync(CancellationToken ct = default)
     {
         var accounts = store.Read(Datasets.KnownPlayers, new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase)).Count;
-        var playtime = store.Read(Datasets.Playtime, new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)).Count;
+        var playtime = store.Read(Datasets.Playtime, new Dictionary<string, PavlovBot.Host.Discord.PlaytimeEntry>(StringComparer.OrdinalIgnoreCase)).Count;
         var lastSeen = store.Read(Datasets.LastSeen, new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase)).Count;
 
         await store.WriteAsync(Datasets.KnownPlayers, new Dictionary<string, AccountRecord>(StringComparer.OrdinalIgnoreCase), ct).ConfigureAwait(false);
-        await store.WriteAsync(Datasets.Playtime, new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase), ct).ConfigureAwait(false);
+        await store.WriteAsync(Datasets.Playtime, new Dictionary<string, PavlovBot.Host.Discord.PlaytimeEntry>(StringComparer.OrdinalIgnoreCase), ct).ConfigureAwait(false);
         await store.WriteAsync(Datasets.LastSeen, new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase), ct).ConfigureAwait(false);
 
         return OwnerActionResult.Done(

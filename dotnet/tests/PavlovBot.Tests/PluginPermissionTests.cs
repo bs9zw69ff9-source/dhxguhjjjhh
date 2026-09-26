@@ -186,4 +186,14 @@ public class PluginPermissionTests
         Assert.Null(PluginHost.Incompatible(new Stub("1.0.0"), null));
         Assert.Null(PluginHost.Incompatible(new Stub("not-a-version"), "1.0.0"));
     }
+
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    public void PluginsDoNotLoadIntoARootProcessUnlessAllowed(bool privileged, bool allowRoot, bool loads)
+    {
+        // In-process plugins are root code execution for whoever can write the plugins folder.
+        Assert.Equal(loads, PluginHost.MayLoad(privileged, allowRoot));
+    }
 }

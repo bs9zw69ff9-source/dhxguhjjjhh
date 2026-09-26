@@ -37,11 +37,45 @@ public sealed class SerializedStore
     private readonly IKeyValueBackend _backend;
     private readonly IJsonCodec _codec;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _unreadable = new(StringComparer.Ordinal);
+    private readonly Action<string>? _onUnreadable;
 
-    public SerializedStore(IKeyValueBackend backend, IJsonCodec codec)
+    /// <param name="onUnreadable">
+    /// Told the name of a dataset that holds data but will not parse - once, until it parses
+    /// again. The host logs it at Error: a dataset in that state can no longer be changed.
+    /// </param>
+    public SerializedStore(IKeyValueBackend backend, IJsonCodec codec, Action<string>? onUnreadable = null)
     {
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
         _codec = codec ?? throw new ArgumentNullException(nameof(codec));
+        _onUnreadable = onUnreadable;
+    }
+
+    /// <summary>Datasets currently holding data that does not parse.</summary>
+    public IReadOnlyCollection<string> Unreadable => [.. _unreadable.Keys];
+
+    /// <summary>
+    /// Parse a dataset. Absent (or a bare JSON null) is NOT the same as unreadable, and the
+    /// difference decides whether a write is safe.
+    /// </summary>
+    private bool TryLoad<T>(string key, out T? value, out bool unreadable)
+    {
+        value = default;
+        unreadable = false;
+
+        var json = _backend.Read(key);
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null") return false;
+
+        if (_codec.TryDeserialize<T>(json, out var parsed) && parsed is not null)
+        {
+            _unreadable.TryRemove(key, out _);
+            value = parsed;
+            return true;
+        }
+
+        unreadable = true;
+        if (_unreadable.TryAdd(key, 0)) _onUnreadable?.Invoke(key);
+        return false;
     }
 
     private SemaphoreSlim Gate(string key) => _gates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
@@ -60,11 +94,10 @@ public sealed class SerializedStore
     /// <summary>Read a dataset, or <paramref name="fallback"/> when it is absent or unreadable.</summary>
     public T Read<T>(string key, T fallback)
     {
-        var json = _backend.Read(key);
-        if (string.IsNullOrWhiteSpace(json)) return fallback;
         /* A corrupt dataset returns the fallback rather than throwing. The alternative is a
-           single bad character taking down every command that touches bans. */
-        return _codec.TryDeserialize<T>(json, out var value) && value is not null ? value : fallback;
+           single bad character taking down every command that touches bans. It is REPORTED,
+           though, and UpdateAsync will not write over it - see there. */
+        return TryLoad<T>(key, out var value, out _) ? value! : fallback;
     }
 
     /// <summary>
@@ -97,11 +130,8 @@ public sealed class SerializedStore
     {
         ArgumentNullException.ThrowIfNull(fallback);
 
-        var json = _backend.Read(key);
-        if (string.IsNullOrWhiteSpace(json)) return fallback;
-
-        return _codec.TryDeserialize<Dictionary<string, TValue>>(json, out var value) && value is not null
-            ? new Dictionary<string, TValue>(value, fallback.Comparer)
+        return TryLoad<Dictionary<string, TValue>>(key, out var value, out _)
+            ? new Dictionary<string, TValue>(value!, fallback.Comparer)
             : fallback;
     }
 
@@ -142,7 +172,18 @@ public sealed class SerializedStore
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var current = Read(key, fallback);
+            /* AN UNREADABLE DATASET IS NEVER WRITTEN OVER. This used to read the fallback -
+               empty - apply the change to it, and save the result: one bad character, or a
+               shape one call site reads differently from another, and the next ban or join
+               replaced the whole dataset with a single entry. Refusing loses one change and
+               says so; overwriting lost everything, silently. */
+            if (!TryLoad<T>(key, out var loaded, out var unreadable) && unreadable)
+            {
+                return new UpdateResult<T>(false, fallback,
+                    $"dataset \"{key}\" holds data that cannot be read, so it was not changed - fix or restore it");
+            }
+
+            var current = loaded ?? fallback;
             T? next;
             try
             {

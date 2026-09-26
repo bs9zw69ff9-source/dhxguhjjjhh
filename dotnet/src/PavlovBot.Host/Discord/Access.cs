@@ -272,11 +272,15 @@ public sealed class Access
     private Func<ulong, IGuildUser?>? _homeMember;
 
     /// <summary>Attach the home-guild lookup. See <see cref="_homeMember"/>.</summary>
-    public void UseHomeGuild(Func<ulong, IGuildUser?> lookup)
+    public void UseHomeGuild(Func<ulong, IGuildUser?> lookup, Func<ulong?>? homeGuildId = null)
     {
         ArgumentNullException.ThrowIfNull(lookup);
         _homeMember = lookup;
+        _homeGuildId = homeGuildId;
     }
+
+    /// <summary>The staff guild's id, or null when it cannot be determined.</summary>
+    private Func<ulong?>? _homeGuildId;
 
     public Access(SerializedStore store, IEnumerable<ulong> owners, IEnumerable<ulong>? superOwners = null,
         FactionSet? factions = null)
@@ -387,11 +391,26 @@ public sealed class Access
         user is not null && (IsSuperOwner(user) || _owners.Contains(user.Id));
 
     public bool IsAdmin(IUser? user) =>
-        IsOwner(user) || Has(user, Roles.AdminRole) ||
-        // Discord's own Administrator permission counts: somebody who can delete the guild
-        // is not meaningfully restricted by a bot role check. Through Member, so it holds in
-        // a DM too - an administrator who loses admin by messaging the bot is the same bug.
-        (Member(user)?.GuildPermissions.Administrator ?? false);
+        IsOwner(user) || Has(user, Roles.AdminRole) || IsHomeAdministrator(user);
+
+    /// <summary>
+    /// Discord's own Administrator permission, counted ONLY in the staff guild.
+    /// </summary>
+    /// <remarks>
+    /// ROLES ARE SAFE ACROSS GUILDS AND THIS PERMISSION IS NOT. A role id is a snowflake that
+    /// belongs to exactly one guild, so holding the admin role proves membership of the guild
+    /// that owns it wherever the command runs. Administrator is relative to whichever guild the
+    /// interaction came from: anybody who adds this bot to a server they own is Administrator
+    /// there, and used to be bot Admin everywhere - bans, server switches, /setroles.
+    ///
+    /// So it counts only when the member object belongs to the staff guild (HOME_GUILD_ID, else
+    /// GUILD_ID, else the only guild the bot is in). When that cannot be determined it does not
+    /// count at all; owners still work, because they are matched by user id.
+    /// </remarks>
+    private bool IsHomeAdministrator(IUser? user) =>
+        Member(user) is { GuildPermissions.Administrator: true } member &&
+        _homeGuildId?.Invoke() is { } home &&
+        member.GuildId == home;
 
     public bool IsMod(IUser? user) => IsAdmin(user) || Has(user, Roles.ModRole);
 
@@ -474,7 +493,7 @@ public sealed class Access
         }
         else if (required is RequiredAccess.Mod && Roles.ModRole is null)
         {
-            lines.Add("No moderator role is configured. An admin can set one with `/setroles`.");
+            lines.Add("No moderator role is configured. An owner can set one with `/setroles`.");
         }
         else if (required is RequiredAccess.Admin && Roles.AdminRole is null)
         {

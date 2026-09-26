@@ -199,9 +199,9 @@ public sealed class ServerBanFile(
 
             try
             {
-                var temp = $"{one}.tmp";
-                await File.WriteAllTextAsync(temp, text, ct).ConfigureAwait(false);
-                File.Move(temp, one, overwrite: true);
+                // Keeps the game's ownership of the file, or the server can no longer record
+                // in-game bans in it. See AtomicFile.
+                await PavlovBot.Host.Storage.AtomicFile.WriteAsync(one, text, ct).ConfigureAwait(false);
                 wrote = true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

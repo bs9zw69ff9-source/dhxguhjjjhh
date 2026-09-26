@@ -247,7 +247,8 @@ public sealed class Payroll(
             return new PayrollRun(now, factionName, none, none, "no server has a fresh player list");
         }
 
-        var present = online.Online.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // CONFIRMED, not Online: a crashed server's frozen roster must not keep drawing wages.
+        var present = online.ConfirmedOnline.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var roster = await rosters.RosterAsync(faction, ct).ConfigureAwait(false);
 
         // ---- 1. bank what the people who have left already earned ----

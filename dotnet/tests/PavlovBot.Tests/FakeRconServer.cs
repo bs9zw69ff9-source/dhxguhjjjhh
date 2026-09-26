@@ -35,6 +35,9 @@ internal sealed class FakeRconServer : IAsyncDisposable
     /// <summary>Artificial delay before replying, for concurrency tests.</summary>
     public TimeSpan ReplyDelay { get; set; } = TimeSpan.Zero;
 
+    /// <summary>Deliver the password prompt and the auth line in two TCP writes each.</summary>
+    public bool SplitHandshake { get; set; }
+
     /// <summary>
     /// Answer every command as if it were this verb, modelling a server that misattributes.
     /// </summary>
@@ -124,12 +127,12 @@ internal sealed class FakeRconServer : IAsyncDisposable
                 var stream = client.GetStream();
                 var buf = new byte[4096];
 
-                await stream.WriteAsync(Encoding.UTF8.GetBytes("Password: "), _cts.Token);
+                await WriteMaybeSplitAsync(stream, "Password: ");
 
                 var n = await stream.ReadAsync(buf, _cts.Token);
                 var supplied = Encoding.UTF8.GetString(buf, 0, n).Trim();
                 var ok = !RejectAuth && supplied == Md5Hex(Password);
-                await stream.WriteAsync(Encoding.UTF8.GetBytes($"Authenticated={(ok ? 1 : 0)}\r\n"), _cts.Token);
+                await WriteMaybeSplitAsync(stream, $"Authenticated={(ok ? 1 : 0)}\r\n");
                 if (!ok) return;
 
                 while (!_cts.IsCancellationRequested)
@@ -173,6 +176,21 @@ internal sealed class FakeRconServer : IAsyncDisposable
             catch (IOException) { }
             catch (ObjectDisposedException) { }
         }
+    }
+
+    private async Task WriteMaybeSplitAsync(NetworkStream stream, string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        if (!SplitHandshake)
+        {
+            await stream.WriteAsync(bytes, _cts.Token);
+            return;
+        }
+
+        await stream.WriteAsync(bytes.AsMemory(0, 4), _cts.Token);
+        await stream.FlushAsync(_cts.Token);
+        await Task.Delay(50, _cts.Token);
+        await stream.WriteAsync(bytes.AsMemory(4), _cts.Token);
     }
 
     public async ValueTask DisposeAsync()

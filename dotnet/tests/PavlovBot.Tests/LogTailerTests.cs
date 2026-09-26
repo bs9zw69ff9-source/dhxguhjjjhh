@@ -38,6 +38,55 @@ public class LogTailerTests : IDisposable
     }
 
     [Fact]
+    public void ANewLogThatOutgrewTheOldOffsetIsReadFromItsStart()
+    {
+        /* A restart with a SMALL old log: by the next poll the new one is already longer than
+           the old offset, so "it shrank" never fires. The tailer used to seek past the new
+           file's first lines - the joins right after the restart - and never read them. */
+        Append("Log file open, 07/15/26 12:00:00\nold\n");
+        var tailer = New();
+        tailer.Poll(_path);
+
+        File.WriteAllText(_path, "Log file open, 07/15/26 13:30:00\n" +
+            string.Concat(Enumerable.Range(1, 20).Select(i => $"join {i}\n")));
+
+        var lines = tailer.Poll(_path).Select(l => l.Text).ToList();
+
+        Assert.Contains("join 1", lines);
+        Assert.Contains("join 20", lines);
+    }
+
+    [Fact]
+    public void AGrowingLogIsNotMistakenForARotation()
+    {
+        Append("Log file open, 07/15/26 12:00:00\n");
+        var tailer = New();
+        tailer.Poll(_path);
+
+        Append("a\n");
+        Assert.Equal(["a"], tailer.Poll(_path).Select(l => l.Text));
+        Append("b\n");
+        Assert.Equal(["b"], tailer.Poll(_path).Select(l => l.Text));
+    }
+
+    [Fact]
+    public void AMultiByteCharacterSplitAcrossPollsSurvives()
+    {
+        // "é" is two bytes in UTF-8. Split between two reads it used to decode as two
+        // replacement characters, and a name with one in it stopped matching its flags.
+        Append("start\n");
+        var tailer = New();
+        tailer.Poll(_path);
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes("René joined\n");
+        using (var s = new FileStream(_path, FileMode.Append)) s.Write(bytes, 0, 4);   // ends mid-"é"
+        tailer.Poll(_path);
+        using (var s = new FileStream(_path, FileMode.Append)) s.Write(bytes, 4, bytes.Length - 4);
+
+        Assert.Equal(["René joined"], tailer.Poll(_path).Select(l => l.Text));
+    }
+
+    [Fact]
     public void OnlyNewLinesComeBackOnEachPoll()
     {
         Append("first\n");

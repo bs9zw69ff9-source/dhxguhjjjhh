@@ -45,9 +45,8 @@ public sealed record ProcessOutcome(bool Started, bool TimedOut, int ExitCode, s
 public static class ProcessRunner
 {
     /// <param name="stdin">
-    /// Fed to the child's standard input and closed immediately, for the handful of programs -
-    /// <c>chpasswd</c> is the one this bot uses - whose documented interface IS stdin rather than
-    /// an argument. Kept tiny by every caller: this is not a general pipe, just enough to avoid
+    /// Fed to the child's standard input and closed immediately, for the handful of programs
+    /// (<c>chpasswd</c> and the like) whose documented interface IS stdin rather than an argument. Kept tiny by every caller: this is not a general pipe, just enough to avoid
     /// putting a secret on the command line where <c>ps</c> would show it to every other user on
     /// the box. Null (the default) leaves stdin untouched, exactly as before this parameter
     /// existed - every existing call site is unaffected.

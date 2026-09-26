@@ -224,7 +224,15 @@ public sealed class ServiceRegistry : IAsyncDisposable
             var token = record.Stopping.Token;
 
             if (record.Definition.Interval is { } interval)
+            {
+                /* Refused HERE, not inside the loop. PeriodicTimer throws on a non-positive period,
+                   and it used to do so inside the detached loop - leaving a service that reported
+                   Running while its loop had already died. */
+                if (interval <= TimeSpan.Zero)
+                    throw new ArgumentOutOfRangeException(nameof(name), interval, $"service \"{name}\" has a non-positive interval");
+
                 record.Loop = Task.Run(() => LoopAsync(record, interval, token), CancellationToken.None);
+            }
 
             record.State = ServiceState.Running;
             record.StartedAt = DateTimeOffset.UtcNow;
@@ -375,8 +383,12 @@ public sealed class ServiceRegistry : IAsyncDisposable
                process, so a service that recovered and later broke again would never be
                revived. */
             record.ConsecutiveFailures = 0;
-            record.RestartsAt.Clear();
-            record.RestartsExhausted = false;
+            // Locked: the supervisor reads and prunes this list from its own loop.
+            lock (record.RestartsAt)
+            {
+                record.RestartsAt.Clear();
+                record.RestartsExhausted = false;
+            }
             _metrics.Increment("service_ticks_total", MetricLabels.Of("service", name, "outcome", "success"),
                 help: "Service ticks by outcome");
         }
@@ -486,20 +498,31 @@ public sealed class ServiceRegistry : IAsyncDisposable
                         (record.State == ServiceState.Running && record.ConsecutiveFailures >= threshold);
             if (!stuck) continue;
 
-            // Pruned here rather than on a timer, so the list cannot outgrow the window.
-            record.RestartsAt.RemoveAll(at => now - at > RestartWindow);
-
-            if (record.RestartsAt.Count >= MaxRestartsPerWindow)
+            // Locked against the tick loop, which clears this list on a successful tick.
+            bool exhausted, announce;
+            int recent;
+            lock (record.RestartsAt)
             {
+                // Pruned here rather than on a timer, so the list cannot outgrow the window.
+                record.RestartsAt.RemoveAll(at => now - at > RestartWindow);
+                recent = record.RestartsAt.Count;
+                exhausted = recent >= MaxRestartsPerWindow;
+
                 /* SAID ONCE. Repeating it every sweep would bury the original failure under
                    the report that we have stopped acting on it. */
-                if (!record.RestartsExhausted)
+                announce = exhausted && !record.RestartsExhausted;
+                if (exhausted) record.RestartsExhausted = true;
+                else record.RestartsAt.Add(now);
+            }
+
+            if (exhausted)
+            {
+                if (announce)
                 {
-                    record.RestartsExhausted = true;
                     _logger.LogError(
                         "Service {Name} restarted {Count} times in {Minutes:0} minutes and still fails - " +
                         "giving up until it recovers or the bot restarts. Last error: {Error}",
-                        record.Definition.Name, record.RestartsAt.Count, RestartWindow.TotalMinutes,
+                        record.Definition.Name, recent, RestartWindow.TotalMinutes,
                         record.LastError ?? "(none recorded)");
                 }
                 continue;
@@ -508,7 +531,6 @@ public sealed class ServiceRegistry : IAsyncDisposable
             _logger.LogWarning("Restarting {Name} after {Failures} consecutive failures",
                 record.Definition.Name, record.ConsecutiveFailures);
 
-            record.RestartsAt.Add(now);
             await RestartAsync(record.Definition.Name, ct).ConfigureAwait(false);
             revived.Add(record.Definition.Name);
         }

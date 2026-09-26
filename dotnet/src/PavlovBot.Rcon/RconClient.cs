@@ -94,10 +94,25 @@ public sealed class RconClient : IAsyncDisposable
 
     private static bool IsReadOnly(string command) => ReadOnlyCommands.Contains(Verb(command));
 
+    /// <summary>
+    /// Refuse a command that would be more than one line on the wire.
+    /// </summary>
+    /// <remarks>
+    /// The protocol is line-based, so an embedded newline sends a SECOND command made of
+    /// whatever followed it. Every call site sanitises its input already; this is the one place
+    /// that can guarantee it, so a call site that forgets fails loudly instead of injecting.
+    /// </remarks>
+    internal static void ValidateCommand(string command)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        if (command.AsSpan().IndexOfAny('\r', '\n') >= 0)
+            throw new ArgumentException("an RCON command must be a single line", nameof(command));
+    }
+
     /// <summary>Send a command, coalescing it with concurrent identical reads where safe.</summary>
     public Task<string> SendAsync(string command, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        ValidateCommand(command);
         NoteIssued(command);
 
         if (_options.ReadCacheDuration <= TimeSpan.Zero || !IsReadOnly(command))
@@ -163,14 +178,16 @@ public sealed class RconClient : IAsyncDisposable
     private async Task<string> SendUncachedAsync(string command, CancellationToken ct)
     {
         Exception? last = null;
+        var readOnly = IsReadOnly(command);
         for (var attempt = 0; attempt < _options.MaxAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
+            var progress = new ExchangeProgress();
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(_options.CommandTimeout);
-                var result = await _connection.SendAsync(command, cts.Token).ConfigureAwait(false);
+                var result = await _connection.SendAsync(command, readOnly, progress, cts.Token).ConfigureAwait(false);
 
                 /* THE REPLY HAS TO BE THE ONE WE ASKED FOR. Seen in production: `BanList`
                    answered with a ServerInfo document, and the same command answered with a
@@ -210,6 +227,19 @@ public sealed class RconClient : IAsyncDisposable
             catch (Exception ex)
             {
                 last = ex;
+
+                /* A COMMAND THAT CHANGES STATE IS NOT SENT TWICE. Retrying a timeout re-sent a
+                   Notify, Kick or SetPin the server had quite possibly already carried out and was
+                   just slow to confirm - up to six times across the two retry layers. It is sent
+                   again only when it provably never arrived: it was never written, or the
+                   connection died without a single reply byte. */
+                if (!readOnly && MayHaveBeenApplied(ex, progress))
+                {
+                    throw new RconException(
+                        $"{_options.Name}: \"{Verb(command)}\" got no confirmation ({ex.Message}). It may have been " +
+                        "applied, so it was not sent again", ex);
+                }
+
                 if (attempt == _options.MaxAttempts - 1) break;
                 await Task.Delay(Backoff.Delay(attempt), ct).ConfigureAwait(false);
             }
@@ -221,6 +251,19 @@ public sealed class RconClient : IAsyncDisposable
         throw new RconException(
             $"{_options.Name}: \"{Verb(command)}\" failed after {_options.MaxAttempts} attempt(s): {last?.Message}",
             last!);
+    }
+
+    /// <summary>
+    /// Whether a failed exchange could have been carried out by the server anyway.
+    /// </summary>
+    internal static bool MayHaveBeenApplied(Exception failure, ExchangeProgress progress)
+    {
+        if (!progress.Written) return false;
+
+        // The connection died with nothing coming back: a dead socket delivers nothing, which is
+        // the stale-session-after-a-restart case the reconnect exists for.
+        var connectionLost = failure is IOException or System.Net.Sockets.SocketException or ObjectDisposedException;
+        return !(connectionLost && progress.ReplyBytes == 0);
     }
 
     /// <summary>
@@ -261,7 +304,7 @@ public sealed class RconClient : IAsyncDisposable
     /// </remarks>
     public Task<string> SendUncachedProbeAsync(string command, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        ValidateCommand(command);
         return SendUncachedAsync(command, ct);
     }
 

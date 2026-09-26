@@ -245,6 +245,12 @@ public sealed class BackgroundServiceHost : IHostedService
             {
                 Name = "log-tail",
                 Interval = _features.LogPollInterval,
+                /* EXPLICIT, not derived from the 1.5s interval (which gives the 30s floor). Lines
+                   are consumed from the file before they are processed, so a tick abandoned at its
+                   budget loses the rest of its batch - joins included, which then never reach
+                   evasion or VPN screening. A join burst with VPN lookups can legitimately take
+                   longer than 30s; the budget is only a backstop against a hang. */
+                Timeout = TimeSpan.FromMinutes(3),
                 Tick = async ct =>
                 {
                     foreach (var path in logPaths)
@@ -604,49 +610,8 @@ public sealed class BackgroundServiceHost : IHostedService
     }
 
     /// <summary>Put back the rank of anyone whose suspension has run out.</summary>
-    private async Task RestoreExpiredRanksAsync(CancellationToken ct)
-    {
-        var now = DateTimeOffset.UtcNow;
-        var suspensions = _store.Read(Datasets.RankSuspensions,
-            new Dictionary<string, RankSuspension>(StringComparer.OrdinalIgnoreCase));
-
-        var due = suspensions.Values.Where(s => s.Until <= now).ToList();
-        if (due.Count == 0) return;
-
-        foreach (var suspension in due)
-        {
-            var faction = _rosters.Factions.Get(suspension.Faction);
-            if (faction is null) continue;
-
-            /* Re-add at the entry rank, then promote to where they were. Writing straight
-               into the target rank file would skip the cap check, so a rank that filled up
-               while they were suspended would silently overflow. */
-            await _rosters.JoinAsync(faction, suspension.Player, ct).ConfigureAwait(false);
-
-            var target = faction.IndexOf(suspension.RestoreTo);
-            for (var step = faction.IndexOf(faction.Default); step < target; step++)
-            {
-                var decision = await _rosters.ChangeRankAsync(faction, suspension.Player, +1, ct).ConfigureAwait(false);
-                if (!decision.IsAllowed)
-                {
-                    _logger.LogWarning(
-                        "Could not fully restore {Player} to {Rank}: {Outcome}. They are at a lower rank and need a manual promotion.",
-                        suspension.Player, suspension.RestoreTo, decision.Outcome);
-                    break;
-                }
-            }
-
-            _logger.LogInformation("Rank suspension served: {Player} restored to {Rank}", suspension.Player, suspension.RestoreTo);
-        }
-
-        await _store.UpdateAsync(Datasets.RankSuspensions,
-            new Dictionary<string, RankSuspension>(StringComparer.OrdinalIgnoreCase),
-            current =>
-            {
-                foreach (var suspension in due) current.Remove(suspension.Player);
-                return current;
-            }, ct).ConfigureAwait(false);
-    }
+    private Task RestoreExpiredRanksAsync(CancellationToken ct) =>
+        new PavlovBot.Host.Factions.RankRestorer(_store, _rosters, _logger).RestoreExpiredAsync(DateTimeOffset.UtcNow, ct);
 
     /// <summary>
     /// A player joined, so push their newest caps ledger to every install before this server

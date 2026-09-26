@@ -58,10 +58,12 @@ internal sealed class FakeMember(ulong id, params ulong[] roles) : FakeUser(id),
 
     public GuildPermissions GuildPermissions => new(administrator: Administrator);
 
+    /// <summary>The guild this membership belongs to. Administrator only counts in the staff guild.</summary>
+    public ulong GuildId { get; init; }
+
     // ---- not modelled ----
 
     IGuild IGuildUser.Guild => throw new NotSupportedException();
-    ulong IGuildUser.GuildId => throw new NotSupportedException();
     string? IGuildUser.DisplayName => throw new NotSupportedException();
     string? IGuildUser.Nickname => throw new NotSupportedException();
     string? IGuildUser.DisplayAvatarId => throw new NotSupportedException();

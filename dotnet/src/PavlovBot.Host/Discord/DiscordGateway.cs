@@ -50,6 +50,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly RecentErrors _errors;
     private readonly ILogger<DiscordGateway> _logger;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly InteractionDispatcher _dispatcher;
     private CancellationTokenSource? _stopping;
 
     /// <summary>The off-the-Ready-path scope reconciliation. Awaited on shutdown.</summary>
@@ -86,6 +87,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _autocomplete = autocomplete;
         _errors = errors;
         _logger = logger;
+        _dispatcher = new InteractionDispatcher(logger);
         /* DISABLED COMMANDS ARE DROPPED HERE, at the one place the dictionary is built, so
            the same filter covers registration, dispatch and the /help catalogue. Filtering at
            registration alone would leave a disabled command dispatchable from a picker entry
@@ -723,7 +725,22 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     /// </remarks>
     private static readonly TimeSpan CommandBudget = TimeSpan.FromMinutes(5);
 
-    private async Task OnSlashCommand(SocketSlashCommand interaction)
+    /// <summary>
+    /// Slash commands running at once. Past this they wait - AFTER their deferral, so a burst
+    /// costs latency rather than "the application did not respond".
+    /// </summary>
+    private const int MaxConcurrentCommands = 16;
+
+    private readonly SemaphoreSlim _commandSlots = new(MaxConcurrentCommands, MaxConcurrentCommands);
+
+    /// <summary>Hands the command to the thread pool; see <see cref="InteractionDispatcher"/>.</summary>
+    private Task OnSlashCommand(SocketSlashCommand interaction)
+    {
+        _ = _dispatcher.Run($"/{interaction.Data.Name}", () => HandleSlashCommandAsync(interaction));
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleSlashCommandAsync(SocketSlashCommand interaction)
     {
         var name = interaction.Data.Name;
 
@@ -775,6 +792,15 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
 
         try
         {
+            await _commandSlots.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;   // shutting down, or queued past the whole budget
+        }
+
+        try
+        {
             await _metrics.TimeAsync("command_duration_ms", MetricLabels.Of("command", name), async () =>
             {
                 await command.HandleAsync(interaction, ct).ConfigureAwait(false);
@@ -822,6 +848,10 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 _logger.LogWarning(nested, "Could not tell the caller that /{Name} failed", name);
             }
         }
+        finally
+        {
+            _commandSlots.Release();
+        }
     }
 
     /// <summary>
@@ -837,7 +867,14 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     /// messages that outlived the build that created them, and a silent drop leaves the
     /// clicker looking at a button that does nothing at all.
     /// </remarks>
-    private async Task OnComponent(SocketInteraction interaction)
+    /// <summary>Hands the component to the thread pool; see <see cref="InteractionDispatcher"/>.</summary>
+    private Task OnComponent(SocketInteraction interaction)
+    {
+        _ = _dispatcher.Run("component", () => HandleComponentAsync(interaction));
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleComponentAsync(SocketInteraction interaction)
     {
         var customId = interaction switch
         {
@@ -1034,6 +1071,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
            guilds, so this does not hold up a shutdown for long. */
         if (_scopeCleanup is { } cleanup) await cleanup.ConfigureAwait(false);
 
+        /* Let commands in flight finish, bounded so a wedged one cannot hold the process past
+           pm2's kill timeout. They were told to stop through _stopping above. */
+        if (!await _dispatcher.DrainAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false))
+            _logger.LogWarning("{Count} interaction(s) were still running at shutdown", _dispatcher.InFlight);
+
         await _client.StopAsync().ConfigureAwait(false);
         await _client.LogoutAsync().ConfigureAwait(false);
 
@@ -1047,6 +1089,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stopping?.Dispose();
+        _commandSlots.Dispose();
         await _client.DisposeAsync().ConfigureAwait(false);
         if (_factionClient is not null) await _factionClient.DisposeAsync().ConfigureAwait(false);
     }

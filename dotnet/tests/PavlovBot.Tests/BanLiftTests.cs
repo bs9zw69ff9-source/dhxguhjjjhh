@@ -284,6 +284,20 @@ public class BanLiftTests : IAsyncDisposable
         Assert.DoesNotContain($"Ban {Account}", _server.Commands, StringComparer.Ordinal);
     }
 
+    [Fact]
+    public async Task ABanTheServerRefusesIsNotCountedAsEnforced()
+    {
+        /* "Successful": false used to count as served, so a refused ban was logged and reported
+           as applied. The kick that follows it is not verified - a refused kick usually just
+           means the player is not there - so it must not stand in for the ban either. */
+        _server.RefuseEverything = true;
+        var service = Build(new RecordingMasters(), new FakeEvidence());
+
+        var result = await service.HardEnforceAsync("NeverSeen");
+
+        Assert.Equal(0, result.Servers);
+    }
+
     /// <summary>An unknown player is still enforced by the name given.</summary>
     /// <remarks>
     /// The control. A player the bot has never seen has no recorded name/id mapping, and a

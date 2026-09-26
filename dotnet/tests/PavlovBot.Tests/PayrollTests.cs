@@ -55,6 +55,12 @@ public class PayrollTests : IDisposable
 
     private static IOnlineRoster Roster(bool fresh, params string[] online) => new FakeRoster(fresh, online);
 
+    /// <summary>A roster where some names come only from a server whose list is stale.</summary>
+    private sealed record SplitRoster(IReadOnlyList<string> Online, IReadOnlyList<string> ConfirmedOnline) : IOnlineRoster
+    {
+        public bool IsTrustworthy => true;
+    }
+
     private void PutOnRoster(params string[] players)
     {
         var faction = FactionRegistry.All["NYPD"];
@@ -99,6 +105,25 @@ public class PayrollTests : IDisposable
        sightings; a member seen for the first time this tick has been on for an unknown part
        of the preceding gap. Crediting that gap pays for time nobody watched, and at a
        one-minute service interval the under-credit is at most a minute. */
+
+    [Fact]
+    public async Task AnOfficerOnACrashedServerAccruesNothing()
+    {
+        /* Server 2 crashed with Bob on it. Its last roster is frozen, so Bob is still in
+           Online - and IsTrustworthy is true because server 1 is answering. Payroll used to
+           read Online, and paid Bob for every period server 2 stayed down. */
+        PutOnRoster("Alice", "Bob");
+        GiveLedger("Alice");
+        GiveLedger("Bob");
+        var roster = new SplitRoster(Online: ["Alice", "Bob"], ConfirmedOnline: ["Alice"]);
+
+        await Build(roster).RunAsync();
+        Wait(30);
+        var run = await Build(roster).RunAsync();
+
+        Assert.Equal(500, run.Accrued["Alice"]);
+        Assert.False(run.Accrued.ContainsKey("Bob"));
+    }
 
     [Fact]
     public async Task AnOnlineOfficerAccruesButIsNotPaidYet()

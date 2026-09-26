@@ -6,6 +6,10 @@ bot.db
 bot.db-wal
 bot.db-shm
 
+# Watchdog config (holds a webhook URL)
+watchdog.env
+backup.env
+
 # Process lock + logs
 bot.lock
 *.log

@@ -53,6 +53,57 @@ public class SerializedStoreTests
     }
 
     [Fact]
+    public async Task AnUnreadableDatasetIsNeverOverwritten()
+    {
+        /* The data-loss bug: an unparseable dataset read as the empty fallback, the update was
+           applied to that, and the result saved - replacing every ban with one. */
+        var store = NewStore(out var backend);
+        backend.Seed("bans", "{ this is not json");
+
+        var result = await store.UpdateAsync("bans", new List<string>(), list => { list.Add("Griefer"); return list; });
+
+        Assert.False(result.Ok);
+        Assert.Contains("cannot be read", result.Error, StringComparison.Ordinal);
+        Assert.Equal("{ this is not json", store.ReadRaw("bans"));
+    }
+
+    [Fact]
+    public async Task AnUnreadableDatasetIsReportedOnceUntilItRecovers()
+    {
+        var reported = new List<string>();
+        var backend = new MemoryBackend();
+        var store = new SerializedStore(backend, new SystemTextJsonCodec(), reported.Add);
+        backend.Seed("bans", "{ broken");
+
+        store.Read("bans", new List<string>());
+        store.Read("bans", new List<string>());
+        await store.UpdateAsync("bans", new List<string>(), l => l);
+        Assert.Equal(["bans"], reported);
+        Assert.Equal(["bans"], store.Unreadable);
+
+        backend.Seed("bans", "[]");
+        store.Read("bans", new List<string>());
+        Assert.Empty(store.Unreadable);
+
+        backend.Seed("bans", "{ broken again");
+        store.Read("bans", new List<string>());
+        Assert.Equal(["bans", "bans"], reported);
+    }
+
+    [Fact]
+    public async Task AnAbsentOrNullDatasetIsStillCreatedByAnUpdate()
+    {
+        // Absent is not unreadable: the first write to a new dataset must still happen.
+        var store = NewStore(out var backend);
+        backend.Seed("warrants", "null");
+
+        var result = await store.UpdateAsync("warrants", new List<string>(), l => { l.Add("x"); return l; });
+
+        Assert.True(result.Ok);
+        Assert.Equal(["x"], store.Read("warrants", new List<string>()));
+    }
+
+    [Fact]
     public async Task UpdateReadsModifiesAndPersists()
     {
         var store = NewStore(out _);

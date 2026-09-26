@@ -239,7 +239,18 @@ public static class Program
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<SqliteKeyValueBackend>()));
         builder.Services.AddSingleton<IKeyValueBackend>(sp => sp.GetRequiredService<SqliteKeyValueBackend>());
         builder.Services.AddSingleton<IJsonCodec, SystemTextJsonCodec>();
-        builder.Services.AddSingleton<SerializedStore>();
+        builder.Services.AddSingleton(sp =>
+        {
+            var storeLog = sp.GetRequiredService<ILoggerFactory>().CreateLogger<SerializedStore>();
+            return new SerializedStore(
+                sp.GetRequiredService<IKeyValueBackend>(),
+                sp.GetRequiredService<IJsonCodec>(),
+                key => storeLog.LogError(
+                    "Dataset {Dataset} holds data that cannot be parsed. Reads return an empty default and " +
+                    "EVERY CHANGE TO IT IS REFUSED until it is fixed or restored - the alternative was writing " +
+                    "that empty default over the real data. The JSON export in the data directory has the last " +
+                    "good copy", key));
+        });
 
         builder.Services.AddSingleton<RconRegistry>();
         builder.Services.AddSingleton(sp => new ServiceRegistry(
@@ -838,7 +849,8 @@ public static class Program
             host.Services.GetRequiredService<ILogger<PavlovBot.Host.Discord.HomeGuildMembers>>());
 
         gatewayForRoles.UseHomeGuild(homeGuild);
-        host.Services.GetRequiredService<PavlovBot.Host.Discord.Access>().UseHomeGuild(homeGuild.Member);
+        host.Services.GetRequiredService<PavlovBot.Host.Discord.Access>().UseHomeGuild(
+            homeGuild.Member, () => homeGuild.Home()?.Id);
 
         logger.LogInformation(
             "  staff roles outside a server: read from {Source}", homeGuild.Describe());
@@ -1142,6 +1154,24 @@ public static class Program
            command refusing everyone. Role-derived tiers still work (they live in bot.db), so
            it is not a full lockout, which is exactly why it would otherwise go unnoticed for
            days. The warning stays because ONE account is not a configuration. */
+        if (!OperatingSystem.IsWindows() &&
+            PavlovBot.Host.Storage.UnixFileOwnership.Get(Directory.GetCurrentDirectory()) is null)
+        {
+            logger.LogWarning("File ownership cannot be read on this system (libc.so.6 statx unavailable), so " +
+                              "game files the bot rewrites will NOT keep the game server's owner. If in-game " +
+                              "caps or bans stop saving, chown the Saved directory back to the game's user");
+        }
+
+        var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+        if (!OperatingSystem.IsWindows() && File.Exists(envPath) && EnvFileTooOpen(File.GetUnixFileMode(envPath)))
+            logger.LogWarning("{Path} holds the Discord token and RCON passwords and is readable by other users on " +
+                              "this box. Run: chmod 600 {Path}", envPath, envPath);
+
+        if (Environment.IsPrivilegedProcess)
+            logger.LogWarning("The bot is running as ROOT. Anything that compromises it - a library bug, a bad " +
+                              "plugin - owns the whole host. Run it as an unprivileged user with sudoers grants " +
+                              "for systemctl and ufw (see INSTALL.md); only /provisionserver needs root");
+
         if (features.Owners.Count == 0 && features.SuperOwners.Count == 0)
             logger.LogWarning("OWNER_IDS and SUPER_OWNER_IDS are both unset - only the built-in super owner " +
                               "{Owner} holds owner tier. Every other account is limited to whatever its " +
@@ -1284,6 +1314,11 @@ public static class Program
     /// A MALFORMED file still stops the bot. That is ladders somebody is actively editing, and
     /// quietly running a different set writes the wrong roster files.
     /// </remarks>
+    /// <summary>True when a secrets file can be read or written by anyone but its owner.</summary>
+    internal static bool EnvFileTooOpen(UnixFileMode mode) =>
+        (mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite |
+                 UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0;
+
     internal static bool MayFallBackToSet(string? path, string? setName) =>
         path is { Length: > 0 } &&
         !File.Exists(path) &&
