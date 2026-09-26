@@ -43,7 +43,7 @@ public sealed class RotateMapCommand(
     /// leading "All" this used to carry is gone - kept here it would go out twice, and it
     /// was never part of the sentence in the first place.
     /// </remarks>
-    public const string Warning = "Server Rotating...";
+    public const string Warning = "Server Rotating... Please rejoin after disconnect";
 
     public ApplicationCommandProperties Build()
     {

@@ -55,7 +55,7 @@ public sealed class ServerSwitchCommand(
     internal static string? WarningFor(UnitAction action) => action switch
     {
         UnitAction.Stop => "Server shutting down...",
-        UnitAction.Restart => "Server restarting...",
+        UnitAction.Restart => RotateMapCommand.Warning,   // the same restart, so the same words
         _ => null,
     };
 

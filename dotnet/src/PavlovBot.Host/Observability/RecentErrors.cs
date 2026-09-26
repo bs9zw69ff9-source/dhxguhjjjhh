@@ -39,23 +39,29 @@ public sealed class RecentErrors
     public const int Capacity = 25;
 
     private readonly ConcurrentQueue<RecordedError> _errors = new();
+    private readonly Lock _trim = new();
 
     public void Record(string correlationId, string operation, ulong userId, Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
 
-        _errors.Enqueue(new RecordedError(
+        var error = new RecordedError(
             correlationId,
             operation,
             userId,
             DateTimeOffset.UtcNow,
             exception.GetType().Name,
             exception.Message,
-            exception.ToString()));
+            exception.ToString());
 
-        // Trim to the cap. A while rather than a single dequeue, because two threads can
-        // enqueue between the count check and the removal.
-        while (_errors.Count > Capacity && _errors.TryDequeue(out _)) { }
+        /* ENQUEUE AND TRIM TOGETHER. Unlocked, two threads could both see Capacity + 1 and
+           both dequeue, leaving the buffer one short - which the concurrency test caught
+           intermittently. Reads stay lock-free: they snapshot the queue. */
+        lock (_trim)
+        {
+            _errors.Enqueue(error);
+            while (_errors.Count > Capacity && _errors.TryDequeue(out _)) { }
+        }
     }
 
     /// <summary>Most recent first.</summary>

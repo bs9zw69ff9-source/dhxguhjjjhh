@@ -17,9 +17,10 @@ public sealed class ServerLogActivity(ServerLabels labels, IReadOnlyList<string>
 {
     public DateTimeOffset? For(string server)
     {
-        foreach (var path in logPaths)
+        /* BY THE RCON NUMBER. This used to compare the feed label ("Server 1") with the RCON
+           name ("server1"), which never matched, so the monitor never saw a log time at all. */
+        if ((labels.LogFor(server) ?? ServerLabels.LogFor(logPaths, server)) is { } path)
         {
-            if (!string.Equals(labels.Of(path), server, StringComparison.OrdinalIgnoreCase)) continue;
             try
             {
                 return File.Exists(path)

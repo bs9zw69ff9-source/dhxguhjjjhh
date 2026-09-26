@@ -27,6 +27,32 @@ public sealed class ServerLabels
     public string Of(string file) => Label(_paths, file);
 
     /// <summary>
+    /// The log file of an RCON server ("server2" is the second discovered log), or null when
+    /// that server has no log being tailed.
+    /// </summary>
+    /// <remarks>
+    /// The same numbering as <see cref="Of"/>: "Server 2" in a feed and "server2" in RCON are
+    /// the same box. The order logs are discovered in follows <c>PAVLOV_LOGS</c>, else the
+    /// install order - which is how the servers are numbered.
+    /// </remarks>
+    public string? LogFor(string rconServer) => LogFor(_paths, rconServer);
+
+    /// <summary>The pure part of <see cref="LogFor(string)"/>, for tests.</summary>
+    public static string? LogFor(IReadOnlyList<string> paths, string rconServer)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        if (rconServer is null ||
+            !rconServer.StartsWith("server", StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(rconServer.AsSpan("server".Length), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var number) ||
+            number < 1 || number > paths.Count)
+        {
+            return null;
+        }
+        return paths[number - 1];
+    }
+
+    /// <summary>
     /// The label for a log path, given the discovered set.
     /// </summary>
     /// <remarks>
