@@ -364,7 +364,10 @@ public sealed class Payroll(
 
             paid[player] = wage;
 
-            await store.UpdateAsync(Datasets.PayrollState, PayrollState.New(), state =>
+            /* NOT CANCELLABLE. The money has moved; this only records it. With the tick's token a
+               shutdown landing between the two - every restart that caught payroll mid-run - left
+               the wage owed after it was banked, and the next run paid it again. */
+            var settled = await store.UpdateAsync(Datasets.PayrollState, PayrollState.New(), state =>
             {
                 /* Subtract what was banked rather than removing the key, because a period may
                    have accrued between the read above and this write. Taking the whole entry
@@ -374,7 +377,13 @@ public sealed class Payroll(
                 var remaining = current - wage;
                 if (remaining > 0) state.Owed[player] = remaining; else state.Owed.Remove(player);
                 return state;
-            }, ct).ConfigureAwait(false);
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            if (!settled.Ok && !settled.Vetoed)
+            {
+                logger.LogError("Payroll banked {Wage:N0} for {Player} but could not clear the debt ({Error}) - " +
+                    "it will be paid AGAIN next run unless payroll state is fixed", wage, player, settled.Error);
+            }
 
             logger.LogInformation("Payroll banked {Wage:N0} for {Player} (balance {Before:N0} -> {After:N0})",
                 wage, player, change.Before, change.After);

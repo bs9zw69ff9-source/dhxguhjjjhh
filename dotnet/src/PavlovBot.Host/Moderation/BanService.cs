@@ -199,6 +199,9 @@ public sealed class BanService
         return text.Length > 140 ? text[..140] : text;
     }
 
+    /// <summary>How many RCON servers a ban is enforced on.</summary>
+    public int ServerCount => _rcon.Servers.Count;
+
     /// <summary>
     /// Lift a ban on every server.
     /// </summary>

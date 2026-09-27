@@ -34,6 +34,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// </remarks>
 public sealed class ProvisionServerCommand(
     IServerProvisioner provisioner,
+    ServerLayoutGate layout,
     Access access,
     AuditLog audit,
     BotOptions options,
@@ -111,6 +112,26 @@ public sealed class ProvisionServerCommand(
             return;
         }
 
+        if (layout.TryEnter("provisioning a server") is { } busy)
+        {
+            await Reply(command, Theme.Failure("Cannot provision a server", busy)).ConfigureAwait(false);
+            return;
+        }
+
+        var handedOff = false;
+        try
+        {
+            handedOff = await StartAsync(command, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!handedOff) layout.Abandon();
+        }
+    }
+
+    /// <summary>Plan, validate and start the provision. True once it runs in the background, owning the gate.</summary>
+    private async Task<bool> StartAsync(SocketSlashCommand command, CancellationToken ct)
+    {
         // ---- read the existing layout straight from configuration (not the defaulted views) ----
         var usedIndices = UsedRconIndices();
         var existingRconPorts = options.Servers.Select(s => s.Port).ToList();
@@ -173,7 +194,7 @@ public sealed class ProvisionServerCommand(
         {
             await Reply(command, Theme.Failure($"Cannot provision server {prospectiveSlot}",
                 string.Join("\n", problems.Select(p => $"{Theme.Dot} {p}")))).ConfigureAwait(false);
-            return;
+            return false;
         }
 
         // The authoritative slot from the planner (equals prospectiveSlot when the layout is sound).
@@ -209,15 +230,17 @@ public sealed class ProvisionServerCommand(
         // Detached: SteamCMD outlives both the command budget and the interaction token, so this
         // runs under the HOST lifetime, not the command's ct, and reports to the channel.
         _ = Task.Run(() => RunAsync(request, spec, channelId, messageId), CancellationToken.None);
+        return true;
     }
 
     /// <summary>Drive the provision to completion, editing the channel checklist as it goes.</summary>
     private async Task RunAsync(ProvisionRequest request, ServerProvisionSpec spec, ulong channelId, ulong? messageId)
     {
         var stopping = lifetime.ApplicationStopping;
+        ProvisionOutcome? outcome = null;
         try
         {
-            await provisioner.ProvisionAsync(request, async steps =>
+            outcome = await provisioner.ProvisionAsync(request, async steps =>
             {
                 var embed = Checklist(spec, steps);
                 if (messageId is { } id) await Post.EditAsync(channelId, id, embed, null, stopping).ConfigureAwait(false);
@@ -237,6 +260,10 @@ public sealed class ProvisionServerCommand(
             {
                 logger.LogWarning(postEx, "Could not post the provisioning failure for server {Slot}", spec.Slot);
             }
+        }
+        finally
+        {
+            layout.Exit(outcome);
         }
     }
 

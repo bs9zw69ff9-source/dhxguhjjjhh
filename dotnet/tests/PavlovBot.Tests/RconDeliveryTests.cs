@@ -31,7 +31,7 @@ public class RconDeliveryTests
         await using var server = new FakeRconServer { ReplyDelay = TimeSpan.FromMilliseconds(800) };
         await using var client = new RconClient(Options(server));
 
-        var failure = await Assert.ThrowsAsync<RconException>(() => client.SendAsync("Kick Griefer"));
+        var failure = await Assert.ThrowsAsync<RconUnconfirmedException>(() => client.SendAsync("Kick Griefer"));
 
         Assert.Contains("may have been applied", failure.Message, StringComparison.Ordinal);
         Assert.Equal(1, Count(server, "Kick Griefer"));

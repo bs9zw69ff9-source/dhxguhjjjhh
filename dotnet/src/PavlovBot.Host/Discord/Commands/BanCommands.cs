@@ -140,7 +140,7 @@ public abstract class BanCommandBase : ISlashCommand
             Tier = tier,
         };
 
-        await Store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
+        var saved = await Store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
         {
             // Replace rather than append: two records for one player means an unban lifts
             // one of them and the other quietly re-catches them on the next sweep.
@@ -148,6 +148,16 @@ public abstract class BanCommandBase : ISlashCommand
             bans.Add(record);
             return bans;
         }, ct).ConfigureAwait(false);
+
+        /* NO RECORD, NO BAN. The write can be refused without throwing - an unreadable ban
+           list is never written over - and enforcing anyway put a native ban on the server
+           that nothing would ever lift: a temp ban turned permanent, reported as a success. */
+        if (!saved.Ok)
+        {
+            Logger.LogError("ban NOT issued for \"{Player}\": the record could not be saved ({Error})", name, saved.Error);
+            return Theme.Failure("Ban not issued",
+                $"The ban record could not be saved, so nothing was enforced. ({Sanitize.Code(saved.Error ?? "unknown error")})");
+        }
 
         var enforcement = await Bans.HardEnforceAsync(name, account?.Id, ct: ct).ConfigureAwait(false);
 
@@ -165,7 +175,7 @@ public abstract class BanCommandBase : ISlashCommand
             "{Kind} ban | player=\"{Player}\" | target=\"{Target}\" | by={Moderator} ({Tier}) | " +
             "rcon={Accepted}/{Total} | flagged: ips={Ips} ids={Ids}{Pending} | at={At}",
             permanent ? "permanent" : "temporary", name, enforcement.Target ?? "none",
-            command.User.Username, tier, enforcement.Servers, Bans.LoadBans().Count,
+            command.User.Username, tier, enforcement.Servers, Bans.ServerCount,
             flags?.Ips.Count ?? 0, flags?.Ids.Count ?? 0,
             flags?.Pending == true ? " (pending confirmation)" : "", EasternTime.Stamp(now));
 
@@ -183,7 +193,7 @@ public abstract class BanCommandBase : ISlashCommand
             embed.AddField($"{Theme.Warn} Not enforced",
                 "The record was saved but no server accepted the command. The sweep will retry.");
         }
-        else if (enforcement.Servers < Bans.LoadBans().Count && enforcement.Servers > 0)
+        else if (enforcement.Servers < Bans.ServerCount && enforcement.Servers > 0)
         {
             embed.AddField($"{Theme.Warn} Partially enforced", $"{enforcement.Servers} server(s) accepted it.");
         }

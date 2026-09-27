@@ -98,6 +98,13 @@ internal sealed class RconConnection : IAsyncDisposable
             await WriteAsync(stream, Md5Hex(_options.Password), ct).ConfigureAwait(false);
 
             var auth = await ReadUntilAsync(stream, HasAuthVerdict, ct).ConfigureAwait(false);
+
+            /* ONLY AN ANSWER OF 0 IS A WRONG PASSWORD. A server mid-restart accepts the TCP
+               connection and closes it before answering; calling that a rejected password made
+               it an RconAuthException, which the client never retries, and the operator went
+               looking at the password. No verdict at all is a transport failure. */
+            if (!HasAuthVerdict(auth))
+                throw new IOException($"{_options.Name} closed the connection before answering the login");
             if (!auth.Contains("Authenticated=1", StringComparison.Ordinal))
                 throw new RconAuthException($"{_options.Name} rejected the RCON password");
 
@@ -442,6 +449,19 @@ public sealed class RconRejectedException : RconException
 
     public string Command { get; }
     public string Reply { get; }
+}
+
+/// <summary>
+/// A state-changing command that failed after it was sent: the server may have carried it out.
+/// </summary>
+/// <remarks>
+/// Its own type because it is the one failure worth a second opinion. Every other RCON failure
+/// means the command never reached the server, so nothing else - Pavlov.log included - can
+/// show it ran.
+/// </remarks>
+public sealed class RconUnconfirmedException : RconException
+{
+    public RconUnconfirmedException(string message, Exception inner) : base(message, inner) { }
 }
 
 /// <summary>The server rejected the password. Never worth retrying.</summary>

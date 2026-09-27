@@ -577,7 +577,7 @@ public sealed class BackgroundServiceHost : IHostedService
             {
                 // Keeps the human-readable backup CURRENT. A file that looks like a backup
                 // and is six months stale is worse than not having one.
-                _backend.ExportToJson(_options.DataDirectory);
+                _backend.ExportToJson(_options.DataDirectory, _store.Unreadable);
                 return Task.CompletedTask;
             },
         });

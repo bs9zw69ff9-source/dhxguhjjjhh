@@ -94,7 +94,7 @@ public class RconLogConfirmationTests
         server.Swallow.Add("Kick");
         var registry = Registry(server, new RconConfirmations(), TimeSpan.FromMilliseconds(300));
 
-        await Assert.ThrowsAsync<RconException>(() => registry.SendAsync("server1", "Kick Nobody"));
+        await Assert.ThrowsAsync<RconUnconfirmedException>(() => registry.SendAsync("server1", "Kick Nobody"));
     }
 
     [Fact]
@@ -118,8 +118,38 @@ public class RconLogConfirmationTests
         var registry = Registry(server, confirmations, TimeSpan.FromMilliseconds(300));
 
         var echo = EchoWhenReceived(server, confirmations, "Kick Griefer", Log2);
-        await Assert.ThrowsAsync<RconException>(() => registry.SendAsync("server1", "Kick Griefer"));
+        await Assert.ThrowsAsync<RconUnconfirmedException>(() => registry.SendAsync("server1", "Kick Griefer"));
         await echo;
+    }
+
+    [Fact]
+    public async Task AnUnreachableServerFailsWithoutWaitingForTheLog()
+    {
+        // Nothing listening: the command never left the bot, so the log cannot show it. This
+        // used to sit out the whole confirmation window per command, per stopped server.
+        var port = FreePort();
+        var registry = new RconRegistry(new BotOptions
+        {
+            DiscordToken = "t",
+            Servers = [new RconOptions { Name = "server1", Host = "127.0.0.1", Port = port, Password = "x", MaxAttempts = 1 }],
+            Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+            DataDirectory = Path.GetTempPath(),
+        }, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+        registry.UseLogConfirmation(new RconConfirmations(), name => ServerLabels.LogFor([Log1], name));
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThrowsAsync<RconException>(() => registry.SendAsync("server1", "Kick Griefer"));
+
+        Assert.True(watch.Elapsed < RconRegistry.LogConfirmWindow / 2, $"took {watch.Elapsed}");
+    }
+
+    private static int FreePort()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
     }
 
     [Fact]

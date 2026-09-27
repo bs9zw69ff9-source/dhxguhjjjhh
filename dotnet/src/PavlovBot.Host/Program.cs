@@ -586,6 +586,7 @@ public static class Program
         builder.Services.AddSingleton<PavlovBot.Host.Servers.IServerProvisioner>(sp =>
             new PavlovBot.Host.Servers.ServerProvisioner(
                 sp.GetRequiredService<ILogger<PavlovBot.Host.Servers.ServerProvisioner>>()));
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.ServerLayoutGate>();
         builder.Services.AddSingleton<ISlashCommand, ProvisionServerCommand>();
         builder.Services.AddSingleton<ISlashCommand, DeleteServerCommand>();
         builder.Services.AddSingleton<ISlashCommand, GuildInvitesCommand>();

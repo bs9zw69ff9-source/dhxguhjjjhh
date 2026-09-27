@@ -34,6 +34,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// </remarks>
 public sealed class DeleteServerCommand(
     IServerProvisioner provisioner,
+    ServerLayoutGate layout,
     Access access,
     AuditLog audit,
     IConfiguration configuration,
@@ -87,6 +88,26 @@ public sealed class DeleteServerCommand(
             return;
         }
 
+        if (layout.TryEnter($"deleting server {slot}") is { } busy)
+        {
+            await Reply(command, Theme.Failure($"Cannot delete server {slot}", busy)).ConfigureAwait(false);
+            return;
+        }
+
+        var handedOff = false;
+        try
+        {
+            handedOff = await StartAsync(command, slot, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!handedOff) layout.Abandon();
+        }
+    }
+
+    /// <summary>Validate and start the deletion. True once it runs in the background, owning the gate.</summary>
+    private async Task<bool> StartAsync(SocketSlashCommand command, int slot, CancellationToken ct)
+    {
         var used = UsedRconIndices();
         var units = SplitList(configuration["PAVLOV_UNITS"]);
         var bases = SplitList(configuration["PAVLOV_BASES"]);
@@ -94,7 +115,7 @@ public sealed class DeleteServerCommand(
         if (Problem(slot, used, units, bases) is { } problem)
         {
             await Reply(command, Theme.Failure($"Cannot delete server {slot}", problem)).ConfigureAwait(false);
-            return;
+            return false;
         }
 
         var unit = units[slot - 1];
@@ -118,6 +139,7 @@ public sealed class DeleteServerCommand(
         var messageId = await Post.SendAsync(channelId, Checklist(slot, unit, []), null, ct).ConfigureAwait(false);
 
         _ = Task.Run(() => RunAsync(request, unit, channelId, messageId), CancellationToken.None);
+        return true;
     }
 
     /// <summary>Why this slot may not be deleted, or null when it may.</summary>
@@ -158,9 +180,10 @@ public sealed class DeleteServerCommand(
     private async Task RunAsync(DeleteRequest request, string unit, ulong channelId, ulong? messageId)
     {
         var stopping = lifetime.ApplicationStopping;
+        ProvisionOutcome? outcome = null;
         try
         {
-            await provisioner.DeleteAsync(request, async steps =>
+            outcome = await provisioner.DeleteAsync(request, async steps =>
             {
                 var embed = Checklist(request.Slot, unit, steps);
                 if (messageId is { } id) await Post.EditAsync(channelId, id, embed, null, stopping).ConfigureAwait(false);
@@ -180,6 +203,11 @@ public sealed class DeleteServerCommand(
             {
                 logger.LogWarning(postEx, "Could not post the deletion failure for server {Slot}", request.Slot);
             }
+        }
+        finally
+        {
+            // Deleting the last server skips the restart on purpose; see ServerLayoutGate.Exit.
+            layout.Exit(outcome, restartExpected: request.FinalPavlovUnits.Count > 0);
         }
     }
 
