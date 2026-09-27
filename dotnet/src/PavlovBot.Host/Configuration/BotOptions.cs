@@ -186,8 +186,9 @@ public sealed record BotOptions
         if (string.IsNullOrWhiteSpace(DiscordToken))
             problems.Add("DISCORD_TOKEN is not set - the bot cannot log in.");
 
-        if (Servers.Count == 0)
-            problems.Add("No RCON servers configured - set RCON_HOST_1, RCON_PORT_1 and RCON_PASSWORD_1.");
+        /* NO SERVERS IS NOT A REFUSAL. It used to be, and that made deleting the last server a
+           trap: the bot could not start with none, and /provisionserver - the way to make one -
+           needs the bot running. Startup warns instead (see Program). */
 
         foreach (var server in Servers)
         {

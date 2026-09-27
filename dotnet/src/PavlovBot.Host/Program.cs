@@ -97,6 +97,14 @@ public static class Program
             return 78;   // EX_CONFIG
         }
 
+        if (options.Servers.Count == 0)
+        {
+            /* Stderr, because the logger does not exist yet; journalctl shows both. */
+            await Console.Error.WriteLineAsync(
+                "No RCON servers configured (no RCON_HOST_n in .env). Starting anyway so /provisionserver " +
+                "can create one; every RCON feature is idle until a server is added.").ConfigureAwait(false);
+        }
+
         var features = FeatureOptions.Bind(builder.Configuration);
 
         /* THE SKIN, applied before anything can build an embed. BOT_NAME has been documented

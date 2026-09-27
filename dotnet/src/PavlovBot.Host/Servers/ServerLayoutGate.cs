@@ -16,8 +16,8 @@ namespace PavlovBot.Host.Servers;
 ///   again and rebuilt over the server it had just made - new RCON password, new config.
 ///
 /// So a run holds the gate, and a run that changed .env leaves it shut until the process
-/// restarts and reads the new layout - except where the caller says the old layout still plans
-/// correctly (see <see cref="Exit"/>).
+/// restarts and reads the new layout. Every such run ends by restarting the bot, the last
+/// server's delete included, now that the bot starts with no servers configured.
 /// </remarks>
 public sealed class ServerLayoutGate
 {
@@ -44,18 +44,12 @@ public sealed class ServerLayoutGate
 
     /// <summary>Release the gate after a run.</summary>
     /// <param name="outcome">The run's result; null when it threw, which is treated as a possible change.</param>
-    /// <param name="restartExpected">
-    /// False when the run deliberately leaves the bot on its old configuration - deleting the last
-    /// server, which it cannot restart without. Latching then would block the very provision that
-    /// has to come next, behind a restart that cannot happen; and the old layout plans it correctly
-    /// anyway, because the provision checks the disk and finds that slot empty.
-    /// </param>
-    public void Exit(ProvisionOutcome? outcome, bool restartExpected = true)
+    public void Exit(ProvisionOutcome? outcome)
     {
         lock (_lock)
         {
             _running = null;
-            if (restartExpected && (outcome is null || outcome.ChangedEnv)) _reloadPending = true;
+            if (outcome is null || outcome.ChangedEnv) _reloadPending = true;
         }
     }
 

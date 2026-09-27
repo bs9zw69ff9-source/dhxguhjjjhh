@@ -91,17 +91,6 @@ public class DebugPassRegressionTests : IDisposable
     }
 
     [Fact]
-    public void DeletingTheLastServerDoesNotLockOutTheNextProvision()
-    {
-        // No restart follows (the bot cannot start with no servers), so latching would be a dead end.
-        var gate = new ServerLayoutGate();
-        gate.TryEnter("deleting server 1");
-        gate.Exit(Outcome(("Unwire from the bot (.env)", ProvisionStatus.Ok)), restartExpected: false);
-
-        Assert.Null(gate.TryEnter("provisioning a server"));
-    }
-
-    [Fact]
     public void ARunThatFailedBeforeEnvLeavesTheGateOpen()
     {
         var gate = new ServerLayoutGate();

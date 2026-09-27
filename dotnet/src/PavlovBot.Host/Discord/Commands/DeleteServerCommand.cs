@@ -155,11 +155,8 @@ public sealed class DeleteServerCommand(
         if (slot > count)
             return $"there is no server {slot} - this box has {count} configured. Nothing was deleted.";
 
-        /* DELETING THE LAST ONE IS ALLOWED, and used to be refused. The bot exits 78 with no RCON
-           server configured, so the refusal was protecting against a crash-loop on the restart
-           this normally ends with - but that is a reason to SKIP the restart, not a reason to
-           trap the operator with a server they cannot remove. The run leaves the process up on
-           its existing configuration and says what to do next. */
+        /* DELETING THE LAST ONE IS ALLOWED. The bot starts with no RCON servers, so the restart
+           that ends every delete is safe here too, and /provisionserver works from nothing. */
 
         if (slot != count)
         {
@@ -207,7 +204,7 @@ public sealed class DeleteServerCommand(
         finally
         {
             // Deleting the last server skips the restart on purpose; see ServerLayoutGate.Exit.
-            layout.Exit(outcome, restartExpected: request.FinalPavlovUnits.Count > 0);
+            layout.Exit(outcome);
         }
     }
 
