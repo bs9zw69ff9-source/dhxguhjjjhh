@@ -333,6 +333,32 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok("written and owned by steam.").ConfigureAwait(false);
 
+        // ---- player data kept by an earlier /deleteserver of this slot ----
+        if (Directory.Exists(PreservedPlayerData.PreservedDir(spec.InstallDir)))
+        {
+            await run.Start("restoring the player data kept when this server was deleted…").ConfigureAwait(false);
+            try
+            {
+                var restored = PreservedPlayerData.Restore(spec.InstallDir);
+                var summary = $"restored {(restored.Moved.Count > 0 ? string.Join(", ", restored.Moved) : "nothing")}";
+                if (restored.Skipped.Count > 0)
+                {
+                    await run.SoftFail($"{summary}; left in {PreservedPlayerData.PreservedDir(spec.InstallDir)}: " +
+                                       string.Join(", ", restored.Skipped)).ConfigureAwait(false);
+                }
+                else
+                {
+                    await run.Ok(summary + ".").ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                /* Not fatal: the server itself is fine, and the data is still where it was kept. */
+                await run.SoftFail($"could not restore it ({ex.Message}); it is still at " +
+                                   $"{PreservedPlayerData.PreservedDir(spec.InstallDir)}.").ConfigureAwait(false);
+            }
+        }
+
         // ---- systemd unit ----
         await run.Start("installing and enabling the service…").ConfigureAwait(false);
         if (await InstallUnitAsync(spec, unitPath, ct).ConfigureAwait(false) is { } unitProblem)
@@ -430,6 +456,24 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             return await run.Abort().ConfigureAwait(false);
         }
 
+        /* THE PLAYER DATA GOES FIRST, and the delete does not happen if it cannot. ModSave holds
+           the faction rosters and the caps ledgers; an rm -rf that took them with it is how a
+           delete-and-reprovision wiped every whitelist. */
+        var keptAt = PreservedPlayerData.PreservedDir(request.InstallDir);
+        try
+        {
+            var kept = PreservedPlayerData.Preserve(request.InstallDir, DateTimeOffset.UtcNow);
+            if (kept.Moved.Count > 0)
+                logger.LogWarning("Preserved {Items} from {Install} at {Path}",
+                    string.Join(", ", kept.Moved), request.InstallDir, keptAt);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await run.Fail($"could not move the player data (ModSave, mods/whitelist/blacklist) out to {keptAt}, " +
+                           $"so nothing was deleted: {ex.Message}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+
         var remove = await RunAsync(null, "rm", ["-rf", request.InstallDir], SteamCmdTimeout, ct).ConfigureAwait(false);
         if (!remove.Ok)
         {
@@ -437,7 +481,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             return await run.Abort().ConfigureAwait(false);
         }
         logger.LogWarning("DELETED the install at {Path} for server {Slot}", request.InstallDir, request.Slot);
-        await run.Ok("deleted.").ConfigureAwait(false);
+        await run.Ok(Directory.Exists(keptAt)
+            ? $"deleted. Player data (rosters, ledgers, mod saves) kept at `{keptAt}` and restored by the next /provisionserver into this slot."
+            : "deleted.").ConfigureAwait(false);
 
         // ---- unwire ----
         await run.Start("clearing it from .env…").ConfigureAwait(false);
