@@ -647,6 +647,7 @@ public static class Program
         // below, and a box without ufw or without root reports that per call rather than throwing.
         builder.Services.AddSingleton<PavlovBot.Host.Servers.IFirewall, PavlovBot.Host.Servers.UfwFirewall>();
 
+        builder.Services.AddSingleton<WhitelistBackup>();
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<IpTrackingService>(),
@@ -661,7 +662,8 @@ public static class Program
                path never gets a firewall handle at all. Off leaves a blacklist bot-only. */
             firewall: features.FirewallBlacklistedIps
                 ? sp.GetRequiredService<PavlovBot.Host.Servers.IFirewall>()
-                : null));
+                : null,
+            whitelists: sp.GetRequiredService<WhitelistBackup>()));
         builder.Services.AddSingleton<ISlashCommand, InspectCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
         builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(

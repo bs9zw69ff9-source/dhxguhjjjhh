@@ -36,7 +36,8 @@ public sealed class OwnerActions(
     string? ledgerDirectory = null,
     MasterNames? masters = null,
     Func<string, CancellationToken, Task>? liftBan = null,
-    IFirewall? firewall = null)
+    IFirewall? firewall = null,
+    PavlovBot.Host.Factions.WhitelistBackup? whitelists = null)
 {
     // ---- IP enforcement -----------------------------------------------------------------
 
@@ -387,30 +388,20 @@ public sealed class OwnerActions(
 
     // ---- whitelists ---------------------------------------------------------------------
 
-    public async Task<OwnerActionResult> SaveWhitelistsAsync(CancellationToken ct = default)
-    {
-        var ranks = store.Read(Datasets.FactionRanks, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
-        var config = store.Read(Datasets.FactionConfig, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    /// <summary>Snapshot every roster file. See <see cref="PavlovBot.Host.Factions.WhitelistBackup"/>.</summary>
+    public async Task<OwnerActionResult> SaveWhitelistsAsync(CancellationToken ct = default) =>
+        whitelists is null
+            ? OwnerActionResult.Refused("Whitelist snapshots are not wired up on this bot.")
+            : Result(await whitelists.SaveAsync(ct).ConfigureAwait(false));
 
-        await store.WriteAsync(Datasets.FactionBackup, new WhitelistSnapshot(
-            DateTimeOffset.UtcNow, ranks, config), ct).ConfigureAwait(false);
+    /// <summary>Write the last snapshot back over every roster file it holds.</summary>
+    public async Task<OwnerActionResult> LoadWhitelistsAsync(CancellationToken ct = default) =>
+        whitelists is null
+            ? OwnerActionResult.Refused("Whitelist snapshots are not wired up on this bot.")
+            : Result(await whitelists.LoadAsync(ct).ConfigureAwait(false));
 
-        return OwnerActionResult.Done($"Snapshot saved: **{ranks.Count}** rank entr(ies), **{config.Count}** config entr(ies). Restoring overwrites the current ones.");
-    }
-
-    public async Task<OwnerActionResult> LoadWhitelistsAsync(CancellationToken ct = default)
-    {
-        var snapshot = store.Read<WhitelistSnapshot?>(Datasets.FactionBackup, null);
-        if (snapshot is null || snapshot.At == default)
-            return OwnerActionResult.Refused("There is no snapshot to restore. Save one first.");
-
-        await store.WriteAsync(Datasets.FactionRanks, snapshot.Ranks, ct).ConfigureAwait(false);
-        await store.WriteAsync(Datasets.FactionConfig, snapshot.Config, ct).ConfigureAwait(false);
-
-        return OwnerActionResult.Done(
-            $"Restored the snapshot from {snapshot.At:yyyy-MM-dd HH:mm} UTC: " +
-            $"**{snapshot.Ranks.Count}** rank entr(ies), **{snapshot.Config.Count}** config entr(ies).");
-    }
+    private static OwnerActionResult Result(PavlovBot.Host.Factions.WhitelistBackupResult result) =>
+        result.Ok ? OwnerActionResult.Done(result.Message) : OwnerActionResult.Refused(result.Message);
 
     // ---- destructive wipes ---------------------------------------------------------------
 
@@ -517,8 +508,3 @@ public sealed class OwnerActions(
     }
 }
 
-/// <param name="At">Default when no snapshot has ever been taken.</param>
-public sealed record WhitelistSnapshot(
-    DateTimeOffset At,
-    Dictionary<string, string> Ranks,
-    Dictionary<string, string> Config);

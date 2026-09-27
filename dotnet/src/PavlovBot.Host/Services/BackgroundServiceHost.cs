@@ -71,6 +71,8 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Monitoring.ServerMonitor _monitor;
     private readonly PavlovBot.Host.Monitoring.MonitorBoard _monitorBoard;
 
+    private readonly WhitelistBackup _whitelistBackup;
+
     public BackgroundServiceHost(
         ServiceRegistry registry,
         RconRegistry rcon,
@@ -103,8 +105,10 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Monitoring.ServerMonitor monitor,
         PavlovBot.Host.Monitoring.MonitorBoard monitorBoard,
         PavlovBot.Host.Stats.KillStats killStats,
+        WhitelistBackup whitelistBackup,
         ILogger<BackgroundServiceHost> logger)
     {
+        _whitelistBackup = whitelistBackup;
         _monitor = monitor;
         _monitorBoard = monitorBoard;
         _killStats = killStats;
@@ -493,6 +497,17 @@ public sealed class BackgroundServiceHost : IHostedService
         /* ---- rank suspensions ----
            The suspension records where to put them BACK. Restoring to the default rank
            would quietly strip every suspended officer of everything they had earned. */
+        /* DAILY WHITELIST SNAPSHOT, the Node bot's auto-backup that the port dropped. Checked
+           hourly, saved when the last snapshot is a day old, so a restart neither skips a day nor
+           replaces a fresh snapshot. It never replaces a populated snapshot with empty rosters. */
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "whitelist-backup",
+            Interval = TimeSpan.FromHours(1),
+            RunOnStart = true,
+            Tick = _whitelistBackup.AutoSaveAsync,
+        });
+
         _registry.Register(new ServiceDefinition
         {
             Name = "rank-restore",

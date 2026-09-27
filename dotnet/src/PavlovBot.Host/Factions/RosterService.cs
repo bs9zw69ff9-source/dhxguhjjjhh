@@ -253,6 +253,22 @@ public sealed class RosterService
         }
     }
 
+    /// <summary>
+    /// Every <c>.txt</c> in the roster folder, plus any roster file the factions expect that is
+    /// not there yet. Hand-made files are included: a snapshot is of the folder, not the registry.
+    /// </summary>
+    public IReadOnlyList<string> ListRosterFiles()
+    {
+        if (!Enabled) return [];
+
+        return [.. Directory.EnumerateFiles(_directory!, "*.txt")
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            .Concat(RosterFilesOf(Factions))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)];
+    }
+
     /// <summary>Read a roster. Null means UNREADABLE, which is not the same as empty.</summary>
     /// <remarks>
     /// The distinction is load-bearing: an empty roster is a valid state the game accepts,
