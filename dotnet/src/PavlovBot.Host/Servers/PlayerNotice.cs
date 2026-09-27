@@ -12,7 +12,7 @@ public sealed record NoticeResult(bool Delivered, string Detail);
 /// Telling players a server is about to go away, and giving them time to read it.
 /// </summary>
 /// <remarks>
-/// Shared by <c>/rotatemap</c> and <c>/serverswitch</c> so the two cannot drift about how
+/// Shared by <c>/serverswitch</c> and <c>/testmode</c> so the two cannot drift about how
 /// long players get or which server gets told.
 ///
 /// THE SERVER IS FOUND BY NAME, NOT BY POSITION. RCON slots are allowed to have GAPS -

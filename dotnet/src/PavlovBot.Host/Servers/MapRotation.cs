@@ -33,8 +33,8 @@ public sealed record RotationResult(int Number, RotationOutcome Outcome, string 
 /// instead. That is still available as <c>/serverswitch restart</c> for a server that has gone bad
 /// in a way a map change does not fix; this is the lighter action the command's name promises.
 ///
-/// Servers are addressed through <see cref="ServiceControl.RconNameFor"/>, the same rule the
-/// warning uses, so the server that is told and the server that rotates cannot differ.
+/// Servers are addressed through <see cref="ServiceControl.RconNameFor"/>, the same rule
+/// <c>/serverswitch</c> uses, so "server 2" means the same server in both.
 /// </remarks>
 public sealed class MapRotation(RconRegistry rcon, ILogger<MapRotation> logger)
 {
