@@ -719,8 +719,8 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     /// <remarks>
     /// Five minutes, which is far longer than any command should take and deliberately so.
     /// The purpose is to stop a handler hanging FOREVER on something that will never answer,
-    /// not to enforce responsiveness - /rotatemap legitimately spends over a minute
-    /// restarting three servers in sequence, and cutting that off partway would leave a
+    /// not to enforce responsiveness - /serverswitch and /testmode legitimately
+    /// spend a long time restarting servers, and cutting that off partway would leave a
     /// server down with nothing coming to start it.
     /// </remarks>
     private static readonly TimeSpan CommandBudget = TimeSpan.FromMinutes(5);
@@ -778,8 +778,8 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
            spinner forever. Discord abandons the interaction token after 15 minutes anyway, so
            work continuing past that can no longer report anything to anyone.
 
-           Generous on purpose: /rotatemap deliberately waits 5s and then restarts three
-           servers sequentially, and killing that halfway would leave servers down. This is a
+           Generous on purpose: a restart through systemd can take a long time, and killing
+           it halfway would leave servers down. This is a
            backstop against hanging, not a latency budget. */
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stopping?.Token ?? CancellationToken.None);
         deadline.CancelAfter(CommandBudget);

@@ -12,9 +12,9 @@ namespace PavlovBot.Host.Discord.Commands;
 /// <c>/serverswitch</c> - start, stop or restart one game server through systemd.
 /// </summary>
 /// <remarks>
-/// The per-server control panel, where <c>/rotatemap</c> is the all-at-once convenience.
-/// Both go through <see cref="ServiceControl"/> so they cannot drift apart about what a
-/// server is called or how systemctl is reached.
+/// The per-server systemd control panel. <c>/rotatemap</c> only changes the map over RCON;
+/// restarting the process is this command's job. Both number servers through
+/// <see cref="ServiceControl"/> so they cannot drift apart about which server is which.
 ///
 /// STOP IS THE DANGEROUS ONE, and it is the reason this is a separate command rather than
 /// another option on <c>/rotatemap</c>. A restart ends with the server back; a stop ends
