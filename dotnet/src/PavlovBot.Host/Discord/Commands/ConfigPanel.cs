@@ -70,8 +70,8 @@ public sealed class ConfigPanel(
         new("ignorelist", "List ignored usernames", "📋", "Who is not being tracked"),
 
         // ── whitelists ──
-        new("savewl", "Save whitelists", "💾", "Snapshot every whitelist rank and setting"),
-        new("loadwl", "Load whitelists", "♻️", "Restore the snapshot (overwrites current)", Confirm: "RESTORE"),
+        new("savewl", "Save whitelists", "💾", "Snapshot every faction roster file"),
+        new("loadwl", "Load whitelists", "♻️", "Restore every roster file from the snapshot (overwrites current)", Confirm: "RESTORE"),
 
         // ── bans and menus ──
         new("cleartempbans", "Clear temporary bans", "⏳", "Lift every temp ban, keep permanent ones", Confirm: "CLEAR"),

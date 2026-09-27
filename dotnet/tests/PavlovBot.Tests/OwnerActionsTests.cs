@@ -272,37 +272,105 @@ public class OwnerActionsTests : IDisposable
 
     // ---- whitelists ----
 
-    [Fact]
-    public async Task RestoringWithNoSnapshotIsRefusedRatherThanClearing()
+    /// <summary>OwnerActions wired to a real roster folder, the way the bot runs it.</summary>
+    private (OwnerActions Actions, string Rosters) WithRosters()
     {
-        /* The dangerous version of this bug: "restore" on an empty snapshot writing empty
-           maps over the live ranks, wiping every whitelist rank in one click. */
-        await _store.WriteAsync(Datasets.FactionRanks,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Alice"] = "Capo" });
+        var rosters = Path.Combine(_directory, "FactionRoles");
+        Directory.CreateDirectory(rosters);
+        var service = new PavlovBot.Host.Factions.RosterService(rosters, NullLogger<PavlovBot.Host.Factions.RosterService>.Instance,
+            backupDirectory: Path.Combine(_directory, "roster_bak"));
+        var backup = new PavlovBot.Host.Factions.WhitelistBackup(_store, service,
+            NullLogger<PavlovBot.Host.Factions.WhitelistBackup>.Instance);
+        return (new OwnerActions(_store, _tracking, _ledgers, whitelists: backup), rosters);
+    }
 
-        var result = await _actions.LoadWhitelistsAsync();
+    [Fact]
+    public async Task ASnapshotHoldsTheRosterFilesAndRestoresThem()
+    {
+        /* THE BUG: save snapshotted faction_ranks/faction_config, which nothing writes, so it
+           stored nothing and a restore changed nothing. It has to be the FILES. */
+        var (actions, rosters) = WithRosters();
+        await File.WriteAllTextAsync(Path.Combine(rosters, "ncr_trooper.txt"), "Alice\nBob\n");
+        await File.WriteAllTextAsync(Path.Combine(rosters, "handmade.txt"), "Carol\n");
+
+        var saved = await actions.SaveWhitelistsAsync();
+        Assert.True(saved.Ok, saved.Detail);
+        Assert.Contains("**3** name(s)", saved.Detail, StringComparison.Ordinal);
+
+        // Wiped, as a delete-and-reprovision does.
+        foreach (var file in Directory.GetFiles(rosters)) File.Delete(file);
+
+        var loaded = await actions.LoadWhitelistsAsync();
+
+        Assert.True(loaded.Ok, loaded.Detail);
+        Assert.Equal(["Alice", "Bob"], await File.ReadAllLinesAsync(Path.Combine(rosters, "ncr_trooper.txt")));
+        Assert.Equal(["Carol"], await File.ReadAllLinesAsync(Path.Combine(rosters, "handmade.txt")));
+    }
+
+    [Fact]
+    public async Task EmptyRostersNeverReplaceAPopulatedSnapshot()
+    {
+        var (actions, rosters) = WithRosters();
+        await File.WriteAllTextAsync(Path.Combine(rosters, "ncr_trooper.txt"), "Alice\n");
+        Assert.True((await actions.SaveWhitelistsAsync()).Ok);
+
+        await File.WriteAllTextAsync(Path.Combine(rosters, "ncr_trooper.txt"), "");
+        var second = await actions.SaveWhitelistsAsync();
+
+        Assert.False(second.Ok);
+        Assert.True((await actions.LoadWhitelistsAsync()).Ok);
+        Assert.Equal(["Alice"], await File.ReadAllLinesAsync(Path.Combine(rosters, "ncr_trooper.txt")));
+    }
+
+    [Fact]
+    public async Task RestoringWithNoSnapshotIsRefusedAndTouchesNothing()
+    {
+        var (actions, rosters) = WithRosters();
+        await File.WriteAllTextAsync(Path.Combine(rosters, "ncr_trooper.txt"), "Alice\n");
+
+        var result = await actions.LoadWhitelistsAsync();
 
         Assert.False(result.Ok);
-        Assert.Equal("Capo", _store.Read(Datasets.FactionRanks,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))["Alice"]);
+        Assert.Equal(["Alice"], await File.ReadAllLinesAsync(Path.Combine(rosters, "ncr_trooper.txt")));
     }
 
     [Fact]
-    public async Task ASnapshotRoundTrips()
+    public async Task ANodeSnapshotOnDiskLoads()
     {
-        await _store.WriteAsync(Datasets.FactionRanks,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Alice"] = "Capo" });
-        await _actions.SaveWhitelistsAsync();
+        // The dataset shape is the Node bot's: { savedAt, files }. A snapshot it wrote is the
+        // one most worth restoring on a server that migrated.
+        var (actions, rosters) = WithRosters();
+        await File.WriteAllTextAsync(Path.Combine(_directory, "data", "faction_backup.json"),
+            "{\"savedAt\":1700000000000,\"files\":{\"legion_recruit.txt\":[\"Dave\"]}}");
 
-        await _store.WriteAsync(Datasets.FactionRanks,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Alice"] = "Soldier" });
+        var result = await actions.LoadWhitelistsAsync();
 
-        var result = await _actions.LoadWhitelistsAsync();
-
-        Assert.True(result.Ok);
-        Assert.Equal("Capo", _store.Read(Datasets.FactionRanks,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))["Alice"]);
+        Assert.True(result.Ok, result.Detail);
+        Assert.Equal(["Dave"], await File.ReadAllLinesAsync(Path.Combine(rosters, "legion_recruit.txt")));
     }
+
+    [Fact]
+    public async Task ASnapshotEntryThatIsAPathIsNotWritten()
+    {
+        var (actions, _) = WithRosters();
+        await File.WriteAllTextAsync(Path.Combine(_directory, "data", "faction_backup.json"),
+            "{\"savedAt\":1700000000000,\"files\":{\"../../escape.txt\":[\"x\"],\"ok.txt\":[\"y\"]}}");
+
+        var result = await actions.LoadWhitelistsAsync();
+
+        Assert.Contains("not a roster file name", result.Detail, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(_directory, "..", "escape.txt")));
+    }
+
+    [Theory]
+    [InlineData("ncr_trooper.txt", true)]
+    [InlineData("../x.txt", false)]
+    [InlineData("/etc/x.txt", false)]
+    [InlineData("sub/x.txt", false)]
+    [InlineData("x.json", false)]
+    [InlineData("", false)]
+    public void OnlyPlainTxtNamesAreRosterFiles(string file, bool ok) =>
+        Assert.Equal(ok, PavlovBot.Host.Factions.WhitelistBackup.IsRosterFileName(file));
 
     // ---- wipes ----
 
