@@ -8,7 +8,7 @@ namespace PavlovBot.Host.Discord;
 /// </summary>
 /// <remarks>
 /// WHY THIS EXISTS. Discord.Net awaits every event handler inline in the loop that reads the
-/// gateway socket. A slash command awaited there - /rotatemap restarting three servers, a slow
+/// gateway socket. A slash command awaited there - /rotatemap waiting on three servers, a slow
 /// RCON sweep - stopped the bot reading Discord for its whole duration: every other user's
 /// interaction queued behind it and missed its three-second acknowledgement window, and past the
 /// heartbeat interval (about 41s) Discord.Net declared the connection dead and reconnected.

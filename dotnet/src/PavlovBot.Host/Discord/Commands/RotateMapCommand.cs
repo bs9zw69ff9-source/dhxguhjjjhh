@@ -9,35 +9,29 @@ using PavlovBot.Host.Servers;
 namespace PavlovBot.Host.Discord.Commands;
 
 /// <summary>
-/// <c>/rotatemap</c> - warn everyone, then restart the game server through systemd.
+/// <c>/rotatemap</c> - warn everyone, then send <c>RotateMap</c> over RCON.
 /// </summary>
 /// <remarks>
-/// A SERVICE RESTART, NOT AN RCON MAP CHANGE, and that is the whole point of the command.
-/// RCON's own rotate switches map inside a process that keeps running; this replaces the
-/// process. They are not interchangeable - restarting is what clears a server that has gone
-/// bad in a way a map change does not fix, which is the state somebody reaches for this in.
+/// AN RCON MAP CHANGE, NOT A SERVICE RESTART. It used to run <c>systemctl restart</c>; the
+/// process-replacing restart now lives only in <c>/serverswitch restart</c>, for a server that
+/// has gone bad in a way a map change does not fix.
 ///
-/// THE WARNING GOES OUT FIRST. It has to: after the restart the server is gone and everybody
-/// on it is already disconnected, so a notice sent afterwards reaches nobody. There is a
-/// short grace period between the two so the message renders in-game rather than arriving in
-/// the same instant the process dies.
-///
-/// The warning is sent over RCON to the servers being rotated and its failure is NOT fatal -
-/// an unreachable server is often exactly why somebody is restarting it, and refusing to
-/// restart because the warning could not be delivered would make the command useless in the
-/// one case it exists for.
+/// THE WARNING GOES OUT FIRST, with a short grace period before the rotation so the message
+/// renders in-game rather than arriving in the same instant the map unloads. Its failure is
+/// not fatal on its own: the rotation is still attempted and reported per server, so an
+/// unreachable server shows up as a failed rotation rather than as a refused command.
 /// </remarks>
 public sealed class RotateMapCommand(
     ServiceControl services,
     PlayerNotice notice,
-    RconRegistry rcon,
+    MapRotation rotation,
     Access access,
     AuditLog audit,
     ILogger<RotateMapCommand> logger) : ISlashCommand
 {
     public string Name => "rotatemap";
 
-    /// <summary>The exact line broadcast before a restart.</summary>
+    /// <summary>The exact line broadcast before a rotation.</summary>
     /// <remarks>
     /// The message only. <see cref="PlayerNotice"/> addresses it to every player, so the
     /// leading "All" this used to carry is gone - kept here it would go out twice, and it
@@ -49,19 +43,19 @@ public sealed class RotateMapCommand(
     {
         var server = new SlashCommandOptionBuilder()
             .WithName("server")
-            .WithDescription("Which server to restart. Defaults to all of them.")
+            .WithDescription("Which server to rotate. Defaults to all of them.")
             .WithType(ApplicationCommandOptionType.Integer)
             .WithRequired(false)
             .AddChoice("All servers", 0);
 
-        /* Choices, not free text. The number picks a CONFIGURED unit by index, so nothing a
-           caller types ever reaches the command line of a privileged process. */
+        /* Choices, not free text, numbered the same way /serverswitch numbers servers. The
+           number picks RCON slot `serverN`; nothing a caller types reaches the wire. */
         for (var i = 1; i <= services.Units.Count; i++)
             server.AddChoice($"Server {i}", i);
 
         return new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Admin - Warn players, then restart the game server(s) via systemd")
+            .WithDescription("Admin - Warn players, then rotate the map on the game server(s) via RCON")
             .AddOption(server)
             .Build();
     }
@@ -70,9 +64,9 @@ public sealed class RotateMapCommand(
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        /* ADMIN. This disconnects every player on the server and takes it down for as long
-           as it takes to come back - the same weight as a ban wave, not the same weight as
-           reading a roster. Owners pass this gate automatically. */
+        /* ADMIN. This ends the round for every player on the server - the same weight as a
+           ban wave, not the same weight as reading a roster. Owners pass this gate
+           automatically. */
         if (!access.Allows(RequiredAccess.Admin, command))
         {
             await Reply(command, Theme.Denied("Not allowed", access.Refusal(RequiredAccess.Admin, command))).ConfigureAwait(false);
@@ -81,9 +75,9 @@ public sealed class RotateMapCommand(
 
         var choice = (int)(command.Data.Options.FirstOrDefault(o => o.Name == "server")?.Value as long? ?? 0);
 
-        var targets = choice == 0
-            ? services.Units.Select((unit, index) => (Number: index + 1, Unit: unit)).ToList()
-            : services.UnitFor(choice) is { } one ? [(Number: choice, Unit: one)] : [];
+        List<int> targets = choice == 0
+            ? [.. Enumerable.Range(1, services.Units.Count)]
+            : choice >= 1 && choice <= services.Units.Count ? [choice] : [];
 
         if (targets.Count == 0)
         {
@@ -94,67 +88,62 @@ public sealed class RotateMapCommand(
         }
 
         var who = command.User.Username;
-        logger.LogWarning("ROTATEMAP by {User} | {Units}", who, string.Join(", ", targets.Select(t => t.Unit)));
+        logger.LogWarning("ROTATEMAP by {User} | {Units}", who, string.Join(", ", targets.Select(ServiceControl.RconNameFor)));
 
-        // ---- 1. warn, before anything goes down ----
+        // ---- 1. warn, before the map changes ----
 
         var notices = new List<NoticeResult>();
         foreach (var target in targets)
-            notices.Add(await notice.WarnAsync(target.Number, Warning, ct).ConfigureAwait(false));
+            notices.Add(await notice.WarnAsync(target, Warning, ct).ConfigureAwait(false));
 
         var warned = notices.Count(n => n.Delivered);
 
         await Reply(command, Theme.Notice($"{Theme.Warn} Rotating {targets.Count} server(s)",
             $"Broadcast `{Warning}` to {warned} of {targets.Count} server(s). " +
-            $"Restarting in {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
+            $"Rotating in {PlayerNotice.Grace.TotalSeconds:0}s…")).ConfigureAwait(false);
 
         /* THE PAUSE IS THE POINT. The broadcast has to reach the client and render before
-           the process it is warning about disappears - sent and restarted in the same
-           instant, the player sees nothing and is simply dropped. */
+           the map it is warning about unloads - sent and rotated in the same instant, the
+           player sees nothing. */
         await PlayerNotice.WaitAsync(ct).ConfigureAwait(false);
 
-        // ---- 2. restart, one at a time ----
+        // ---- 2. rotate, one at a time ----
 
-        /* SEQUENTIALLY. Restarting three Pavlov servers at once means three simultaneous
-           map loads on one box, and staggering them also means a failure on the first is
-           visible before the rest are torn down. */
-        var results = new List<UnitResult>();
+        /* SEQUENTIALLY. Three map loads at once on one box is three times the load spike, and
+           staggering them means a failure on the first is visible before the rest go. */
+        var results = new List<RotationResult>();
         foreach (var target in targets)
-            results.Add(await services.RestartAsync(target.Unit, ct).ConfigureAwait(false));
-
-        // A restarted server has nobody on it; a roster from before the restart is fiction.
-        rcon.InvalidateRosters();
+            results.Add(await rotation.RotateAsync(target, ct).ConfigureAwait(false));
 
         await audit.RecordAsync("rotatemap", who,
-            string.Join(", ", targets.Select(t => t.Unit)),
-            $"{results.Count(r => r.Ok)}/{results.Count} restarted", ct).ConfigureAwait(false);
+            string.Join(", ", targets.Select(ServiceControl.RconNameFor)),
+            $"{results.Count(r => r.Ok)}/{results.Count} rotated", ct).ConfigureAwait(false);
 
-        await Reply(command, Report(results, notices, services.Advice(results))).ConfigureAwait(false);
+        await Reply(command, Report(results, notices)).ConfigureAwait(false);
     }
 
-    private static EmbedBuilder Report(
-        IReadOnlyList<UnitResult> results, IReadOnlyList<NoticeResult> notices, string? advice)
+    private static EmbedBuilder Report(IReadOnlyList<RotationResult> results, IReadOnlyList<NoticeResult> notices)
     {
         var ok = results.Count(r => r.Ok);
         var warned = notices.Count(n => n.Delivered);
 
         var embed = ok == results.Count
             ? Theme.Success($"Rotated {ok} server(s)",
-                $"Warned {warned} of {notices.Count} {PlayerNotice.Grace.TotalSeconds:0}s beforehand, restarted {ok}.")
+                $"Warned {warned} of {notices.Count} {PlayerNotice.Grace.TotalSeconds:0}s beforehand, rotated {ok}.")
             : Theme.Failure($"Rotated {ok} of {results.Count} server(s)",
-                "The units below did not restart. **Players on them may be disconnected with nothing to come back to** — " +
-                "check `systemctl status` on the box.");
+                "The servers below did not confirm the rotation.");
 
         foreach (var result in results)
         {
-            embed.AddField(
-                $"{(result.Ok ? Theme.Ok : Theme.Bad)} {Sanitize.Message(result.Unit)}",
-                result.Ok ? "restarted" : $"```\n{Sanitize.Code(Truncate(result.Detail))}\n```");
+            var mark = result.Outcome switch
+            {
+                RotationOutcome.Rotated => Theme.Ok,
+                RotationOutcome.Unconfirmed => Theme.Warn,
+                _ => Theme.Bad,
+            };
+            embed.AddField($"{mark} Server {result.Number}", Sanitize.Message(Truncate(result.Detail)));
         }
 
-        /* The fix, not just the failure. A permission error is the EXPECTED outcome on a bot
-           that does not run as root, and without this it presents as the command being
-           broken. */
         /* WHY a warning did not land, per server. It used to report only a count, so
            "warned 1 of 3" gave no way to tell an unconfigured RCON slot apart from a server
            that was refusing connections. */
@@ -166,8 +155,6 @@ public sealed class RotateMapCommand(
                     .Where(x => !x.Notice.Delivered)
                     .Select(x => $"{Theme.Dot} Server {x.Number} — {Sanitize.Message(x.Notice.Detail)}")));
         }
-
-        if (advice is not null) embed.AddField($"{Theme.Warn} How to fix this", advice);
 
         return embed;
     }

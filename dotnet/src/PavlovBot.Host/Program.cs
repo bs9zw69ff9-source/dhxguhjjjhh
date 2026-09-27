@@ -522,6 +522,7 @@ public static class Program
         builder.Services.AddSingleton<PavlovBot.Host.Rcon.IOnlineRoster>(
             sp => sp.GetRequiredService<PavlovBot.Host.Rcon.RconRegistry>());
         builder.Services.AddSingleton<PavlovBot.Host.Servers.PlayerNotice>();
+        builder.Services.AddSingleton<PavlovBot.Host.Servers.MapRotation>();
         builder.Services.AddSingleton<PavlovBot.Host.Servers.CrashRecovery>();
 
         // ---- warnings, payroll and money alerts ----

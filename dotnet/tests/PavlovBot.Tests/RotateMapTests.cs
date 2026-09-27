@@ -11,12 +11,13 @@ using Xunit;
 namespace PavlovBot.Tests;
 
 /// <summary>
-/// <c>/rotatemap</c>: warn over RCON, then restart the units through systemd.
+/// <c>/rotatemap</c> and <c>/serverswitch</c>: the warning, the unit mapping and the systemctl
+/// guards. <c>/rotatemap</c> itself rotates over RCON - see <see cref="MapRotationTests"/>.
 /// </summary>
 /// <remarks>
-/// This is the only command that runs a PRIVILEGED SYSTEM COMMAND, so the tests that matter
-/// most are the ones about what can reach its argument list. Everywhere else in the bot a
-/// bad argument is a wrong ban; here it would be arbitrary execution as root.
+/// <c>/serverswitch</c> runs a PRIVILEGED SYSTEM COMMAND, so the tests that matter most are the
+/// ones about what can reach its argument list. Everywhere else in the bot a bad argument is a
+/// wrong ban; here it would be arbitrary execution as root.
 /// </remarks>
 public class RotateMapTests
 {
@@ -216,8 +217,8 @@ public class RotateMapTests
     [Fact]
     public void AListWithNothingUsableInItFallsBackRatherThanDisablingTheCommand()
     {
-        /* An empty unit list would make /rotatemap a command that reports success for
-           restarting nothing, which is the worst of the available outcomes. */
+        /* An empty unit list would make /rotatemap and /serverswitch commands that report
+           success for acting on nothing, which is the worst of the available outcomes. */
         Assert.Equal(ServiceControl.DefaultUnits, ServiceControl.ParseUnits("!!!, @@@"));
     }
 
@@ -408,6 +409,71 @@ public class RotateMapTests
         Assert.Null(Control().Advice([
             new UnitResult(false, "pavlovserver", "Job for pavlovserver.service failed"),
         ]));
+    }
+}
+
+/// <summary>
+/// <c>/rotatemap</c>'s rotation: exactly <c>RotateMap</c> on the wire, to the right server.
+/// </summary>
+public class MapRotationTests
+{
+    private static RconRegistry Registry(FakeRconServer server, int slot = 1) => new(new BotOptions
+    {
+        DiscordToken = "t",
+        Servers = [new RconOptions
+        {
+            Name = ServiceControl.RconNameFor(slot),
+            Host = "127.0.0.1",
+            Port = server.Port,
+            Password = server.Password,
+        }],
+        Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+        DataDirectory = Path.GetTempPath(),
+    }, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+
+    private static MapRotation Rotation(RconRegistry rcon) => new(rcon, NullLogger<MapRotation>.Instance);
+
+    [Fact]
+    public async Task SendsExactlyRotateMapAndNothingElse()
+    {
+        /* ON THE WIRE. /rotatemap used to be `systemctl restart`; the replacement is the RCON
+           verb with no arguments, and nothing that restarts or stops anything rides along. */
+        await using var server = new FakeRconServer();
+        await using var rcon = Registry(server);
+
+        var result = await Rotation(rcon).RotateAsync(1, CancellationToken.None);
+
+        Assert.Equal(RotationOutcome.Rotated, result.Outcome);
+        Assert.True(result.Ok);
+        Assert.Equal(["RotateMap"], server.Commands);
+    }
+
+    [Fact]
+    public async Task TheServerNumberPicksTheMatchingRconSlot()
+    {
+        // Slot 2 only: server 2 must reach it, and server 1 must not be quietly redirected there.
+        await using var server = new FakeRconServer();
+        await using var rcon = Registry(server, slot: 2);
+
+        Assert.True((await Rotation(rcon).RotateAsync(2, CancellationToken.None)).Ok);
+
+        var missing = await Rotation(rcon).RotateAsync(1, CancellationToken.None);
+        Assert.Equal(RotationOutcome.Failed, missing.Outcome);
+        Assert.Contains("RCON_HOST_1", missing.Detail, StringComparison.Ordinal);
+        Assert.Single(server.Commands, c => c == "RotateMap");
+    }
+
+    [Fact]
+    public async Task ARefusalIsAFailureNotARotation()
+    {
+        // "Successful": false is the server saying no; reporting it as rotated is the ban bug again.
+        await using var server = new FakeRconServer { RefuseEverything = true };
+        await using var rcon = Registry(server);
+
+        var result = await Rotation(rcon).RotateAsync(1, CancellationToken.None);
+
+        Assert.Equal(RotationOutcome.Failed, result.Outcome);
+        Assert.False(string.IsNullOrWhiteSpace(result.Detail));
     }
 }
 
