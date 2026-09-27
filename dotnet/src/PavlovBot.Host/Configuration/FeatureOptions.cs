@@ -663,7 +663,7 @@ public sealed record FeatureOptions
             ? "off (FACTION_ROLES_PATH not set)"
             : Directory.Exists(RosterDirectory)
                 ? RosterDirectory
-                : $"off (FACTION_ROLES_PATH is {RosterDirectory}, which does not exist)")}",
+                : $"{RosterDirectory} does not exist yet - the \"faction rosters\" line below says whether it was created")}",
         $"ignored paths: {(IgnoredPaths.Count == 0
             ? "none (IGNORE_PATHS not set) - this bot may write every file it is given"
             : string.Join(", ", IgnoredPaths))}",

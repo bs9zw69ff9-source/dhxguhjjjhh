@@ -59,6 +59,9 @@ public sealed class GameFileGuard
     /// Composes the ignore list with <see cref="GameFiles.Problem"/>, so every caller gets both
     /// rules from one call and neither can be forgotten at a new write site.
     /// </remarks>
+    /// <summary>Whether IGNORE_PATHS covers this path. Unlike <see cref="Problem"/>, the path need not exist yet.</summary>
+    public bool IsIgnored(string? path) => path is { Length: > 0 } && Any && GameFiles.InsideInstall(path, _ignored);
+
     public string? Problem(string? path)
     {
         if (path is { Length: > 0 } && Any && GameFiles.InsideInstall(path, _ignored))

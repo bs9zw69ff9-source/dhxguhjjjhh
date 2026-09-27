@@ -117,9 +117,8 @@ public class RosterFileCreationTests
     [Fact]
     public void NoRosterDirectoryMeansNoFilesAndNoDirectoryCreated()
     {
-        /* THE RULE THAT DOES NOT BEND: the bot never creates a directory inside a game install.
-           A missing one means the configured path is wrong, and building a tree the game never
-           reads is worse than doing nothing. */
+        /* Outside a Pavlov install a missing directory means the configured path is wrong, and
+           building a tree the game never reads is worse than doing nothing. */
         var missing = Path.Combine(Path.GetTempPath(), $"pavlov-absent-{Guid.NewGuid():N}");
 
         var service = new RosterService(missing, NullLogger<RosterService>.Instance, factions: TwoFactions());
@@ -178,5 +177,48 @@ public class RosterFileCreationTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public void AMissingRosterDirectoryInsideAnInstallIsCreatedWithItsFiles()
+    {
+        /* THE REPROVISION CASE: a fresh install has Pavlov/Saved/Config and no ModSave, so a
+           correct FACTION_ROLES_PATH pointed at nothing and every /whitelist was refused. */
+        var root = Path.Combine(Path.GetTempPath(), $"pavlov-reprovisioned-{Guid.NewGuid():N}");
+        var config = Path.Combine(root, "pavlovserver", "Pavlov", "Saved", "Config");
+        Directory.CreateDirectory(config);
+        var rosters = Path.Combine(config, "ModSave", "FactionRoles");
+
+        try
+        {
+            var report = new RosterService(rosters, NullLogger<RosterService>.Instance, factions: TwoFactions())
+                .EnsureRosterFiles();
+
+            Assert.True(Directory.Exists(rosters));
+            Assert.Equal(report.Expected, report.Created);
+            Assert.All(RosterService.RosterFilesOf(TwoFactions()),
+                file => Assert.True(File.Exists(Path.Combine(rosters, file)), $"{file} was not created"));
+            Assert.Contains("directory created", report.Summary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AnInstallWithNoConfigFolderIsNotBuiltOut()
+    {
+        // Pavlov/Saved/Config missing too means no server is installed there; creating it all
+        // would be a tree no game reads.
+        var root = Path.Combine(Path.GetTempPath(), $"pavlov-noinstall-{Guid.NewGuid():N}");
+        var rosters = Path.Combine(root, "pavlovserver", "Pavlov", "Saved", "Config", "ModSave", "FactionRoles");
+
+        var report = new RosterService(rosters, NullLogger<RosterService>.Instance, factions: TwoFactions())
+            .EnsureRosterFiles();
+
+        Assert.Equal(0, report.Created);
+        Assert.False(Directory.Exists(root));
+        Assert.Contains("is the server installed", report.Summary, StringComparison.Ordinal);
     }
 }
