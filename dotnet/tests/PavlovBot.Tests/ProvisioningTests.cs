@@ -976,12 +976,57 @@ public class ProvisioningTests
             "SteamCMD (locate or bootstrap)",
             "SteamCMD install",
             "Server config (RconSettings.txt, Game.ini)",
+            "Restore kept player data",
             "systemd unit (write, daemon-reload, enable --now)",
             "Firewall (ufw)",
             "RCON reachability",
             "Wire into the bot (.env)",
             "Restart the bot",
         ], ServerProvisioner.StepNames);
+    }
+
+    /// <summary>The body of one method in ServerProvisioner.cs, from its signature to the next one.</summary>
+    private static string MethodSource(string signature, string next)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "src", "PavlovBot.Host", "Servers", "ServerProvisioner.cs")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        var source = File.ReadAllText(Path.Combine(directory!.FullName, "src", "PavlovBot.Host", "Servers", "ServerProvisioner.cs"));
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        var end = source.IndexOf(next, start + signature.Length, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start, $"could not find {signature}");
+        return source[start..end];
+    }
+
+    private static int Starts(string body) =>
+        System.Text.RegularExpressions.Regex.Matches(body, @"\brun\.Start\(").Count;
+
+    [Fact]
+    public void EveryStepTheCodeStartsIsOnTheChecklist()
+    {
+        /* THE SHIPPED BUG: a conditional run.Start() for restoring kept player data, with no entry
+           in StepNames. Every later step shifted by one and "Restart the bot" indexed past the end
+           - "Index was outside the bounds of the array" at the end of a provision that had
+           otherwise worked. A full provision needs root, so no test drives one; this counts the
+           Start() calls in the source against the lists instead.
+
+           ProvisionAsync starts one copy-only step and two SteamCMD-only steps on its two
+           branches, so it holds one more Start() than either checklist minus the restart. */
+        var provision = Starts(MethodSource("public async Task<ProvisionOutcome> ProvisionAsync(",
+            "public async Task<ProvisionOutcome> DeleteAsync("));
+        var delete = Starts(MethodSource("public async Task<ProvisionOutcome> DeleteAsync(",
+            "internal static string? DeletableInstallProblem("));
+        var restart = Starts(MethodSource("private async Task<ProvisionOutcome> RestartAsync(", "\n    }\n"));
+
+        Assert.Equal(1, restart);
+        Assert.Equal(ServerProvisioner.StepNames.Length, provision + restart - 1);
+        Assert.Equal(ServerProvisioner.CopyStepNames.Length, provision + restart - 2);
+        Assert.Equal(ServerProvisioner.DeleteStepNames.Length, delete + restart);
     }
 
     private static ServerProvisioner.Run NewRun(out List<IReadOnlyList<ProvisionStep>> snapshots)

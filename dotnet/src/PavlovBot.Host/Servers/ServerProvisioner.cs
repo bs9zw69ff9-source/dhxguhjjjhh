@@ -62,6 +62,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "SteamCMD (locate or bootstrap)",
         "SteamCMD install",
         "Server config (RconSettings.txt, Game.ini)",
+        "Restore kept player data",
         "systemd unit (write, daemon-reload, enable --now)",
         "Firewall (ufw)",
         "RCON reachability",
@@ -77,6 +78,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Remove legacy steam sudo grant",
         "Copy an existing install",
         "Server config (RconSettings.txt, Game.ini)",
+        "Restore kept player data",
         "systemd unit (write, daemon-reload, enable --now)",
         "Firewall (ufw)",
         "RCON reachability",
@@ -333,10 +335,17 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok("written and owned by steam.").ConfigureAwait(false);
 
-        // ---- player data kept by an earlier /deleteserver of this slot ----
-        if (Directory.Exists(PreservedPlayerData.PreservedDir(spec.InstallDir)))
+        /* ---- player data kept by an earlier /deleteserver of this slot ----
+           ALWAYS A STEP, even with nothing to restore. The checklist is a cursor over a fixed
+           list: a Start() that only happens sometimes shifts every later step by one, and the
+           last one then indexes past the end - which is exactly how this shipped the first time. */
+        await run.Start("looking for player data kept when this server was deleted…").ConfigureAwait(false);
+        if (!Directory.Exists(PreservedPlayerData.PreservedDir(spec.InstallDir)))
         {
-            await run.Start("restoring the player data kept when this server was deleted…").ConfigureAwait(false);
+            await run.Ok("none kept - nothing to restore.").ConfigureAwait(false);
+        }
+        else
+        {
             try
             {
                 var restored = PreservedPlayerData.Restore(spec.InstallDir);
