@@ -128,9 +128,13 @@ public sealed class RosterService
     /// game's behaviour: it is that the whole set is present and visible on disk from the first
     /// start, rather than appearing one file at a time as each faction gains its first member.
     ///
-    /// STILL NEVER CREATES THE DIRECTORY. That rule is unchanged and is what
-    /// <see cref="Enabled"/> already enforces - a missing roster directory means the configured
-    /// path is wrong, and building a tree the game never reads is worse than doing nothing.
+    /// THE DIRECTORY IS CREATED ONLY INSIDE A REAL INSTALL. <c>/deleteserver</c> followed by
+    /// <c>/provisionserver</c> leaves an install with no ModSave, so a correct FACTION_ROLES_PATH
+    /// pointed at a folder that no longer existed and every <c>/whitelist</c> was refused. A path
+    /// under an existing <c>Pavlov/Saved/Config</c> is created (see <see cref="CreatableProblem"/>),
+    /// owned like that Config folder so the game can use it. Anywhere else a missing directory
+    /// still means the path is wrong, and building a tree the game never reads is worse than
+    /// doing nothing.
     ///
     /// IT ALWAYS SAYS WHAT IT DID, which is the whole reason this returns a report rather than a
     /// count. Doing nothing because the feature is off, doing nothing because every file was
@@ -144,13 +148,27 @@ public sealed class RosterService
         if (string.IsNullOrWhiteSpace(_directory))
             return new RosterFileReport("off (FACTION_ROLES_PATH not set)", expected.Count, 0, 0, []);
 
+        var createdDirectory = false;
         if (!Directory.Exists(_directory))
         {
-            /* NOT CREATED, DELIBERATELY. A missing roster directory means the path is wrong, and
-               a tree built beside the real one is a bot that looks healthy and writes where the
-               game never reads. */
-            return new RosterFileReport(
-                $"off (FACTION_ROLES_PATH is {_directory}, which does not exist)", expected.Count, 0, 0, []);
+            if (CreatableProblem(_directory) is { } refusal)
+            {
+                return new RosterFileReport(
+                    $"off (FACTION_ROLES_PATH is {_directory}, which does not exist - {refusal})", expected.Count, 0, 0, []);
+            }
+
+            try
+            {
+                CreateOwnedLikeParent(_directory);
+                createdDirectory = true;
+                _logger.LogWarning("Created the missing roster directory {Directory}", _directory);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new RosterFileReport(
+                    $"off (FACTION_ROLES_PATH is {_directory}, which does not exist and could not be created: {ex.Message})",
+                    expected.Count, 0, 0, []);
+            }
         }
 
         var created = 0;
@@ -180,10 +198,59 @@ public sealed class RosterService
             }
         }
 
-        var summary = $"{created} created, {present} already there, of {expected.Count} in {_directory}";
+        var summary = $"{created} created, {present} already there, of {expected.Count} in {_directory}" +
+                      (createdDirectory ? " (directory created)" : "");
         if (failed.Count > 0) summary += $" - {failed.Count} COULD NOT BE CREATED";
 
         return new RosterFileReport(summary, expected.Count, created, present, failed);
+    }
+
+    /// <summary>
+    /// Why a missing roster directory must not be created, or null when it may.
+    /// </summary>
+    /// <remarks>
+    /// Only below an existing <c>…/Pavlov/Saved/Config</c>: that is a real install, and anything
+    /// under it is somewhere the game's mods read. A path that does not reach one is a typo.
+    /// </remarks>
+    internal string? CreatableProblem(string directory)
+    {
+        var full = Path.GetFullPath(directory).TrimEnd('/');
+        var marker = $"{Path.DirectorySeparatorChar}Pavlov{Path.DirectorySeparatorChar}Saved{Path.DirectorySeparatorChar}Config";
+
+        var at = full.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0)
+            return "it is not inside a Pavlov install's Pavlov/Saved/Config, so it was not created";
+
+        var config = full[..(at + marker.Length)];
+        if (!Directory.Exists(config))
+            return $"{config} does not exist either - is the server installed?";
+
+        return _guard.IsIgnored(Path.Combine(full, "placeholder.txt"))
+            ? "it is in IGNORE_PATHS - another bot or process owns it"
+            : null;
+    }
+
+    /// <summary>Create every missing level, each owned like the nearest existing ancestor.</summary>
+    /// <remarks>
+    /// The bot runs as root; the game runs as steam. A root-owned ModSave is one the game's mods
+    /// cannot write into, which fails with no message at all.
+    /// </remarks>
+    private static void CreateOwnedLikeParent(string directory)
+    {
+        var missing = new Stack<string>();
+        var existing = Path.GetFullPath(directory).TrimEnd('/');
+        while (!Directory.Exists(existing))
+        {
+            missing.Push(existing);
+            existing = Path.GetDirectoryName(existing) ?? throw new IOException($"no existing parent for {directory}");
+        }
+
+        var owner = PavlovBot.Host.Storage.UnixFileOwnership.Get(existing);
+        while (missing.TryPop(out var level))
+        {
+            Directory.CreateDirectory(level);
+            if (owner is { } o) PavlovBot.Host.Storage.UnixFileOwnership.Set(level, o.Uid, o.Gid);
+        }
     }
 
     /// <summary>Read a roster. Null means UNREADABLE, which is not the same as empty.</summary>
