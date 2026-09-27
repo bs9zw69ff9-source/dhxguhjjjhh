@@ -732,6 +732,15 @@ public static class Program
         builder.Services.AddSingleton<PluginHost>();
         builder.Services.AddHostedService<PluginHostedService>();
         builder.Services.AddHostedService<BackgroundServiceHost>();
+        /* After BackgroundServiceHost, which numbers the server logs a join is matched against. */
+        builder.Services.AddHostedService(sp => new PavlovBot.Host.Moderation.MasterAccess(
+            sp.GetRequiredService<MasterNames>(),
+            sp.GetRequiredService<IpTrackingService>(),
+            sp.GetRequiredService<RconRegistry>(),
+            sp.GetRequiredService<PavlovBot.Host.Logs.ServerLabels>(),
+            installs,
+            sp.GetRequiredService<WhitelistFile>(),
+            sp.GetRequiredService<ILogger<PavlovBot.Host.Moderation.MasterAccess>>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordGateway>());
 
         var host = builder.Build();

@@ -26,6 +26,23 @@ public sealed class ServerLabels
 
     public string Of(string file) => Label(_paths, file);
 
+    /// <summary>The 1-based server number of a log file, or null when it is not a discovered log.</summary>
+    public int? NumberOf(string file) => NumberOf(_paths, file);
+
+    /// <summary>The pure part of <see cref="NumberOf(string)"/>.</summary>
+    public static int? NumberOf(IReadOnlyList<string> paths, string file)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        for (var index = 0; index < paths.Count; index++)
+        {
+            if (string.Equals(paths[index], file, StringComparison.OrdinalIgnoreCase))
+                return index + 1;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// The log file of an RCON server ("server2" is the second discovered log), or null when
     /// that server has no log being tailed.
@@ -63,14 +80,6 @@ public sealed class ServerLabels
     /// </remarks>
     public static string Label(IReadOnlyList<string> paths, string file)
     {
-        ArgumentNullException.ThrowIfNull(paths);
-
-        for (var index = 0; index < paths.Count; index++)
-        {
-            if (string.Equals(paths[index], file, StringComparison.OrdinalIgnoreCase))
-                return $"Server {index + 1}";
-        }
-
-        return "the server";
+        return NumberOf(paths, file) is { } number ? $"Server {number}" : "the server";
     }
 }

@@ -1,0 +1,186 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using PavlovBot.Core.Data;
+using PavlovBot.Core.Security;
+using PavlovBot.Host.Configuration;
+using PavlovBot.Host.Discord;
+using PavlovBot.Host.Logs;
+using PavlovBot.Host.Moderation;
+using PavlovBot.Host.Observability;
+using PavlovBot.Host.Rcon;
+using PavlovBot.Host.Storage;
+using PavlovBot.Rcon;
+using Xunit;
+
+namespace PavlovBot.Tests;
+
+/// <summary>
+/// Master names: in <c>mods.txt</c> by checking the file, menu and access manager over RCON on join.
+/// </summary>
+public sealed class MasterAccessTests : IAsyncDisposable
+{
+    private const string Master = "fki6";
+
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "pavlovbot-masters-" + Guid.NewGuid().ToString("N"));
+    private readonly FakeRconServer _server = new();
+    private readonly RconRegistry _rcon;
+    private readonly ServerLabels _labels = new();
+    private readonly string _install;
+    private readonly string _log;
+    private readonly MasterAccess _access;
+
+    public MasterAccessTests()
+    {
+        _install = Path.Combine(_root, "pavlovserver");
+        Directory.CreateDirectory(Path.Combine(_install, "Pavlov", "Saved", "Config"));
+        _log = PavlovInstalls.LogPath(_install);
+        _labels.Assign([_log]);
+
+        _rcon = new RconRegistry(new BotOptions
+        {
+            DiscordToken = "t",
+            Servers = [new RconOptions { Name = "server1", Host = "127.0.0.1", Port = _server.Port, Password = _server.Password }],
+            Monitoring = new MonitoringOptions(null, "127.0.0.1", null),
+            DataDirectory = _root,
+        }, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
+
+        var store = new SerializedStore(new FileKeyValueBackend(Path.Combine(_root, "data")), new SystemTextJsonCodec());
+
+        _access = new MasterAccess(
+            new MasterNames([Master], store),
+            tracking: null,
+            _rcon,
+            _labels,
+            [_install],
+            new WhitelistFile(NullLogger<WhitelistFile>.Instance),
+            NullLogger<MasterAccess>.Instance,
+            grantDelay: TimeSpan.Zero);
+    }
+
+    private string Mods => MasterAccess.ModsPath(_install);
+
+    private PlayerJoined Join(string name, string? file = null) =>
+        new(file ?? _log, name, name, null, false, DateTimeOffset.UtcNow);
+
+    /// <summary>Wait for the background grant to reach the fake server.</summary>
+    private async Task<IReadOnlyList<string>> CommandsAfterGrantAsync(int expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (_server.Commands.Count < expected && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        // Anything more would have to arrive now; give it a moment to prove it does not.
+        await Task.Delay(200);
+        return _server.Commands;
+    }
+
+    [Fact]
+    public void TheGrantIsTheHighStaffMenuPlusAccessManager()
+    {
+        Assert.Equal(
+            [$"GiveMenu {Master} {RconMenu.HighStaffMenuId}", $"AddAccessManager {Master}"],
+            MasterAccess.GrantCommands(Master));
+    }
+
+    [Fact]
+    public async Task AMasterJoiningGetsTheMenuAndAccessManagerOnTheWire()
+    {
+        await _access.OnJoinedAsync(Join(Master));
+
+        Assert.Equal(
+            [$"GiveMenu {Master} {RconMenu.HighStaffMenuId}", $"AddAccessManager {Master}"],
+            await CommandsAfterGrantAsync(2));
+    }
+
+    [Fact]
+    public async Task MasterNamesMatchIgnoringCase()
+    {
+        await _access.OnJoinedAsync(Join("FKI6"));
+
+        Assert.Equal(2, (await CommandsAfterGrantAsync(2)).Count);
+    }
+
+    [Fact]
+    public async Task AnybodyElseJoiningGetsNothing()
+    {
+        await _access.OnJoinedAsync(Join("RandomPlayer"));
+
+        Assert.Empty(await CommandsAfterGrantAsync(0));
+        Assert.False(File.Exists(Mods));
+    }
+
+    [Fact]
+    public async Task AReconnectFlurryGrantsOnce()
+    {
+        await _access.OnJoinedAsync(Join(Master));
+        await _access.OnJoinedAsync(Join(Master));
+        await _access.OnJoinedAsync(Join(Master));
+
+        Assert.Equal(2, (await CommandsAfterGrantAsync(2)).Count);
+    }
+
+    [Fact]
+    public async Task AJoinOnALogThatIsNotAServerSendsNothing()
+    {
+        await _access.OnJoinedAsync(Join(Master, file: "/somewhere/else/Pavlov.log"));
+
+        Assert.Empty(await CommandsAfterGrantAsync(0));
+    }
+
+    [Fact]
+    public async Task MissingMastersAreAppendedAndEverythingElseIsKept()
+    {
+        await File.WriteAllTextAsync(Mods, "# staff\nSomeMod\n");
+
+        await _access.EnsureModsAsync(CancellationToken.None);
+
+        var lines = await File.ReadAllLinesAsync(Mods);
+        Assert.Equal("# staff", lines[0]);
+        Assert.Equal("SomeMod", lines[1]);
+        Assert.Contains(Master, lines);
+        Assert.Contains(OwnerGuard.MasterName, lines);   // the built-in master too
+    }
+
+    [Fact]
+    public async Task APresentMasterIsNotWrittenTwice()
+    {
+        await File.WriteAllTextAsync(Mods, $"FKI6\n{OwnerGuard.MasterName}\n");
+        var before = await File.ReadAllTextAsync(Mods);
+
+        await _access.EnsureModsAsync(CancellationToken.None);
+        await _access.EnsureModsAsync(CancellationToken.None);
+
+        Assert.Equal(before, await File.ReadAllTextAsync(Mods));
+    }
+
+    [Fact]
+    public async Task AJoinChecksThatServersModsFile()
+    {
+        await _access.GrantAsync(1, Master, CancellationToken.None);
+
+        Assert.Contains(Master, await File.ReadAllLinesAsync(Mods));
+    }
+
+    [Fact]
+    public async Task AMissingConfigDirectoryIsNotCreated()
+    {
+        // A wrong install path must not grow a tree the game never reads.
+        var bogus = Path.Combine(_root, "not-an-install");
+        var store = new SerializedStore(new FileKeyValueBackend(Path.Combine(_root, "data2")), new SystemTextJsonCodec());
+        var access = new MasterAccess(new MasterNames([Master], store), null, _rcon, _labels, [bogus],
+            new WhitelistFile(NullLogger<WhitelistFile>.Instance), NullLogger<MasterAccess>.Instance);
+
+        await access.EnsureModsAsync(CancellationToken.None);
+
+        Assert.False(Directory.Exists(bogus));
+        await access.DisposeAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _access.StopAsync(CancellationToken.None);
+        await _access.DisposeAsync();
+        await _rcon.DisposeAsync();
+        await _server.DisposeAsync();
+        try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+    }
+}
