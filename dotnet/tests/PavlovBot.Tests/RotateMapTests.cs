@@ -261,7 +261,7 @@ public class RotateMapTests
         /* The MESSAGE only. It used to read "All Server Rotating..." because the literal
            target was hidden in the text - the one place that happened to make the wire
            format right, while /serverswitch and /announce sent no target at all. */
-        Assert.Equal("Server Rotating... Please rejoin after disconnect", RotateMapCommand.Warning);
+        Assert.Equal("Server Rotating... Please rejoin after disconnect", ServerSwitchCommand.RestartWarning);
     }
 
     [Fact]
@@ -277,7 +277,6 @@ public class RotateMapTests
 
     private static IEnumerable<string> Warnings()
     {
-        yield return RotateMapCommand.Warning;
         foreach (var action in Enum.GetValues<UnitAction>())
             if (ServerSwitchCommand.WarningFor(action) is { } w) yield return w;
     }
@@ -288,8 +287,8 @@ public class RotateMapTests
         /* It goes out as `Notify <text>` on a line-oriented protocol, so it passes through
            Sanitize.Message like every other string that reaches RCON. If sanitising altered
            it, players would see something other than what this command promises. */
-        Assert.Equal(RotateMapCommand.Warning,
-            PavlovBot.Core.Text.Sanitize.Message(RotateMapCommand.Warning));
+        Assert.Equal(ServerSwitchCommand.RestartWarning,
+            PavlovBot.Core.Text.Sanitize.Message(ServerSwitchCommand.RestartWarning));
     }
 
     // ---- what actually reaches the server ----
@@ -344,7 +343,7 @@ public class RotateMapTests
         // that already worked has to keep working rather than turn into `Notify All All …`.
         await using var server = new FakeRconServer();
 
-        await Notice(server).WarnAsync(1, RotateMapCommand.Warning, CancellationToken.None);
+        await Notice(server).WarnAsync(1, ServerSwitchCommand.RestartWarning, CancellationToken.None);
 
         Assert.Equal("Notify All Server Rotating... Please rejoin after disconnect", SentNotify(server));
     }

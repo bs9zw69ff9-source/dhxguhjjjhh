@@ -55,9 +55,16 @@ public sealed class ServerSwitchCommand(
     internal static string? WarningFor(UnitAction action) => action switch
     {
         UnitAction.Stop => "Server shutting down...",
-        UnitAction.Restart => RotateMapCommand.Warning,   // the same restart, so the same words
+        UnitAction.Restart => RestartWarning,
         _ => null,
     };
+
+    /// <summary>The exact line broadcast before a restart.</summary>
+    /// <remarks>
+    /// The message only. <see cref="PlayerNotice"/> addresses it to every player, so a leading
+    /// "All" here would go out twice.
+    /// </remarks>
+    public const string RestartWarning = "Server Rotating... Please rejoin after disconnect";
 
     public ApplicationCommandProperties Build()
     {
