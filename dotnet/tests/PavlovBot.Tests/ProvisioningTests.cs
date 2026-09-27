@@ -922,9 +922,8 @@ public class ProvisioningTests
     [Fact]
     public void TheLastRemainingServerIncludingServerOneCanBeDeleted()
     {
-        /* THE LAST SERVER CAN NOW GO, including server 1. The bot exits 78 with none configured,
-           which is a reason to skip the restart this normally ends with - not a reason to trap
-           the operator with a server they cannot remove. */
+        /* THE LAST SERVER CAN GO, including server 1. The bot starts with none configured, so the
+           restart after it is safe and /provisionserver works from an empty layout. */
         Assert.Null(DeleteServerCommand.Problem(1, [1], ["a"], ["/a"]));
     }
 

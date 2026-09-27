@@ -506,21 +506,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok($"server {request.Slot} cleared.").ConfigureAwait(false);
 
-        /* NOT RESTARTING INTO AN EMPTY CONFIGURATION. With no RCON server left the bot exits 78
-           at startup, and under pm2's autorestart or systemd's Restart= that is a crash loop rather than a clean stop -
-           so the last server can be removed, but the process is left running on the configuration
-           it already has. It keeps working until somebody restarts it deliberately, by which time
-           there is a server to point it at. */
-        if (request.FinalPavlovUnits.Count == 0)
-        {
-            await run.Start("checking how to bring the bot back…").ConfigureAwait(false);
-            await run.Ok(
-                "skipped - no servers are configured now, and the bot cannot start with none. " +
-                "It is still running on its current configuration. Provision a server before restarting it.")
-                .ConfigureAwait(false);
-            return run.Finish(restartQueued: false);
-        }
-
+        /* THE LAST SERVER RESTARTS LIKE ANY OTHER. This used to skip the restart because the bot
+           exited 78 with no RCON server and would crash-loop; it now starts with none, so the
+           restart is what lets the next /provisionserver plan from the real, empty layout. */
         // ---- restart ----
         return await RestartAsync(run, $"to drop server {request.Slot}", ct).ConfigureAwait(false);
     }

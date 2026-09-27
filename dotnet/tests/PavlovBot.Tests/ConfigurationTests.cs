@@ -199,9 +199,21 @@ public class BotOptionsTests
     [Fact]
     public void ValidateReportsEveryProblemAtOnce()
     {
-        var problems = BotOptions.Bind(Config()).Validate();
+        var problems = BotOptions.Bind(Config(("RCON_HOST_1", "a"))).Validate();
         Assert.Contains(problems, p => p.Contains("DISCORD_TOKEN", StringComparison.Ordinal));
-        Assert.Contains(problems, p => p.Contains("RCON_HOST_1", StringComparison.Ordinal));
+        Assert.Contains(problems, p => p.Contains("RCON_PORT_1", StringComparison.Ordinal));
+        Assert.Contains(problems, p => p.Contains("RCON_PASSWORD_1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NoRconServersIsAllowed()
+    {
+        /* Deleting the last server left a bot that refused to start, and /provisionserver - the
+           only way to make a server - needs the bot running. Zero servers must start. */
+        var options = BotOptions.Bind(Config(("DISCORD_TOKEN", "t")));
+
+        Assert.Empty(options.Servers);
+        Assert.Empty(options.Validate());
     }
 
     [Fact]
