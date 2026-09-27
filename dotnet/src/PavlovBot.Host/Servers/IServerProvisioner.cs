@@ -33,6 +33,9 @@ public sealed record ProvisionOutcome(IReadOnlyList<ProvisionStep> Steps, bool R
 {
     /// <summary>Whether every step that ran succeeded (skipped steps do not count against it).</summary>
     public bool Ok => Steps.All(s => s.Status is ProvisionStatus.Ok or ProvisionStatus.Skipped);
+
+    /// <summary>Whether the run rewrote the bot's .env, so the layout it planned from is now stale.</summary>
+    public bool ChangedEnv => Steps.Any(s => s.Status == ProvisionStatus.Ok && s.Name.EndsWith("(.env)", StringComparison.Ordinal));
 }
 
 /// <summary>Everything the provisioner needs to stand up one server and wire it in.</summary>

@@ -34,6 +34,9 @@ public interface IKeyValueBackend
 /// </remarks>
 public sealed class SerializedStore
 {
+    /// <summary>The <see cref="UpdateResult{T}.Error"/> of an update the mutator declined.</summary>
+    public const string Vetoed = "vetoed by mutator";
+
     private readonly IKeyValueBackend _backend;
     private readonly IJsonCodec _codec;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
@@ -197,7 +200,7 @@ public sealed class SerializedStore
             }
 
             // A null return is a deliberate veto - "insufficient funds", "already present".
-            if (next is null) return new UpdateResult<T>(false, current, "vetoed by mutator");
+            if (next is null) return new UpdateResult<T>(false, current, Vetoed);
 
             _backend.Write(key, _codec.Serialize(next));
             return new UpdateResult<T>(true, next, null);
@@ -225,7 +228,11 @@ public sealed class SerializedStore
 /// <param name="Ok">False when the mutator vetoed or threw; the dataset is unchanged.</param>
 /// <param name="Value">The value now stored.</param>
 /// <param name="Error">Why the update did not apply, when it did not.</param>
-public sealed record UpdateResult<T>(bool Ok, T Value, string? Error);
+public sealed record UpdateResult<T>(bool Ok, T Value, string? Error)
+{
+    /// <summary>The mutator declined on purpose (returned null) - nothing went wrong.</summary>
+    public bool Vetoed => Error == SerializedStore.Vetoed;
+}
 
 /// <summary>JSON serialisation, abstracted so Core stays free of a hard dependency on a codec.</summary>
 public interface IJsonCodec

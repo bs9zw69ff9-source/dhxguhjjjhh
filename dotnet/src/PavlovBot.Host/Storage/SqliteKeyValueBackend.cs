@@ -190,8 +190,14 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
     /// Temp-then-rename per file, so a reader (a person with an editor, or a backup job)
     /// sees either the old file or the new one. One failing dataset does not abort the
     /// rest - a single unwritable path must not cost you every other backup.
+    ///
+    /// A DAMAGED DATASET NEVER REPLACES ITS BACKUP. When a dataset stops parsing, the bot tells
+    /// the operator the export holds the last good copy - and this used to overwrite that copy
+    /// with the damaged text on its next run, fifteen minutes later. Damaged data now goes to
+    /// <c>&lt;key&gt;.json.corrupt</c> beside it, so both survive.
     /// </remarks>
-    public int ExportToJson(string directory)
+    /// <param name="unreadable">Datasets the store could not deserialize, even if they parse as JSON.</param>
+    public int ExportToJson(string directory, IReadOnlyCollection<string>? unreadable = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         Directory.CreateDirectory(directory);
@@ -203,20 +209,28 @@ public sealed class SqliteKeyValueBackend : IKeyValueBackend, IDisposable
             if (data is null) continue;
 
             var path = Path.Combine(directory, $"{key}.json");
+            string pretty;
+            try
+            {
+                using var document = JsonDocument.Parse(data);
+                pretty = JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true });
+            }
+            catch (JsonException)
+            {
+                pretty = data;
+                unreadable = [.. unreadable ?? [], key];
+            }
+
+            if (unreadable?.Contains(key) == true)
+            {
+                path += ".corrupt";
+                _logger.LogWarning("Dataset {Key} is damaged - exported to {Path}, leaving the last good copy alone",
+                    key, path);
+            }
+
             var temp = $"{path}.exp.{Environment.ProcessId}.tmp";
             try
             {
-                string pretty;
-                try
-                {
-                    using var document = JsonDocument.Parse(data);
-                    pretty = JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true });
-                }
-                catch (JsonException)
-                {
-                    pretty = data;   // export it as-is rather than losing it entirely
-                }
-
                 File.WriteAllText(temp, pretty);
                 File.Move(temp, path, overwrite: true);
                 exported++;

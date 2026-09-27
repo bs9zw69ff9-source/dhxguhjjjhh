@@ -186,7 +186,12 @@ public sealed class RconRegistry : IAsyncDisposable, IOnlineRoster
 
         var first = await Task.WhenAny(reply, logged).ConfigureAwait(false);
 
-        if (first == reply && reply.IsCompletedSuccessfully)
+        /* A reply, or a failure that proves the command never reached the server - refused
+           connection, bad password, never written. The log cannot show a command the server
+           never got, and waiting the whole window for it anyway cost every fan-out and every
+           ban reconcile ten seconds per command per stopped server. */
+        if (first == reply &&
+            (reply.IsCompletedSuccessfully || reply.Exception?.InnerException is not RconUnconfirmedException))
         {
             await stopWatching.CancelAsync().ConfigureAwait(false);
             return await reply.ConfigureAwait(false);

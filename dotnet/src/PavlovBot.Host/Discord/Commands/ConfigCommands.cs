@@ -414,12 +414,39 @@ public sealed class SuspendRankCommand(
         var suspension = new RankSuspension(player, membership.Faction.Name, membership.Rank, command.User.Username, until);
 
         // Record BEFORE removing them. If the write fails, they keep their rank - the
-        // opposite order strips a rank with nothing recording how to give it back.
-        await store.UpdateAsync(Datasets.RankSuspensions,
+        // opposite order strips a rank with nothing recording how to give it back. That only
+        // holds if the result is actually checked: an unreadable dataset refuses the write
+        // without throwing, and they used to be removed anyway with no way back.
+        var recorded = await store.UpdateAsync(Datasets.RankSuspensions,
             new Dictionary<string, RankSuspension>(StringComparer.OrdinalIgnoreCase),
             suspensions => { suspensions[player] = suspension; return suspensions; }, ct).ConfigureAwait(false);
 
-        await rosters.LeaveAsync(membership.Faction, player, ct).ConfigureAwait(false);
+        if (!recorded.Ok)
+        {
+            logger.LogError("suspendrank refused for \"{Player}\": the suspension could not be recorded ({Error})",
+                player, recorded.Error);
+            await Reply(command, Theme.Failure("Not suspended",
+                $"The suspension could not be saved, so **{Sanitize.Code(player)}** keeps their rank. " +
+                $"({Sanitize.Code(recorded.Error ?? "unknown error")})")).ConfigureAwait(false);
+            return;
+        }
+
+        var left = await rosters.LeaveAsync(membership.Faction, player, CancellationToken.None).ConfigureAwait(false);
+        if (!left.IsAllowed)
+        {
+            // Still on the roster: drop the record, or the restore would later report a rank
+            // they never lost.
+            await store.UpdateAsync(Datasets.RankSuspensions,
+                new Dictionary<string, RankSuspension>(StringComparer.OrdinalIgnoreCase),
+                suspensions => suspensions.Remove(player) ? suspensions : null, CancellationToken.None).ConfigureAwait(false);
+
+            logger.LogError("suspendrank failed for \"{Player}\": could not remove them from the roster ({Outcome})",
+                player, left.Outcome);
+            await Reply(command, Theme.Failure("Not suspended",
+                $"**{Sanitize.Code(player)}** could not be taken off the {membership.Faction.Name} roster " +
+                $"({left.Outcome}). Nothing changed.")).ConfigureAwait(false);
+            return;
+        }
 
         logger.LogInformation("suspendrank | player=\"{Player}\" | was={Rank} | until={Until} | by={By}",
             player, membership.Rank, EasternTime.Stamp(until), command.User.Username);

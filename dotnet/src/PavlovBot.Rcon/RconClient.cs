@@ -238,7 +238,7 @@ public sealed class RconClient : IAsyncDisposable
                    connection died without a single reply byte. */
                 if (!readOnly && MayHaveBeenApplied(ex, progress))
                 {
-                    throw new RconException(
+                    throw new RconUnconfirmedException(
                         $"{_options.Name}: \"{Verb(command)}\" got no confirmation ({ex.Message}). It may have been " +
                         "applied, so it was not sent again", ex);
                 }
