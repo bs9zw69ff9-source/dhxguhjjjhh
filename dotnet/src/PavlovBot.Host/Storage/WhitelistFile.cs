@@ -165,8 +165,8 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger, GameFileGuard? 
                the cut. The rename either happens or it does not. */
             await AtomicFile.WriteAsync(path, string.Join("\n", next) + "\n", ct).ConfigureAwait(false);
 
-            logger.LogInformation("whitelist {Action} | \"{Entry}\" | {Path}",
-                removing ? "remove" : "add", entry, path);
+            logger.LogInformation("{File} {Action} | \"{Entry}\" | {Path}",
+                Path.GetFileName(path), removing ? "remove" : "add", entry, path);
 
             return new WhitelistResult(path, Ok: true, Changed: true);
         }
@@ -196,10 +196,11 @@ public sealed class WhitelistFile(ILogger<WhitelistFile> logger, GameFileGuard? 
             var directory = Path.Combine(Directory.GetCurrentDirectory(), "whitelist_bak");
             Directory.CreateDirectory(directory);
 
-            // Named for the install, so three servers do not overwrite each other's copy.
+            /* Named for the install AND the file, so three servers do not overwrite each
+               other's copy, and mods.txt (see MasterAccess) does not overwrite whitelist.txt's. */
             var install = new WhitelistResult(path, Ok: true, Changed: false).Install;
             File.WriteAllText(
-                Path.Combine(directory, $"{Sanitise(install)}-whitelist.txt.bak"),
+                Path.Combine(directory, $"{Sanitise(install)}-{Sanitise(Path.GetFileName(path))}.bak"),
                 string.Join("\n", contents) + "\n");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
