@@ -55,7 +55,7 @@ fi
 
 failures=$((failures + 1))
 if [ "$failures" -ge "$FAILURES_BEFORE_ALERT" ] && [ "$alerted" != 1 ]; then
-  post ":red_circle: **$BOT_NAME is down** - $HEALTH_URL has not answered for $failures minute(s). Check \`pm2 status\` and \`pm2 logs\` on the host."
+  post ":red_circle: **$BOT_NAME is down** - $HEALTH_URL has not answered for $failures minute(s). Check \`systemctl status pavlov-bot\` and \`journalctl -u pavlov-bot\` on the host."
   alerted=1
   log "DOWN - alerted after $failures failed check(s)"
 else

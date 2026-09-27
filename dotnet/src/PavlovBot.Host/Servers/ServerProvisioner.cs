@@ -365,7 +365,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         await run.Ok($"added as server {spec.Slot}.").ConfigureAwait(false);
 
         // ---- restart the bot ----
-        return await RestartAsync(run, spec.Slot, ct).ConfigureAwait(false);
+        return await RestartAsync(run, $"to bring server {spec.Slot} online", ct).ConfigureAwait(false);
     }
 
     public async Task<ProvisionOutcome> DeleteAsync(
@@ -461,7 +461,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         await run.Ok($"server {request.Slot} cleared.").ConfigureAwait(false);
 
         /* NOT RESTARTING INTO AN EMPTY CONFIGURATION. With no RCON server left the bot exits 78
-           at startup, and under pm2's autorestart that is a crash loop rather than a clean stop -
+           at startup, and under pm2's autorestart or systemd's Restart= that is a crash loop rather than a clean stop -
            so the last server can be removed, but the process is left running on the configuration
            it already has. It keeps working until somebody restarts it deliberately, by which time
            there is a server to point it at. */
@@ -476,7 +476,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
 
         // ---- restart ----
-        return await RestartAsync(run, request.Slot, ct).ConfigureAwait(false);
+        return await RestartAsync(run, $"to drop server {request.Slot}", ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -820,35 +820,33 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     }
 
     /// <summary>
-    /// Restart the bot so it picks up the new server, reporting BEFORE the process can die.
+    /// Restart the bot so it picks up the changed server list, reporting BEFORE the process can die.
     /// </summary>
     /// <remarks>
-    /// The channel checklist is completed and flushed first, because a pm2 restart sends this
-    /// process SIGTERM and nothing after that is guaranteed to run. Only pm2-managed deployments
-    /// can be restarted safely from inside; anywhere else this reports the manual step instead of
-    /// killing a process nothing will bring back.
+    /// The channel checklist is completed and flushed first, because the restart sends this
+    /// process SIGTERM and nothing after that is guaranteed to run. Only a pm2- or systemd-managed
+    /// bot can be restarted safely from inside (see <see cref="BotSupervisor"/>); anywhere else this
+    /// reports the manual step instead of killing a process nothing will bring back.
     /// </remarks>
-    private async Task<ProvisionOutcome> RestartAsync(Run run, int slot, CancellationToken ct)
+    /// <param name="why">What the restart achieves, e.g. "to bring server 3 online".</param>
+    private async Task<ProvisionOutcome> RestartAsync(Run run, string why, CancellationToken ct)
     {
-        var appName = Environment.GetEnvironmentVariable("PAVLOV_PM2_APP")
-                      ?? Environment.GetEnvironmentVariable("name")
-                      ?? "pavlov-bot-cs";
-        var underPm2 = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("pm_id"));
+        var supervisor = BotSupervisor.Current();
 
         await run.Start("checking how to bring the bot back…").ConfigureAwait(false);
 
-        if (!underPm2)
+        if (supervisor.RestartCommand() is not { } restart)
         {
-            await run.Ok($"not running under pm2 - restart the bot yourself to bring server {slot} online.").ConfigureAwait(false);
+            await run.Ok($"not running under pm2 or systemd - restart the bot yourself {why}.").ConfigureAwait(false);
             return run.Finish(restartQueued: false);
         }
 
         // Announce and FLUSH the final state before we trigger our own SIGTERM.
-        await run.Ok($"restarting `{appName}` now to bring server {slot} online…").ConfigureAwait(false);
+        await run.Ok($"restarting {supervisor.Describe()} now {why}…").ConfigureAwait(false);
         var outcome = run.Finish(restartQueued: true);
 
-        logger.LogWarning("Provision complete; restarting {App} via pm2 to load server {Slot}", appName, slot);
-        _ = RunAsync(null, "pm2", ["restart", appName], QuickTimeout, ct);
+        logger.LogWarning("Restarting via {Supervisor} {Why}", supervisor.Describe(), why);
+        _ = RunAsync(null, restart.File, restart.Args, QuickTimeout, ct);
         return outcome;
     }
 
