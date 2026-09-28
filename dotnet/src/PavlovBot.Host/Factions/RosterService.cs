@@ -295,7 +295,18 @@ public sealed class RosterService
     /// Skip the destruction guard. Set ONLY for an operation that legitimately rewrites a
     /// whole roster - a restore or a deliberate wipe.
     /// </param>
-    public async Task<bool> WriteAsync(string file, IReadOnlyList<string> lines, bool allowBulk = false, CancellationToken ct = default)
+    public Task<bool> WriteAsync(string file, IReadOnlyList<string> lines, bool allowBulk = false, CancellationToken ct = default) =>
+        UpdateAsync(file, _ => lines, allowBulk, ct);
+
+    /// <summary>
+    /// A read-modify-write of one roster under its file gate.
+    /// </summary>
+    /// <param name="change">
+    /// The new contents from the current ones (null when unreadable). Returning null writes nothing.
+    /// </param>
+    /// <returns>True when the file was written.</returns>
+    private async Task<bool> UpdateAsync(
+        string file, Func<IReadOnlyList<string>?, IReadOnlyList<string>?> change, bool allowBulk, CancellationToken ct)
     {
         if (!Enabled) return false;
 
@@ -304,6 +315,7 @@ public sealed class RosterService
         try
         {
             var current = Read(file);
+            if (change(current) is not { } lines) return false;
 
             if (!allowBulk)
             {
@@ -366,6 +378,53 @@ public sealed class RosterService
             _logger.LogWarning(ex, "Could not write the roster backup for {File} to {Directory}",
                 file, _backupDirectory);
         }
+    }
+
+    /// <summary>
+    /// Put each name on every roster file the loaded factions own, where it is not already.
+    /// </summary>
+    /// <remarks>
+    /// FOR MASTER NAMES ONLY. It deliberately breaks the one-faction, one-rank rule, which is
+    /// the point: the owner's accounts can spawn as anything. Every other lookup already
+    /// tolerates a name in several files (the highest rank of the first faction wins).
+    ///
+    /// Only additions, so each write passes <see cref="RosterWriteGuard"/> without
+    /// <c>allowBulk</c>. A roster that cannot be read is skipped and reported, never written:
+    /// writing the names over an unreadable file would wipe it.
+    /// </remarks>
+    /// <returns>How many (file, name) entries were added, and the files that could not be updated.</returns>
+    public async Task<(int Added, IReadOnlyList<string> Failed)> EnsureOnEveryRosterAsync(
+        IReadOnlyCollection<string> names, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        if (!Enabled || names.Count == 0) return (0, []);
+
+        var added = 0;
+        var failed = new List<string>();
+
+        foreach (var file in RosterFilesOf(Factions))
+        {
+            var unreadable = false;
+            var missingCount = 0;
+
+            // Under the file gate, so a /whitelist add landing at the same moment is not lost.
+            var written = await UpdateAsync(file, current =>
+            {
+                if (current is null) { unreadable = true; return null; }
+
+                var missing = names
+                    .Where(n => !current.Contains(n, StringComparer.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                missingCount = missing.Count;
+                return missing.Count == 0 ? null : [.. current, .. missing];
+            }, allowBulk: false, ct).ConfigureAwait(false);
+
+            if (written) added += missingCount;
+            else if (unreadable || missingCount > 0) failed.Add(file);
+        }
+
+        return (added, failed);
     }
 
     /// <summary>Where a player currently sits, or null when they are on no roster.</summary>

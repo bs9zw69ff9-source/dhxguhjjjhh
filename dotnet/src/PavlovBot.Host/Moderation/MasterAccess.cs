@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Text;
 using PavlovBot.Host.Discord;
+using PavlovBot.Host.Factions;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Servers;
@@ -11,20 +12,29 @@ using PavlovBot.Host.Storage;
 namespace PavlovBot.Host.Moderation;
 
 /// <summary>
-/// Master names get moderator (through <c>mods.txt</c>) and the RCON+ menu plus access manager
+/// Master names get moderator (through <c>mods.txt</c>), every whitelist (each server's
+/// <c>whitelist.txt</c> and every faction roster file) and the RCON+ menu plus access manager
 /// (through RCON, every time they join).
 /// </summary>
 /// <remarks>
 /// A PORT GAP. The Node bot granted a master a menu on every join; the C# port kept master
 /// names only as ban protection, so the owner's own accounts joined with no powers at all.
 ///
-/// TWO ROUTES, ON PURPOSE. <c>mods.txt</c> is a file the server reads, so it is kept right by
-/// checking the file: a missing name is appended, everything else is left alone. The menu and
+/// TWO ROUTES, ON PURPOSE. <c>mods.txt</c>, <c>whitelist.txt</c> and the rosters are files the
+/// server reads, so they are kept right by checking the files: a missing name is appended,
+/// everything else is left alone. That happens at start and again on each join, so a roster
+/// wipe or a hand edit that dropped a master is repaired the next time they connect. The menu and
 /// access manager are live, per-session state the server drops on disconnect - there is no
 /// file for them - so they go out over RCON after each join.
 ///
 /// ONLY THE SERVER THEY JOINED is sent the grant, and only once per
 /// <see cref="RegrantCooldown"/>, so a reconnect flurry does not spam RCON.
+///
+/// whitelist.txt IS SAFE TO ADD TO. It is only enforced when Game.ini has <c>bWhitelist=true</c>;
+/// otherwise the server ignores it, so adding the owner cannot turn a whitelist on.
+///
+/// EVERY ROSTER, EVERY RANK. That puts a master in several factions at once, which the bot
+/// refuses for anybody else; see <see cref="RosterService.EnsureOnEveryRosterAsync"/>.
 ///
 /// THE GRANT WAITS <see cref="GrantDelay"/>. The join line is written before the player is
 /// fully in; a menu sent at that instant targets somebody the server does not list yet.
@@ -43,6 +53,7 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
     private readonly ServerLabels _servers;
     private readonly IReadOnlyList<string> _installs;
     private readonly WhitelistFile _files;
+    private readonly RosterService? _rosters;
     private readonly ILogger<MasterAccess> _logger;
     private readonly TimeProvider _clock;
     private readonly TimeSpan _grantDelay;
@@ -60,8 +71,10 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
         WhitelistFile files,
         ILogger<MasterAccess> logger,
         TimeProvider? clock = null,
-        TimeSpan? grantDelay = null)
+        TimeSpan? grantDelay = null,
+        RosterService? rosters = null)
     {
+        _rosters = rosters;
         _masters = masters;
         _tracking = tracking;
         _rcon = rcon;
@@ -92,7 +105,7 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         if (_tracking is not null) _tracking.Joined += OnJoinedAsync;
-        await EnsureModsAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureFilesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -110,26 +123,58 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
         }
     }
 
-    /// <summary>Every configured master name in every install's <c>mods.txt</c>. Never throws.</summary>
-    public async Task EnsureModsAsync(CancellationToken ct)
+    /// <summary>
+    /// Every configured master name in every install's <c>mods.txt</c> and <c>whitelist.txt</c>,
+    /// and on every faction roster. Never throws.
+    /// </summary>
+    public async Task EnsureFilesAsync(CancellationToken ct)
     {
         foreach (var install in _installs)
         {
             foreach (var master in _masters.Masters)
-                await EnsureModAsync(install, master, ct).ConfigureAwait(false);
+                await EnsureInstallFilesAsync(install, master, ct).ConfigureAwait(false);
         }
+
+        await EnsureRostersAsync(_masters.Masters, ct).ConfigureAwait(false);
     }
 
-    /// <summary>One name in one install's <c>mods.txt</c>, appended only when it is not there.</summary>
-    private async Task EnsureModAsync(string install, string name, CancellationToken ct)
+    /// <summary>One name in one install's <c>mods.txt</c> and <c>whitelist.txt</c>.</summary>
+    private async Task EnsureInstallFilesAsync(string install, string name, CancellationToken ct)
+    {
+        await EnsureListedAsync(ModsPath(install), name, ct).ConfigureAwait(false);
+        await EnsureListedAsync(PavlovInstalls.WhitelistPath(install), name, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>One name in one list file, appended only when it is not there.</summary>
+    private async Task EnsureListedAsync(string path, string name, CancellationToken ct)
     {
         var entry = WhitelistFile.Entry(name);
-        var result = await _files.AddAsync(ModsPath(install), entry, ct).ConfigureAwait(false);
+        var result = await _files.AddAsync(path, entry, ct).ConfigureAwait(false);
 
         if (!result.Ok)
             _logger.LogWarning("Could not put master {Name} in {Path}: {Error}", entry, result.Path, result.Error);
         else if (result.Changed)
             _logger.LogInformation("Added master {Name} to {Path}", entry, result.Path);
+    }
+
+    private async Task EnsureRostersAsync(IEnumerable<string> names, CancellationToken ct)
+    {
+        if (_rosters is not { Enabled: true }) return;
+
+        var entries = names.Select(WhitelistFile.Entry).Where(e => e.Length > 0).ToList();
+        try
+        {
+            var (added, failed) = await _rosters.EnsureOnEveryRosterAsync(entries, ct).ConfigureAwait(false);
+            if (added > 0)
+                _logger.LogInformation("Added master name(s) to the faction rosters: {Added} entr(ies)", added);
+            if (failed.Count > 0)
+                _logger.LogWarning("Could not put the master name(s) on {Count} roster(s): {Files}",
+                    failed.Count, string.Join(", ", failed));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Putting the master name(s) on the faction rosters failed");
+        }
     }
 
     /// <summary>
@@ -192,13 +237,17 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
     }
 
     /// <summary>
-    /// Check <c>mods.txt</c> for that server, then send the menu and access manager.
+    /// Check that server's <c>mods.txt</c> and <c>whitelist.txt</c> and the rosters, then send the
+    /// menu and access manager.
     /// </summary>
     /// <returns>How many of the RCON lines the server accepted.</returns>
     internal async Task<int> GrantAsync(int number, string name, CancellationToken ct)
     {
         if (number >= 1 && number <= _installs.Count)
-            await EnsureModAsync(_installs[number - 1], name, ct).ConfigureAwait(false);
+            await EnsureInstallFilesAsync(_installs[number - 1], name, ct).ConfigureAwait(false);
+        // Every master, not just this one: the rosters are shared, and the join name here is the
+        // RCON-safe form, which is not always the exact in-game name the files are matched on.
+        await EnsureRostersAsync(_masters.Masters, ct).ConfigureAwait(false);
 
         var server = ServiceControl.RconNameFor(number);
         if (_rcon.Client(server) is null)
