@@ -87,15 +87,18 @@
       "name": "Enclave",
       "spawnFile": "enclavespawn.txt",
       "ranks": [
-        { "name": "Recruit",  "file": "enclaverecruit.txt" },
-        { "name": "Soldier",  "file": "enclavesoldier.txt" },
-        { "name": "Sergeant", "file": "enclavesergeant.txt" },
-        { "name": "Officer",  "file": "enclaveofficer.txt" },
-        { "name": "Colonel",  "file": "enclavecolonel.txt" }
+        { "name": "Recruit",         "file": "enclaverecruit.txt" },
+        { "name": "Soldier",         "file": "enclavesoldier.txt" },
+        { "name": "Sergeant",        "file": "enclavesergeant.txt" },
+        { "name": "Master Sergeant", "file": "enclavemastersergeant.txt" },
+        { "name": "Lieutenant",      "file": "enclavelieutenant.txt" },
+        { "name": "Officer",         "file": "enclaveofficer.txt" },
+        { "name": "Colonel",         "file": "enclavecolonel.txt" }
       ],
       "subclasses": [
         { "name": "Hellfire",   "file": "enclavehellfire.txt" },
-        { "name": "Demolition", "file": "enclavedemolition.txt" }
+        { "name": "Demolition", "file": "enclavedemolition.txt" },
+        { "name": "Recon",      "file": "enclaverecon.txt" }
       ]
     }
   ]

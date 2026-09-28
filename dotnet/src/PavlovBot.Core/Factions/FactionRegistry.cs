@@ -271,7 +271,7 @@ public static class FactionRegistry
             ["Enclave"] = new()
             {
                 Name = "Enclave",
-                Order = ["Recruit", "Soldier", "Sergeant", "Officer", "Colonel"],
+                Order = ["Recruit", "Soldier", "Sergeant", "Master Sergeant", "Lieutenant", "Officer", "Colonel"],
                 Default = "Recruit",
                 SpawnFile = "enclavespawn.txt",
                 RankFiles = new Dictionary<string, string>
@@ -279,6 +279,8 @@ public static class FactionRegistry
                     ["Recruit"] = "enclaverecruit.txt",
                     ["Soldier"] = "enclavesoldier.txt",
                     ["Sergeant"] = "enclavesergeant.txt",
+                    ["Master Sergeant"] = "enclavemastersergeant.txt",
+                    ["Lieutenant"] = "enclavelieutenant.txt",
                     ["Officer"] = "enclaveofficer.txt",
                     ["Colonel"] = "enclavecolonel.txt",
                 },
@@ -290,6 +292,7 @@ public static class FactionRegistry
                 {
                     ["Hellfire"] = "enclavehellfire.txt",
                     ["Demolition"] = "enclavedemolition.txt",
+                    ["Recon"] = "enclaverecon.txt",
                 },
             },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
