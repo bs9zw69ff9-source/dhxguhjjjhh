@@ -50,10 +50,12 @@ public class EnclaveSubclassTests : IDisposable
     {
         Assert.Equal("enclavehellfire.txt", Enclave.Subclasses["Hellfire"]);
         Assert.Equal("enclavedemolition.txt", Enclave.Subclasses["Demolition"]);
+        Assert.Equal("enclaverecon.txt", Enclave.Subclasses["Recon"]);
 
         // Neither collides with a rank file, which would hand out the wrong loadout.
         Assert.DoesNotContain(Enclave.Subclasses["Hellfire"], Enclave.RankFiles.Values, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain(Enclave.Subclasses["Demolition"], Enclave.RankFiles.Values, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(Enclave.Subclasses["Recon"], Enclave.RankFiles.Values, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -185,5 +187,16 @@ public class EnclaveSubclassTests : IDisposable
     {
         try { Directory.Delete(_directory, recursive: true); } catch (IOException) { }
         GC.SuppressFinalize(this);
+    }
+
+    [Fact]
+    public void TheEnclaveLadderRunsThroughMasterSergeantAndLieutenant()
+    {
+        // Master Sergeant above Sergeant, Lieutenant above both, and both are RANKS with their own files.
+        Assert.Equal(["Recruit", "Soldier", "Sergeant", "Master Sergeant", "Lieutenant", "Officer", "Colonel"], Enclave.Order);
+        Assert.Equal("enclavemastersergeant.txt", Enclave.RankFiles["Master Sergeant"]);
+        Assert.Equal("enclavelieutenant.txt", Enclave.RankFiles["Lieutenant"]);
+        Assert.False(Enclave.Subclasses.ContainsKey("Master Sergeant"));
+        Assert.False(Enclave.Subclasses.ContainsKey("Lieutenant"));
     }
 }
