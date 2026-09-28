@@ -130,12 +130,13 @@ public class SlashCommandValidationTests
            the command without anybody editing it. Hellfire is the proof - it was added to the
            Enclave in the data alone.
 
-           ASSERTED ON THE VALUE, which is the bare name - that is what HasSubclass matches
-           and what the roster files are keyed on. The LABEL carries the owning faction, so
-           it reads "Enclave - Hellfire" in the picker; asserting on that alone would pass
-           while the value silently changed to something no roster knows. */
+           ASSERTED ON THE VALUE AND ITS ROUND TRIP. The value is "Enclave:Hellfire" and the
+           handler parses the bare name back out - that is what HasSubclass matches and what
+           the roster files are keyed on. Asserting on the label alone would pass while the
+           value silently changed to something no roster knows. */
         var choices = Assert.Single(options, o => o.Name == "subclass").Choices;
-        Assert.Contains("Hellfire", choices!.Select(c => c.Value?.ToString()), StringComparer.Ordinal);
+        Assert.Contains("Enclave:Hellfire", choices!.Select(c => c.Value?.ToString()), StringComparer.Ordinal);
+        Assert.Equal(("Enclave", "Hellfire"), SubclassCommand.ParseValue("Enclave:Hellfire"));
         Assert.Contains("Enclave - Hellfire", choices!.Select(c => c.Name), StringComparer.Ordinal);
     }
 

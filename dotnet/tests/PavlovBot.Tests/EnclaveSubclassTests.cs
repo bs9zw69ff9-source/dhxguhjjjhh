@@ -164,11 +164,13 @@ public class EnclaveSubclassTests : IDisposable
            Discord is handed - the half of "it is not showing up" that lives in this repo. */
         var choices = SubclassCommand.SubclassChoices(FactionRegistry.Default);
 
-        var hellfire = Assert.Single(choices, c => c.Name == "Hellfire");
-        var demolition = Assert.Single(choices, c => c.Name == "Demolition");
+        var enclave = choices.Where(c => c.Faction == "Enclave").Select(c => c.Label).ToList();
 
-        Assert.Equal(["Enclave"], hellfire.Owners);
-        Assert.Equal(["Enclave"], demolition.Owners);
+        Assert.Equal(["Enclave - Demolition", "Enclave - Hellfire", "Enclave - Recon"], enclave);
+
+        // The Brotherhood has a Recon too; each is its own choice, not one merged under the Brotherhood.
+        Assert.Contains(choices, c => c.Value == "Brotherhood of Steel:Recon");
+        Assert.Contains(choices, c => c.Value == "Enclave:Recon");
     }
 
     [Fact]
