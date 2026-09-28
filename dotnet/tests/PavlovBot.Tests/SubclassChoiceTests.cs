@@ -15,7 +15,9 @@ namespace PavlovBot.Tests;
 /// THE DUPLICATE IS THE DANGEROUS PART. Two factions may define a sub-class with the same
 /// name, and Discord rejects a duplicate choice by rejecting the WHOLE registration - which
 /// takes every command in the bot off the picker, not just this one. That has happened here
-/// before, over duplicated subcommands, and it cost nine hours.
+/// before, over duplicated subcommands, and it cost nine hours. Merging them into one choice
+/// hid the second faction's (Enclave Recon under "BoS/Enclave - Recon"), so each faction gets
+/// its own choice and the faction travels in the value.
 /// </remarks>
 public class SubclassChoiceTests
 {
@@ -40,8 +42,8 @@ public class SubclassChoiceTests
         var choices = SubclassCommand.SubclassChoices(set);
 
         Assert.Equal(["Patrol Ranger", "Veteran Ranger", "Frumentarius"], choices.Select(c => c.Name));
-        Assert.Equal(["NCR"], choices[0].Owners);
-        Assert.Equal(["Legion"], choices[2].Owners);
+        Assert.Equal("NCR - Patrol Ranger", choices[0].Label);
+        Assert.Equal("Legion - Frumentarius", choices[2].Label);
     }
 
     [Fact]
@@ -55,17 +57,39 @@ public class SubclassChoiceTests
     }
 
     [Fact]
-    public void ANameTwoFactionsShareProducesONECHOICEWithBothOwners()
+    public void ANameTwoFactionsShareGetsAChoicePerFactionWithUniqueLabelsAndValues()
     {
-        /* THE REGRESSION GUARD. Two choices with the same value is a malformed command, and
-           Discord's rejection is atomic - it would take the whole bot off the picker. */
         var set = FactionSet.Of([Faction("NCR", "Scout"), Faction("Legion", "Scout")]);
 
         var choices = SubclassCommand.SubclassChoices(set);
 
-        Assert.Single(choices);
-        Assert.Equal("Scout", choices[0].Name);
-        Assert.Equal(["NCR", "Legion"], choices[0].Owners);
+        Assert.Equal(["NCR - Scout", "Legion - Scout"], choices.Select(c => c.Label));
+        Assert.Equal(["NCR:Scout", "Legion:Scout"], choices.Select(c => c.Value));
+    }
+
+    [Fact]
+    public void AValueParsesBackToItsFactionAndName()
+    {
+        Assert.Equal(("Enclave", "Recon"), SubclassCommand.ParseValue("Enclave:Recon"));
+        Assert.Equal(("NCR", "Veteran Ranger"), SubclassCommand.ParseValue("NCR:Veteran Ranger"));
+    }
+
+    [Fact]
+    public void ABareNameFromAnOldRegistrationStillParses()
+    {
+        Assert.Equal(((string?)null, "Hellfire"), SubclassCommand.ParseValue("Hellfire"));
+    }
+
+    [Fact]
+    public void EveryChoiceFitsDiscordsLimits()
+    {
+        var choices = SubclassCommand.SubclassChoices(FactionRegistry.Default);
+
+        Assert.InRange(choices.Count, 1, SubclassCommand.MaxChoices);
+        Assert.All(choices, c => Assert.InRange(c.Label.Length, 1, 100));
+        Assert.All(choices, c => Assert.InRange(c.Value.Length, 1, 100));
+        Assert.Equal(choices.Count, choices.Select(c => c.Label).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(choices.Count, choices.Select(c => c.Value).Distinct(StringComparer.Ordinal).Count());
     }
 
     [Fact]

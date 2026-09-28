@@ -267,20 +267,23 @@ public sealed class SubclassCommand(
             .WithName("subclass").WithDescription("Which sub-class")
             .WithType(ApplicationCommandOptionType.String).WithRequired(true);
 
-        /* GROUPED BY FACTION, and labelled with it. Driven off the registry, so adding a
-           sub-class to the data adds it to the picker - but the picker was a flat list in
-           registry order, which on a multi-faction server is a wall of names with nothing
-           saying which faction each belongs to. Sorted by faction, then by name.
+        /* ONE CHOICE PER FACTION AND SUB-CLASS, labelled with the faction and grouped by it.
+           Driven off the registry, so adding a sub-class to the data adds it to the picker.
 
-           THE VALUE STAYS THE BARE NAME, because that is what HasSubclass matches and what
-           the roster files are keyed on. Only the label carries the faction.
-
-           ONE CHOICE PER NAME, still. Two factions can define a sub-class with the same
-           name, and Discord rejects a duplicate choice - which would take EVERY command in
-           the bot off the picker, not just this one. Where that happens both owners go in
-           the one label. */
-        foreach (var (name, owners) in SubclassChoices(rosters.Factions))
-            subclass.AddChoice(Label(owners, name), name);
+           NOT MERGED BY NAME ANY MORE. Two factions defining the same name (BoS and Enclave
+           both have Recon) used to collapse into one "BoS/Enclave - Recon" choice filed under
+           the first faction, so the second faction's looked missing. The faction now travels
+           in the VALUE, which keeps every label and value unique - Discord rejects the whole
+           registration over a duplicate, taking every command off the picker. */
+        var choices = SubclassChoices(rosters.Factions);
+        if (choices.Count > MaxChoices)
+        {
+            logger.LogWarning(
+                "/subclass has {Count} sub-classes but Discord allows {Max} choices - these are left off the picker: {Dropped}",
+                choices.Count, MaxChoices, string.Join(", ", choices.Skip(MaxChoices).Select(c => c.Label)));
+        }
+        foreach (var choice in choices.Take(MaxChoices))
+            subclass.AddChoice(choice.Label, choice.Value);
 
         /* BY DISCORD ACCOUNT, like promotion, demotion and removal. The in-game name is asked
            for exactly once, at /whitelist add, and recorded against the account; every command
@@ -297,50 +300,69 @@ public sealed class SubclassCommand(
             .Build();
     }
 
-    /// <summary>Every sub-class, once each, with the faction(s) that define it.</summary>
+    /// <summary>Discord's limit on the choices of one option.</summary>
+    internal const int MaxChoices = 25;
+
+    /// <summary>Discord's limit on a choice's label and on a string value.</summary>
+    private const int MaxChoiceLength = 100;
+
+    /// <summary>Separates the faction from the sub-class in a choice value.</summary>
+    private const char ValueSeparator = ':';
+
+    /// <summary>One picker entry: a sub-class of one faction.</summary>
+    internal sealed record SubclassChoice(string Faction, string Name)
+    {
+        /// <summary>"Enclave - Recon", cut to Discord's limit.</summary>
+        public string Label => Truncate($"{Faction} - {Name}");
+
+        /// <summary>"Enclave:Recon". Parsed back by <see cref="ParseValue"/>.</summary>
+        public string Value => Truncate($"{Faction}{ValueSeparator}{Name}");
+
+        private static string Truncate(string text) => text.Length <= MaxChoiceLength ? text : text[..MaxChoiceLength];
+    }
+
+    /// <summary>Every sub-class of every faction, one entry each.</summary>
     /// <remarks>
-    /// Ordered by the first owning faction and then by name, so the picker reads as one
-    /// faction's sub-classes followed by the next rather than as registry order - which is
-    /// insertion order and means nothing to whoever is looking at the list.
+    /// Ordered by faction and then by name, so the picker reads as one faction's sub-classes
+    /// followed by the next rather than as registry order - which is insertion order and means
+    /// nothing to whoever is looking at the list. Deduplicated on label and value: a clash can
+    /// only come from truncating absurdly long names, and one would sink the registration.
     /// </remarks>
-    internal static IReadOnlyList<(string Name, IReadOnlyList<string> Owners)> SubclassChoices(FactionSet factions)
+    internal static IReadOnlyList<SubclassChoice> SubclassChoices(FactionSet factions)
     {
         ArgumentNullException.ThrowIfNull(factions);
 
-        var owners = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        var order = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var position = 0;
+        var labels = new HashSet<string>(StringComparer.Ordinal);
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        var choices = new List<SubclassChoice>();
 
         foreach (var faction in factions.All.Values)
         {
-            foreach (var subclass in faction.Subclasses.Keys)
+            foreach (var name in faction.Subclasses.Keys.Order(StringComparer.OrdinalIgnoreCase))
             {
-                if (!owners.TryGetValue(subclass, out var list))
-                {
-                    owners[subclass] = list = [];
-                    order[subclass] = position;
-                }
-                if (!list.Contains(faction.Name, StringComparer.OrdinalIgnoreCase)) list.Add(faction.Name);
+                var choice = new SubclassChoice(faction.Name, name);
+                if (labels.Contains(choice.Label) || values.Contains(choice.Value)) continue;
+
+                labels.Add(choice.Label);
+                values.Add(choice.Value);
+                choices.Add(choice);
             }
-            position++;
         }
 
-        return [.. owners
-            .OrderBy(e => order[e.Key])
-            .ThenBy(e => e.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(e => (e.Key, (IReadOnlyList<string>)e.Value))];
+        return choices;
     }
 
-    /// <summary>"NCR - Veteran Ranger", or the bare name if that would not fit.</summary>
+    /// <summary>
+    /// The faction (null when the value names none) and sub-class a choice value stands for.
+    /// </summary>
     /// <remarks>
-    /// Discord caps a choice label at 100 characters and REJECTS the whole registration over
-    /// one that is too long - which takes every command off the picker, so the prefix is
-    /// dropped rather than truncated when it does not fit.
+    /// A bare name is still accepted: a Discord client holding the previous registration sends
+    /// one until it refreshes, and that should keep working rather than fail.
     /// </remarks>
-    private static string Label(IReadOnlyList<string> owners, string name)
+    internal static (string? Faction, string Name) ParseValue(string value)
     {
-        var label = $"{string.Join("/", owners)} - {name}";
-        return label.Length <= 100 ? label : name;
+        var at = value.IndexOf(ValueSeparator, StringComparison.Ordinal);
+        return at < 0 ? (null, value.Trim()) : (value[..at].Trim(), value[(at + 1)..].Trim());
     }
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
@@ -362,7 +384,7 @@ public sealed class SubclassCommand(
             return;
         }
 
-        var subclass = command.Data.Options.First(o => o.Name == "subclass").Value as string ?? "";
+        var (chosenFaction, subclass) = ParseValue(command.Data.Options.First(o => o.Name == "subclass").Value as string ?? "");
         var removing = command.Data.Options.FirstOrDefault(o => o.Name == "remove")?.Value as bool? ?? false;
 
         if (command.Data.Options.FirstOrDefault(o => o.Name == "member")?.Value is not IUser member)
@@ -399,6 +421,17 @@ public sealed class SubclassCommand(
         {
             await Reply(command, Theme.Denied("Not your roster",
                 $"You do not manage the **{membership.Faction.Name}** whitelist.")).ConfigureAwait(false);
+            return;
+        }
+
+        /* Two factions can share a sub-class name, so the name alone would put a BoS "Recon"
+           pick into the Enclave's file for an Enclave member. The choice says whose it is. */
+        if (chosenFaction is not null &&
+            !string.Equals(chosenFaction, membership.Faction.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            await Reply(command, Theme.Failure("Wrong faction's sub-class",
+                $"That is a **{chosenFaction}** sub-class, and **{Sanitize.Code(player)}** is in " +
+                $"**{membership.Faction.Name}**. Pick the {membership.Faction.Name} one.")).ConfigureAwait(false);
             return;
         }
 
