@@ -3,6 +3,7 @@ using PavlovBot.Core.Data;
 using PavlovBot.Core.Security;
 using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
+using PavlovBot.Host.Factions;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Observability;
@@ -27,6 +28,8 @@ public sealed class MasterAccessTests : IAsyncDisposable
     private readonly string _install;
     private readonly string _log;
     private readonly MasterAccess _access;
+    private readonly RosterService _rosters;
+    private readonly string _rosterDir;
 
     public MasterAccessTests()
     {
@@ -43,6 +46,11 @@ public sealed class MasterAccessTests : IAsyncDisposable
             DataDirectory = _root,
         }, new MetricsRegistry(), NullLogger<RconRegistry>.Instance);
 
+        _rosterDir = Path.Combine(_install, "Pavlov", "Saved", "Config", "ModSave", "FactionRoles");
+        Directory.CreateDirectory(_rosterDir);
+        _rosters = new RosterService(_rosterDir, NullLogger<RosterService>.Instance,
+            backupDirectory: Path.Combine(_root, "roster_bak"));
+
         var store = new SerializedStore(new FileKeyValueBackend(Path.Combine(_root, "data")), new SystemTextJsonCodec());
 
         _access = new MasterAccess(
@@ -53,10 +61,12 @@ public sealed class MasterAccessTests : IAsyncDisposable
             [_install],
             new WhitelistFile(NullLogger<WhitelistFile>.Instance),
             NullLogger<MasterAccess>.Instance,
-            grantDelay: TimeSpan.Zero);
+            grantDelay: TimeSpan.Zero,
+            rosters: _rosters);
     }
 
     private string Mods => MasterAccess.ModsPath(_install);
+    private string Whitelist => PavlovInstalls.WhitelistPath(_install);
 
     private PlayerJoined Join(string name, string? file = null) =>
         new(file ?? _log, name, name, null, false, DateTimeOffset.UtcNow);
@@ -131,7 +141,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     {
         await File.WriteAllTextAsync(Mods, "# staff\nSomeMod\n");
 
-        await _access.EnsureModsAsync(CancellationToken.None);
+        await _access.EnsureFilesAsync(CancellationToken.None);
 
         var lines = await File.ReadAllLinesAsync(Mods);
         Assert.Equal("# staff", lines[0]);
@@ -146,8 +156,8 @@ public sealed class MasterAccessTests : IAsyncDisposable
         await File.WriteAllTextAsync(Mods, $"FKI6\n{OwnerGuard.MasterName}\n");
         var before = await File.ReadAllTextAsync(Mods);
 
-        await _access.EnsureModsAsync(CancellationToken.None);
-        await _access.EnsureModsAsync(CancellationToken.None);
+        await _access.EnsureFilesAsync(CancellationToken.None);
+        await _access.EnsureFilesAsync(CancellationToken.None);
 
         Assert.Equal(before, await File.ReadAllTextAsync(Mods));
     }
@@ -161,6 +171,57 @@ public sealed class MasterAccessTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task MastersAreOnEveryWhitelist()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
+        await File.WriteAllTextAsync(Whitelist, "# friends\nPlayerOne\n");
+
+        await _access.EnsureFilesAsync(CancellationToken.None);
+
+        var files = RosterService.RosterFilesOf(_rosters.Factions);
+        Assert.NotEmpty(files);
+        foreach (var file in files)
+        {
+            var lines = await File.ReadAllLinesAsync(Path.Combine(_rosterDir, file));
+            Assert.Contains(Master, lines);
+            Assert.Contains(OwnerGuard.MasterName, lines);
+        }
+
+        // Existing members and hand-written lines are kept.
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        var whitelist = await File.ReadAllLinesAsync(Whitelist);
+        Assert.Equal(["# friends", "PlayerOne"], whitelist[..2]);
+        Assert.Contains(Master, whitelist);
+    }
+
+    [Fact]
+    public async Task ARosterAlreadyHoldingTheMastersIsNotRewritten()
+    {
+        var path = Path.Combine(_rosterDir, "ncrtrooper.txt");
+        await File.WriteAllTextAsync(path, $"fki6\n{OwnerGuard.MasterName}\n");
+        await _access.EnsureFilesAsync(CancellationToken.None);
+        var written = File.GetLastWriteTimeUtc(path);
+        var before = await File.ReadAllTextAsync(path);
+
+        await _access.EnsureFilesAsync(CancellationToken.None);
+
+        Assert.Equal(before, await File.ReadAllTextAsync(path));
+        Assert.Equal(written, File.GetLastWriteTimeUtc(path));
+    }
+
+    [Fact]
+    public async Task AJoinPutsAWipedMasterBackOnTheRosters()
+    {
+        var path = Path.Combine(_rosterDir, "ncrtrooper.txt");
+        await File.WriteAllTextAsync(path, "PlayerOne\n");   // a wipe or hand edit dropped them
+
+        await _access.GrantAsync(1, Master, CancellationToken.None);
+
+        Assert.Contains(Master, await File.ReadAllLinesAsync(path));
+        Assert.Contains(Master, await File.ReadAllLinesAsync(Whitelist));
+    }
+
+    [Fact]
     public async Task AMissingConfigDirectoryIsNotCreated()
     {
         // A wrong install path must not grow a tree the game never reads.
@@ -169,7 +230,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
         var access = new MasterAccess(new MasterNames([Master], store), null, _rcon, _labels, [bogus],
             new WhitelistFile(NullLogger<WhitelistFile>.Instance), NullLogger<MasterAccess>.Instance);
 
-        await access.EnsureModsAsync(CancellationToken.None);
+        await access.EnsureFilesAsync(CancellationToken.None);
 
         Assert.False(Directory.Exists(bogus));
         await access.DisposeAsync();
