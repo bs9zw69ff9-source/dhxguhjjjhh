@@ -215,4 +215,76 @@ public sealed class ModSaveSyncTests : IDisposable
 
         Assert.Equal("2500", File.ReadAllText(LedgerPath(b, "Hopper")));
     }
+
+    // ---- faction rosters on a freshly provisioned server ----
+
+    private static string Rosters(string install) => Path.Combine(PavlovInstalls.ModSavePath(install), "FactionRoles");
+
+    private static void WriteRoster(string install, string file, string content, DateTime modifiedUtc)
+    {
+        Directory.CreateDirectory(Rosters(install));
+        var path = Path.Combine(Rosters(install), file);
+        File.WriteAllText(path, content);
+        File.SetLastWriteTimeUtc(path, modifiedUtc);
+    }
+
+    private ModSaveSync RosterSync(IReadOnlyList<string> installs) =>
+        new(installs, new FakeRoster(true, []), enabled: true, NullLogger<ModSaveSync>.Instance,
+            rosterDirectory: Rosters(installs[0]));
+
+    /// <summary>A real install with nothing under Config: what /provisionserver leaves.</summary>
+    private string BareInstall(string name)
+    {
+        var root = Path.Combine(_root, name);
+        Directory.CreateDirectory(Path.Combine(root, "Pavlov", "Saved", "Config"));
+        return root;
+    }
+
+    [Fact]
+    public async Task AFreshServerGetsItsFactionRolesFolderAndEveryRoster()
+    {
+        /* THE BUG. Servers 2 and 3 had no ModSave/FactionRoles, every copy into them was
+           skipped for want of the folder, and they never had a whitelist at all. */
+        var one = Install("pavlovserver");
+        var two = BareInstall("pavlovserver2");
+        var three = BareInstall("pavlovserver3");
+        WriteRoster(one, "gambinospawn.txt", "Alice\nBob\n", DateTime.UtcNow);
+        WriteRoster(one, "policecadet.txt", "Carol\n", DateTime.UtcNow);
+
+        await RosterSync([one, two, three]).SweepAsync();
+
+        foreach (var server in new[] { two, three })
+        {
+            Assert.Equal("Alice\nBob\n", File.ReadAllText(Path.Combine(Rosters(server), "gambinospawn.txt")));
+            Assert.Equal("Carol\n", File.ReadAllText(Path.Combine(Rosters(server), "policecadet.txt")));
+        }
+    }
+
+    [Fact]
+    public async Task AnEmptyRosterOnANewServerNeverWipesTheRealOne()
+    {
+        // Newer, but empty, and not from the folder the bot edits: it must not win.
+        var one = Install("pavlovserver");
+        var two = Install("pavlovserver2");
+        WriteRoster(one, "gambinospawn.txt", "Alice\n", DateTime.UtcNow.AddHours(-1));
+        WriteRoster(two, "gambinospawn.txt", "", DateTime.UtcNow);
+
+        await RosterSync([one, two]).SweepAsync();
+
+        Assert.Equal("Alice\n", File.ReadAllText(Path.Combine(Rosters(one), "gambinospawn.txt")));
+    }
+
+    [Fact]
+    public async Task AWipeFromTheBotsOwnRosterFolderStillGoesOut()
+    {
+        // /whitelist wipe empties the file the bot edits; that is deliberate and must reach every server.
+        var one = Install("pavlovserver");
+        var two = Install("pavlovserver2");
+        WriteRoster(two, "gambinospawn.txt", "Alice\n", DateTime.UtcNow.AddHours(-1));
+        WriteRoster(one, "gambinospawn.txt", "", DateTime.UtcNow);
+
+        await RosterSync([one, two]).SweepAsync();
+
+        Assert.Equal("", File.ReadAllText(Path.Combine(Rosters(two), "gambinospawn.txt")));
+    }
 }

@@ -307,7 +307,8 @@ public static class Program
             sp.GetRequiredService<RconRegistry>(),
             features.ModSaveSync,
             sp.GetRequiredService<ILogger<ModSaveSync>>(),
-            features.ModSaveSyncSkipExtra));
+            features.ModSaveSyncSkipExtra,
+            features.RosterDirectory));
 
         builder.Services.AddSingleton<IpTrackingService>();
         builder.Services.AddSingleton(sp => new LogTailer(sp.GetRequiredService<ILoggerFactory>().CreateLogger<LogTailer>()));
