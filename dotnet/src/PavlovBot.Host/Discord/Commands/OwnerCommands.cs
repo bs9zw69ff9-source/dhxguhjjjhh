@@ -272,11 +272,10 @@ public sealed class ManualCommand(
 /// <c>/firewall</c> - manual OS-level blocks through ufw.
 /// </summary>
 /// <remarks>
-/// THE AUTO-BAN PATH NEVER AUTOMATES THIS, and that is the whole design. A ufw rule blocks an
-/// ADDRESS, not an account: on residential CGNAT or a shared household one, blocking an evader
-/// can cut off people who have done nothing, and nothing in the bot would know to undo it. So
-/// a ban never touches it, and this command exists for an owner who has decided to accept that
-/// cost themselves. The one other route to a ufw rule is the same deliberate call in a
+/// MANUAL RULES, alongside the automatic ones. Bans are denied at ufw automatically when
+/// <c>FIREWALL_BANS</c> is on (see <see cref="BanFirewall"/>), which tracks and lifts only the
+/// rules it added. A rule made here is not tracked: if its address belongs to a banned player,
+/// the ban's end lifts it. The other manual route to a ufw rule is the same deliberate call in a
 /// different place - <c>/configure blacklist &lt;address&gt;</c>, an owner typing one exact
 /// address to block forever - which applies and later removes a ufw deny alongside the bot
 /// flag (see <see cref="OwnerActions"/>, gated by <c>FIREWALL_BLACKLIST</c>).
@@ -297,7 +296,7 @@ public sealed partial class FirewallCommand(IFirewall firewall, AuditLog audit, 
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Owner - Manual OS firewall (ufw) control. Never applied automatically.")
+            .WithDescription("Owner - Manual OS firewall (ufw) control. Bans are also denied automatically.")
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("action").WithDescription("What to do")
                 .WithType(ApplicationCommandOptionType.String).WithRequired(true)

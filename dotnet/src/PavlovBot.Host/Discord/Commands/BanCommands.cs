@@ -70,8 +70,10 @@ internal static class BanFileReport
 public abstract class BanCommandBase : ISlashCommand
 {
     protected BanCommandBase(
-        BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger logger)
+        BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger logger,
+        MasterNames masters)
     {
+        Masters = masters;
         Bans = bans;
         Tracking = tracking;
         Store = store;
@@ -81,6 +83,7 @@ public abstract class BanCommandBase : ISlashCommand
     }
 
     protected BanService Bans { get; }
+    protected MasterNames Masters { get; }
     protected IpTrackingService Tracking { get; }
     protected SerializedStore Store { get; }
     protected Access Access { get; }
@@ -124,6 +127,15 @@ public abstract class BanCommandBase : ISlashCommand
         var now = DateTimeOffset.UtcNow;
         var permanent = duration is null;
 
+        /* A MASTER OWNER'S UNBAN STANDS. Re-banning somebody they let back in is overriding
+           them, so only another master owner may. */
+        if (tier < StaffTier.MasterOwner && Masters.IsPardoned(name))
+        {
+            return Theme.Denied("Above your authority",
+                $"A **{StaffHierarchy.Name(StaffTier.MasterOwner)}** unbanned **{Sanitize.Code(name)}**. " +
+                $"Only a {StaffHierarchy.Name(StaffTier.MasterOwner)} can ban them again.");
+        }
+
         var record = new BanRecord
         {
             PlayerId = name,
@@ -140,14 +152,28 @@ public abstract class BanCommandBase : ISlashCommand
             Tier = tier,
         };
 
+        BanRecord? outranked = null;
         var saved = await Store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], bans =>
         {
+            /* REPLACING IS LIFTING. A ban issued above your tier cannot be /unbanned by you, so
+               it cannot be swapped for a one-minute ban by you either. Checked inside the
+               update so a ban landing concurrently is seen. */
+            outranked = BanRules.ProtectedFromReplacement(bans, name, tier, now);
+            if (outranked is not null) return null;
+
             // Replace rather than append: two records for one player means an unban lifts
             // one of them and the other quietly re-catches them on the next sweep.
             bans.RemoveAll(b => BanRules.SamePlayer(b.PlayerId, name));
             bans.Add(record);
             return bans;
         }, ct).ConfigureAwait(false);
+
+        if (outranked is not null)
+        {
+            return Theme.Denied("Above your authority",
+                $"**{Sanitize.Code(name)}** is already banned by a **{StaffHierarchy.Name(outranked.Tier ?? StaffTier.None)}**, " +
+                $"and a new ban would replace it. You are **{StaffHierarchy.Name(tier)}**.");
+        }
 
         /* NO RECORD, NO BAN. The write can be refused without throwing - an unreadable ban
            list is never written over - and enforcing anyway put a native ban on the server
@@ -158,6 +184,9 @@ public abstract class BanCommandBase : ISlashCommand
             return Theme.Failure("Ban not issued",
                 $"The ban record could not be saved, so nothing was enforced. ({Sanitize.Code(saved.Error ?? "unknown error")})");
         }
+
+        // A master owner banning a player they had pardoned ends the pardon.
+        if (tier == StaffTier.MasterOwner) await Masters.ClearPardonAsync(name, ct).ConfigureAwait(false);
 
         var enforcement = await Bans.HardEnforceAsync(name, account?.Id, ct: ct).ConfigureAwait(false);
 
@@ -211,8 +240,9 @@ public abstract class BanCommandBase : ISlashCommand
 
 /// <summary><c>/tempban</c> - a ban with a length, never a date.</summary>
 public sealed class TempBanCommand(
-    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<TempBanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, audit, logger)
+    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<TempBanCommand> logger,
+    MasterNames masters)
+    : BanCommandBase(bans, tracking, store, access, audit, logger, masters)
 {
     public override string Name => "tempban";
 
@@ -263,8 +293,9 @@ public sealed class TempBanCommand(
 
 /// <summary><c>/permban</c> - no expiry, and the account id is flagged too.</summary>
 public sealed class PermBanCommand(
-    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<PermBanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, audit, logger)
+    BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit, ILogger<PermBanCommand> logger,
+    MasterNames masters)
+    : BanCommandBase(bans, tracking, store, access, audit, logger, masters)
 {
     public override string Name => "permban";
 
@@ -293,8 +324,8 @@ public sealed class PermBanCommand(
 /// <summary><c>/unban</c> - lift a ban, subject to the staff hierarchy.</summary>
 public sealed class UnbanCommand(
     BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit,
-    ServerBanFile banFile, ILogger<UnbanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, audit, logger)
+    ServerBanFile banFile, ILogger<UnbanCommand> logger, MasterNames masters)
+    : BanCommandBase(bans, tracking, store, access, audit, logger, masters)
 {
     public override string Name => "unban";
 
@@ -342,13 +373,15 @@ public sealed class UnbanCommand(
             await Audit.RecordAsync("unban", command.User.Username, player,
                 $"Removed from the server's ban file - {listed.Entry!.Reason}", ct).ConfigureAwait(false);
 
-            await Reply(command, Theme.Success("Removed from the server's ban file",
+            var fileEmbed = Theme.Success("Removed from the server's ban file",
                     $"**{Sanitize.Code(player)}** had no record with this bot. The server's own ban " +
                     $"file listed them, and that entry is now gone.")
                 .AddField("Was", $"{Sanitize.Code(Sanitize.RedactPrivate(listed.Entry.Reason))} — {Sanitize.Code(listed.Entry.Unban)}")
                 .AddField("File", $"`{Sanitize.Code(listed.Path ?? "unknown")}`")
-                .AddField("Lifted by", command.User.Username, true)
-                .Brand()).ConfigureAwait(false);
+                .AddField("Lifted by", command.User.Username, true);
+            await PardonIfMasterAsync(command, player, fileEmbed, ct).ConfigureAwait(false);
+
+            await Reply(command, fileEmbed.Brand()).ConfigureAwait(false);
             return;
         }
 
@@ -382,15 +415,38 @@ public sealed class UnbanCommand(
                 "The record was removed but no server accepted the Unban. They may still be natively banned.");
         }
 
+        await PardonIfMasterAsync(command, player, embed, ct).ConfigureAwait(false);
         await Reply(command, embed.Brand()).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A master owner's unban becomes a pardon: nobody below them, and no automated path, can
+    /// ban the player again until a master owner does.
+    /// </summary>
+    private async Task PardonIfMasterAsync(SocketSlashCommand command, string player, EmbedBuilder embed, CancellationToken ct)
+    {
+        if (Access.TierOf(command.User) != StaffTier.MasterOwner) return;
+
+        if (await Masters.PardonAsync(player, ct).ConfigureAwait(false))
+        {
+            Logger.LogWarning("MASTER PARDON | player=\"{Player}\" | by={By}", player, command.User.Username);
+            embed.AddField("Master Owner pardon",
+                "Nobody below a Master Owner can ban them again, and automatic bans will not touch them.");
+        }
+        else
+        {
+            Logger.LogError("Master pardon for \"{Player}\" could not be saved - they are unbanned but NOT protected", player);
+            embed.AddField($"{Theme.Warn} Pardon not saved",
+                "They are unbanned, but the pardon could not be written, so staff can still ban them.");
+        }
     }
 }
 
 /// <summary><c>/checkban</c> - what, if anything, is on a player.</summary>
 public sealed class CheckBanCommand(
     BanService bans, IpTrackingService tracking, SerializedStore store, Access access, AuditLog audit,
-    ServerBanFile banFile, ILogger<CheckBanCommand> logger)
-    : BanCommandBase(bans, tracking, store, access, audit, logger)
+    ServerBanFile banFile, ILogger<CheckBanCommand> logger, MasterNames masters)
+    : BanCommandBase(bans, tracking, store, access, audit, logger, masters)
 {
     public override string Name => "checkban";
 

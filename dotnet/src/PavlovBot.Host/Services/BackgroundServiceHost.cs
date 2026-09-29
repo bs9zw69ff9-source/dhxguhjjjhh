@@ -72,6 +72,7 @@ public sealed class BackgroundServiceHost : IHostedService
     private readonly PavlovBot.Host.Monitoring.MonitorBoard _monitorBoard;
 
     private readonly WhitelistBackup _whitelistBackup;
+    private readonly BanFirewall _banFirewall;
 
     public BackgroundServiceHost(
         ServiceRegistry registry,
@@ -106,8 +107,10 @@ public sealed class BackgroundServiceHost : IHostedService
         PavlovBot.Host.Monitoring.MonitorBoard monitorBoard,
         PavlovBot.Host.Stats.KillStats killStats,
         WhitelistBackup whitelistBackup,
+        BanFirewall banFirewall,
         ILogger<BackgroundServiceHost> logger)
     {
+        _banFirewall = banFirewall;
         _whitelistBackup = whitelistBackup;
         _monitor = monitor;
         _monitorBoard = monitorBoard;
@@ -311,6 +314,23 @@ public sealed class BackgroundServiceHost : IHostedService
                got one. BanService.LiftAsync now clears the flags and grants the exemption for
                every lift, so this tick is just the timer. */
             Tick = ct => _bans.ProcessExpiredAsync(ct),
+        });
+
+        /* ---- banned addresses at the OS firewall ----
+           Registered even with FIREWALL_BANS off: a pass then wants nothing and lifts every
+           rule this feature added, so turning it off cleans up after itself. */
+        _registry.Register(new ServiceDefinition
+        {
+            Name = "ban-firewall",
+            Interval = TimeSpan.FromSeconds(30),
+            RunOnStart = true,
+            Tick = async ct =>
+            {
+                var pass = await _banFirewall.SyncAsync(ct).ConfigureAwait(false);
+                if (pass.Denied + pass.Lifted > 0)
+                    _logger.LogInformation("Ban firewall: {Denied} denied, {Lifted} lifted, {Failed} failed",
+                        pass.Denied, pass.Lifted, pass.Failed);
+            },
         });
 
         /* ---- timeline retention ----

@@ -64,6 +64,15 @@ public static class Datasets
     /// </remarks>
     public const string NeverBan = "never_ban";
 
+    /// <summary>
+    /// Player -> when a MASTER OWNER unbanned them. While listed, nobody below a master owner
+    /// can ban them and no automated path will; a master owner banning them again clears it.
+    /// </summary>
+    public const string MasterPardons = "master_pardons";
+
+    /// <summary>Address -> the ban a ufw deny was added for. Only these rules are ever lifted.</summary>
+    public const string FirewallBans = "firewall_bans";
+
 
     /// <summary>Player -> their warnings, newest last. Escalation counts these.</summary>
     public const string Warnings = "warnings";
@@ -166,6 +175,8 @@ public static class Datasets
         [IgnoredNames] = "[]",
         [AutobanExempt] = "{}",
         [NeverBan] = "{}",
+        [MasterPardons] = "{}",
+        [FirewallBans] = "{}",
         [Warnings] = "{}",
         [BanReconcileState] = "{}",
         [MonitorHistory] = "{}",

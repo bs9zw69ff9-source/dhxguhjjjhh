@@ -357,7 +357,8 @@ public static class Program
 
         // ---- discord surfaces ----
         builder.Services.AddSingleton(sp => new Access(
-            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners, factions));
+            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners, factions,
+            masterOwners: features.MasterOwners));
         /* Singleton, and registered as BOTH: commands inject it to send paged output, and
            the gateway resolves it as a component handler to turn the pages. Two instances
            would mean the handler looking up a session the sender never stored. */
@@ -656,6 +657,15 @@ public static class Program
         builder.Services.AddSingleton<PavlovBot.Host.Servers.IFirewall, PavlovBot.Host.Servers.UfwFirewall>();
 
         builder.Services.AddSingleton<WhitelistBackup>();
+        builder.Services.AddSingleton(sp => new BanFirewall(
+            sp.GetRequiredService<BanService>(),
+            sp.GetRequiredService<IpTrackingService>(),
+            sp.GetRequiredService<MasterNames>(),
+            sp.GetRequiredService<PavlovBot.Host.Servers.IFirewall>(),
+            sp.GetRequiredService<SerializedStore>(),
+            features.FirewallBans,
+            features.FirewallNeverBlock,
+            sp.GetRequiredService<ILogger<BanFirewall>>()));
         builder.Services.AddSingleton(sp => new OwnerActions(
             sp.GetRequiredService<SerializedStore>(),
             sp.GetRequiredService<IpTrackingService>(),

@@ -125,6 +125,31 @@ public static class BanRules
     }
 
     /// <summary>
+    /// The active ban a new ban for this player must NOT replace, or null when it may.
+    /// </summary>
+    /// <param name="actor">
+    /// Who is issuing the new ban. <see cref="StaffTier.None"/> for anything automated.
+    /// </param>
+    /// <remarks>
+    /// A BAN REPLACES THE PLAYER'S EXISTING RECORD - one record per player, so an unban lifts
+    /// all of it. That made re-banning a way round <see cref="StaffHierarchy.CanOverride"/>: a
+    /// mod could not /unban the owner's permanent ban, but could /tempban the same player for
+    /// a minute, which replaced it, and wait. Replacing is lifting, so it takes the same right.
+    ///
+    /// Only an ACTIVE record is protected. An expired one is being lifted anyway, and a record
+    /// with no tier (older records, automated bans) stays replaceable, exactly as it stays
+    /// liftable - so automation can never replace a human's ban, and nothing else changes.
+    /// </remarks>
+    public static BanRecord? ProtectedFromReplacement(
+        IEnumerable<BanRecord> bans, string player, StaffTier actor, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(bans);
+        return bans.FirstOrDefault(b =>
+            SamePlayer(b.PlayerId, player) && b.IsValid && b.IsActiveAt(now) &&
+            !StaffHierarchy.CanOverride(actor, b.Tier));
+    }
+
+    /// <summary>
     /// Whether a ban is a REAL punishment on a person, rather than machinery.
     /// </summary>
     /// <remarks>
