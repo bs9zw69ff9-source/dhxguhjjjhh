@@ -332,6 +332,17 @@ public sealed record FeatureOptions
     public IReadOnlyList<ulong> SuperOwners { get; init; } = [];
 
     /// <summary>
+    /// Discord users barred from every command (<c>BLACKLIST_IDS</c>), on top of the ones barred
+    /// from <c>/configure</c>.
+    /// </summary>
+    /// <remarks>
+    /// SPACES OR COMMAS, because that is how the Node bot split it and a value written for that
+    /// bot is still in plenty of .env files. Split on commas alone, "1 2" would be one id that
+    /// parses as nothing, and both people would walk straight past the bar.
+    /// </remarks>
+    public IReadOnlyList<ulong> BarredUserIds { get; init; } = [];
+
+    /// <summary>
     /// Who actually receives a security alert: the explicit list, or the owners.
     /// </summary>
     /// <remarks>
@@ -564,6 +575,7 @@ public sealed record FeatureOptions
 
             SecurityDmIds = Snowflakes(configuration, "SECURITY_DM_IDS"),
             Owners = Snowflakes(configuration, "OWNER_IDS"),
+            BarredUserIds = Snowflakes(configuration, "BLACKLIST_IDS", [',', ' ', '\t', '\r', '\n']),
             SuperOwners = Snowflakes(configuration, "SUPER_OWNER_IDS"),
             MasterNames = List(configuration, "MASTER_NAMES"),
             PluginDirectory = Text(configuration, "PLUGIN_DIR"),
@@ -645,7 +657,10 @@ public sealed record FeatureOptions
         ulong.TryParse(configuration[key]?.Trim(), CultureInfo.InvariantCulture, out var id) && id > 0 ? id : null;
 
     private static IReadOnlyList<ulong> Snowflakes(IConfiguration configuration, string key) =>
-        List(configuration, key)
+        Snowflakes(configuration, key, [',']);
+
+    private static IReadOnlyList<ulong> Snowflakes(IConfiguration configuration, string key, char[] separators) =>
+        (configuration[key] ?? "").Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(v => ulong.TryParse(v, CultureInfo.InvariantCulture, out var id) ? id : 0)
             .Where(id => id > 0)
             .ToList();
@@ -721,6 +736,7 @@ public sealed record FeatureOptions
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
               (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
         $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in master owner",
+        $"command blacklist: {(BarredUserIds.Count == 0 ? "none from BLACKLIST_IDS" : $"{BarredUserIds.Count} from BLACKLIST_IDS")}, plus any barred from /configure",
         $"security DMs: {(SecurityAlertRecipients.Count == 0
             ? "off (SECURITY_DM_IDS is unset and no owners are configured)"
             : $"{SecurityAlertRecipients.Count} recipient(s)" +

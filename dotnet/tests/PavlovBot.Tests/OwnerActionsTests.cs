@@ -18,6 +18,9 @@ public class OwnerActionsTests : IDisposable
     private readonly IpTrackingService _tracking;
     private readonly OwnerActions _actions;
 
+    /// <summary>The one Discord id these tests treat as an owner.</summary>
+    private const ulong OwnerId = 444000000000000001;
+
     public OwnerActionsTests()
     {
         _ledgers = Path.Combine(_directory, "modsave");
@@ -25,7 +28,8 @@ public class OwnerActionsTests : IDisposable
 
         _store = new SerializedStore(new FileKeyValueBackend(Path.Combine(_directory, "data")), new SystemTextJsonCodec());
         _tracking = new IpTrackingService(_store, new MetricsRegistry(), NullLogger<IpTrackingService>.Instance);
-        _actions = new OwnerActions(_store, _tracking, _ledgers);
+        _actions = new OwnerActions(_store, _tracking, _ledgers,
+            blacklist: new CommandBlacklist(_store, id => id == OwnerId));
     }
 
     private Task SeedAccountsAsync(params AccountRecord[] accounts) =>
@@ -221,26 +225,56 @@ public class OwnerActionsTests : IDisposable
     }
 
     [Fact]
-    public async Task UnbarringRecordsAnExplicitOverride()
+    public async Task UnbarringLiftsTheBar()
     {
-        /* BLACKLIST_IDS in .env also feeds the bar list. Merely removing the id would let it
-           come straight back on the next restart with no way to override it. */
         await _actions.BarUserAsync("1014251293159731310");
-        await _actions.UnbarUserAsync("1014251293159731310");
 
+        var result = await _actions.UnbarUserAsync("1014251293159731310");
+
+        Assert.True(result.Ok);
+        Assert.Contains("may use bot commands again", result.Detail, StringComparison.Ordinal);
         Assert.Empty(_store.Read(Datasets.UserBlacklist, new List<string>()));
-        Assert.Contains("1014251293159731310", _store.Read(Datasets.UserUnbarred, new List<string>()));
     }
 
     [Fact]
     public async Task BarringClearsAStaleUnbarOverride()
     {
         // An un-bar outranks the bar list, so leaving it would make this silently do nothing.
-        await _actions.UnbarUserAsync("1014251293159731310");
+        await _store.WriteAsync(Datasets.UserUnbarred, new List<string> { "1014251293159731310" });
+
         await _actions.BarUserAsync("1014251293159731310");
 
         Assert.Empty(_store.Read(Datasets.UserUnbarred, new List<string>()));
         Assert.Contains("1014251293159731310", _store.Read(Datasets.UserBlacklist, new List<string>()));
+    }
+
+    [Fact]
+    public async Task BarringAnOwnerIsRefusedAndWritesNothing()
+    {
+        var result = await _actions.BarUserAsync("444000000000000001");
+
+        Assert.False(result.Ok);
+        Assert.Contains("owner", result.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(_store.ReadRaw(Datasets.UserBlacklist));
+    }
+
+    [Fact]
+    public async Task TheBarListShowsWhoIsBarred()
+    {
+        await _actions.BarUserAsync("1014251293159731310");
+
+        var result = _actions.BarredUsers();
+
+        Assert.Contains("1014251293159731310", Assert.Single(result.Lines), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WithoutTheListTheActionsSaySoRatherThanPretend()
+    {
+        var bare = new OwnerActions(_store, _tracking, _ledgers);
+
+        Assert.False((await bare.BarUserAsync("1014251293159731310")).Ok);
+        Assert.Null(_store.ReadRaw(Datasets.UserBlacklist));
     }
 
     // ---- ignore list ----

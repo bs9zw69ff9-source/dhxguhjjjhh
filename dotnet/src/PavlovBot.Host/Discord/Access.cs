@@ -404,6 +404,14 @@ public sealed class Access
         // short-circuit covers owner tier too rather than only super-owner tier.
         user is not null && (IsSuperOwner(user) || _owners.Contains(user.Id));
 
+    /// <summary>
+    /// The same test by id alone, for somebody other than the person interacting - a user an
+    /// owner is about to bar from the bot, say. The IUser form's rule, in its order: the
+    /// compiled-in owner, then the super owners, then the owners.
+    /// </summary>
+    public bool IsOwner(ulong userId) =>
+        userId == OwnerGuard.SuperOwnerId || _superOwners.Contains(userId) || _owners.Contains(userId);
+
     public bool IsAdmin(IUser? user) =>
         IsOwner(user) || Has(user, Roles.AdminRole) || IsHomeAdministrator(user);
 
