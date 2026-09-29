@@ -243,7 +243,6 @@ public sealed class Access
     private readonly SerializedStore _store;
     private readonly IReadOnlySet<ulong> _owners;
     private readonly IReadOnlySet<ulong> _superOwners;
-    private readonly IReadOnlySet<ulong> _masterOwners;
 
     /// <summary>
     /// How many owners the DEPLOYMENT set, ignoring the compiled-in one.
@@ -284,9 +283,8 @@ public sealed class Access
     private Func<ulong?>? _homeGuildId;
 
     public Access(SerializedStore store, IEnumerable<ulong> owners, IEnumerable<ulong>? superOwners = null,
-        FactionSet? factions = null, IEnumerable<ulong>? masterOwners = null)
+        FactionSet? factions = null)
     {
-        _masterOwners = (masterOwners ?? []).ToHashSet();
         _factions = factions ?? FactionRegistry.Default;
         _store = store;
         _owners = owners.ToHashSet();
@@ -372,16 +370,15 @@ public sealed class Access
     public IReadOnlyCollection<ulong>? VisibleRoles(IUser? user) => Member(user)?.RoleIds;
 
     /// <summary>
-    /// The tier above everyone: the built-in super owner, plus <c>MASTER_OWNER_IDS</c>.
+    /// The tier above everyone: the built-in owner, and nobody else.
     /// </summary>
     /// <remarks>
-    /// THE BUILT-IN ID IS A MASTER OWNER UNCONDITIONALLY, checked against the constant here for
-    /// the same reason <see cref="IsSuperOwner"/> is: a super owner added through .env can do
-    /// everything else, and the point of this tier is that they cannot undo the bot owner's
-    /// bans. If .env could demote the built-in owner, it would not be above them.
+    /// COMPILED IN, NEVER CONFIGURED. A super owner added through .env can do everything else,
+    /// and the point of this tier is that they cannot undo the bot owner's bans. If .env could
+    /// name a master owner, anybody able to edit it could make themselves one - so there is no
+    /// setting for it at all.
     /// </remarks>
-    public bool IsMasterOwner(IUser? user) =>
-        user is not null && (user.Id == OwnerGuard.SuperOwnerId || _masterOwners.Contains(user.Id));
+    public bool IsMasterOwner(IUser? user) => user is not null && user.Id == OwnerGuard.SuperOwnerId;
 
     public bool IsSuperOwner(IUser? user)
     {

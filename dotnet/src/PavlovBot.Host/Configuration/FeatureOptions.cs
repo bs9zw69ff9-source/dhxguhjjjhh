@@ -332,12 +332,6 @@ public sealed record FeatureOptions
     public IReadOnlyList<ulong> SuperOwners { get; init; } = [];
 
     /// <summary>
-    /// Discord ids above the super owners (<c>MASTER_OWNER_IDS</c>). The built-in super owner is
-    /// always one, whatever this says - see <c>Access.IsMasterOwner</c>.
-    /// </summary>
-    public IReadOnlyList<ulong> MasterOwners { get; init; } = [];
-
-    /// <summary>
     /// Who actually receives a security alert: the explicit list, or the owners.
     /// </summary>
     /// <remarks>
@@ -347,7 +341,7 @@ public sealed record FeatureOptions
     public IReadOnlyList<ulong> SecurityAlertRecipients =>
         SecurityDmIds.Count > 0
             ? [.. SecurityDmIds.Distinct()]
-            : [.. MasterOwners.Concat(SuperOwners).Concat(Owners).Distinct()];
+            : [.. SuperOwners.Concat(Owners).Distinct()];
 
     /// <summary>In-game names that must never be banned by any path.</summary>
     public IReadOnlyList<string> MasterNames { get; init; } = [];
@@ -571,7 +565,6 @@ public sealed record FeatureOptions
             SecurityDmIds = Snowflakes(configuration, "SECURITY_DM_IDS"),
             Owners = Snowflakes(configuration, "OWNER_IDS"),
             SuperOwners = Snowflakes(configuration, "SUPER_OWNER_IDS"),
-            MasterOwners = Snowflakes(configuration, "MASTER_OWNER_IDS"),
             MasterNames = List(configuration, "MASTER_NAMES"),
             PluginDirectory = Text(configuration, "PLUGIN_DIR"),
             PluginsAllowRoot = Flag(configuration, "PLUGINS_ALLOW_ROOT"),
@@ -727,7 +720,7 @@ public sealed record FeatureOptions
             ? "off (needs VERIFY_CHANNEL and VERIFY_STAFF_CHANNEL)"
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
               (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
-        $"owners: {Owners.Count + SuperOwners.Count + MasterOwners.Count} configured, plus the built-in master owner",
+        $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in master owner",
         $"security DMs: {(SecurityAlertRecipients.Count == 0
             ? "off (SECURITY_DM_IDS is unset and no owners are configured)"
             : $"{SecurityAlertRecipients.Count} recipient(s)" +

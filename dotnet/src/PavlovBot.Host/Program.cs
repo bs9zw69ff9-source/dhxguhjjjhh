@@ -357,8 +357,7 @@ public static class Program
 
         // ---- discord surfaces ----
         builder.Services.AddSingleton(sp => new Access(
-            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners, factions,
-            masterOwners: features.MasterOwners));
+            sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners, factions));
         /* Singleton, and registered as BOTH: commands inject it to send paged output, and
            the gateway resolves it as a component handler to turn the pages. Two instances
            would mean the handler looking up a session the sender never stored. */

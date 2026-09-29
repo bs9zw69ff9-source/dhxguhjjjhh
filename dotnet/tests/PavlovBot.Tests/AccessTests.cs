@@ -174,14 +174,13 @@ public class AccessTests
     }
 
     [Fact]
-    public void MasterOwnerIdsAreMasterOwners()
+    public void ASuperOwnerIsNeverAMasterOwner()
     {
-        var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var access = new Access(store, [OwnerId], [SuperOwnerId], masterOwners: [StrangerId]);
+        // No setting makes a master owner: only the compiled-in id is one.
+        var access = Build(out _);
 
-        Assert.Equal(StaffTier.MasterOwner, access.TierOf(new FakeMember(StrangerId)));
+        Assert.False(access.IsMasterOwner(new FakeMember(SuperOwnerId)));
         Assert.Equal(StaffTier.SuperOwner, access.TierOf(new FakeMember(SuperOwnerId)));
-        Assert.Equal("MASTER OWNER", access.DescribeAccess(new FakeMember(StrangerId)));
     }
 
     [Fact]
