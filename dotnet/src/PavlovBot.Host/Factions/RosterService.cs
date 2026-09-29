@@ -159,7 +159,7 @@ public sealed class RosterService
 
             try
             {
-                CreateOwnedLikeParent(_directory);
+                PavlovBot.Host.Storage.GameDirectories.CreateOwnedLikeParent(_directory);
                 createdDirectory = true;
                 _logger.LogWarning("Created the missing roster directory {Directory}", _directory);
             }
@@ -228,29 +228,6 @@ public sealed class RosterService
         return _guard.IsIgnored(Path.Combine(full, "placeholder.txt"))
             ? "it is in IGNORE_PATHS - another bot or process owns it"
             : null;
-    }
-
-    /// <summary>Create every missing level, each owned like the nearest existing ancestor.</summary>
-    /// <remarks>
-    /// The bot runs as root; the game runs as steam. A root-owned ModSave is one the game's mods
-    /// cannot write into, which fails with no message at all.
-    /// </remarks>
-    private static void CreateOwnedLikeParent(string directory)
-    {
-        var missing = new Stack<string>();
-        var existing = Path.GetFullPath(directory).TrimEnd('/');
-        while (!Directory.Exists(existing))
-        {
-            missing.Push(existing);
-            existing = Path.GetDirectoryName(existing) ?? throw new IOException($"no existing parent for {directory}");
-        }
-
-        var owner = PavlovBot.Host.Storage.UnixFileOwnership.Get(existing);
-        while (missing.TryPop(out var level))
-        {
-            Directory.CreateDirectory(level);
-            if (owner is { } o) PavlovBot.Host.Storage.UnixFileOwnership.Set(level, o.Uid, o.Gid);
-        }
     }
 
     /// <summary>

@@ -44,15 +44,39 @@ public sealed class ModSaveSync
     /// </remarks>
     private static readonly string[] AlwaysSkip = ["menuaccess", "accessmanager", "rconplus", "rcon_plus"];
 
+    /// <summary>The roster folder's path relative to ModSave, e.g. <c>FactionRoles/</c>, or null.</summary>
+    private readonly string? _rosterPrefix;
+
+    /// <summary>The install whose roster folder the bot writes - the authority for rosters.</summary>
+    private readonly string? _rosterInstall;
+
+    /// <param name="rosterDirectory">
+    /// <c>FACTION_ROLES_PATH</c>. The bot edits rosters there, so only that install may blank a
+    /// roster elsewhere - see <see cref="WouldBlankRoster"/>.
+    /// </param>
     public ModSaveSync(
         IReadOnlyList<string> installs,
         IOnlineRoster? online,
         bool enabled,
         ILogger<ModSaveSync> logger,
-        IEnumerable<string>? extraSkip = null)
+        IEnumerable<string>? extraSkip = null,
+        string? rosterDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(installs);
         _installs = installs;
+
+        if (rosterDirectory is { Length: > 0 })
+        {
+            var full = Path.GetFullPath(rosterDirectory).TrimEnd('/');
+            foreach (var root in installs)
+            {
+                var modSave = Path.GetFullPath(PavlovInstalls.ModSavePath(root)).TrimEnd('/');
+                if (!full.StartsWith(modSave + "/", StringComparison.Ordinal)) continue;
+                _rosterInstall = root;
+                _rosterPrefix = Path.GetRelativePath(modSave, full).Replace(Path.DirectorySeparatorChar, '/') + "/";
+                break;
+            }
+        }
         _online = online;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         Enabled = enabled;
@@ -128,7 +152,15 @@ public sealed class ModSaveSync
                     continue;
                 }
 
-                if (WriteMirrored(destPath, content, copy.ModifiedUnixMs)) copied++;
+                if (WouldBlankRoster(rel, fromRoot, text, destPath))
+                {
+                    _logger.LogWarning(
+                        "ModSave sync kept {Rel} in {Install} - refused to overwrite a filled roster with an empty one from {Source}",
+                        rel, Path.GetFileName(copy.ToRoot), Path.GetFileName(fromRoot));
+                    continue;
+                }
+
+                if (WriteMirrored(copy.ToRoot, destPath, content, copy.ModifiedUnixMs)) copied++;
             }
         }
 
@@ -197,11 +229,30 @@ public sealed class ModSaveSync
             }
 
             if (LedgerFile.WouldWipeBalance(text, ReadTextOrNull(destPath))) continue;
-            if (WriteMirrored(destPath, content, bestModified)) copied++;
+            if (WriteMirrored(root, destPath, content, bestModified)) copied++;
         }
 
         if (copied > 0)
             _logger.LogDebug("ModSave sync: propagated {Player}'s ledger to {Count} install(s)", playerName, copied);
+    }
+
+    /// <summary>
+    /// Whether this copy would empty a roster that has members, from an install the bot does not
+    /// edit rosters in.
+    /// </summary>
+    /// <remarks>
+    /// NEWEST-WINS IS WRONG FOR ROSTERS IN ONE CASE. A freshly provisioned server can hold empty
+    /// roster files that are newer than the real ones, and mirroring them wipes every faction on
+    /// every server. The bot's own roster folder is the authority: an empty roster from there is a
+    /// deliberate /whitelist wipe and still goes out; an empty one from anywhere else never lands
+    /// on a filled one.
+    /// </remarks>
+    private bool WouldBlankRoster(string rel, string fromRoot, string sourceText, string destPath)
+    {
+        if (_rosterPrefix is null || !rel.StartsWith(_rosterPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.Equals(fromRoot, _rosterInstall, StringComparison.Ordinal)) return false;
+        if (sourceText.Trim().Length > 0) return false;
+        return ReadTextOrNull(destPath) is { } existing && existing.Trim().Length > 0;
     }
 
     /// <summary>One line for the startup summary, and the diagnostics behind it.</summary>
@@ -306,17 +357,27 @@ public sealed class ModSaveSync
     // genuinely binary save that is not valid UTF-8 simply never looks like a ledger.
     private static string AsText(byte[] content) => System.Text.Encoding.UTF8.GetString(content);
 
-    private bool WriteMirrored(string destPath, byte[] content, long modifiedUnixMs)
+    private bool WriteMirrored(string installRoot, string destPath, byte[] content, long modifiedUnixMs)
     {
         try
         {
             var directory = Path.GetDirectoryName(destPath);
+            if (string.IsNullOrEmpty(directory)) return false;
 
-            /* NEVER CREATE A ModSave TREE. A missing directory means this install is not laid
-               out the way discovery assumed, and building one produces a second tree beside the
-               real one that the game never reads - the same rule the rest of the bot's
-               game-file writes keep. */
-            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return false;
+            /* A MISSING FOLDER IS CREATED, BUT ONLY INSIDE A REAL INSTALL. A freshly provisioned
+               server has no ModSave, or a ModSave with no FactionRoles, until something puts one
+               there - and refusing to was why servers 2 and 3 never got a roster at all: every
+               copy into them was skipped, silently, forever. Pavlov/Saved/Config existing is what
+               makes it a real install; without it the layout is not what discovery assumed, and
+               a tree built there would be one the game never reads. Owned like Config, so the
+               game (steam) can still write into what the bot (root) made. */
+            if (!Directory.Exists(directory))
+            {
+                if (!Directory.Exists(GameDirectories.ConfigPath(installRoot))) return false;
+                GameDirectories.CreateOwnedLikeParent(directory);
+                _logger.LogInformation("ModSave sync created {Directory} in {Install}",
+                    Path.GetRelativePath(installRoot, directory), Path.GetFileName(installRoot));
+            }
 
             // Unique temp per write (the sweep and the join-time fast path can target one file at
             // once), flushed, and keeping the game's ownership of the file. See AtomicFile.
