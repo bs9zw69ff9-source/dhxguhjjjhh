@@ -48,6 +48,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly PlayerAutocomplete _autocomplete;
     private readonly IReadOnlyList<IComponentHandler> _components;
     private readonly RecentErrors _errors;
+    private readonly PavlovBot.Host.Moderation.CommandBlacklist _blacklist;
     private readonly ILogger<DiscordGateway> _logger;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly InteractionDispatcher _dispatcher;
@@ -70,6 +71,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         CommandCatalog catalog,
         PlayerAutocomplete autocomplete,
         RecentErrors errors,
+        PavlovBot.Host.Moderation.CommandBlacklist blacklist,
         ILogger<DiscordGateway> logger)
     {
         ArgumentNullException.ThrowIfNull(commands);
@@ -86,6 +88,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         _catalog = catalog;
         _autocomplete = autocomplete;
         _errors = errors;
+        _blacklist = blacklist;
         _logger = logger;
         _dispatcher = new InteractionDispatcher(logger);
         /* DISABLED COMMANDS ARE DROPPED HERE, at the one place the dictionary is built, so
@@ -751,6 +754,13 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
            arguments through ~211 logging statements. */
         using var scope = _logger.BeginInteraction(
             $"/{name}", interaction.GuildId, interaction.User.Id, out var correlationId);
+
+        /* BARRED USERS GET NOTHING, and this is the one place that says so for every command.
+           Before the deferral on purpose: the refusal has to be ephemeral whatever the
+           command would have been, and a deferral has already chosen. The check is a
+           cached store read and an id comparison, nothing that can eat the three seconds. */
+        if (await RefuseIfBarredAsync(interaction, $"/{name}").ConfigureAwait(false)) return;
+
         if (!_commands.TryGetValue(name, out var command))
         {
             // Almost always a command left registered from an older build.
@@ -890,6 +900,12 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         using var scope = _logger.BeginInteraction(
             $"component:{id.Prefix}", interaction.GuildId, interaction.User.Id, out var correlationId);
 
+        /* Buttons, select menus and modals too. A panel posted in a channel is clickable by
+           anybody who can see it, and refusing only the slash commands would leave a barred
+           user every control those commands ever posted. Answered rather than ignored, so
+           the click does not end in Discord's own "interaction failed". */
+        if (await RefuseIfBarredAsync(interaction, $"component:{id.Prefix}").ConfigureAwait(false)) return;
+
         var handler = _components.FirstOrDefault(h => string.Equals(h.Prefix, id.Prefix, StringComparison.Ordinal));
 
         if (handler is null)
@@ -939,6 +955,56 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
                 _logger.LogWarning(nested, "Could not tell the caller that {CustomId} failed", customId);
             }
         }
+    }
+
+    private Task<bool> RefuseIfBarredAsync(IDiscordInteraction interaction, string what) =>
+        RefuseIfBarredAsync(_blacklist, interaction, what, _logger, _metrics);
+
+    /// <summary>
+    /// Turn away an interaction from a user barred from the bot. True when it was refused, and
+    /// the caller must then run nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// The Node bot's behaviour and wording: a private "Blacklisted" reply, and an empty list for
+    /// autocomplete. STATIC, with its collaborators passed in, so the refusal can be tested without
+    /// a gateway connection - Discord.Net's socket interactions cannot be built outside one.
+    /// </remarks>
+    internal static async Task<bool> RefuseIfBarredAsync(
+        PavlovBot.Host.Moderation.CommandBlacklist blacklist, IDiscordInteraction interaction, string what,
+        ILogger logger, MetricsRegistry metrics)
+    {
+        ArgumentNullException.ThrowIfNull(blacklist);
+        ArgumentNullException.ThrowIfNull(interaction);
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(metrics);
+
+        if (!blacklist.IsBarred(interaction.User.Id)) return false;
+
+        try
+        {
+            if (interaction is IAutocompleteInteraction autocomplete)
+            {
+                // One of these per keystroke, so it is neither logged nor counted.
+                await autocomplete.RespondAsync([]).ConfigureAwait(false);
+                return true;
+            }
+
+            logger.LogInformation("Refused {What} from {User} ({UserId}): barred from bot commands",
+                what, interaction.User.Username, interaction.User.Id);
+            metrics.Increment("interactions_barred_total",
+                help: "Interactions refused because the user is barred from bot commands");
+
+            await interaction.RespondAsync(
+                embed: Theme.Denied("Blacklisted", "You are blacklisted from this bot, so no commands will work for you.")
+                    .Brand().Build(),
+                ephemeral: true).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Refused either way. Failing to SAY so is no reason to run the command after all.
+            logger.LogWarning(ex, "Could not tell a barred user that {What} was refused", what);
+        }
+        return true;
     }
 
     /// <summary>
@@ -1004,6 +1070,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     {
         try
         {
+            /* Barred: no suggestions either, not even the names of who is online. The one read
+               here that is not already in this process - and the store's own read cache
+               answers it almost every time, so it stays inside the budget above. */
+            if (await RefuseIfBarredAsync(interaction, "autocomplete").ConfigureAwait(false)) return;
+
             var current = interaction.Data.Current;
             var typed = current.Value?.ToString() ?? "";
 

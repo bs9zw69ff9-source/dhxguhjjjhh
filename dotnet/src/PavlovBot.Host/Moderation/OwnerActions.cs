@@ -38,7 +38,8 @@ public sealed class OwnerActions(
     MasterNames? masters = null,
     Func<string, CancellationToken, Task>? liftBan = null,
     IFirewall? firewall = null,
-    PavlovBot.Host.Factions.WhitelistBackup? whitelists = null)
+    PavlovBot.Host.Factions.WhitelistBackup? whitelists = null,
+    CommandBlacklist? blacklist = null)
 {
     // ---- IP enforcement -----------------------------------------------------------------
 
@@ -297,50 +298,44 @@ public sealed class OwnerActions(
     public async Task<OwnerActionResult> BarUserAsync(string userId, CancellationToken ct = default)
     {
         if (!TryUserId(userId, out var id)) return OwnerActionResult.Refused($"`{userId}` is not a Discord user id.");
+        if (blacklist is null) return OwnerActionResult.Refused(NoBlacklist);
 
-        var barred = Barred();
-        if (barred.Contains(id, StringComparer.Ordinal)) return OwnerActionResult.Done($"`{id}` is already barred.");
-
-        await store.WriteAsync(Datasets.UserBlacklist, barred.Append(id).ToList(), ct).ConfigureAwait(false);
-
-        /* An explicit un-bar outranks the bar list in the Node bot, so leaving a stale entry
-           there would make this look like it did nothing. */
-        var unbarred = store.Read(Datasets.UserUnbarred, new List<string>());
-        if (unbarred.Contains(id, StringComparer.Ordinal))
+        var result = await blacklist.BarAsync(id, ct).ConfigureAwait(false);
+        return result.Outcome switch
         {
-            await store.WriteAsync(Datasets.UserUnbarred,
-                unbarred.Where(u => !string.Equals(u, id, StringComparison.Ordinal)).ToList(), ct).ConfigureAwait(false);
-        }
-
-        return OwnerActionResult.Done($"`{id}` is barred from every bot command.");
+            BarOutcome.Barred => OwnerActionResult.Done($"`{id}` is barred from every bot command."),
+            BarOutcome.AlreadyBarred => OwnerActionResult.Done($"`{id}` is already barred."),
+            BarOutcome.Owner => OwnerActionResult.Refused($"`{id}` is an owner. Owners can never be barred from the bot."),
+            _ => OwnerActionResult.Refused($"`{id}` was NOT barred: the bar list could not be saved. ({result.Error})"),
+        };
     }
 
     public async Task<OwnerActionResult> UnbarUserAsync(string userId, CancellationToken ct = default)
     {
         if (!TryUserId(userId, out var id)) return OwnerActionResult.Refused($"`{userId}` is not a Discord user id.");
+        if (blacklist is null) return OwnerActionResult.Refused(NoBlacklist);
 
-        var barred = Barred();
-        await store.WriteAsync(Datasets.UserBlacklist,
-            barred.Where(b => !string.Equals(b, id, StringComparison.Ordinal)).ToList(), ct).ConfigureAwait(false);
-
-        /* Recorded as explicitly un-barred, not merely absent. BLACKLIST_IDS in .env also
-           feeds the bar list, and without this an id set there would come straight back on
-           the next restart with no way to override it. */
-        var unbarred = store.Read(Datasets.UserUnbarred, new List<string>());
-        if (!unbarred.Contains(id, StringComparer.Ordinal))
-            await store.WriteAsync(Datasets.UserUnbarred, unbarred.Append(id).ToList(), ct).ConfigureAwait(false);
-
-        return OwnerActionResult.Done($"`{id}` may use bot commands again.");
+        var result = await blacklist.UnbarAsync(id, ct).ConfigureAwait(false);
+        return result.Outcome switch
+        {
+            BarOutcome.Unbarred => OwnerActionResult.Done($"`{id}` may use bot commands again."),
+            BarOutcome.NotBarred => OwnerActionResult.Done($"`{id}` was not barred. Nothing changed."),
+            _ => OwnerActionResult.Refused($"`{id}` is STILL barred: the change could not be saved. ({result.Error})"),
+        };
     }
 
     public OwnerActionResult BarredUsers()
     {
-        var barred = Barred();
+        if (blacklist is null) return OwnerActionResult.Refused(NoBlacklist);
+
+        var barred = blacklist.Entries();
         return barred.Count == 0
             ? OwnerActionResult.Done("No Discord user is barred.")
             : OwnerActionResult.List($"**{barred.Count}** barred Discord user(s).",
-                barred.Select(id => $"• <@{id}> — `{id}`").ToList());
+                barred.Select(u => $"• <@{u.Id}> — `{u.Id}`{(u.FromEnvironment ? " *(BLACKLIST_IDS)*" : "")}").ToList());
     }
+
+    private const string NoBlacklist = "The command blacklist is not available.";
 
     // ---- address tracking ignore list ----------------------------------------------------
 
@@ -512,22 +507,16 @@ public sealed class OwnerActions(
 
     // ---- helpers -------------------------------------------------------------------------
 
-    private List<string> Barred() => store.Read(Datasets.UserBlacklist, new List<string>());
-
     private List<string> Ignored() => store.Read(Datasets.IgnoredNames, new List<string>());
 
     private static IReadOnlyList<string> Add(IReadOnlyList<string> existing, string value, StringComparer comparer) =>
         existing.Contains(value, comparer) ? existing : existing.Append(value).ToList();
 
     /// <summary>A Discord snowflake, accepting a &lt;@id&gt; mention as well as a bare id.</summary>
-    private static bool TryUserId(string? input, out string id)
+    private static bool TryUserId(string? input, out ulong id)
     {
-        id = "";
         var trimmed = (input ?? "").Trim().TrimStart('<', '@', '!').TrimEnd('>');
-        if (!ulong.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)) return false;
-
-        id = parsed.ToString(CultureInfo.InvariantCulture);
-        return true;
+        return ulong.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out id) && id > 0;
     }
 }
 

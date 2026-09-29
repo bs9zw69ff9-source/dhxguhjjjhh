@@ -358,6 +358,12 @@ public static class Program
         // ---- discord surfaces ----
         builder.Services.AddSingleton(sp => new Access(
             sp.GetRequiredService<SerializedStore>(), features.Owners, features.SuperOwners, factions));
+        /* Discord users barred from every command. Checked by the gateway before anything is
+           dispatched and edited from /configure, so the two share this one instance. */
+        builder.Services.AddSingleton(sp => new CommandBlacklist(
+            sp.GetRequiredService<SerializedStore>(),
+            sp.GetRequiredService<Access>().IsOwner,
+            features.BarredUserIds));
         /* Singleton, and registered as BOTH: commands inject it to send paged output, and
            the gateway resolves it as a component handler to turn the pages. Two instances
            would mean the handler looking up a session the sender never stored. */
@@ -680,7 +686,8 @@ public static class Program
             firewall: features.FirewallBlacklistedIps
                 ? sp.GetRequiredService<PavlovBot.Host.Servers.IFirewall>()
                 : null,
-            whitelists: sp.GetRequiredService<WhitelistBackup>()));
+            whitelists: sp.GetRequiredService<WhitelistBackup>(),
+            blacklist: sp.GetRequiredService<CommandBlacklist>()));
         builder.Services.AddSingleton<ISlashCommand, InspectCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
         builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(
