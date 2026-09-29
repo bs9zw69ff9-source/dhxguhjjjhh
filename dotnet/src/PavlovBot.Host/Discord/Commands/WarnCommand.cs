@@ -31,7 +31,8 @@ public sealed class WarnCommand(
     SerializedStore store,
     Access access,
     AuditLog audit,
-    ILogger<WarnCommand> logger) : ISlashCommand
+    ILogger<WarnCommand> logger,
+    MasterNames masters) : ISlashCommand
 {
     public string Name => "warn";
 
@@ -144,6 +145,15 @@ public sealed class WarnCommand(
         var reason = $"Automatic: {outcome.Active} warnings in {(int)WarningService.DecayWindow.TotalDays} days";
 
         var now = DateTimeOffset.UtcNow;
+        var tier = access.TierOf(command.User);
+
+        // Same two rules as /tempban: a master owner's pardon, and a higher tier's ban, stand.
+        if (tier < StaffTier.MasterOwner && masters.IsPardoned(player))
+        {
+            return $"No escalation ban: a {StaffHierarchy.Name(StaffTier.MasterOwner)} unbanned them, " +
+                   "and only a Master Owner can ban them again.";
+        }
+
         var record = new BanRecord
         {
             PlayerId = player,
@@ -153,18 +163,28 @@ public sealed class WarnCommand(
             Expires = now + span,
             Permanent = false,
             DurationLabel = EasternTime.TimeLeft(now + span, TimeProvider.System),
-            Tier = access.TierOf(command.User),
+            Tier = tier,
         };
 
         // Record first, then enforce. See the class remarks.
+        BanRecord? outranked = null;
         await store.UpdateAsync<List<BanRecord>>(Datasets.TempBans, [], all =>
         {
+            outranked = BanRules.ProtectedFromReplacement(all, player, tier, now);
+            if (outranked is not null) return null;
+
             // Replace rather than append: two rows for one player means an unban lifts one
             // and the other quietly re-catches them on the next sweep.
             all.RemoveAll(b => BanRules.SamePlayer(b.PlayerId, player));
             all.Add(record);
             return all;
         }, ct).ConfigureAwait(false);
+
+        if (outranked is not null)
+        {
+            return $"No escalation ban: they are already banned by a {StaffHierarchy.Name(outranked.Tier ?? StaffTier.None)}, " +
+                   "and replacing that ban is above your authority.";
+        }
 
         var enforcement = await bans.HardEnforceAsync(player, account?.Id, ct: ct).ConfigureAwait(false);
 

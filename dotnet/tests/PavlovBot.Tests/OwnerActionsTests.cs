@@ -431,6 +431,51 @@ public class OwnerActionsTests : IDisposable
         Assert.Contains("**1**", result.Detail, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task BulkClearsKeepMasterOwnerBans()
+    {
+        // The panel is owner-level; a super owner is an owner. Neither clear may lift what a
+        // master owner banned - /unban already refuses them one at a time.
+        var now = DateTimeOffset.UtcNow;
+        await _store.WriteAsync(Datasets.TempBans, new List<PavlovBot.Core.Moderation.BanRecord>
+        {
+            new() { PlayerId = "masterTemp", Expires = now.AddDays(1), Tier = PavlovBot.Core.Moderation.StaffTier.MasterOwner },
+            new() { PlayerId = "masterPerm", Permanent = true, Tier = PavlovBot.Core.Moderation.StaffTier.MasterOwner },
+            new() { PlayerId = "ownerPerm", Permanent = true, Tier = PavlovBot.Core.Moderation.StaffTier.SuperOwner },
+            new() { PlayerId = "modTemp", Expires = now.AddDays(1), Tier = PavlovBot.Core.Moderation.StaffTier.Mod },
+        });
+
+        var temp = await _actions.ClearTempBansAsync();
+        Assert.Equal(["masterTemp", "masterPerm", "ownerPerm"], Stored().Select(b => b.PlayerId));
+        Assert.Contains("Master Owner", temp.Detail, StringComparison.Ordinal);
+
+        await _actions.ClearAllBansAsync();
+        Assert.Equal(["masterTemp", "masterPerm"], Stored().Select(b => b.PlayerId));
+    }
+
+    [Fact]
+    public async Task ClearingTemporaryBansKeepsEveryFieldOfTheOnesItKeeps()
+    {
+        // It used to write the kept records back through the evasion model, which has no tier,
+        // account id or ban time - stripping them from every permanent ban it kept.
+        var at = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        await _store.WriteAsync(Datasets.TempBans, new List<PavlovBot.Core.Moderation.BanRecord>
+        {
+            new() { PlayerId = "temp", Expires = at.AddDays(1) },
+            new() { PlayerId = "perm", Permanent = true, UniqueId = "acct1", At = at, Tier = PavlovBot.Core.Moderation.StaffTier.Admin },
+        });
+
+        await _actions.ClearTempBansAsync();
+
+        var kept = Assert.Single(Stored());
+        Assert.Equal("acct1", kept.UniqueId);
+        Assert.Equal(at, kept.At);
+        Assert.Equal(PavlovBot.Core.Moderation.StaffTier.Admin, kept.Tier);
+    }
+
+    private List<PavlovBot.Core.Moderation.BanRecord> Stored() =>
+        _store.Read<List<PavlovBot.Core.Moderation.BanRecord>>(Datasets.TempBans, []);
+
     // ---- never-ban ----
 
     private (OwnerActions Actions, MasterNames Masters, List<string> Lifted) WithProtection()

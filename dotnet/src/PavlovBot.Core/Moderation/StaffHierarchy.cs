@@ -8,6 +8,12 @@ public enum StaffTier
     Admin = 2,
     Owner = 3,
     SuperOwner = 4,
+
+    /// <summary>
+    /// Above everyone. Nobody else can lift a Master Owner's ban, replace it, or ban a player a
+    /// Master Owner unbanned.
+    /// </summary>
+    MasterOwner = 5,
 }
 
 /// <summary>
@@ -21,6 +27,9 @@ public enum StaffTier
 /// permissions they legitimately have. Without it, any mod can quietly unban whoever the
 /// owner banned, and the audit log records it as routine.
 ///
+/// A MASTER OWNER SITS ABOVE THE SUPER OWNERS, so a super owner added through .env - who can
+/// otherwise do everything - still cannot undo what the bot's owner decided.
+///
 /// EQUAL TIERS CAN OVERRIDE EACH OTHER. The rule protects strictly-higher tiers only -
 /// making peers unable to undo each other would mean any mod going inactive leaves their
 /// bans permanent.
@@ -31,6 +40,7 @@ public static class StaffHierarchy
 {
     public static string Name(StaffTier tier) => tier switch
     {
+        StaffTier.MasterOwner => "Master Owner",
         StaffTier.SuperOwner => "Super Owner",
         StaffTier.Owner => "Owner",
         StaffTier.Admin => "Admin",
@@ -43,8 +53,9 @@ public static class StaffHierarchy
     /// the mod role does not fall through to the lower answer.
     /// </summary>
     public static StaffTier TierOf(
-        bool isSuperOwner, bool isOwner, bool isAdmin, bool isMod)
+        bool isSuperOwner, bool isOwner, bool isAdmin, bool isMod, bool isMasterOwner = false)
     {
+        if (isMasterOwner) return StaffTier.MasterOwner;
         if (isSuperOwner) return StaffTier.SuperOwner;
         if (isOwner) return StaffTier.Owner;
         if (isAdmin) return StaffTier.Admin;

@@ -400,13 +400,28 @@ public sealed record FeatureOptions
     public MonitorSettings MonitorSettings { get; init; } = MonitorSettings.Default;
 
     /// <summary>
+    /// Deny every address of every actively banned player at the OS firewall (ufw), temp bans
+    /// included, and lift the rule when the ban ends. <c>FIREWALL_BANS</c>, default on.
+    /// </summary>
+    /// <remarks>
+    /// Turning it off does not strand rules: the next pass finds nothing wanted and removes
+    /// every rule this feature added. See <c>BanFirewall</c> for what is never blocked.
+    /// </remarks>
+    public bool FirewallBans { get; init; } = true;
+
+    /// <summary>
+    /// Addresses the ban firewall must never deny (<c>FIREWALL_NEVER_BLOCK</c>): your home IP,
+    /// the address you SSH in from. A ufw deny blocks EVERY port, SSH included.
+    /// </summary>
+    public IReadOnlyList<string> FirewallNeverBlock { get; init; } = [];
+
+    /// <summary>
     /// Also deny a manually blacklisted ADDRESS at the OS firewall (ufw), not just in the bot.
     /// </summary>
     /// <remarks>
     /// Applies to a manual address block through <c>/configure blacklist</c> only - the owner's
-    /// deliberate, exact-match decision, the same category <c>/firewall</c> serves. The auto-ban
-    /// path still never touches the firewall: a false-positive ban must not cut somebody off at
-    /// the OS level. Defaults ON because that is what was asked for; set <c>FIREWALL_BLACKLIST</c>
+    /// deliberate, exact-match decision, the same category <c>/firewall</c> serves. Banned
+    /// players' addresses are a separate feature, <see cref="FirewallBans"/>. Defaults ON because that is what was asked for; set <c>FIREWALL_BLACKLIST</c>
     /// false to keep blacklisting bot-only, e.g. where the bot does not run as root.
     /// </remarks>
     public bool FirewallBlacklistedIps { get; init; } = true;
@@ -517,6 +532,8 @@ public sealed record FeatureOptions
             // Defaults ON, like VPN_AUTOBAN: a plain switch, not something discovered by
             // deleting a key. Off keeps a manual blacklist bot-only, touching no ufw rule.
             FirewallBlacklistedIps = OptionalFlag(configuration, "FIREWALL_BLACKLIST") != false,
+            FirewallBans = OptionalFlag(configuration, "FIREWALL_BANS") != false,
+            FirewallNeverBlock = List(configuration, "FIREWALL_NEVER_BLOCK"),
 
             // ---- server monitoring: every threshold overridable, sane defaults otherwise ----
             MonitoringEnabled = OptionalFlag(configuration, "MONITORING") != false,
@@ -703,7 +720,7 @@ public sealed record FeatureOptions
             ? "off (needs VERIFY_CHANNEL and VERIFY_STAFF_CHANNEL)"
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
               (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
-        $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in super owner",
+        $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in master owner",
         $"security DMs: {(SecurityAlertRecipients.Count == 0
             ? "off (SECURITY_DM_IDS is unset and no owners are configured)"
             : $"{SecurityAlertRecipients.Count} recipient(s)" +

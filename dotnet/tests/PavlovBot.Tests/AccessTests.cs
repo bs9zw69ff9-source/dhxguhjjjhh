@@ -163,6 +163,27 @@ public class AccessTests
     }
 
     [Fact]
+    public void TheBuiltInOwnerIsAMasterOwnerAboveTheSuperOwners()
+    {
+        var access = Build(out _);
+        var builtIn = new FakeMember(PavlovBot.Core.Security.OwnerGuard.SuperOwnerId);
+
+        Assert.Equal(StaffTier.MasterOwner, access.TierOf(builtIn));
+        Assert.True(access.IsSuperOwner(builtIn));        // every power a super owner has
+        Assert.False(access.IsMasterOwner(new FakeMember(SuperOwnerId)));
+    }
+
+    [Fact]
+    public void ASuperOwnerIsNeverAMasterOwner()
+    {
+        // No setting makes a master owner: only the compiled-in id is one.
+        var access = Build(out _);
+
+        Assert.False(access.IsMasterOwner(new FakeMember(SuperOwnerId)));
+        Assert.Equal(StaffTier.SuperOwner, access.TierOf(new FakeMember(SuperOwnerId)));
+    }
+
+    [Fact]
     public void ASuperOwnerOutranksAnOwner()
     {
         var access = Build(out _);

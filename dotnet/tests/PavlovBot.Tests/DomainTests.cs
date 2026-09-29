@@ -285,9 +285,50 @@ public class StaffHierarchyTests
     }
 
     [Fact]
-    public void ASuperOwnerCanUndoAnything()
+    public void ASuperOwnerCanUndoAnythingBelowAMasterOwner()
     {
-        Assert.All(Enum.GetValues<StaffTier>(), t => Assert.True(StaffHierarchy.CanOverride(StaffTier.SuperOwner, t)));
+        Assert.All(Enum.GetValues<StaffTier>().Where(t => t != StaffTier.MasterOwner),
+            t => Assert.True(StaffHierarchy.CanOverride(StaffTier.SuperOwner, t)));
+        Assert.False(StaffHierarchy.CanOverride(StaffTier.SuperOwner, StaffTier.MasterOwner));
+    }
+
+    [Fact]
+    public void AMasterOwnerIsAboveEveryoneAndOnlyAMasterOwnerCanUndoThem()
+    {
+        Assert.All(Enum.GetValues<StaffTier>(), t => Assert.True(StaffHierarchy.CanOverride(StaffTier.MasterOwner, t)));
+        Assert.All(Enum.GetValues<StaffTier>().Where(t => t != StaffTier.MasterOwner),
+            t => Assert.False(StaffHierarchy.CanOverride(t, StaffTier.MasterOwner)));
+        Assert.Equal(StaffTier.MasterOwner,
+            StaffHierarchy.TierOf(isSuperOwner: true, isOwner: true, isAdmin: true, isMod: true, isMasterOwner: true));
+        Assert.Equal("Master Owner", StaffHierarchy.Name(StaffTier.MasterOwner));
+    }
+
+    [Fact]
+    public void ABanCannotBeReplacedByATierThatCouldNotLiftIt()
+    {
+        /* Replacing is lifting: a mod who cannot /unban an owner's permanent ban must not be
+           able to /tempban the same player for a minute and wait. */
+        var now = DateTimeOffset.UtcNow;
+        BanRecord[] bans = [new() { PlayerId = "Cheater", Permanent = true, Tier = StaffTier.MasterOwner }];
+
+        Assert.NotNull(BanRules.ProtectedFromReplacement(bans, "cheater", StaffTier.SuperOwner, now));
+        Assert.NotNull(BanRules.ProtectedFromReplacement(bans, "Cheater", StaffTier.None, now));   // automation
+        Assert.Null(BanRules.ProtectedFromReplacement(bans, "Cheater", StaffTier.MasterOwner, now));
+        Assert.Null(BanRules.ProtectedFromReplacement(bans, "SomeoneElse", StaffTier.Mod, now));
+    }
+
+    [Fact]
+    public void AnExpiredOrUntieredBanCanAlwaysBeReplaced()
+    {
+        var now = DateTimeOffset.UtcNow;
+        BanRecord[] bans =
+        [
+            new() { PlayerId = "Served", Expires = now.AddMinutes(-1), Tier = StaffTier.MasterOwner },
+            new() { PlayerId = "Auto", Permanent = true, Tier = null },
+        ];
+
+        Assert.Null(BanRules.ProtectedFromReplacement(bans, "Served", StaffTier.Mod, now));
+        Assert.Null(BanRules.ProtectedFromReplacement(bans, "Auto", StaffTier.Mod, now));
     }
 
     [Fact]

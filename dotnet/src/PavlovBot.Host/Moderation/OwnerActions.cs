@@ -5,6 +5,7 @@ using PavlovBot.Core.Evasion;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Servers;
 using PavlovBot.Host.Storage;
+using StoredBan = PavlovBot.Core.Moderation.BanRecord;
 
 namespace PavlovBot.Host.Moderation;
 
@@ -446,26 +447,48 @@ public sealed class OwnerActions(
     // Carried over from the earlier flat /configure command so the panel is the ONE place
     // these live. Two entry points to "clear every ban" is one too many.
 
-    public async Task<OwnerActionResult> ClearTempBansAsync(CancellationToken ct = default)
-    {
-        var before = store.Read<List<BanRecord>>(Datasets.TempBans, []);
-        var kept = before.Where(b => b.Permanent).ToList();
-        var removed = before.Count - kept.Count;
+    /// <summary>
+    /// Whether a bulk clear keeps this record: MASTER OWNER bans survive every bulk clear.
+    /// </summary>
+    /// <remarks>
+    /// These actions are owner-level, and a super owner is an owner. Wiping the list would lift
+    /// a master owner's ban wholesale, which is exactly what /unban refuses them one at a time.
+    /// A master owner lifts their own with /unban.
+    /// </remarks>
+    private static bool MasterOwnerBan(StoredBan ban) => ban.Tier == PavlovBot.Core.Moderation.StaffTier.MasterOwner;
 
-        await store.WriteAsync(Datasets.TempBans, kept, ct).ConfigureAwait(false);
-        return OwnerActionResult.Done($"**{removed}** temporary ban(s) cleared. Permanent bans were kept.");
-    }
+    public Task<OwnerActionResult> ClearTempBansAsync(CancellationToken ct = default) =>
+        ClearBansAsync(ban => !ban.Permanent, "temporary ban(s)", "Permanent bans were kept.", ct);
 
-    public async Task<OwnerActionResult> ClearAllBansAsync(CancellationToken ct = default)
-    {
-        var count = store.Read<List<BanRecord>>(Datasets.TempBans, []).Count;
-        await store.WriteAsync<List<BanRecord>>(Datasets.TempBans, [], ct).ConfigureAwait(false);
-
+    public Task<OwnerActionResult> ClearAllBansAsync(CancellationToken ct = default) =>
         /* The bot's record only. Lifting the native server bans too would be one action that
            unbans everyone on every server, and the reconcile pass would then have nothing
            left to re-apply. */
-        return OwnerActionResult.Done(
-            $"**{count}** ban record(s) cleared from the bot. Native server bans are untouched - lift those with `/unban`.");
+        ClearBansAsync(_ => true, "ban record(s)",
+            "Native server bans are untouched - lift those with `/unban`.", ct);
+
+    /// <summary>Remove every record <paramref name="clear"/> selects, except master owner bans.</summary>
+    private async Task<OwnerActionResult> ClearBansAsync(
+        Func<StoredBan, bool> clear, string what, string note, CancellationToken ct)
+    {
+        var removed = 0;
+        var kept = 0;
+
+        // One locked read-modify-write, so a ban issued while this runs is not wiped with the rest.
+        var saved = await store.UpdateAsync<List<StoredBan>>(Datasets.TempBans, [], bans =>
+        {
+            kept = bans.Count(b => clear(b) && MasterOwnerBan(b));
+            removed = bans.RemoveAll(b => clear(b) && !MasterOwnerBan(b));
+            return removed > 0 ? bans : null;
+        }, ct).ConfigureAwait(false);
+
+        if (!saved.Ok)
+            return OwnerActionResult.Refused($"The ban list could not be updated, so nothing was cleared. ({saved.Error})");
+
+        var protectedNote = kept > 0
+            ? $"\n**{kept}** Master Owner ban(s) were kept - only a Master Owner can lift those, with `/unban`."
+            : "";
+        return OwnerActionResult.Done($"**{removed}** {what} cleared. {note}{protectedNote}");
     }
 
     public async Task<OwnerActionResult> StripAllMenusAsync(CancellationToken ct = default)

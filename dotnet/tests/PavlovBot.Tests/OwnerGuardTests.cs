@@ -127,13 +127,15 @@ public class OwnerGuardTests
     // ---- LAYER 2 and 5: the access layer ----
 
     [Fact]
-    public void TheBuiltInIsASuperOwnerWithNothingConfigured()
+    public void TheBuiltInIsAMasterOwnerWithNothingConfigured()
     {
         var access = new Access(Store(), []);
 
+        // The master owner tier sits above super owner and holds every super owner power.
+        Assert.True(access.IsMasterOwner(new FakeUser(PinnedSuperOwnerId)));
         Assert.True(access.IsSuperOwner(new FakeUser(PinnedSuperOwnerId)));
         Assert.True(access.IsOwner(new FakeUser(PinnedSuperOwnerId)));
-        Assert.Equal("SUPER OWNER", access.DescribeAccess(new FakeUser(PinnedSuperOwnerId)));
+        Assert.Equal("MASTER OWNER", access.DescribeAccess(new FakeUser(PinnedSuperOwnerId)));
     }
 
     [Fact]

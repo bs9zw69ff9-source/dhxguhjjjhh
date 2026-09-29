@@ -212,6 +212,9 @@ public sealed class IpTrackingService : PavlovBot.Host.Moderation.IBanEvidence
 
     public AccountRecord? Account(string accountId) => LoadAccounts().GetValueOrDefault(accountId);
 
+    /// <summary>Every account, read once. For a caller resolving many players in one pass.</summary>
+    public IReadOnlyDictionary<string, AccountRecord> Accounts() => LoadAccounts();
+
     /// <summary>Every display name the bot has ever recorded, most recent per account first.</summary>
     public IReadOnlyList<string> KnownNames() =>
         LoadAccounts().Values

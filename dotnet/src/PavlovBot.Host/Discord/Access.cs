@@ -369,9 +369,23 @@ public sealed class Access
     /// <summary>Every role id the bot can see on this user, or null when it cannot see them.</summary>
     public IReadOnlyCollection<ulong>? VisibleRoles(IUser? user) => Member(user)?.RoleIds;
 
+    /// <summary>
+    /// The tier above everyone: the built-in owner, and nobody else.
+    /// </summary>
+    /// <remarks>
+    /// COMPILED IN, NEVER CONFIGURED. A super owner added through .env can do everything else,
+    /// and the point of this tier is that they cannot undo the bot owner's bans. If .env could
+    /// name a master owner, anybody able to edit it could make themselves one - so there is no
+    /// setting for it at all.
+    /// </remarks>
+    public bool IsMasterOwner(IUser? user) => user is not null && user.Id == OwnerGuard.SuperOwnerId;
+
     public bool IsSuperOwner(IUser? user)
     {
         if (user is null) return false;
+
+        // A master owner holds every power a super owner does.
+        if (IsMasterOwner(user)) return true;
 
         /* AT THE POINT OF USE, not only at construction. Patching the constructor is the
            obvious move; this makes the answer itself depend on the constant, so the id has
@@ -451,11 +465,12 @@ public sealed class Access
         ManageableFactions(user).Contains(faction, StringComparer.OrdinalIgnoreCase);
 
     public StaffTier TierOf(IUser? user) =>
-        StaffHierarchy.TierOf(IsSuperOwner(user), IsOwner(user), IsAdmin(user), IsMod(user));
+        StaffHierarchy.TierOf(IsSuperOwner(user), IsOwner(user), IsAdmin(user), IsMod(user), IsMasterOwner(user));
 
     /// <summary>The label shown on the help menu.</summary>
     public string DescribeAccess(IUser? user) => TierOf(user) switch
     {
+        StaffTier.MasterOwner => "MASTER OWNER",
         StaffTier.SuperOwner => "SUPER OWNER",
         StaffTier.Owner => "OWNER",
         StaffTier.Admin => "ADMIN",

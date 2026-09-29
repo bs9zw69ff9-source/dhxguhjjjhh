@@ -33,9 +33,9 @@ public readonly record struct EnforcementResult(int Servers, string? Target)
 /// This is the opposite of stock PC Pavlov, whose RCON keys on the UniqueId. If this bot is
 /// ever pointed at a non-Shack server, this is the one assumption to revisit.
 ///
-/// The OS firewall is deliberately NEVER touched from here. A ufw rule is an owner-managed
-/// manual action through <c>/firewall</c>; automating it means a false-positive ban can cut
-/// off a whole household or a shared NAT, and nothing in the bot would know to undo it.
+/// The OS firewall is not touched from here. <see cref="BanFirewall"/> reconciles ufw against
+/// the active bans on its own timer, so every path that starts or ends a ban is covered without
+/// each of them having to remember to.
 /// </remarks>
 public sealed class BanService
 {
