@@ -471,11 +471,11 @@ public sealed class CheckBanCommand(
             var note = BanFileReport.Describe(listed);
             var body = $"**{Sanitize.Code(player)}** is not banned{(note is null ? "." : $".\n\n{note}")}";
 
-            await Reply(command, listed.Listed
+            await Reply(command, WithHistory(listed.Listed
                 ? Theme.Punishment($"{Theme.Deny} Exiled by the server", body)
                     .AddField("Lift it", "`/unban` removes them from that file.")
                     .Brand()
-                : Theme.Success("No ban on record", body)).ConfigureAwait(false);
+                : Theme.Success("No ban on record", body), player)).ConfigureAwait(false);
             return;
         }
 
@@ -483,8 +483,9 @@ public sealed class CheckBanCommand(
         {
             // A record whose time has passed but which the sweep has not cleared yet. Say
             // so plainly rather than reporting them as banned.
-            await Reply(command, Theme.Notice("Sentence served",
-                $"**{Sanitize.Code(player)}** served their ban; it expired {Theme.Relative(record.Expires!.Value)}.")).ConfigureAwait(false);
+            await Reply(command, WithHistory(Theme.Notice("Sentence served",
+                $"**{Sanitize.Code(player)}** served their ban; it expired {Theme.Relative(record.Expires!.Value)}."), player))
+                .ConfigureAwait(false);
             return;
         }
 
@@ -527,6 +528,85 @@ public sealed class CheckBanCommand(
                 : "Ban evasion (no earlier record found)");
         }
 
-        await Reply(command, embed.Brand()).ConfigureAwait(false);
+        await Reply(command, WithHistory(embed, player).Brand()).ConfigureAwait(false);
+    }
+
+    /// <summary>Most past bans shown. Older ones are counted, not listed.</summary>
+    internal const int HistoryShown = 8;
+
+    /// <summary>The longest a single reason may run before it is cut, so the field fits Discord's 1024.</summary>
+    private const int HistoryReasonLength = 70;
+
+    /// <summary>
+    /// The audit actions that are a ban or its end, and how each reads. The Node bot's names
+    /// are here too: its entries are in the same log, and they are most of the history.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> HistoryLabels =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["permban"] = "Permanent ban",
+            ["tempban"] = "Temp ban",
+            ["warn-ban"] = "Ban (warning limit)",
+            ["autoban"] = "Auto-ban",
+            ["auto-ipban"] = "Auto-ban",
+            ["vpnban"] = "Auto-ban (VPN)",
+            ["auto-vpnban"] = "Auto-ban (VPN)",
+            ["unban"] = "Unbanned",
+            ["auto-unban"] = "Unbanned (served)",
+            ["autoban-released"] = "Unbanned (served)",
+        };
+
+    /// <summary>Add the player's ban history - under any name their account has used - to a reply.</summary>
+    private EmbedBuilder WithHistory(EmbedBuilder embed, string player)
+    {
+        var names = (Tracking.AccountByName(player)?.Names ?? []).Append(player).ToList();
+        var history = BanHistory(Audit.All(), names, player);
+        return history is null ? embed : embed.AddField("Ban history", history);
+    }
+
+    /// <summary>
+    /// Every past ban and unban against any of these names, newest first, as one field. Null when
+    /// there are none.
+    /// </summary>
+    /// <remarks>
+    /// FROM THE AUDIT LOG, not the ban store: a ban that was lifted or served is gone from the
+    /// store, and that is exactly the part of somebody's record an appeal or a repeat offence
+    /// needs. Reasons are redacted the same way the current ban's is - an auto-ban reason carries
+    /// the address that caught them.
+    /// </remarks>
+    internal static string? BanHistory(IEnumerable<ModAction> log, IReadOnlyCollection<string> names, string asked)
+    {
+        var entries = log
+            .Where(a => HistoryLabels.ContainsKey(a.Action) && names.Contains(a.Player, StringComparer.OrdinalIgnoreCase))
+            .Reverse()                              // the log is chronological; stable sort keeps ties newest-first
+            .OrderByDescending(a => a.At)
+            .ToList();
+        if (entries.Count == 0) return null;
+
+        var bans = entries.Count(a => !HistoryLabels[a.Action].StartsWith("Unbanned", StringComparison.Ordinal));
+        var lines = entries.Take(HistoryShown).Select(a =>
+        {
+            var reason = Sanitize.RedactPrivate(a.Reason ?? "");
+            if (reason.Length > HistoryReasonLength) reason = reason[..HistoryReasonLength] + "…";
+            var alias = string.Equals(a.Player, asked, StringComparison.OrdinalIgnoreCase) ? "" : $" as **{Sanitize.Code(a.Player)}**";
+            var why = reason.Length > 0 ? $" - {Sanitize.Code(reason)}" : "";
+            return $"{Theme.Dot} **{HistoryLabels[a.Action]}**{alias} by {Sanitize.Code(a.Moderator)}{why} {Theme.Relative(a.At)}";
+        }).ToList();
+
+        var header = $"{bans} ban(s) on record.";
+
+        /* FITTED, not estimated: a long moderator name or reason must not push the field past
+           Discord's limit, which fails the whole reply rather than trimming it. Oldest go first. */
+        string Render() =>
+            $"{header}\n{string.Join("\n", lines)}" +
+            (entries.Count > lines.Count ? $"\n…and {entries.Count - lines.Count} older." : "");
+
+        var text = Render();
+        while (text.Length > EmbedFieldBuilder.MaxFieldValueLength && lines.Count > 1)
+        {
+            lines.RemoveAt(lines.Count - 1);
+            text = Render();
+        }
+        return text.Length <= EmbedFieldBuilder.MaxFieldValueLength ? text : text[..(EmbedFieldBuilder.MaxFieldValueLength - 1)] + "…";
     }
 }
