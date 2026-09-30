@@ -475,7 +475,7 @@ public sealed class CheckBanCommand(
                 ? Theme.Punishment($"{Theme.Deny} Exiled by the server", body)
                     .AddField("Lift it", "`/unban` removes them from that file.")
                     .Brand()
-                : Theme.Success("No ban on record", body), player)).ConfigureAwait(false);
+                : Theme.Success("No active ban", body), player)).ConfigureAwait(false);
             return;
         }
 
