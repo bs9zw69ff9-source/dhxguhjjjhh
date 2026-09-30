@@ -537,22 +537,66 @@ public sealed class CheckBanCommand(
     /// <summary>The longest a single reason may run before it is cut, so the field fits Discord's 1024.</summary>
     private const int HistoryReasonLength = 70;
 
-    /// <summary>
-    /// The audit actions shown as history, and how each reads: bans staff issued, and unbans.
-    /// </summary>
-    /// <remarks>
-    /// AUTOMATED ENTRIES ARE LEFT OUT - evasion and VPN auto-bans, and the releases when a ban
-    /// runs out. They are the machinery repeating itself (one evader can log dozens), and they
-    /// buried the handful of decisions a person actually made, which is what an appeal is about.
-    /// </remarks>
+    /// <summary>The bans staff issued, and how each reads. These are what the history lists.</summary>
     private static readonly IReadOnlyDictionary<string, string> HistoryLabels =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["permban"] = "Permanent ban",
             ["tempban"] = "Temp ban",
             ["warn-ban"] = "Ban (warning limit)",
-            ["unban"] = "Unbanned",
         };
+
+    /// <summary>
+    /// Automated bans, from both bots. Never listed - one evader can log dozens - but they still
+    /// take part in the matching, so the /unban that lifted one is not charged to a staff ban.
+    /// </summary>
+    private static readonly HashSet<string> AutomatedBans =
+        new(["autoban", "auto-ipban", "vpnban", "auto-vpnban"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A staff member lifting a ban early.</summary>
+    private const string ManualUnban = "unban";
+
+    /// <summary>A ban ending on its own, as the bots logged it.</summary>
+    private static readonly HashSet<string> Releases =
+        new(["autoban-released", "auto-unban"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The staff bans that count, oldest first: ones still in force or that ran their course. A
+    /// ban a staff member lifted early with /unban does not count.
+    /// </summary>
+    /// <remarks>
+    /// Walked in log order. Each /unban lifts the most recent ban still standing at that moment -
+    /// which may be an automated one, and then no staff ban is affected. A release (a ban that
+    /// ran out) ends the most recent standing ban without discounting it.
+    /// </remarks>
+    private static List<ModAction> CountedBans(IReadOnlyList<ModAction> actions)
+    {
+        var standing = new List<ModAction>();   // bans not yet lifted or released, oldest first
+        var counted = new List<ModAction>();
+        var lifted = new HashSet<ModAction>(ReferenceEqualityComparer.Instance);
+
+        foreach (var action in actions)         // the audit log is chronological
+        {
+            if (HistoryLabels.ContainsKey(action.Action) || AutomatedBans.Contains(action.Action))
+            {
+                standing.Add(action);
+            }
+            else if (string.Equals(action.Action, ManualUnban, StringComparison.OrdinalIgnoreCase) ||
+                     Releases.Contains(action.Action))
+            {
+                if (standing.Count == 0) continue;
+                var ended = standing[^1];
+                standing.RemoveAt(standing.Count - 1);
+                if (!Releases.Contains(action.Action)) lifted.Add(ended);
+            }
+        }
+
+        foreach (var action in actions)
+        {
+            if (HistoryLabels.ContainsKey(action.Action) && !lifted.Contains(action)) counted.Add(action);
+        }
+        return counted;
+    }
 
     /// <summary>Add the player's ban history - under any name their account has used - to a reply.</summary>
     private EmbedBuilder WithHistory(EmbedBuilder embed, string player)
@@ -574,30 +618,22 @@ public sealed class CheckBanCommand(
     /// </remarks>
     internal static string? BanHistory(IEnumerable<ModAction> log, IReadOnlyCollection<string> names, string asked)
     {
-        var entries = log
-            .Where(a => HistoryLabels.ContainsKey(a.Action) && names.Contains(a.Player, StringComparer.OrdinalIgnoreCase))
-            .Reverse()                              // the log is chronological; stable sort keeps ties newest-first
+        var entries = CountedBans([.. log.Where(a => names.Contains(a.Player, StringComparer.OrdinalIgnoreCase))])
+            .AsEnumerable().Reverse()                              // newest first; the list is chronological so ties keep their order
             .OrderByDescending(a => a.At)
             .ToList();
         if (entries.Count == 0) return null;
 
-        static bool IsUnban(ModAction a) => string.Equals(a.Action, "unban", StringComparison.OrdinalIgnoreCase);
-
-        // Unbans alone (of auto-bans, left out above) are not a history worth a field.
-        var bans = entries.Count(a => !IsUnban(a));
-        if (bans == 0) return null;
-
         var lines = entries.Take(HistoryShown).Select(a =>
         {
-            // An unban is logged with the reason of the ban it lifted; repeating it is noise.
-            var reason = IsUnban(a) ? "" : Sanitize.RedactPrivate(a.Reason ?? "");
+            var reason = Sanitize.RedactPrivate(a.Reason ?? "");
             if (reason.Length > HistoryReasonLength) reason = reason[..HistoryReasonLength] + "…";
             var alias = string.Equals(a.Player, asked, StringComparison.OrdinalIgnoreCase) ? "" : $" as **{Sanitize.Code(a.Player)}**";
             var why = reason.Length > 0 ? $" - {Sanitize.Code(reason)}" : "";
             return $"{Theme.Dot} **{HistoryLabels[a.Action]}**{alias} by {Sanitize.Code(a.Moderator)}{why} {Theme.Relative(a.At)}";
         }).ToList();
 
-        var header = $"{bans} ban(s) on record.";
+        var header = $"{entries.Count} ban(s) on record.";
 
         /* FITTED, not estimated: a long moderator name or reason must not push the field past
            Discord's limit, which fails the whole reply rather than trimming it. Oldest go first. */

@@ -17,21 +17,61 @@ public class CheckBanHistoryTests
         new(action, by, player, reason, Now.AddDays(-daysAgo));
 
     [Fact]
-    public void PastBansAndTheirEndsAreListedNewestFirst()
+    public void CurrentAndExpiredBansAreListedNewestFirst()
     {
         var log = new[]
         {
-            Act("tempban", "Evader", "griefing", 30),
-            Act("unban", "Evader", "griefing", 28),
-            Act("permban", "Evader", "cheating", 2),
+            Act("tempban", "Evader", "griefing", 30),   // ran its course
+            Act("permban", "Evader", "cheating", 2),    // still in force
         };
 
         var history = CheckBanCommand.BanHistory(log, ["Evader"], "Evader")!;
 
         Assert.StartsWith("2 ban(s) on record.", history, StringComparison.Ordinal);
         Assert.True(history.IndexOf("cheating", StringComparison.Ordinal) < history.IndexOf("griefing", StringComparison.Ordinal));
-        Assert.Contains("Unbanned", history, StringComparison.Ordinal);
-        Assert.Equal(2, history.Split("griefing").Length);   // once, on the ban - not again on its unban
+    }
+
+    [Fact]
+    public void ABanStaffLiftedEarlyIsNotCounted()
+    {
+        var log = new[]
+        {
+            Act("tempban", "Evader", "griefing", 30),
+            Act("permban", "Evader", "mistaken ban", 10),
+            Act("unban", "Evader", "mistaken ban", 9),
+        };
+
+        var history = CheckBanCommand.BanHistory(log, ["Evader"], "Evader")!;
+
+        Assert.StartsWith("1 ban(s) on record.", history, StringComparison.Ordinal);
+        Assert.DoesNotContain("mistaken", history, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unbanned", history, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnbanningAnAutoBanDoesNotDiscountAnEarlierStaffBan()
+    {
+        // The unban lifted the auto-ban, not the temp ban that had already run out before it.
+        var log = new[]
+        {
+            Act("tempban", "Evader", "griefing", 30),
+            Act("autoban-released", "Evader", null, 28, by: "auto"),
+            Act("autoban", "Evader", "Ban evasion", 5, by: "auto"),
+            Act("unban", "Evader", "Ban evasion", 4),
+        };
+
+        var history = CheckBanCommand.BanHistory(log, ["Evader"], "Evader")!;
+
+        Assert.StartsWith("1 ban(s) on record.", history, StringComparison.Ordinal);
+        Assert.Contains("griefing", history, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnlyLiftedBansMeansNoHistory()
+    {
+        var log = new[] { Act("permban", "Evader", "oops", 3), Act("unban", "Evader", "oops", 2) };
+
+        Assert.Null(CheckBanCommand.BanHistory(log, ["Evader"], "Evader"));
     }
 
     [Fact]
