@@ -22,7 +22,7 @@ public class CheckBanHistoryTests
         var log = new[]
         {
             Act("tempban", "Evader", "griefing", 30),
-            Act("autoban-released", "Evader", null, 28, by: "auto"),
+            Act("unban", "Evader", "griefing", 28),
             Act("permban", "Evader", "cheating", 2),
         };
 
@@ -30,16 +30,24 @@ public class CheckBanHistoryTests
 
         Assert.StartsWith("2 ban(s) on record.", history, StringComparison.Ordinal);
         Assert.True(history.IndexOf("cheating", StringComparison.Ordinal) < history.IndexOf("griefing", StringComparison.Ordinal));
-        Assert.Contains("Unbanned (served)", history, StringComparison.Ordinal);
+        Assert.Contains("Unbanned", history, StringComparison.Ordinal);
+        Assert.Equal(2, history.Split("griefing").Length);   // once, on the ban - not again on its unban
     }
 
     [Fact]
-    public void TheNodeBotsEntriesCountToo()
+    public void AutomatedBansAndReleasesAreLeftOut()
     {
-        // Same dataset; most of the history on a live server was written under these names.
-        var history = CheckBanCommand.BanHistory([Act("auto-ipban", "Evader", null, 90)], ["Evader"], "Evader");
+        // The machinery repeating itself - one evader can log dozens - buries what staff decided.
+        var log = new[]
+        {
+            Act("autoban", "Evader", "Ban evasion", 3, by: "auto"),
+            Act("auto-ipban", "Evader", null, 90, by: "auto"),
+            Act("vpnban", "Evader", "VPN", 4, by: "auto"),
+            Act("autoban-released", "Evader", null, 2, by: "auto"),
+            Act("unban", "Evader", "Ban evasion", 1),
+        };
 
-        Assert.Contains("Auto-ban", history, StringComparison.Ordinal);
+        Assert.Null(CheckBanCommand.BanHistory(log, ["Evader"], "Evader"));
     }
 
     [Fact]
@@ -61,7 +69,7 @@ public class CheckBanHistoryTests
     [Fact]
     public void AnAutoBanReasonDoesNotLeakTheAddress()
     {
-        var history = CheckBanCommand.BanHistory([Act("autoban", "Evader", "Ban evasion - blacklisted ip 203.0.113.9", 1)], ["Evader"], "Evader")!;
+        var history = CheckBanCommand.BanHistory([Act("permban", "Evader", "alt of banned player at 203.0.113.9", 1)], ["Evader"], "Evader")!;
 
         Assert.DoesNotContain("203.0.113.9", history, StringComparison.Ordinal);
     }

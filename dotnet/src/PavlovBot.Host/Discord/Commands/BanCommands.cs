@@ -538,22 +538,20 @@ public sealed class CheckBanCommand(
     private const int HistoryReasonLength = 70;
 
     /// <summary>
-    /// The audit actions that are a ban or its end, and how each reads. The Node bot's names
-    /// are here too: its entries are in the same log, and they are most of the history.
+    /// The audit actions shown as history, and how each reads: bans staff issued, and unbans.
     /// </summary>
+    /// <remarks>
+    /// AUTOMATED ENTRIES ARE LEFT OUT - evasion and VPN auto-bans, and the releases when a ban
+    /// runs out. They are the machinery repeating itself (one evader can log dozens), and they
+    /// buried the handful of decisions a person actually made, which is what an appeal is about.
+    /// </remarks>
     private static readonly IReadOnlyDictionary<string, string> HistoryLabels =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["permban"] = "Permanent ban",
             ["tempban"] = "Temp ban",
             ["warn-ban"] = "Ban (warning limit)",
-            ["autoban"] = "Auto-ban",
-            ["auto-ipban"] = "Auto-ban",
-            ["vpnban"] = "Auto-ban (VPN)",
-            ["auto-vpnban"] = "Auto-ban (VPN)",
             ["unban"] = "Unbanned",
-            ["auto-unban"] = "Unbanned (served)",
-            ["autoban-released"] = "Unbanned (served)",
         };
 
     /// <summary>Add the player's ban history - under any name their account has used - to a reply.</summary>
@@ -583,10 +581,16 @@ public sealed class CheckBanCommand(
             .ToList();
         if (entries.Count == 0) return null;
 
-        var bans = entries.Count(a => !HistoryLabels[a.Action].StartsWith("Unbanned", StringComparison.Ordinal));
+        static bool IsUnban(ModAction a) => string.Equals(a.Action, "unban", StringComparison.OrdinalIgnoreCase);
+
+        // Unbans alone (of auto-bans, left out above) are not a history worth a field.
+        var bans = entries.Count(a => !IsUnban(a));
+        if (bans == 0) return null;
+
         var lines = entries.Take(HistoryShown).Select(a =>
         {
-            var reason = Sanitize.RedactPrivate(a.Reason ?? "");
+            // An unban is logged with the reason of the ban it lifted; repeating it is noise.
+            var reason = IsUnban(a) ? "" : Sanitize.RedactPrivate(a.Reason ?? "");
             if (reason.Length > HistoryReasonLength) reason = reason[..HistoryReasonLength] + "…";
             var alias = string.Equals(a.Player, asked, StringComparison.OrdinalIgnoreCase) ? "" : $" as **{Sanitize.Code(a.Player)}**";
             var why = reason.Length > 0 ? $" - {Sanitize.Code(reason)}" : "";
