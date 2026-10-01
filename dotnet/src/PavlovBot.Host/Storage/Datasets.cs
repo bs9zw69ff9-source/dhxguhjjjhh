@@ -70,6 +70,12 @@ public static class Datasets
     /// </summary>
     public const string MasterPardons = "master_pardons";
 
+    /// <summary>
+    /// The master names whose access was last granted. A name that drops out of MASTER_NAMES is
+    /// found by comparing against this, and everything it was given is taken back.
+    /// </summary>
+    public const string MasterGrants = "master_grants";
+
     /// <summary>Address -> the ban a ufw deny was added for. Only these rules are ever lifted.</summary>
     public const string FirewallBans = "firewall_bans";
 
@@ -176,6 +182,7 @@ public static class Datasets
         [AutobanExempt] = "{}",
         [NeverBan] = "{}",
         [MasterPardons] = "{}",
+        [MasterGrants] = "[]",
         [FirewallBans] = "{}",
         [Warnings] = "{}",
         [BanReconcileState] = "{}",

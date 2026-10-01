@@ -404,6 +404,45 @@ public sealed class RosterService
         return (added, failed);
     }
 
+    /// <summary>
+    /// Take each name off every roster file the loaded factions own - the reverse of
+    /// <see cref="EnsureOnEveryRosterAsync"/>, for a name that is no longer a master.
+    /// </summary>
+    /// <remarks>
+    /// A few lines per file, so each write passes <see cref="RosterWriteGuard"/> without
+    /// <c>allowBulk</c>. An unreadable roster is skipped and reported, never written.
+    /// </remarks>
+    /// <returns>How many (file, name) entries were removed, and the files that could not be updated.</returns>
+    public async Task<(int Removed, IReadOnlyList<string> Failed)> RemoveFromEveryRosterAsync(
+        IReadOnlyCollection<string> names, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        if (!Enabled || names.Count == 0) return (0, []);
+
+        var removed = 0;
+        var failed = new List<string>();
+
+        foreach (var file in RosterFilesOf(Factions))
+        {
+            var unreadable = false;
+            var dropped = 0;
+
+            var written = await UpdateAsync(file, current =>
+            {
+                if (current is null) { unreadable = true; return null; }
+
+                var kept = current.Where(line => !names.Contains(line.Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
+                dropped = current.Count - kept.Count;
+                return dropped == 0 ? null : kept;
+            }, allowBulk: false, ct).ConfigureAwait(false);
+
+            if (written) removed += dropped;
+            else if (unreadable || dropped > 0) failed.Add(file);
+        }
+
+        return (removed, failed);
+    }
+
     /// <summary>Where a player currently sits, or null when they are on no roster.</summary>
     public Task<Membership?> FindAsync(string player, CancellationToken ct = default)
     {
