@@ -451,7 +451,7 @@ public sealed record FeatureOptions
             FactionsPath = Text(configuration, "FACTIONS_PATH"),
             FactionSetName = Text(configuration, "FACTION_SET"),
             IgnoredPaths = List(configuration, "IGNORE_PATHS"),
-            PavlovUnits = PavlovBot.Host.Servers.ServiceControl.ParseUnits(Text(configuration, "PAVLOV_UNITS")),
+            PavlovUnits = UnitsFor(configuration),
             SystemctlSudo = OptionalFlag(configuration, "PAVLOV_SYSTEMCTL_SUDO"),
             /* THE FILE THE SERVER ACTUALLY READS, which is Config/blacklist.txt - the one
                the setup guide creates beside mods.txt and whitelist.txt, and the one this
@@ -594,6 +594,30 @@ public sealed record FeatureOptions
     /// Every ban file to keep in sync: none when disabled, the one explicit path when set, or
     /// one per discovered install otherwise. See <see cref="BanFilePaths"/>.
     /// </summary>
+    /// <summary>
+    /// PAVLOV_UNITS when set; otherwise the unit systemd runs each install with, in install order.
+    /// </summary>
+    /// <remarks>
+    /// Detected rather than defaulted: the fixed pavlovserver, pavlovserver1, pavlovserver2 list was
+    /// only right for a box laid out exactly that way, and a wrong unit list restarts the wrong
+    /// server. The fixed list is still the answer when systemd has no Pavlov units to read.
+    /// </remarks>
+    private static IReadOnlyList<string> UnitsFor(IConfiguration configuration)
+    {
+        if (Text(configuration, "PAVLOV_UNITS") is { } configured)
+            return PavlovBot.Host.Servers.ServiceControl.ParseUnits(configured);
+
+        var detected = PavlovBot.Host.Servers.PavlovServerDetection.FromSystemd();
+        if (detected.Count == 0) return PavlovBot.Host.Servers.ServiceControl.DefaultUnits;
+
+        var installs = PavlovBot.Host.Storage.PavlovInstalls.Discover(
+            Text(configuration, "PAVLOV_BASES"), Text(configuration, "PAVLOV_BASE_1"));
+        var units = PavlovBot.Host.Servers.PavlovServerDetection.UnitsFor(installs, detected)
+            .Where(PavlovBot.Host.Servers.ServiceControl.IsPlausibleUnitName)
+            .ToList();
+        return units.Count > 0 ? units : PavlovBot.Host.Servers.ServiceControl.DefaultUnits;
+    }
+
     private static IReadOnlyList<string> BanFilePathsFor(IConfiguration configuration)
     {
         if (OptionalFlag(configuration, "BLACKLIST_SYNC") == false) return [];
@@ -604,7 +628,7 @@ public sealed record FeatureOptions
         // Otherwise every install on the box gets its own Config/blacklist.txt covered.
         var installs = PavlovBot.Host.Storage.PavlovInstalls.Discover(
             Text(configuration, "PAVLOV_BASES"),
-            Text(configuration, "PAVLOV_BASE_1") ?? "/home/steam/pavlovserver");
+            Text(configuration, "PAVLOV_BASE_1"));
 
         var paths = installs
             .Select(PavlovBot.Host.Storage.PavlovInstalls.BlacklistPath)
