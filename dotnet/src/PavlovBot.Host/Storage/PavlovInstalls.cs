@@ -24,8 +24,17 @@ public static class PavlovInstalls
     /// </summary>
     /// <param name="explicitBases">PAVLOV_BASES, comma or colon separated. Wins outright.</param>
     /// <param name="firstBase">PAVLOV_BASE_1. Its parent and prefix drive the scan.</param>
+    /// <param name="unitDirectory">
+    /// Where to look for systemd units when neither setting is given; null for
+    /// <see cref="PavlovBot.Host.Servers.PavlovServerDetection.UnitDirectory"/>.
+    /// </param>
+    /// <remarks>
+    /// WITH NOTHING CONFIGURED, systemd is asked first: every service that runs PavlovServer.sh
+    /// names its install, so a box set up by /provisionserver needs neither setting. The sibling
+    /// scan from the default base is the fallback when no such unit is found.
+    /// </remarks>
     public static IReadOnlyList<string> Discover(
-        string? explicitBases = null, string? firstBase = null, ILogger? logger = null)
+        string? explicitBases = null, string? firstBase = null, ILogger? logger = null, string? unitDirectory = null)
     {
         var listed = (explicitBases ?? "")
             .Split([',', ':'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -36,6 +45,17 @@ public static class PavlovInstalls
         {
             logger?.LogInformation("Using the {Count} install(s) named in PAVLOV_BASES", listed.Count);
             return listed;
+        }
+
+        if (string.IsNullOrWhiteSpace(firstBase))
+        {
+            var detected = PavlovBot.Host.Servers.PavlovServerDetection.FromSystemd(
+                unitDirectory ?? PavlovBot.Host.Servers.PavlovServerDetection.UnitDirectory);
+            if (detected.Count > 0)
+            {
+                logger?.LogInformation("Found {Count} Pavlov server(s) from their systemd units", detected.Count);
+                return [.. detected.Select(d => d.Install)];
+            }
         }
 
         var root = string.IsNullOrWhiteSpace(firstBase) ? DefaultBase : firstBase.TrimEnd('/');
