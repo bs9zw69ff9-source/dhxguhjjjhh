@@ -54,6 +54,7 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
     private readonly IReadOnlyList<string> _installs;
     private readonly WhitelistFile _files;
     private readonly RosterService? _rosters;
+    private readonly PavlovBot.Core.Data.SerializedStore? _store;
     private readonly ILogger<MasterAccess> _logger;
     private readonly TimeProvider _clock;
     private readonly TimeSpan _grantDelay;
@@ -72,9 +73,11 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
         ILogger<MasterAccess> logger,
         TimeProvider? clock = null,
         TimeSpan? grantDelay = null,
-        RosterService? rosters = null)
+        RosterService? rosters = null,
+        PavlovBot.Core.Data.SerializedStore? store = null)
     {
         _rosters = rosters;
+        _store = store;
         _masters = masters;
         _tracking = tracking;
         _rcon = rcon;
@@ -105,7 +108,90 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         if (_tracking is not null) _tracking.Joined += OnJoinedAsync;
+        await RevokeRemovedAsync(cancellationToken).ConfigureAwait(false);
         await EnsureFilesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Take back everything from a name that has left MASTER_NAMES since the last start.
+    /// </summary>
+    /// <remarks>
+    /// THE GRANTS OUTLIVED THE NAME. Removing a master from .env only stopped the bot granting
+    /// them again; the mods.txt line, every whitelist.txt line and every roster entry it had added
+    /// stayed, so a removed master kept moderator and every faction. The names granted are
+    /// recorded (<see cref="Datasets.MasterGrants"/>) so a missing one can be found and undone.
+    ///
+    /// EVERYTHING A MASTER GETS, NOTHING ELSE: mods.txt and whitelist.txt on every install, every
+    /// faction roster, and the RCON+ menu, mod and access manager on every server for a session
+    /// still running. A removed master who was ALSO a real faction member loses that membership -
+    /// the bot put them on every roster, so it cannot tell which one was theirs.
+    ///
+    /// A name whose removal did not fully land stays recorded, so the next start tries again.
+    /// </remarks>
+    internal async Task RevokeRemovedAsync(CancellationToken ct)
+    {
+        if (_store is null) return;
+
+        var current = _masters.Masters.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var granted = _store.Read(Datasets.MasterGrants, new List<string>());
+        var removed = granted.Where(n => !current.Contains(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var unfinished = new List<string>();
+
+        foreach (var name in removed)
+        {
+            try
+            {
+                if (!await RevokeAsync(name, ct).ConfigureAwait(false)) unfinished.Add(name);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Revoking removed master {Name} failed - will retry on the next start", name);
+                unfinished.Add(name);
+            }
+        }
+
+        await _store.WriteAsync(Datasets.MasterGrants, current.Concat(unfinished).ToList(), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Undo every grant for one former master. False when any file could not be updated.</summary>
+    private async Task<bool> RevokeAsync(string name, CancellationToken ct)
+    {
+        var entry = WhitelistFile.Entry(name);
+        var complete = true;
+
+        foreach (var install in _installs)
+        {
+            foreach (var path in new[] { ModsPath(install), PavlovInstalls.WhitelistPath(install) })
+            {
+                var result = await _files.RemoveAsync(path, entry, ct).ConfigureAwait(false);
+                if (!result.Ok)
+                {
+                    complete = false;
+                    _logger.LogWarning("Could not remove former master {Name} from {Path}: {Error}", entry, result.Path, result.Error);
+                }
+            }
+        }
+
+        if (_rosters is { Enabled: true })
+        {
+            var (_, failed) = await _rosters.RemoveFromEveryRosterAsync([entry], ct).ConfigureAwait(false);
+            if (failed.Count > 0)
+            {
+                complete = false;
+                _logger.LogWarning("Could not take former master {Name} off {Count} roster(s): {Files}",
+                    entry, failed.Count, string.Join(", ", failed));
+            }
+        }
+
+        /* A live session keeps its menu until it ends, so it is taken now too - in the
+           background, because this runs during startup and a server that is down would hold the
+           whole bot up for its RCON timeouts. Refusals (not online) are expected and quiet. */
+        var target = Sanitize.Id(name);
+        if (target.Length > 0) Track(Task.Run(() => RevokeSessionsAsync(target, _stopping.Token), CancellationToken.None));
+
+        _logger.LogWarning("MASTER REMOVED | {Name} is no longer in MASTER_NAMES - mods.txt, whitelists, rosters and RCON+ access revoked{Partial}",
+            entry, complete ? "" : " (partly - retried next start)");
+        return complete;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -177,6 +263,30 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
         }
     }
 
+    private async Task RevokeSessionsAsync(string target, CancellationToken ct)
+    {
+        foreach (var server in _rcon.Servers)
+        {
+            foreach (var line in RconMenu.Revoke(target, wasHighStaff: true))
+            {
+                try { await _rcon.SendAsync(server, line, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("\"{Line}\" on {Server}: {Message}", line, server, ex.Message);
+                }
+            }
+        }
+    }
+
+    /// <summary>Keep a background task until it finishes, so shutdown can wait for it.</summary>
+    private void Track(Task work)
+    {
+        _pending.TryAdd(work, 0);
+        _ = work.ContinueWith(t => _pending.TryRemove(t, out _), CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
     /// <summary>
     /// A join. Masters are handed to a background grant so the log reader is not held up for
     /// the delay; everybody else returns at once.
@@ -200,10 +310,7 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
         if (_lastGrant.TryGetValue(key, out var last) && now - last < RegrantCooldown) return Task.CompletedTask;
         _lastGrant[key] = now;
 
-        var work = Task.Run(() => GrantAfterDelayAsync(number, name, _stopping.Token), CancellationToken.None);
-        _pending.TryAdd(work, 0);
-        _ = work.ContinueWith(t => _pending.TryRemove(t, out _), CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        Track(Task.Run(() => GrantAfterDelayAsync(number, name, _stopping.Token), CancellationToken.None));
 
         return Task.CompletedTask;
     }

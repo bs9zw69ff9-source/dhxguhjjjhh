@@ -768,7 +768,8 @@ public static class Program
             installs,
             sp.GetRequiredService<WhitelistFile>(),
             sp.GetRequiredService<ILogger<PavlovBot.Host.Moderation.MasterAccess>>(),
-            rosters: sp.GetRequiredService<RosterService>()));
+            rosters: sp.GetRequiredService<RosterService>(),
+            store: sp.GetRequiredService<SerializedStore>()));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordGateway>());
 
         var host = builder.Build();

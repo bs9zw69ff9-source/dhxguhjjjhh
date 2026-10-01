@@ -236,6 +236,86 @@ public sealed class MasterAccessTests : IAsyncDisposable
         await access.DisposeAsync();
     }
 
+    // ---- a name removed from MASTER_NAMES ----
+
+    private MasterAccess Access(SerializedStore store, params string[] masters) =>
+        new(new MasterNames(masters, store), null, _rcon, _labels, [_install],
+            new WhitelistFile(NullLogger<WhitelistFile>.Instance), NullLogger<MasterAccess>.Instance,
+            grantDelay: TimeSpan.Zero, rosters: _rosters, store: store);
+
+    private SerializedStore GrantStore() =>
+        new(new FileKeyValueBackend(Path.Combine(_root, "grants")), new SystemTextJsonCodec());
+
+    [Fact]
+    public async Task ARemovedMasterLosesEverythingItWasGiven()
+    {
+        /* THE BUG. Dropping a name from .env only stopped the bot granting it again; the mods.txt
+           line, the whitelist lines and every roster entry stayed behind. */
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
+        var store = GrantStore();
+
+        var before = Access(store, Master, "KeptMaster");
+        await before.StartAsync(CancellationToken.None);
+        await before.StopAsync(CancellationToken.None);
+        Assert.Contains(Master, await File.ReadAllLinesAsync(Mods));
+
+        var after = Access(store, "KeptMaster");   // Master taken out of MASTER_NAMES, restart
+        await after.StartAsync(CancellationToken.None);
+        await after.StopAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(Master, await File.ReadAllLinesAsync(Mods));
+        Assert.DoesNotContain(Master, await File.ReadAllLinesAsync(Whitelist));
+        foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
+        {
+            var lines = await File.ReadAllLinesAsync(Path.Combine(_rosterDir, file));
+            Assert.DoesNotContain(Master, lines);
+            Assert.Contains("KeptMaster", lines);
+        }
+
+        // Everybody else's lines are untouched.
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        var recorded = store.Read(Datasets.MasterGrants, new List<string>());
+        Assert.Contains("KeptMaster", recorded);
+        Assert.DoesNotContain(Master, recorded);
+
+        await before.DisposeAsync();
+        await after.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ARemovedMastersLiveMenuIsTakenOnTheWire()
+    {
+        var store = GrantStore();
+        await store.WriteAsync(Datasets.MasterGrants, new List<string> { Master });
+
+        var after = Access(store);
+        await after.StartAsync(CancellationToken.None);
+        var commands = await CommandsAfterGrantAsync(3);   // sent in the background, so startup is not held up
+
+        Assert.Contains($"RemoveMenu {Master}", commands);
+        Assert.Contains($"RemoveAccessManager {Master}", commands);
+        await after.StopAsync(CancellationToken.None);
+        await after.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AStillListedMasterIsLeftAlone()
+    {
+        var store = GrantStore();
+        var access = Access(store, Master);
+        await access.StartAsync(CancellationToken.None);
+        await access.StopAsync(CancellationToken.None);
+
+        var again = Access(store, Master);
+        await again.StartAsync(CancellationToken.None);
+        await again.StopAsync(CancellationToken.None);
+
+        Assert.Contains(Master, await File.ReadAllLinesAsync(Mods));
+        Assert.DoesNotContain(_server.Commands, c => c.StartsWith("Remove", StringComparison.Ordinal));
+        await access.DisposeAsync();
+        await again.DisposeAsync();
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _access.StopAsync(CancellationToken.None);
