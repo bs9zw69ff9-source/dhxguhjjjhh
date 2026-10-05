@@ -13,8 +13,8 @@ namespace PavlovBot.Host.Moderation;
 
 /// <summary>
 /// Master names get moderator (through <c>mods.txt</c>), every whitelist (each server's
-/// <c>whitelist.txt</c> and every faction roster file) and the RCON+ menu plus access manager
-/// (through RCON, every time they join).
+/// <c>whitelist.txt</c> and every faction roster file) and the full RCON+ menu (<c>GiveMenu</c>
+/// over RCON, every time they join).
 /// </summary>
 /// <remarks>
 /// A PORT GAP. The Node bot granted a master a menu on every join; the C# port kept master
@@ -94,16 +94,15 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
         Path.Combine(installRoot, "Pavlov", "Saved", "Config", "mods.txt");
 
     /// <summary>
-    /// The RCON lines that give a master the menu and access manager.
+    /// The RCON line that gives a master full RCON+: <c>GiveMenu &lt;name&gt;</c> with no bitcode.
     /// </summary>
     /// <remarks>
-    /// The High Staff bitcode, because it is the fullest menu read off a working grant; see
-    /// <see cref="RconMenu"/>. AddAccessManager is sent as well, explicitly, rather than trusting
-    /// the bitcode to carry it: this is the owner's account, and the one grant that must not
-    /// depend on a positional mask being exactly right.
+    /// NO BITCODE, ON PURPOSE. A bitcode is a positional mask of which buttons a menu gets, and
+    /// the High Staff one that used to go here is a subset; the owner's own account gets the whole
+    /// menu, which is what GiveMenu with just a name grants. The separate AddAccessManager went with
+    /// it - one command, nothing to be half-refused.
     /// </remarks>
-    public static IReadOnlyList<string> GrantCommands(string player) =>
-        [.. RconMenu.Grant(player, RconMenu.HighStaff), $"AddAccessManager {player}"];
+    public static IReadOnlyList<string> GrantCommands(string player) => [$"GiveMenu {player}"];
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {

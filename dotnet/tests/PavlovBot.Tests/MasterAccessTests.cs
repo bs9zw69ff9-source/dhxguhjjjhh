@@ -84,21 +84,17 @@ public sealed class MasterAccessTests : IAsyncDisposable
     }
 
     [Fact]
-    public void TheGrantIsTheHighStaffMenuPlusAccessManager()
+    public void TheGrantIsTheFullMenuWithNoBitcode()
     {
-        Assert.Equal(
-            [$"GiveMenu {Master} {RconMenu.HighStaffMenuId}", $"AddAccessManager {Master}"],
-            MasterAccess.GrantCommands(Master));
+        Assert.Equal([$"GiveMenu {Master}"], MasterAccess.GrantCommands(Master));
     }
 
     [Fact]
-    public async Task AMasterJoiningGetsTheMenuAndAccessManagerOnTheWire()
+    public async Task AMasterJoiningGetsTheFullMenuOnTheWire()
     {
         await _access.OnJoinedAsync(Join(Master));
 
-        Assert.Equal(
-            [$"GiveMenu {Master} {RconMenu.HighStaffMenuId}", $"AddAccessManager {Master}"],
-            await CommandsAfterGrantAsync(2));
+        Assert.Equal([$"GiveMenu {Master}"], await CommandsAfterGrantAsync(1));
     }
 
     [Fact]
@@ -106,7 +102,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     {
         await _access.OnJoinedAsync(Join("FKI6"));
 
-        Assert.Equal(2, (await CommandsAfterGrantAsync(2)).Count);
+        Assert.Single(await CommandsAfterGrantAsync(1));
     }
 
     [Fact]
@@ -125,7 +121,9 @@ public sealed class MasterAccessTests : IAsyncDisposable
         await _access.OnJoinedAsync(Join(Master));
         await _access.OnJoinedAsync(Join(Master));
 
-        Assert.Equal(2, (await CommandsAfterGrantAsync(2)).Count);
+        await CommandsAfterGrantAsync(1);
+        await Task.Delay(300);   // long enough for a duplicate grant to land if one were sent
+        Assert.Single(_server.Commands);
     }
 
     [Fact]
