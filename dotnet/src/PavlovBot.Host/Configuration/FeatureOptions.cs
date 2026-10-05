@@ -577,7 +577,11 @@ public sealed record FeatureOptions
             Owners = Snowflakes(configuration, "OWNER_IDS"),
             BarredUserIds = Snowflakes(configuration, "BLACKLIST_IDS", [',', ' ', '\t', '\r', '\n']),
             SuperOwners = Snowflakes(configuration, "SUPER_OWNER_IDS"),
-            MasterNames = List(configuration, "MASTER_NAMES"),
+            /* Spaces separate names as well as commas: "UserOne UserTwo" is two accounts, and
+               reading it as one name granted a player who does not exist and protected nobody. */
+            MasterNames = [.. (configuration["MASTER_NAMES"] ?? "")
+                .Split([',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)],
             PluginDirectory = Text(configuration, "PLUGIN_DIR"),
             PluginsAllowRoot = Flag(configuration, "PLUGINS_ALLOW_ROOT"),
             EnabledPlugins = List(configuration, "PLUGINS_ENABLED"),
@@ -766,10 +770,7 @@ public sealed record FeatureOptions
             : $"{SecurityAlertRecipients.Count} recipient(s)" +
               (SecurityDmIds.Count > 0 ? " (SECURITY_DM_IDS)" : " (the owners - SECURITY_DM_IDS is unset)"))}",
 
-        /* Rendered THROUGH the same union the auto-ban check uses, rather than restated.
-           A summary that lists the configured names alone would have said "none" on a
-           deployment where one account is in fact protected - and the startup summary is
-           the only place most people ever look. */
-        $"master names: {string.Join(", ", OwnerGuard.WithBuiltIn(MasterNames))}",
+        // Each name on its own, so a space that split two names is visible here.
+        $"master names: {(MasterNames.Count == 0 ? "none (MASTER_NAMES not set)" : string.Join(", ", MasterNames))}",
     ];
 }
