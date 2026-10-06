@@ -763,7 +763,7 @@ public sealed record FeatureOptions
             ? "off (needs VERIFY_CHANNEL and VERIFY_STAFF_CHANNEL)"
             : $"panel in {VerifyChannel}, requests to {VerifyStaffChannel}" +
               (VerifiedRole is null ? " - NO VERIFIED_ROLE, approval grants nothing" : $", grants role {VerifiedRole}"))}",
-        $"owners: {Owners.Count + SuperOwners.Count} configured, plus the built-in master owner",
+        $"owners: {Owners.Count + SuperOwners.Count} configured, plus {OwnerGuard.MasterOwnerIds.Count} built-in master owners",
         $"command blacklist: {(BarredUserIds.Count == 0 ? "none from BLACKLIST_IDS" : $"{BarredUserIds.Count} from BLACKLIST_IDS")}, plus any barred from /configure",
         $"security DMs: {(SecurityAlertRecipients.Count == 0
             ? "off (SECURITY_DM_IDS is unset and no owners are configured)"
@@ -771,6 +771,6 @@ public sealed record FeatureOptions
               (SecurityDmIds.Count > 0 ? " (SECURITY_DM_IDS)" : " (the owners - SECURITY_DM_IDS is unset)"))}",
 
         // Each name on its own, so a space that split two names is visible here.
-        $"master names: {(MasterNames.Count == 0 ? "none (MASTER_NAMES not set)" : string.Join(", ", MasterNames))}",
+        $"master names: {string.Join(", ", OwnerGuard.WithBuiltIn(MasterNames))}",
     ];
 }

@@ -32,6 +32,8 @@ public class OwnerGuardTests
     /* Written out rather than referenced. If either changes, THIS is the assertion that
        names the old value and the new one. */
     private const ulong PinnedSuperOwnerId = 1014251293159731310UL;
+    private const ulong PinnedSecondMasterOwnerId = 307052224087851009UL;
+    private const string PinnedMasterName = "fki6";
 
     private static SerializedStore Store() => new(new MemoryBackend(), new SystemTextJsonCodec());
 
@@ -53,7 +55,7 @@ public class OwnerGuardTests
     }
 
     [Fact]
-    public void TheFingerprintIsTheDigestOfTheId()
+    public void TheFingerprintIsTheDigestOfTheIdsAndName()
     {
         /* Recomputed here from the pinned literals rather than from the constants, so
            editing BOTH the constants and the fingerprint - the only edit that keeps
@@ -61,7 +63,8 @@ public class OwnerGuardTests
         var expected = Convert.ToHexStringLower(
             System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(
-                    PinnedSuperOwnerId.ToString(CultureInfo.InvariantCulture))));
+                    string.Create(CultureInfo.InvariantCulture,
+                        $"{PinnedSuperOwnerId}:{PinnedSecondMasterOwnerId}:{PinnedMasterName}"))));
 
         Assert.Equal(OwnerGuard.Fingerprint, expected);
     }
@@ -135,24 +138,52 @@ public class OwnerGuardTests
         Assert.False(access.IsOwner(new FakeMember(0UL)));
     }
 
-    // ---- master names are configuration only ----
+    // ---- the built-in master name and second master owner ----
 
     [Fact]
-    public void NoMasterNameIsBuiltIn()
+    public void TheBuiltInMasterNameIsAlwaysAMaster()
     {
-        // LxPXHam was compiled in; it is gone, so an empty MASTER_NAMES protects nobody.
         var masters = new MasterNames([], Store());
 
-        Assert.Empty(masters.Masters);
+        Assert.Equal(PinnedMasterName, OwnerGuard.MasterName);
+        Assert.True(masters.IsMaster("fki6"));
+        Assert.True(masters.IsMaster("  FKI6 "));
+        Assert.Contains("fki6", masters.Masters);
         Assert.False(masters.IsMaster("LxPXHam"));
     }
 
     [Fact]
-    public void ConfiguredMastersMatchTrimmedAndIgnoringCase()
+    public void ConfiguredMastersAreKeptAlongsideTheBuiltIn()
     {
-        var masters = new MasterNames(["  Spaced  ", "", "   "], Store());
+        var masters = new MasterNames(["  Spaced  ", "", "   ", "FKI6"], Store());
 
         Assert.True(masters.IsMaster("spaced"));
-        Assert.Single(masters.Masters);
+        Assert.Equal(2, masters.Masters.Count);   // Spaced and fki6, not fki6 twice
+    }
+
+    [Fact]
+    public void TheSecondMasterOwnerIsAMasterOwnerWithNothingConfigured()
+    {
+        var access = new Access(Store(), []);
+        var second = new FakeUser(PinnedSecondMasterOwnerId);
+
+        Assert.Equal(PinnedSecondMasterOwnerId, OwnerGuard.SecondMasterOwnerId);
+        Assert.True(access.IsMasterOwner(second));
+        Assert.True(access.IsSuperOwner(second));
+        Assert.True(access.IsOwner(second));
+        Assert.True(access.IsOwner(PinnedSecondMasterOwnerId));
+        Assert.Equal("MASTER OWNER", access.DescribeAccess(second));
+        foreach (var required in Enum.GetValues<RequiredAccess>())
+            Assert.True(access.Passes(required, second), $"second master owner refused {required}");
+    }
+
+    [Fact]
+    public void NobodyElseBecomesAMasterOwner()
+    {
+        var access = new Access(Store(), [42UL], [43UL]);
+
+        Assert.False(access.IsMasterOwner(new FakeUser(42UL)));
+        Assert.False(access.IsMasterOwner(new FakeUser(43UL)));
+        Assert.False(access.IsMasterOwner(new FakeUser(PinnedSecondMasterOwnerId + 1)));
     }
 }

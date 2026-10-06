@@ -29,11 +29,23 @@ public sealed class OwnerGuardException(string message) : Exception(message);
 /// </remarks>
 public static class OwnerGuard
 {
-    /// <summary>The Discord account that always holds super-owner tier.</summary>
+    /// <summary>The Discord account that always holds super-owner tier, and is a master owner.</summary>
     public const ulong SuperOwnerId = 1014251293159731310UL;
 
+    /// <summary>The second built-in master owner.</summary>
+    public const ulong SecondMasterOwnerId = 307052224087851009UL;
+
+    /// <summary>The in-game account that is always a master name, whatever MASTER_NAMES says.</summary>
+    public const string MasterName = "fki6";
+
+    /// <summary>Every Discord account that is a master owner: compiled in, never configured.</summary>
+    public static IReadOnlySet<ulong> MasterOwnerIds { get; } = new HashSet<ulong> { SuperOwnerId, SecondMasterOwnerId };
+
+    /// <summary>Whether this Discord id is a built-in master owner.</summary>
+    public static bool IsMasterOwner(ulong userId) => userId is SuperOwnerId or SecondMasterOwnerId;
+
     /// <summary>
-    /// SHA-256 over the id above, so EDITING it is caught as well as removing it.
+    /// SHA-256 over the constants above, so EDITING one is caught as well as removing it.
     /// </summary>
     /// <remarks>
     /// The obvious attack on a hard-coded id is not deleting the check, it is changing the
@@ -43,11 +55,12 @@ public static class OwnerGuard
     ///
     /// Not a secret and not pretending to be. It is a tripwire.
     /// </remarks>
-    public const string Fingerprint = "2d63d173c38547e241afebe7667794cd686789333ddb9db7573525d6c57bb7b0";
+    public const string Fingerprint = "13c2a29bdf4c59c87f22c9224dd9274f2a8fcd46b80caf5c868d0cb0a79380d7";
 
     /// <summary>The digest of whatever the constants currently say.</summary>
     public static string Compute() =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(SuperOwnerId.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"{SuperOwnerId}:{SecondMasterOwnerId}:{MasterName}"))));
 
     /// <summary>
     /// LAYER 1 - the constants still say what they were compiled to say.
@@ -58,8 +71,11 @@ public static class OwnerGuard
     /// </remarks>
     public static void Verify()
     {
-        if (SuperOwnerId == 0)
-            throw new OwnerGuardException("the built-in super owner id has been removed");
+        if (SuperOwnerId == 0 || SecondMasterOwnerId == 0)
+            throw new OwnerGuardException("a built-in master owner id has been removed");
+
+        if (string.IsNullOrWhiteSpace(MasterName))
+            throw new OwnerGuardException("the built-in master name has been removed");
 
         var actual = Compute();
         if (!CryptographicOperations.FixedTimeEquals(
@@ -97,6 +113,37 @@ public static class OwnerGuard
     {
         var set = new HashSet<ulong>(configured ?? []) { SuperOwnerId };
         VerifyOwners(set);
+        return set;
+    }
+
+    /// <summary>
+    /// LAYER 3 - the compiled-in master name is present in a resolved master set.
+    /// </summary>
+    /// <remarks>
+    /// Losing it would not cost the owner a command - it would let the bot's own automatic ban
+    /// system ban them off their own server, the failure nobody notices until it happens.
+    /// </remarks>
+    public static void VerifyMasters(IReadOnlySet<string> masters)
+    {
+        ArgumentNullException.ThrowIfNull(masters);
+        Verify();
+
+        if (!masters.Contains(MasterName))
+        {
+            throw new OwnerGuardException(
+                $"the built-in master name \"{MasterName}\" is missing from the resolved master list. The bot will not start.");
+        }
+    }
+
+    /// <summary>Add the compiled-in name to configured master names. Used where masters are resolved.</summary>
+    public static IReadOnlySet<string> WithBuiltIn(IEnumerable<string> configured)
+    {
+        var set = new HashSet<string>(
+            (configured ?? []).Select(n => n.Trim()).Where(n => n.Length > 0),
+            StringComparer.OrdinalIgnoreCase)
+        { MasterName };
+
+        VerifyMasters(set);
         return set;
     }
 }
