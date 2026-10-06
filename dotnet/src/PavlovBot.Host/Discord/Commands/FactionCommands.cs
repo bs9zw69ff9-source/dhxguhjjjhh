@@ -855,3 +855,53 @@ public sealed class RankChangeCommand : ISlashCommand
             m.AllowedMentions = AllowedMentions.None;
         });
 }
+
+/// <summary><c>/subclasses</c> - who holds each of a faction's sub-classes.</summary>
+/// <remarks>
+/// THE SAME LIST AS <c>/whitelist subclasses</c>, at the top level beside <c>/subclass</c>, which is
+/// where people look for it. Read-only, so it is open to the same people the roster list is.
+/// </remarks>
+public sealed class SubclassesCommand(RosterService rosters, Paged paged) : ISlashCommand
+{
+    public string Name => "subclasses";
+
+    /// <summary>Only the person who ran it sees the reply, like the rest of the roster commands.</summary>
+    public bool Ephemeral => true;
+
+    public ApplicationCommandProperties Build()
+    {
+        var faction = new SlashCommandOptionBuilder()
+            .WithName("faction").WithDescription("Which faction")
+            .WithType(ApplicationCommandOptionType.String).WithRequired(true);
+
+        // Only factions that have any, so every choice in the picker lists something.
+        foreach (var name in rosters.Factions.Names.Where(n => rosters.Factions.Get(n)?.Subclasses.Count > 0))
+            faction.AddChoice(name, name);
+
+        return new SlashCommandBuilder()
+            .WithName(Name)
+            .WithDescription("Who holds each of a faction's sub-classes")
+            .AddOption(faction)
+            .Build();
+    }
+
+    public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        var name = command.Data.Options.FirstOrDefault(o => o.Name == "faction")?.Value?.ToString() ?? "";
+        if (rosters.Factions.Get(name) is not { } faction)
+        {
+            await command.ModifyOriginalResponseAsync(m => m.Embed = Theme.Failure("Unknown faction").Brand().Build())
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var roster = await rosters.RosterAsync(faction, ct).ConfigureAwait(false);
+        var held = await rosters.SubclassesAsync(faction, ct).ConfigureAwait(false);
+        var lines = WhitelistCommand.SubclassLines(faction, roster, held);
+
+        await paged.SendAsync(command, $"{faction.Name} sub-classes · {held.Count} held",
+            Theme.Paginate(lines, 1800), ct).ConfigureAwait(false);
+    }
+}

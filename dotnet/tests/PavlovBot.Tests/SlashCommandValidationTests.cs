@@ -95,6 +95,20 @@ public class SlashCommandValidationTests
         Assert.Contains("wipe", ((SlashCommandProperties)built).Options.Value.Select(o => o.Name), StringComparer.Ordinal);
     }
 
+    [Fact]
+    public void TheSubclassesCommandRegistersCleanlyAndOffersOnlyFactionsWithSubclasses()
+    {
+        var rosters = new RosterService(null, NullLogger<RosterService>.Instance);
+        var command = new SubclassesCommand(rosters, new Paged(NullLogger<Paged>.Instance));
+
+        var built = (SlashCommandProperties)command.Build();
+
+        Assert.Empty(SlashCommandValidation.Problems(built));
+        var choices = built.Options.Value.Single(o => o.Name == "faction").Choices.Select(c => c.Name).ToList();
+        Assert.NotEmpty(choices);
+        Assert.All(choices, name => Assert.NotEmpty(rosters.Factions.Get(name)!.Subclasses));
+    }
+
     /// <summary>
     /// /subclass takes a Discord account, not a typed in-game name.
     /// </summary>
