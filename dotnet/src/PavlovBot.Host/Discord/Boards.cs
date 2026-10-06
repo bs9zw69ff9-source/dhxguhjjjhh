@@ -449,7 +449,7 @@ public sealed class Boards(
     internal const int KdRows = 15;
 
     /// <summary>Kills needed to be ranked, so one lucky kill and no deaths cannot top the board.</summary>
-    internal const int KdMinimumKills = 10;
+    internal const int KdMinimumKills = 75;
 
     /// <summary>
     /// Players ranked by kills per death - what <c>KD_LEADERBOARD_CHANNEL</c> is for - with each
