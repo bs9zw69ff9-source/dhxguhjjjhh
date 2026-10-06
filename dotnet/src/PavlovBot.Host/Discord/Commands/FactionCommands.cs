@@ -18,7 +18,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// per-rank caps. The roster files are plain text the game reads live and nothing stops a
 /// name appearing in six of them at once, so the boundary is the only enforcement point.
 /// </remarks>
-public sealed class WhitelistCommand(RosterService rosters, FactionMembers members, Access access, Boards boards, AuditLog audit, ILogger<WhitelistCommand> logger) : ISlashCommand
+public sealed class WhitelistCommand(RosterService rosters, FactionMembers members, Access access, Boards boards, AuditLog audit, ILogger<WhitelistCommand> logger, Paged? paged = null) : ISlashCommand
 {
     public string Name => "whitelist";
 
@@ -108,6 +108,10 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(Faction()))
             .AddOption(new SlashCommandOptionBuilder()
+                .WithName("subclasses").WithDescription("Who holds each of a faction's sub-classes")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption(Faction()))
+            .AddOption(new SlashCommandOptionBuilder()
                 .WithName("playtime").WithDescription("Whitelisted members' playtime, highest to lowest")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(Faction()))
@@ -125,7 +129,7 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
         var sub = command.Data.Options.First();
         var options = sub.Options.ToDictionary(o => o.Name, o => o.Value, StringComparer.Ordinal);
 
-        if (sub.Name is "list" or "playtime")
+        if (sub.Name is "list" or "subclasses" or "playtime")
         {
             if (Resolve(options) is not { } readOnly)
             {
@@ -133,9 +137,19 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
                 return;
             }
 
-            await Reply(command, sub.Name == "list"
-                ? await BuildRosterAsync(readOnly, ct).ConfigureAwait(false)
-                : await BuildPlaytimeAsync(readOnly, ct).ConfigureAwait(false)).ConfigureAwait(false);
+            if (sub.Name == "playtime")
+            {
+                await Reply(command, await BuildPlaytimeAsync(readOnly, ct).ConfigureAwait(false)).ConfigureAwait(false);
+                return;
+            }
+
+            var roster = await rosters.RosterAsync(readOnly, ct).ConfigureAwait(false);
+            var subclasses = await rosters.SubclassesAsync(readOnly, ct).ConfigureAwait(false);
+            var (title, lines) = sub.Name == "list"
+                ? ($"{readOnly.Name} whitelist · {roster.Count} member(s)", RosterLines(readOnly, roster, subclasses))
+                : ($"{readOnly.Name} sub-classes · {subclasses.Count} held", SubclassLines(readOnly, roster, subclasses));
+
+            await SendPagesAsync(command, title, lines, ct).ConfigureAwait(false);
             return;
         }
 
@@ -586,37 +600,72 @@ public sealed class WhitelistCommand(RosterService rosters, FactionMembers membe
             .Brand(pages.Count > 1 ? $"Showing the first of {pages.Count} pages" : null);
     }
 
-    private async Task<EmbedBuilder> BuildRosterAsync(FactionDefinition faction, CancellationToken ct)
+    /// <summary>
+    /// The roster, highest rank first, one member per line with their sub-class beside them.
+    /// </summary>
+    /// <remarks>
+    /// ONE NAME PER LINE. The comma-joined list it replaced ran a whole rank into one paragraph
+    /// that nobody could scan, and a sub-class in brackets mid-paragraph was easy to miss.
+    /// </remarks>
+    internal static IReadOnlyList<string> RosterLines(
+        FactionDefinition faction, IReadOnlyList<Membership> roster, IReadOnlyDictionary<string, string> subclasses)
     {
-        var roster = await rosters.RosterAsync(faction, ct).ConfigureAwait(false);
-        if (roster.Count == 0)
-            return Theme.Notice($"{faction.Name} whitelist", "Nobody is on this roster.");
+        if (roster.Count == 0) return ["*Nobody is on this roster.*"];
 
-        // Their sub-classes, read once for the whole roster. A member with one is tagged; a
-        // member without shows as before, so the list stays legible for factions with none.
-        var subclasses = await rosters.SubclassesAsync(faction, ct).ConfigureAwait(false);
-
-        /* Grouped by rank, HIGHEST FIRST. A flat alphabetical list of eighty names answers
-           "is X whitelisted" and nothing else; grouped by rank it also answers "who runs
-           this faction", which is the question people actually ask. */
         var lines = new List<string>();
         foreach (var rank in faction.Order.Reverse())
         {
-            var members = roster.Where(m => string.Equals(m.Rank, rank, StringComparison.OrdinalIgnoreCase))
+            var held = roster.Where(m => string.Equals(m.Rank, rank, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(m => m.Player, StringComparer.OrdinalIgnoreCase).ToList();
-            if (members.Count == 0) continue;
+            if (held.Count == 0) continue;
 
-            lines.Add($"**{rank}** ({members.Count})");
-            lines.Add(string.Join(", ", members.Select(m =>
-                subclasses.TryGetValue(m.Player, out var subclass)
-                    ? $"`{Sanitize.Code(m.Player)}` ({Sanitize.Markdown(subclass)})"
-                    : $"`{Sanitize.Code(m.Player)}`")));
+            if (lines.Count > 0) lines.Add("");
+            lines.Add($"**{Sanitize.Markdown(rank)}** · {held.Count}");
+            lines.AddRange(held.Select(m => subclasses.TryGetValue(m.Player, out var subclass)
+                ? $"{Theme.Dot} `{Sanitize.Code(m.Player)}` · *{Sanitize.Markdown(subclass)}*"
+                : $"{Theme.Dot} `{Sanitize.Code(m.Player)}`"));
         }
-
-        var pages = Theme.Paginate(lines);
-        return Theme.Notice($"{faction.Name} whitelist — {roster.Count} member(s)", pages[0])
-            .Brand(pages.Count > 1 ? $"Showing the first of {pages.Count} pages" : null);
+        return lines;
     }
+
+    /// <summary>Every sub-class the faction has, with who holds it and their rank.</summary>
+    internal static IReadOnlyList<string> SubclassLines(
+        FactionDefinition faction, IReadOnlyList<Membership> roster, IReadOnlyDictionary<string, string> subclasses)
+    {
+        if (faction.Subclasses.Count == 0) return [$"**{Sanitize.Markdown(faction.Name)}** has no sub-classes."];
+
+        var ranks = roster.ToDictionary(m => m.Player, m => m.Rank, StringComparer.OrdinalIgnoreCase);
+        var lines = new List<string>();
+        foreach (var name in faction.Subclasses.Keys.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var holders = subclasses.Where(h => string.Equals(h.Value, name, StringComparison.OrdinalIgnoreCase))
+                .Select(h => h.Key)
+                .OrderByDescending(p => faction.IndexOf(ranks.GetValueOrDefault(p)))
+                .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (lines.Count > 0) lines.Add("");
+            lines.Add($"**{Sanitize.Markdown(name)}** · {holders.Count}");
+            if (holders.Count == 0) lines.Add("*nobody yet*");
+            lines.AddRange(holders.Select(p => ranks.TryGetValue(p, out var rank)
+                ? $"{Theme.Dot} `{Sanitize.Code(p)}` · {Sanitize.Markdown(rank)}"
+                : $"{Theme.Dot} `{Sanitize.Code(p)}` · *not on the roster*"));
+        }
+        return lines;
+    }
+
+    /// <summary>Paged with buttons when it runs long; the first page alone when the pager is not wired.</summary>
+    private Task SendPagesAsync(SocketSlashCommand command, string title, IReadOnlyList<string> lines, CancellationToken ct)
+    {
+        var pages = Theme.Paginate(lines, ListPageLength);
+        if (paged is not null) return paged.SendAsync(command, title, pages, ct);
+
+        return Reply(command, Theme.Notice(title, pages[0])
+            .Brand(pages.Count > 1 ? $"Showing the first of {pages.Count} pages" : null));
+    }
+
+    /// <summary>Shorter than an embed allows, so a page reads at a glance rather than as a wall.</summary>
+    private const int ListPageLength = 1800;
 
     private static EmbedBuilder Describe(MembershipDecision decision, string player, FactionDefinition faction) => decision.Outcome switch
     {
