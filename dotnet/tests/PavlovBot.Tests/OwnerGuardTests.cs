@@ -32,7 +32,6 @@ public class OwnerGuardTests
     /* Written out rather than referenced. If either changes, THIS is the assertion that
        names the old value and the new one. */
     private const ulong PinnedSuperOwnerId = 1014251293159731310UL;
-    private const string PinnedMasterName = "LxPXHam";
 
     private static SerializedStore Store() => new(new MemoryBackend(), new SystemTextJsonCodec());
 
@@ -45,12 +44,6 @@ public class OwnerGuardTests
     }
 
     [Fact]
-    public void TheMasterNameIsTheCompiledInOne()
-    {
-        Assert.Equal(PinnedMasterName, OwnerGuard.MasterName);
-    }
-
-    [Fact]
     public void TheFingerprintMatchesTheConstants()
     {
         // The tripwire for the swap that leaves every check in place but pointing at
@@ -60,7 +53,7 @@ public class OwnerGuardTests
     }
 
     [Fact]
-    public void TheFingerprintIsTheDigestOfIdAndName()
+    public void TheFingerprintIsTheDigestOfTheId()
     {
         /* Recomputed here from the pinned literals rather than from the constants, so
            editing BOTH the constants and the fingerprint - the only edit that keeps
@@ -68,7 +61,7 @@ public class OwnerGuardTests
         var expected = Convert.ToHexStringLower(
             System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(
-                    $"{PinnedSuperOwnerId.ToString(CultureInfo.InvariantCulture)}:{PinnedMasterName}")));
+                    PinnedSuperOwnerId.ToString(CultureInfo.InvariantCulture))));
 
         Assert.Equal(OwnerGuard.Fingerprint, expected);
     }
@@ -85,19 +78,9 @@ public class OwnerGuardTests
     }
 
     [Fact]
-    public void AMasterSetWithoutTheBuiltInIsRejected()
-    {
-        var ex = Assert.Throws<OwnerGuardException>(
-            () => OwnerGuard.VerifyMasters(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "someone" }));
-
-        Assert.Contains(PinnedMasterName, ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void AnEmptyConfigurationStillYieldsTheBuiltIn()
     {
         Assert.Contains(PinnedSuperOwnerId, OwnerGuard.WithBuiltIn(Array.Empty<ulong>()));
-        Assert.Contains(PinnedMasterName, OwnerGuard.WithBuiltIn(Array.Empty<string>()));
     }
 
     [Fact]
@@ -108,20 +91,12 @@ public class OwnerGuardTests
         Assert.Contains(7UL, owners);
         Assert.Contains(8UL, owners);
         Assert.Contains(PinnedSuperOwnerId, owners);
-
-        var masters = OwnerGuard.WithBuiltIn(["  spaced  ", "", "   "]);
-        Assert.Contains("spaced", masters);
-        Assert.Contains(PinnedMasterName, masters);
-        Assert.DoesNotContain("", masters);
     }
 
     [Fact]
     public void TheBuiltInIsNotDuplicatedWhenAlsoConfigured()
     {
         Assert.Single(OwnerGuard.WithBuiltIn([PinnedSuperOwnerId]));
-
-        // Case-insensitively, because MASTER_NAMES is matched that way everywhere else.
-        Assert.Single(OwnerGuard.WithBuiltIn([PinnedMasterName.ToUpperInvariant()]));
     }
 
     // ---- LAYER 2 and 5: the access layer ----
@@ -160,26 +135,24 @@ public class OwnerGuardTests
         Assert.False(access.IsOwner(new FakeMember(0UL)));
     }
 
-    // ---- LAYER 3 and 5: the auto-ban protection ----
+    // ---- master names are configuration only ----
 
     [Fact]
-    public void TheBuiltInIsAMasterWithNothingConfigured()
+    public void NoMasterNameIsBuiltIn()
     {
+        // LxPXHam was compiled in; it is gone, so an empty MASTER_NAMES protects nobody.
         var masters = new MasterNames([], Store());
 
-        Assert.True(masters.IsMaster(PinnedMasterName));
-        Assert.True(masters.IsMaster(PinnedMasterName.ToUpperInvariant()));
-        Assert.True(masters.IsMaster($"  {PinnedMasterName}  "));
-        Assert.Contains(PinnedMasterName, masters.Masters);
+        Assert.Empty(masters.Masters);
+        Assert.False(masters.IsMaster("LxPXHam"));
     }
 
     [Fact]
-    public void AddingTheBuiltInDoesNotProtectAnybodyElse()
+    public void ConfiguredMastersMatchTrimmedAndIgnoringCase()
     {
-        var masters = new MasterNames([], Store());
+        var masters = new MasterNames(["  Spaced  ", "", "   "], Store());
 
-        Assert.False(masters.IsMaster("LxPXHam2"));
-        Assert.False(masters.IsMaster("xPXHam"));
-        Assert.False(masters.IsMaster(""));
+        Assert.True(masters.IsMaster("spaced"));
+        Assert.Single(masters.Masters);
     }
 }

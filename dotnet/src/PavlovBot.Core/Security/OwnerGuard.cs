@@ -11,10 +11,9 @@ public sealed class OwnerGuardException(string message) : Exception(message);
 /// </summary>
 /// <remarks>
 /// WHAT THIS IS FOR. Everything else about who holds power in this bot comes from
-/// <c>.env</c> - <c>OWNER_IDS</c>, <c>SUPER_OWNER_IDS</c>, <c>MASTER_NAMES</c> - which means
-/// anybody who can edit that file can remove the owner from their own bot, and anybody who
-/// can edit it can also stop the bot from protecting the owner's in-game account from an
-/// automatic ban. This pins one identity that does not depend on that file.
+/// <c>.env</c> - <c>OWNER_IDS</c>, <c>SUPER_OWNER_IDS</c> - which means anybody who can edit
+/// that file can remove the owner from their own bot. This pins one Discord identity that does
+/// not depend on that file. In-game master names are configuration only (<c>MASTER_NAMES</c>).
 ///
 /// WHAT IT IS NOT. It is not tamper-PROOF and nothing in a source tree can be. Anyone able
 /// to edit and rebuild this project can delete every check here, and the fingerprint below
@@ -33,11 +32,8 @@ public static class OwnerGuard
     /// <summary>The Discord account that always holds super-owner tier.</summary>
     public const ulong SuperOwnerId = 1014251293159731310UL;
 
-    /// <summary>The in-game account that is never auto-banned.</summary>
-    public const string MasterName = "LxPXHam";
-
     /// <summary>
-    /// SHA-256 over the two values above, so EDITING one is caught as well as removing it.
+    /// SHA-256 over the id above, so EDITING it is caught as well as removing it.
     /// </summary>
     /// <remarks>
     /// The obvious attack on a hard-coded id is not deleting the check, it is changing the
@@ -47,11 +43,11 @@ public static class OwnerGuard
     ///
     /// Not a secret and not pretending to be. It is a tripwire.
     /// </remarks>
-    public const string Fingerprint = "4ab75c54ee5b5e473497e7ed88ce17d27a7917cebe26a77e3d83a848e4c7c583";
+    public const string Fingerprint = "2d63d173c38547e241afebe7667794cd686789333ddb9db7573525d6c57bb7b0";
 
     /// <summary>The digest of whatever the constants currently say.</summary>
     public static string Compute() =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{SuperOwnerId}:{MasterName}")));
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(SuperOwnerId.ToString(System.Globalization.CultureInfo.InvariantCulture))));
 
     /// <summary>
     /// LAYER 1 - the constants still say what they were compiled to say.
@@ -64,9 +60,6 @@ public static class OwnerGuard
     {
         if (SuperOwnerId == 0)
             throw new OwnerGuardException("the built-in super owner id has been removed");
-
-        if (string.IsNullOrWhiteSpace(MasterName))
-            throw new OwnerGuardException("the built-in master name has been removed");
 
         var actual = Compute();
         if (!CryptographicOperations.FixedTimeEquals(
@@ -99,46 +92,11 @@ public static class OwnerGuard
         }
     }
 
-    /// <summary>
-    /// LAYER 3 - the compiled-in master name is present in a resolved master set.
-    /// </summary>
-    /// <remarks>
-    /// Separate from the owner check because they protect different things and can be broken
-    /// independently: removing the Discord id costs the owner their commands, removing the
-    /// in-game name lets the bot's own automatic ban system ban them off their own server.
-    /// The second is the one nobody would notice until it happened.
-    /// </remarks>
-    public static void VerifyMasters(IReadOnlySet<string> masters)
-    {
-        ArgumentNullException.ThrowIfNull(masters);
-        Verify();
-
-        if (!masters.Contains(MasterName))
-        {
-            throw new OwnerGuardException(
-                $"the built-in master name \"{MasterName}\" is missing from the resolved master list. " +
-                "The owner's in-game account would not be protected from an automatic ban. " +
-                "The bot will not start.");
-        }
-    }
-
     /// <summary>Add the compiled-in id to a configured set. Used where owners are resolved.</summary>
     public static IReadOnlySet<ulong> WithBuiltIn(IEnumerable<ulong> configured)
     {
         var set = new HashSet<ulong>(configured ?? []) { SuperOwnerId };
         VerifyOwners(set);
-        return set;
-    }
-
-    /// <summary>Add the compiled-in name to a configured set. Used where masters are resolved.</summary>
-    public static IReadOnlySet<string> WithBuiltIn(IEnumerable<string> configured)
-    {
-        var set = new HashSet<string>(
-            (configured ?? []).Select(n => n.Trim()).Where(n => n.Length > 0),
-            StringComparer.OrdinalIgnoreCase)
-        { MasterName };
-
-        VerifyMasters(set);
         return set;
     }
 }

@@ -145,13 +145,12 @@ public sealed class MasterAccessTests : IAsyncDisposable
         Assert.Equal("# staff", lines[0]);
         Assert.Equal("SomeMod", lines[1]);
         Assert.Contains(Master, lines);
-        Assert.Contains(OwnerGuard.MasterName, lines);   // the built-in master too
     }
 
     [Fact]
     public async Task APresentMasterIsNotWrittenTwice()
     {
-        await File.WriteAllTextAsync(Mods, $"FKI6\n{OwnerGuard.MasterName}\n");
+        await File.WriteAllTextAsync(Mods, "FKI6\n");
         var before = await File.ReadAllTextAsync(Mods);
 
         await _access.EnsureFilesAsync(CancellationToken.None);
@@ -182,7 +181,6 @@ public sealed class MasterAccessTests : IAsyncDisposable
         {
             var lines = await File.ReadAllLinesAsync(Path.Combine(_rosterDir, file));
             Assert.Contains(Master, lines);
-            Assert.Contains(OwnerGuard.MasterName, lines);
         }
 
         // Existing members and hand-written lines are kept.
@@ -196,7 +194,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     public async Task ARosterAlreadyHoldingTheMastersIsNotRewritten()
     {
         var path = Path.Combine(_rosterDir, "ncrtrooper.txt");
-        await File.WriteAllTextAsync(path, $"fki6\n{OwnerGuard.MasterName}\n");
+        await File.WriteAllTextAsync(path, "fki6\n");
         await _access.EnsureFilesAsync(CancellationToken.None);
         var written = File.GetLastWriteTimeUtc(path);
         var before = await File.ReadAllTextAsync(path);
@@ -294,6 +292,68 @@ public sealed class MasterAccessTests : IAsyncDisposable
         Assert.Contains($"RemoveAccessManager {Master}", commands);
         await after.StopAsync(CancellationToken.None);
         await after.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AnUnrecordedMasterLeftOnEveryRosterIsPurged()
+    {
+        /* Granted before the grants were recorded, then taken out of .env: nothing remembered
+           it. Being on every roster is the record - nobody but a master is ever put there. */
+        await File.WriteAllTextAsync(Mods, "OldMaster\n");
+        await File.WriteAllTextAsync(Whitelist, "OldMaster\nPlayerOne\n");
+        foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
+            await File.WriteAllTextAsync(Path.Combine(_rosterDir, file), "OldMaster\n");
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "OldMaster\nPlayerOne\n");
+
+        var access = Access(GrantStore(), Master);
+        await access.StartAsync(CancellationToken.None);
+        await access.StopAsync(CancellationToken.None);
+
+        Assert.DoesNotContain("OldMaster", await File.ReadAllLinesAsync(Mods));
+        Assert.Equal(["PlayerOne", Master], (await File.ReadAllLinesAsync(Whitelist)).Where(l => l.Length > 0));
+        foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
+            Assert.DoesNotContain("OldMaster", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, file)));
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        await access.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TheJoinedUpNameFromASpaceIsPurgedAndBothRealNamesGranted()
+    {
+        /* MASTER_NAMES=fki6 Holosight1 used to be ONE name, "fki6 Holosight1", written into
+           every roster and whitelist. Read as two names now, the joined-up one is a leftover. */
+        const string joined = "fki6 Holosight1";
+        await File.WriteAllTextAsync(Mods, joined + "\n");
+        await File.WriteAllTextAsync(Whitelist, joined + "\n");
+        foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
+            await File.WriteAllTextAsync(Path.Combine(_rosterDir, file), joined + "\n");
+
+        var access = Access(GrantStore(), "fki6", "Holosight1");
+        await access.StartAsync(CancellationToken.None);
+        await access.StopAsync(CancellationToken.None);
+
+        foreach (var path in new[] { Mods, Whitelist }.Concat(
+                     RosterService.RosterFilesOf(_rosters.Factions).Select(f => Path.Combine(_rosterDir, f))))
+        {
+            var lines = await File.ReadAllLinesAsync(path);
+            Assert.DoesNotContain(joined, lines);
+            Assert.Contains("fki6", lines);
+            Assert.Contains("Holosight1", lines);
+        }
+        await access.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AMemberOfOneFactionIsNeverTakenForALeftover()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
+
+        var access = Access(GrantStore(), Master);
+        await access.StartAsync(CancellationToken.None);
+        await access.StopAsync(CancellationToken.None);
+
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        await access.DisposeAsync();
     }
 
     [Fact]

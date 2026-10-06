@@ -133,7 +133,17 @@ public sealed class MasterAccess : IHostedService, IAsyncDisposable
 
         var current = _masters.Masters.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var granted = _store.Read(Datasets.MasterGrants, new List<string>());
-        var removed = granted.Where(n => !current.Contains(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        /* PLUS ANY NAME ON EVERY ROSTER. Grants from before they were recorded are invisible to
+           the list above, so a master removed back then kept everything for good. Only a master
+           grant puts a name on every roster (see RosterService.NamesOnEveryRoster), which makes
+           that the record they never had. */
+        var leftovers = _rosters is { Enabled: true } ? _rosters.NamesOnEveryRoster() : [];
+
+        var removed = granted.Concat(leftovers)
+            .Where(n => !current.Contains(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var unfinished = new List<string>();
 
         foreach (var name in removed)

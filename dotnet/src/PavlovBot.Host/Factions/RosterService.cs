@@ -405,6 +405,35 @@ public sealed class RosterService
     }
 
     /// <summary>
+    /// The names that sit on EVERY roster file - which only a master grant ever does.
+    /// </summary>
+    /// <remarks>
+    /// The bot refuses to put anybody else in two factions, let alone every rank of every one,
+    /// so a name found on all of them was put there by <see cref="EnsureOnEveryRosterAsync"/>.
+    /// That is how a master grant from before the grants were recorded is still recognised once
+    /// the name leaves MASTER_NAMES. Empty when the rosters are off, there are fewer than two
+    /// files (the test means nothing then), or any file cannot be read.
+    /// </remarks>
+    public IReadOnlyList<string> NamesOnEveryRoster()
+    {
+        if (!Enabled) return [];
+
+        var files = RosterFilesOf(Factions);
+        if (files.Count < 2) return [];
+
+        HashSet<string>? common = null;
+        foreach (var file in files)
+        {
+            if (Read(file) is not { } lines) return [];
+            var names = lines.Select(l => l.Trim()).Where(l => l.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (common is null) common = names;
+            else common.IntersectWith(names);
+            if (common.Count == 0) return [];
+        }
+        return [.. common!];
+    }
+
+    /// <summary>
     /// Take each name off every roster file the loaded factions own - the reverse of
     /// <see cref="EnsureOnEveryRosterAsync"/>, for a name that is no longer a master.
     /// </summary>

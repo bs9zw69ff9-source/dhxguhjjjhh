@@ -1191,9 +1191,9 @@ public static class Program
                               "is not what you meant.", cashChannel);
 
         if (features.MasterNames.Count == 0)
-            logger.LogWarning("MASTER_NAMES is not set - only the built-in master account \"{Master}\" is " +
-                              "protected from an auto-ban. Any OTHER account of yours could be caught by a " +
-                              "false positive.", PavlovBot.Core.Security.OwnerGuard.MasterName);
+            logger.LogWarning("MASTER_NAMES is not set - no in-game account is protected from an auto-ban, " +
+                              "and none gets mods.txt, the whitelists or the RCON+ menu. Your own account " +
+                              "could be caught by a false positive");
 
         /* One owner identity IS compiled in - see OwnerGuard - because a cutover that never
            copied OWNER_IDS into .env leaves nobody at owner tier and every owner-gated
