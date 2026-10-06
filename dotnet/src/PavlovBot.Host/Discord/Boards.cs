@@ -445,6 +445,67 @@ public sealed class Boards(
     private static string Clamp(string name) =>
         name.Length <= MaxNameWidth ? name : name[..(MaxNameWidth - 1)] + "\u2026";
 
+    /// <summary>Rows on the K/D board.</summary>
+    internal const int KdRows = 15;
+
+    /// <summary>Kills needed to be ranked, so one lucky kill and no deaths cannot top the board.</summary>
+    internal const int KdMinimumKills = 10;
+
+    /// <summary>
+    /// Players ranked by kills per death - what <c>KD_LEADERBOARD_CHANNEL</c> is for - with each
+    /// one's faction and playtime beside them.
+    /// </summary>
+    /// <remarks>
+    /// A MINIMUM KILL COUNT TO RANK. A ratio from three kills says nothing, and without a floor
+    /// the top of the board is whoever got one kill and logged off. Ties go to the player with
+    /// more kills. Faction and playtime come from the rosters and the playtime tracker, matched on
+    /// the in-game name the kill was logged under.
+    ///
+    /// An empty board rather than null, like the others: what is posted must never be a stale
+    /// board left sitting in the channel looking current.
+    /// </remarks>
+    public static Embed BuildKdBoard(
+        IEnumerable<PavlovBot.Host.Stats.PlayerKills> kills,
+        IReadOnlyDictionary<string, PlaytimeEntry> playtime,
+        IReadOnlyDictionary<string, Membership> affiliations,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(kills);
+        ArgumentNullException.ThrowIfNull(playtime);
+        ArgumentNullException.ThrowIfNull(affiliations);
+
+        var footer = $"At least {KdMinimumKills} kills to rank - updated {EasternTime.Stamp(now)} Eastern";
+        var ranked = kills
+            .Where(k => k.Kills >= KdMinimumKills)
+            .OrderByDescending(k => k.Ratio).ThenByDescending(k => k.Kills)
+            .Take(KdRows)
+            .ToList();
+
+        if (ranked.Count == 0)
+        {
+            return Theme.Notice($"💀 Deadliest in {Lore.World}",
+                    $"Nobody has {KdMinimumKills} kills yet.")
+                .Brand(footer)
+                .Build();
+        }
+
+        var lines = ranked.Select((k, i) =>
+        {
+            var faction = affiliations.TryGetValue(k.Player, out var member)
+                ? $"{Sanitize.Markdown(member.Faction.Name)} {Sanitize.Markdown(member.Rank)}"
+                : "No faction";
+            var played = playtime.TryGetValue(k.Player, out var entry) ? Hours(entry.Minutes) : "no playtime";
+
+            return $"`{i + 1,2}.` {Medal(i)} **{Sanitize.Code(k.Player)}** · **{k.Ratio.ToString("0.00", CultureInfo.InvariantCulture)}** K/D " +
+                   $"({k.Kills.ToString(CultureInfo.InvariantCulture)}/{k.Deaths.ToString(CultureInfo.InvariantCulture)})\n" +
+                   $"{Theme.Dot} {faction} · {played}";
+        });
+
+        return Theme.Notice($"💀 Deadliest in {Lore.World}", string.Join("\n", lines))
+            .Brand(footer)
+            .Build();
+    }
+
     private static string Medal(int index) => index switch { 0 => "🥇", 1 => "🥈", 2 => "🥉", _ => Theme.Dot };
 
     private static string Hours(long minutes) =>

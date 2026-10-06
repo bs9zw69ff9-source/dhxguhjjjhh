@@ -169,6 +169,9 @@ public sealed record FeatureOptions
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
 
+    /// <summary>Where the K/D leaderboard is posted and kept updated (<c>KD_LEADERBOARD_CHANNEL</c>).</summary>
+    public ulong? KdBoardChannel { get; init; }
+
     /// <summary>Where the live warrant board lives. Its own channel - it is a work queue, not a leaderboard.</summary>
     public ulong? WarrantBoardChannel { get; init; }
 
@@ -502,6 +505,7 @@ public sealed record FeatureOptions
 
             LeaderboardChannel = Snowflake(configuration, "LEADERBOARD_CHANNEL"),
             ArrestBoardChannel = Snowflake(configuration, "ARREST_LEADERBOARD_CHANNEL"),
+            KdBoardChannel = Snowflake(configuration, "KD_LEADERBOARD_CHANNEL"),
             WarrantBoardChannel = Snowflake(configuration, "WARRANT_BOARD_CHANNEL"),
             PlayerBoardChannel = Snowflake(configuration, "PLAYERLIST_CHANNEL"),
 
@@ -733,6 +737,7 @@ public sealed record FeatureOptions
         $"rcon feed: {(RconWebhook is null ? "off" : "on")}",
         $"cash leaderboard: {(LeaderboardChannel is null ? "off (LEADERBOARD_CHANNEL not set)" : $"channel {LeaderboardChannel}, every {LeaderboardInterval.TotalSeconds:0}s")}",
         $"arrest board: {(ArrestBoardChannel is null ? "off (ARREST_LEADERBOARD_CHANNEL not set)" : $"channel {ArrestBoardChannel}")}",
+        $"K/D board: {(KdBoardChannel is null ? "off (KD_LEADERBOARD_CHANNEL not set)" : $"channel {KdBoardChannel}")}",
         $"warrant board: {(WarrantBoardChannel is null ? "off (WARRANT_BOARD_CHANNEL not set)" : $"channel {WarrantBoardChannel}")}",
         $"player board: {(PlayerBoardChannel is null ? "off (PLAYERLIST_CHANNEL not set)" : $"channel {PlayerBoardChannel}")}",
         $"payroll: {(PayrollAmount <= 0
