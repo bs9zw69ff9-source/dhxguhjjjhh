@@ -250,21 +250,21 @@ public sealed class MasterAccessTests : IAsyncDisposable
         await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
         var store = GrantStore();
 
-        var before = Access(store, Master, "KeptMaster");
+        var before = Access(store, Master, "OldAlt", "KeptMaster");
         await before.StartAsync(CancellationToken.None);
         await before.StopAsync(CancellationToken.None);
-        Assert.Contains(Master, await File.ReadAllLinesAsync(Mods));
+        Assert.Contains("OldAlt", await File.ReadAllLinesAsync(Mods));
 
-        var after = Access(store, "KeptMaster");   // Master taken out of MASTER_NAMES, restart
+        var after = Access(store, Master, "KeptMaster");   // OldAlt taken out of MASTER_NAMES, restart
         await after.StartAsync(CancellationToken.None);
         await after.StopAsync(CancellationToken.None);
 
-        Assert.DoesNotContain(Master, await File.ReadAllLinesAsync(Mods));
-        Assert.DoesNotContain(Master, await File.ReadAllLinesAsync(Whitelist));
+        Assert.DoesNotContain("OldAlt", await File.ReadAllLinesAsync(Mods));
+        Assert.DoesNotContain("OldAlt", await File.ReadAllLinesAsync(Whitelist));
         foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
         {
             var lines = await File.ReadAllLinesAsync(Path.Combine(_rosterDir, file));
-            Assert.DoesNotContain(Master, lines);
+            Assert.DoesNotContain("OldAlt", lines);
             Assert.Contains("KeptMaster", lines);
         }
 
@@ -272,7 +272,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
         Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
         var recorded = store.Read(Datasets.MasterGrants, new List<string>());
         Assert.Contains("KeptMaster", recorded);
-        Assert.DoesNotContain(Master, recorded);
+        Assert.DoesNotContain("OldAlt", recorded);
 
         await before.DisposeAsync();
         await after.DisposeAsync();
@@ -282,14 +282,14 @@ public sealed class MasterAccessTests : IAsyncDisposable
     public async Task ARemovedMastersLiveMenuIsTakenOnTheWire()
     {
         var store = GrantStore();
-        await store.WriteAsync(Datasets.MasterGrants, new List<string> { Master });
+        await store.WriteAsync(Datasets.MasterGrants, new List<string> { "OldAlt" });
 
         var after = Access(store);
         await after.StartAsync(CancellationToken.None);
         var commands = await CommandsAfterGrantAsync(3);   // sent in the background, so startup is not held up
 
-        Assert.Contains($"RemoveMenu {Master}", commands);
-        Assert.Contains($"RemoveAccessManager {Master}", commands);
+        Assert.Contains("RemoveMenu OldAlt", commands);
+        Assert.Contains("RemoveAccessManager OldAlt", commands);
         await after.StopAsync(CancellationToken.None);
         await after.DisposeAsync();
     }

@@ -370,7 +370,7 @@ public sealed class Access
     public IReadOnlyCollection<ulong>? VisibleRoles(IUser? user) => Member(user)?.RoleIds;
 
     /// <summary>
-    /// The tier above everyone: the built-in owner, and nobody else.
+    /// The tier above everyone: the built-in master owners (see OwnerGuard.MasterOwnerIds), and nobody else.
     /// </summary>
     /// <remarks>
     /// COMPILED IN, NEVER CONFIGURED. A super owner added through .env can do everything else,
@@ -378,7 +378,7 @@ public sealed class Access
     /// name a master owner, anybody able to edit it could make themselves one - so there is no
     /// setting for it at all.
     /// </remarks>
-    public bool IsMasterOwner(IUser? user) => user is not null && user.Id == OwnerGuard.SuperOwnerId;
+    public bool IsMasterOwner(IUser? user) => user is not null && OwnerGuard.IsMasterOwner(user.Id);
 
     public bool IsSuperOwner(IUser? user)
     {
@@ -410,7 +410,7 @@ public sealed class Access
     /// compiled-in owner, then the super owners, then the owners.
     /// </summary>
     public bool IsOwner(ulong userId) =>
-        userId == OwnerGuard.SuperOwnerId || _superOwners.Contains(userId) || _owners.Contains(userId);
+        OwnerGuard.IsMasterOwner(userId) || _superOwners.Contains(userId) || _owners.Contains(userId);
 
     public bool IsAdmin(IUser? user) =>
         IsOwner(user) || Has(user, Roles.AdminRole) || IsHomeAdministrator(user);
