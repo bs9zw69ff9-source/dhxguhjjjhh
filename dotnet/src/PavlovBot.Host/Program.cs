@@ -586,6 +586,7 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, DonatorCommand>();
         builder.Services.AddSingleton<ISlashCommand, SuspendRankCommand>();
         builder.Services.AddSingleton<ISlashCommand, SubclassCommand>();
+        builder.Services.AddSingleton<ISlashCommand, SubclassesCommand>();
         builder.Services.AddSingleton<ISlashCommand, StripMenuCommand>();
         builder.Services.AddSingleton<ISlashCommand, BanListCommand>();
         builder.Services.AddSingleton<ISlashCommand, FlushCommand>();

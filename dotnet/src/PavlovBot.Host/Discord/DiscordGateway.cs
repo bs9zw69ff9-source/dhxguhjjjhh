@@ -33,7 +33,7 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     /// entries in the picker, and whichever the user clicked would answer twice.
     /// </remarks>
     private static readonly HashSet<string> FactionCommands =
-        new(StringComparer.Ordinal) { "whitelist", "promotion", "demotion", "subclass" };
+        new(StringComparer.Ordinal) { "whitelist", "promotion", "demotion", "subclass", "subclasses" };
 
     private readonly DiscordSocketClient _client;
 
