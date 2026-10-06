@@ -440,6 +440,21 @@ public sealed class BackgroundServiceHost : IHostedService
             });
         }
 
+        if (_features.KdBoardChannel is not null)
+        {
+            _registry.Register(new ServiceDefinition
+            {
+                Name = "kd-board",
+                Interval = _features.LeaderboardInterval,
+                Tick = ct => _autoPost.PostAsync("kd", _features.KdBoardChannel, async () =>
+                    (global::Discord.Embed?)Boards.BuildKdBoard(
+                        _killStats.All(),
+                        _boards.Playtime(),
+                        await _rosters.AffiliationsAsync(ct).ConfigureAwait(false),
+                        DateTimeOffset.UtcNow), ct),
+            });
+        }
+
         if (_features.WarrantBoardChannel is not null)
         {
             _registry.Register(new ServiceDefinition
