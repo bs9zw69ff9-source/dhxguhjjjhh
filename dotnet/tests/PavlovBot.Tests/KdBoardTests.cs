@@ -12,6 +12,8 @@ public class KdBoardTests
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
     private static readonly FactionDefinition Enclave = FactionRegistry.Default.Get("Enclave")!;
 
+    private const int Min = Boards.KdMinimumKills;
+
     private static PlayerKills K(string player, long kills, long deaths) => new(player, kills, deaths, 0, Now);
 
     private static string Board(
@@ -26,19 +28,19 @@ public class KdBoardTests
     [Fact]
     public void RankedByRatioWithMoreKillsBreakingATie()
     {
-        var board = Board([K("Average", 20, 20), K("Sharp", 30, 10), K("AlsoSharp", 60, 20)]);
+        var board = Board([K("Average", Min * 2, Min * 2), K("Sharp", Min * 3, Min), K("AlsoSharp", Min * 6, Min * 2)]);
 
         // 3.00 twice: the one with more kills goes first; 1.00 last.
         Assert.True(board.IndexOf("AlsoSharp", StringComparison.Ordinal) < board.IndexOf("**Sharp**", StringComparison.Ordinal));
         Assert.True(board.IndexOf("**Sharp**", StringComparison.Ordinal) < board.IndexOf("Average", StringComparison.Ordinal));
-        Assert.Contains("**3.00** K/D (60/20)", board, StringComparison.Ordinal);
+        Assert.Contains($"**3.00** K/D ({Min * 6}/{Min * 2})", board, StringComparison.Ordinal);
     }
 
     [Fact]
     public void TooFewKillsDoNotRank()
     {
         // One lucky kill and no deaths must not top the board.
-        var board = Board([K("Lucky", Boards.KdMinimumKills - 1, 0), K("Regular", 40, 20)]);
+        var board = Board([K("Lucky", Min - 1, 0), K("Regular", Min, 20)]);
 
         Assert.DoesNotContain("Lucky", board, StringComparison.Ordinal);
         Assert.Contains("Regular", board, StringComparison.Ordinal);
@@ -49,7 +51,7 @@ public class KdBoardTests
     {
         var rank = Enclave.Order[^1];
         var board = Board(
-            [K("Soldier", 50, 10), K("Drifter", 30, 15)],
+            [K("Soldier", Min + 50, 10), K("Drifter", Min + 30, 15)],
             new(StringComparer.OrdinalIgnoreCase) { ["soldier"] = new PlaytimeEntry("Soldier", 860, Now) },
             new(StringComparer.OrdinalIgnoreCase) { ["Soldier"] = new Membership(Enclave, "Soldier", rank) });
 
@@ -60,7 +62,7 @@ public class KdBoardTests
     [Fact]
     public void OnlyTheTopRowsAreShown()
     {
-        var board = Board(Enumerable.Range(1, Boards.KdRows + 5).Select(i => K($"P{i:00}", 10 + i, 10)));
+        var board = Board(Enumerable.Range(1, Boards.KdRows + 5).Select(i => K($"P{i:00}", Min + i, 10)));
 
         Assert.Equal(Boards.KdRows, board.Split('\n').Count(l => l.Contains("K/D (", StringComparison.Ordinal)));
     }
