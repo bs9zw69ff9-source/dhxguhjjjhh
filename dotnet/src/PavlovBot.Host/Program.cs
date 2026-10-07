@@ -931,6 +931,15 @@ public static class Program
                 Show(features.ModLogChannel), Show(features.BanLogChannel),
                 Show(features.PoliceLogChannel), Show(features.ArrestChannel));
         }
+        /* THE COMMAND LOG, attached here for the same reason: posting needs the gateway. */
+        if (features.CommandLogChannel is { } commandLogChannel)
+        {
+            host.Services.GetRequiredService<DiscordGateway>().UseCommandLog(new PavlovBot.Host.Discord.CommandLog(
+                host.Services.GetRequiredService<PavlovBot.Host.Discord.IAutoPostTarget>(),
+                commandLogChannel,
+                host.Services.GetRequiredService<ILogger<PavlovBot.Host.Discord.CommandLog>>()));
+        }
+
         /* THE SECURITY DM SINK, attached here for the same reason the staff log sink is:
            sending a direct message needs the gateway, and the detectors are constructed long
            before it exists. */

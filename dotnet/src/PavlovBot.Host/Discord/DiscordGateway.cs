@@ -54,6 +54,9 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
     private readonly InteractionDispatcher _dispatcher;
     private CancellationTokenSource? _stopping;
 
+    /// <summary>COMMAND_LOG_CHANNEL. Attached after the host is built; null when unset.</summary>
+    private CommandLog? _commandLog;
+
     /// <summary>The off-the-Ready-path scope reconciliation. Awaited on shutdown.</summary>
     private Task? _scopeCleanup;
 
@@ -220,6 +223,15 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
 
     /// <summary>COMMANDS_DISABLED entries that match no command in this build.</summary>
     public IReadOnlyList<string> UnknownDisabledCommands => _unknownDisabled;
+
+    /// <summary>
+    /// Post every slash command attempt to <paramref name="log"/>.
+    /// </summary>
+    /// <remarks>
+    /// Attached rather than injected: posting needs the gateway, and a constructor dependency
+    /// on it would close a cycle the container cannot resolve. Same reason as the staff log.
+    /// </remarks>
+    public void UseCommandLog(CommandLog log) => _commandLog = log ?? throw new ArgumentNullException(nameof(log));
 
     /// <summary>True once the gateway has connected and commands are registered.</summary>
     public bool IsReady => _ready.Task.IsCompletedSuccessfully && _client.ConnectionState == ConnectionState.Connected;
@@ -754,6 +766,24 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
            arguments through ~211 logging statements. */
         using var scope = _logger.BeginInteraction(
             $"/{name}", interaction.GuildId, interaction.User.Id, out var correlationId);
+
+        /* LOGGED ON ARRIVAL, before the bar list, the permission checks or the handler, so an
+           attempt that goes nowhere is recorded exactly like one that works. Captured now and
+           posted off this path: it is a REST call and the acknowledgement is on a clock. */
+        if (_commandLog is { } commandLog)
+        {
+            var invocation = new CommandInvocation(
+                interaction.User.Id,
+                interaction.User.Username,
+                interaction.User.GetAvatarUrl() ?? interaction.User.GetDefaultAvatarUrl(),
+                name,
+                CommandLog.Describe(name, interaction.Data.Options),
+                interaction.ChannelId,
+                (interaction.Channel as IGuildChannel)?.Guild?.Name,
+                DateTimeOffset.UtcNow);
+
+            _ = _dispatcher.Run("command log", () => commandLog.PostAsync(invocation, _stopping?.Token ?? CancellationToken.None));
+        }
 
         /* BARRED USERS GET NOTHING, and this is the one place that says so for every command.
            Before the deferral on purpose: the refusal has to be ephemeral whatever the
