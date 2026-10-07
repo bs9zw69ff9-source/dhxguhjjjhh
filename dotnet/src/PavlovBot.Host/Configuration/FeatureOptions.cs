@@ -166,6 +166,11 @@ public sealed record FeatureOptions
     /// <summary>Overrides <see cref="PoliceLogChannel"/> for arrest bookings only.</summary>
     public ulong? ArrestChannel { get; init; }
 
+    /// <summary>
+    /// Every slash command anyone runs, as typed, including ones that were refused or failed.
+    /// </summary>
+    public ulong? CommandLogChannel { get; init; }
+
     public ulong? LeaderboardChannel { get; init; }
     public ulong? ArrestBoardChannel { get; init; }
 
@@ -499,6 +504,7 @@ public sealed record FeatureOptions
             BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
             PoliceLogChannel = Snowflake(configuration, "POLICE_LOG_CHANNEL"),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
+            CommandLogChannel = Snowflake(configuration, "COMMAND_LOG_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
             KillWebhook = Text(configuration, "KILL_WEBHOOK_URL"),
             RconWebhook = Text(configuration, "RCON_WEBHOOK_URL"),
@@ -756,6 +762,7 @@ public sealed record FeatureOptions
         $"connect feed: {(ConnectWebhook is null ? "off (CONNECT_WEBHOOK_URL not set)" : "on")}",
         $"staff feed: {(StaffWebhook is null ? "off (STAFF_WEBHOOK_URL not set)" : "on")}",
         $"staff log channels: {(ModLogChannel is null && BanLogChannel is null ? "off (MOD_LOG_CHANNEL / BAN_LOG_CHANNEL not set)" : $"mod {ModLogChannel?.ToString(CultureInfo.InvariantCulture) ?? "unset"}, ban {BanLogChannel?.ToString(CultureInfo.InvariantCulture) ?? "unset"}")}",
+        $"command log: {(CommandLogChannel is null ? "off (COMMAND_LOG_CHANNEL not set)" : $"channel {CommandLogChannel}")}",
         $"menu panel: {(MenuPanelChannel is null
             ? "off (MENU_PANEL_CHANNEL not set)"
             : MenuRoleStaff is null && MenuRoleHighStaff is null
