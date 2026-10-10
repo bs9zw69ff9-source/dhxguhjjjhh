@@ -17,7 +17,11 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public static class Theme
 {
-    /* ---- palette: a Pip-Boy, not a dashboard ----
+    /* ---- palette: a Pip-Boy, not a dashboard - in its Christmas colours ----
+
+       THE VALUES BELOW ARE THE SEASONAL SKIN (holly green, red, snow white, gold). The prose
+       that follows describes the standing Pip-Boy palette these replaced; the meanings it
+       describes are unchanged.
 
        THE NAMES KEEP THEIR MEANINGS AND ONLY THE VALUES MOVED. Every embed in the bot picks
        a colour by what it MEANS - green is cleared, red is a ban, amber is a warning - and a
@@ -32,18 +36,18 @@ public static class Theme
        radiation orange, rusted steel - chosen so no two land within a few percent of each
        other at a glance. A palette whose warning and whose error are the same orange is a
        palette that says nothing. */
-    public static readonly Color Green = new(0x3C, 0xF2, 0x81);        // Pip-Boy phosphor: success, online, cleared
-    public static readonly Color Amber = new(0xFF, 0xB0, 0x00);        // terminal amber: warnings
-    public static readonly Color Gold = new(0xF2, 0xC1, 0x4E);         // Vault-Tec yellow: caps, economy
-    public static readonly Color Blue = new(0x4F, 0x8F, 0xD6);         // Vault-Tec blue: information
-    public static readonly Color Sky = new(0x6F, 0xD4, 0xE0);          // cleanroom cyan: neutral accent
-    public static readonly Color BanRed = new(0xD9, 0x33, 0x2B);       // klaxon red: bans, blocks, denied
-    public static readonly Color ErrorRed = new(0xE8, 0x6A, 0x4C);     // rust: errors, softer than a ban
-    public static readonly Color Grey = new(0x8A, 0x85, 0x77);         // wasteland dust: disabled, void
-    public static readonly Color Purple = new(0x9B, 0x7E, 0xC8);
-    public static readonly Color Pink = new(0xE0, 0x7A, 0x9B);
-    public static readonly Color Teal = new(0x3F, 0xB3, 0xA0);
-    public static readonly Color Orange = new(0xE8, 0x8A, 0x2E);       // radiation orange
+    public static readonly Color Green = new(0x1F, 0x8A, 0x4C);        // holly green: success, online, cleared
+    public static readonly Color Amber = new(0xDD, 0xA1, 0x1E);        // gold: warnings
+    public static readonly Color Gold = new(0xF1, 0xDA, 0x94);         // champagne gold: caps, economy
+    public static readonly Color Blue = new(0xF2, 0xEF, 0xE6);         // snow white: information
+    public static readonly Color Sky = new(0xB5, 0xD9, 0xCD);          // frost: neutral accent
+    public static readonly Color BanRed = new(0xD9, 0x30, 0x3F);       // Christmas red: bans, blocks, denied
+    public static readonly Color ErrorRed = new(0xE8, 0x70, 0x7A);     // cranberry: errors, softer than a ban
+    public static readonly Color Grey = new(0x8B, 0x94, 0x90);         // winter grey: disabled, void
+    public static readonly Color Purple = new(0xA6, 0x3A, 0x5A);       // mulled wine
+    public static readonly Color Pink = new(0xF4, 0xAE, 0xB6);         // blush
+    public static readonly Color Teal = new(0x2E, 0x9C, 0x86);         // spruce
+    public static readonly Color Orange = new(0xAD, 0x73, 0x26);       // antique gold
 
     // ---- glyphs ----
     public const string Ok = "✅";
