@@ -212,6 +212,7 @@ public static class FactionRegistry
                     ["Veteran Ranger"] = "ncrranger.txt",
                     ["Patrol Ranger"] = "ncrpatrolranger.txt",
                     ["Heavy Trooper"] = "ncrheavy.txt",
+                    ["Boss"] = "ncrboss.txt",
                 },
             },
             ["Legion"] = new()
@@ -266,6 +267,7 @@ public static class FactionRegistry
                 {
                     ["Recon"] = "bosrecon.txt",
                     ["Purifier"] = "bospurifier.txt",
+                    ["Boss"] = "bosboss.txt",
                 },
             },
             ["Enclave"] = new()
@@ -293,6 +295,7 @@ public static class FactionRegistry
                     ["Hellfire"] = "enclavehellfire.txt",
                     ["Demolition"] = "enclavedemolition.txt",
                     ["Recon"] = "enclaverecon.txt",
+                    ["Boss"] = "enclaveboss.txt",
                 },
             },
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
