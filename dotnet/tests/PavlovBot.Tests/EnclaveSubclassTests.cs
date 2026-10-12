@@ -166,7 +166,7 @@ public class EnclaveSubclassTests : IDisposable
 
         var enclave = choices.Where(c => c.Faction == "Enclave").Select(c => c.Label).ToList();
 
-        Assert.Equal(["Enclave - Demolition", "Enclave - Hellfire", "Enclave - Recon"], enclave);
+        Assert.Equal(["Enclave - Boss", "Enclave - Demolition", "Enclave - Hellfire", "Enclave - Recon"], enclave);
 
         // The Brotherhood has a Recon too; each is its own choice, not one merged under the Brotherhood.
         Assert.Contains(choices, c => c.Value == "Brotherhood of Steel:Recon");

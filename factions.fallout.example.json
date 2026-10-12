@@ -45,7 +45,8 @@
       "subclasses": [
         { "name": "Veteran Ranger", "file": "ncrranger.txt" },
         { "name": "Patrol Ranger",  "file": "ncrpatrolranger.txt" },
-        { "name": "Heavy Trooper",  "file": "ncrheavy.txt" }
+        { "name": "Heavy Trooper",  "file": "ncrheavy.txt" },
+        { "name": "Boss",           "file": "ncrboss.txt" }
       ]
     },
     {
@@ -80,7 +81,8 @@
       ],
 "subclasses": [
         { "name": "Recon",    "file": "bosrecon.txt" },
-        { "name": "Purifier", "file": "bospurifier.txt" }
+        { "name": "Purifier", "file": "bospurifier.txt" },
+        { "name": "Boss",     "file": "bosboss.txt" }
       ]
     },
             {
@@ -98,7 +100,8 @@
       "subclasses": [
         { "name": "Hellfire",   "file": "enclavehellfire.txt" },
         { "name": "Demolition", "file": "enclavedemolition.txt" },
-        { "name": "Recon",      "file": "enclaverecon.txt" }
+        { "name": "Recon",      "file": "enclaverecon.txt" },
+        { "name": "Boss",       "file": "enclaveboss.txt" }
       ]
     }
   ]
