@@ -268,6 +268,8 @@ public static class FactionRegistry
                     ["Recon"] = "bosrecon.txt",
                     ["Purifier"] = "bospurifier.txt",
                     ["Boss"] = "bosboss.txt",
+                    ["Assault"] = "bosassault.txt",
+                    ["Headhunter"] = "bosheadhunter.txt",
                 },
             },
             ["Enclave"] = new()

@@ -82,7 +82,9 @@
 "subclasses": [
         { "name": "Recon",    "file": "bosrecon.txt" },
         { "name": "Purifier", "file": "bospurifier.txt" },
-        { "name": "Boss",     "file": "bosboss.txt" }
+        { "name": "Boss",       "file": "bosboss.txt" },
+        { "name": "Assault",    "file": "bosassault.txt" },
+        { "name": "Headhunter", "file": "bosheadhunter.txt" }
       ]
     },
             {
