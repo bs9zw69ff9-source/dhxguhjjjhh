@@ -65,7 +65,8 @@
         { "name": "Vex", "file": "legionvex.txt" },
         { "name": "Praetorian", "file": "legionpraetorian.txt" },
         { "name": "Slavemaster", "file": "legionslavemaster.txt" },
-        { "name": "Assasin", "file": "legionassasin.txt" }
+        { "name": "Assasin", "file": "legionassasin.txt" },
+        { "name": "Explorer", "file": "legionexplorer.txt" }
       ]
     },
     {
