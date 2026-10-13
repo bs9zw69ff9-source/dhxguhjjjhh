@@ -242,6 +242,7 @@ public static class FactionRegistry
                     ["Praetorian"] = "legionpraetorian.txt",
                     ["Slavemaster"] = "legionslavemaster.txt",
                     ["Assasin"] = "legionassasin.txt",
+                    ["Explorer"] = "legionexplorer.txt",
                 },
             },
             ["Brotherhood of Steel"] = new()
