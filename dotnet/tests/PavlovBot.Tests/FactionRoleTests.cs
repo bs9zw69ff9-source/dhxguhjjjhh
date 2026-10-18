@@ -325,6 +325,21 @@ public class SetRolesShapeTests
     }
 
     [Fact]
+    public void ThePoliceBotIsOfferedTheGwpdNotTheNypd()
+    {
+        /* FACTION_SET=police. The police faction is the GWPD now, so that is the role /setroles
+           offers and the one it files the mapping under - an "nypd_role" option would write a
+           key nothing looks up. */
+        var options = Options(FactionRegistry.Police);
+
+        Assert.Equal(
+            ["mod_role", "admin_role", "whitelist_leader_role", "police_role",
+             "colombo_role", "gambino_role", "gwpd_role"],
+            options);
+        Assert.DoesNotContain("nypd_role", options);
+    }
+
+    [Fact]
     public void TheBuiltInBotKeepsPoliceAndGainsAnOptionPerFaction()
     {
         var options = Options(FactionRegistry.Default);
