@@ -157,6 +157,17 @@ public sealed record FeatureOptions
     /// </summary>
     public string? BotName { get; init; }
 
+    /// <summary>
+    /// Which look this instance wears: <c>fallout</c> (the default) or <c>police</c>. <c>THEME</c>.
+    /// </summary>
+    /// <remarks>
+    /// The words, the glyphs and the colours, together - see <c>Discord.Skins</c>. Separate from
+    /// <see cref="FactionSetName"/> because the two answer different questions (what the bot
+    /// SAYS, and which roster files it WRITES), and a skin change must never be able to
+    /// repoint a roster.
+    /// </remarks>
+    public string? ThemeName { get; init; }
+
     /// <summary>Channel for bans, unbans and automatic bans. Falls back to the mod log.</summary>
     public ulong? BanLogChannel { get; init; }
 
@@ -214,8 +225,9 @@ public sealed record FeatureOptions
     /// </remarks>
     public int EventRetentionDays { get; init; } = 90;
 
-    /// <summary>Which faction draws a wage. NYPD by default - they are the ones on duty.</summary>
-    public string PayrollFaction { get; init; } = "NYPD";
+    /// <summary>Which faction draws a wage. The GWPD by default - they are the ones on duty.</summary>
+    /// <remarks>Its former name, NYPD, still resolves to it.</remarks>
+    public string PayrollFaction { get; init; } = PavlovBot.Core.Factions.FactionRegistry.PoliceName;
 
     // ---- money anomaly detection ----
 
@@ -501,6 +513,7 @@ public sealed record FeatureOptions
             StaffWebhook = Text(configuration, "STAFF_WEBHOOK_URL"),
             ModLogChannel = Snowflake(configuration, "MOD_LOG_CHANNEL"),
             BotName = Text(configuration, "BOT_NAME"),
+            ThemeName = Text(configuration, "THEME"),
             BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
             PoliceLogChannel = Snowflake(configuration, "POLICE_LOG_CHANNEL"),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
@@ -518,7 +531,7 @@ public sealed record FeatureOptions
             PayrollAmount = Money(configuration, "PAYROLL_AMOUNT"),
             PayrollInterval = Minutes(configuration, "PAYROLL_INTERVAL_MINUTES", TimeSpan.FromMinutes(30)),
             EventRetentionDays = Int(configuration, "EVENT_RETENTION_DAYS", 90),
-            PayrollFaction = Text(configuration, "PAYROLL_FACTION") ?? "NYPD",
+            PayrollFaction = Text(configuration, "PAYROLL_FACTION") ?? PavlovBot.Core.Factions.FactionRegistry.PoliceName,
 
 
             CrashRecovery = Flag(configuration, "CRASH_RECOVERY"),

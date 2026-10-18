@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using System.Globalization;
+using PavlovBot.Core.Text;
 
 namespace PavlovBot.Core.Penal;
 
@@ -282,16 +283,20 @@ public sealed record Booking(
     }
 
     /// <summary>"250 caps", "No bail - the sentence must be served", "Based on the associated charge".</summary>
-    public string BailLabel()
+    /// <param name="currency">
+    /// How this server writes money. REQUIRED rather than defaulted, so a call site cannot
+    /// quietly quote bail in a currency the rest of the screen does not use.
+    /// </param>
+    public string BailLabel(Currency currency)
     {
+        ArgumentNullException.ThrowIfNull(currency);
+
         /* Checked FIRST, and it wins outright. A booking that shows a price the player
            cannot actually pay is worse than showing none: they queue up at the station with
-           the caps and nobody can tell them why it will not work. */
+           the money and nobody can tell them why it will not work. */
         if (!Bailable) return "No bail - the sentence must be served";
 
-        // CAPS, which is what the server's currency is called. Core cannot see Host's Lore,
-        // so the one other place that formats money is Lore.Amount - keep them in step.
-        var amount = Bail.ToString("N0", CultureInfo.InvariantCulture) + " caps";
+        var amount = currency.Format(Bail);
 
         if (!AssociatedBail) return amount;
 

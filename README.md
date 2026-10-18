@@ -15,8 +15,9 @@ and ranks, a dollar economy, a wealth leaderboard, donator management,
 self-service RCON menus, and a layered owner/admin/mod/whitelist permission
 model — all behind slash commands.
 
-It ships **brand-neutral** and skins to any RP: set `BOT_NAME` in `.env` (e.g.
-`Mojave Authority`, `LSPD Command`) and every embed is stamped with it.
+It runs two looks from one binary: `THEME=fallout` (the default: caps, bounties,
+the Mojave) or `THEME=police` (dollars, warrants, the GWPD). Pair it with the
+matching `FACTION_SET`. `BOT_NAME` overrides the name stamped on every embed.
 
 ## Requirements
 
@@ -89,6 +90,7 @@ for the full annotated list.
 - **Required:** `DISCORD_TOKEN`, `CLIENT_ID`, and the `RCON_*_1` trio.
 - **Optional:** servers 2–9, ModSave/economy paths, log/leaderboard channel IDs,
   role IDs, and:
+  - `THEME` - `fallout` (default) or `police`: the wording and embed colours
   - `BOT_NAME` — display name stamped on every embed
   - `IPHUB_API_KEY` / `IPQS_API_KEY` / `PROXYCHECK_API_KEY` / `SENTINEL_API_KEY` — VPN/proxy detection
   - `GEOAPIFY_API_KEY` — geolocation and the location map on connect cards

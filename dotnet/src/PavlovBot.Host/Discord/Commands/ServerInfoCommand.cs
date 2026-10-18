@@ -122,7 +122,7 @@ public sealed class ServerInfoCommand : ISlashCommand
     {
         var builder = new EmbedBuilder()
             .WithTitle(view.DisplayName)
-            .WithColor(view.Online ? new Color(0x2E, 0x94, 0x55) : new Color(0xA3, 0x26, 0x36));
+            .WithColor(view.Online ? Theme.ServerUp : Theme.ServerDown);
 
         if (!view.Online)
             return builder.WithDescription($"**{view.DisplayName}** looks offline right now.").Build();

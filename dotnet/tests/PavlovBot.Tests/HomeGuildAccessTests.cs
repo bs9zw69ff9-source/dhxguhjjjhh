@@ -167,7 +167,7 @@ public class HomeGuildAccessTests
         var access = new Access(store, owners: [], factions: FactionRegistry.Police);
         await store.WriteAsync(Datasets.Roles, new RoleMap
         {
-            FactionRoles = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { ["NYPD"] = 777 },
+            FactionRoles = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { ["GWPD"] = 777 },
         });
 
         access.UseHomeGuild(id => new FakeMember(id, 777));

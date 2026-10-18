@@ -107,10 +107,31 @@ public static class Program
 
         var features = FeatureOptions.Bind(builder.Configuration);
 
-        /* THE SKIN, applied before anything can build an embed. BOT_NAME has been documented
-           as "stamped on every embed" since the port and read by nothing; Theme.Brand puts it
-           in the footer of every one. Unset keeps the default name rather than an empty
-           stamp - a blank footer is not a skin, it is a bug that looks like a skin. */
+        /* THE SKIN, applied before anything can build an embed. THEME picks the words and
+           the colours; unset is the Fallout skin, which is what every instance said before
+           skins existed. A NAME THAT IS NOT A SKIN IS FATAL, the same rule as FACTION_SET:
+           quietly dressing the police bot in the Mojave because THEME said "polcie" is a
+           wrong bot, not a typo.
+
+           BOT_NAME AFTER IT, so an explicit name beats the skin's own. BOT_NAME has been
+           documented as "stamped on every embed" since the port and read by nothing;
+           Theme.Brand puts it in the footer of every one. Unset keeps the skin's name rather
+           than an empty stamp - a blank footer is not a skin, it is a bug that looks like a
+           skin. */
+        var skin = Discord.Skins.Fallout;
+        if (features.ThemeName is { Length: > 0 } themeName)
+        {
+            if (Discord.Skins.Named(themeName) is not { } named)
+            {
+                await Console.Error.WriteLineAsync(
+                    $"THEME is \"{themeName}\", which is not a built-in theme. " +
+                    $"Use one of: {string.Join(", ", Discord.Skins.Names)}.").ConfigureAwait(false);
+                return 78;   // EX_CONFIG
+            }
+            skin = named;
+        }
+
+        Discord.Theme.Use(skin);
         if (features.BotName is { Length: > 0 } botName)
             Discord.Theme.BrandName = botName;
 
@@ -817,6 +838,29 @@ public static class Program
             factions.Names.Count, FactionSource(features.FactionsPath, features.FactionSetName),
             string.Join(", ", factions.Names));
 
+        /* A RENAMED FACTION'S RECORDS FOLLOW IT, before anything can read them. NYPD is the
+           GWPD now; the membership index, suspensions, delegated roles and the pay clock were
+           all filed under the old name. Idempotent, and a no-op on an instance whose factions
+           were never renamed. */
+        await PavlovBot.Host.Factions.FactionRenames.CarryOverAsync(
+            host.Services.GetRequiredService<SerializedStore>(), factions, logger).ConfigureAwait(false);
+
+        logger.LogInformation("  theme: {Theme} (THEME), footer \"{Brand}\"",
+            Discord.Theme.Skin.Name, Discord.Theme.BrandName);
+
+        /* A SKIN AND A FACTION SET FROM DIFFERENT SERVERS IS SAID OUT LOUD. They are two
+           settings on purpose - one decides what the bot says, the other which roster files it
+           writes - and that leaves room to set one and forget the other: the police skin
+           over Fallout ladders, or the reverse. A warning, not a refusal, because neither
+           combination loses data; it just looks wrong to everybody in the server. */
+        if (SkinAndFactionsDisagree(Discord.Theme.Skin, factions))
+        {
+            logger.LogWarning(
+                "THEME is {Theme} but the factions are {Names}, which belong to the other server. " +
+                "Set THEME and FACTION_SET to the same thing (both \"police\" or both \"fallout\")",
+                Discord.Theme.Skin.Name, string.Join(", ", factions.Names));
+        }
+
         /* THE SUB-CLASSES BY NAME, because the faction line above does not settle the question
            anybody actually asks after adding one: does THIS bot know about it?
 
@@ -1374,6 +1418,17 @@ public static class Program
     internal static bool EnvFileTooOpen(UnixFileMode mode) =>
         (mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite |
                  UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0;
+
+    /// <summary>
+    /// True when the skin is one server's and the built-in factions are the other's.
+    /// </summary>
+    /// <remarks>
+    /// Only the two built-in sets are judged. A FACTIONS_PATH file is somebody's own ladders,
+    /// and there is nothing to say it does not belong with either skin.
+    /// </remarks>
+    internal static bool SkinAndFactionsDisagree(Discord.Skin skin, PavlovBot.Core.Factions.FactionSet factions) =>
+        (ReferenceEquals(skin, Discord.Skins.Police) && ReferenceEquals(factions, PavlovBot.Core.Factions.FactionRegistry.FalloutSet)) ||
+        (ReferenceEquals(skin, Discord.Skins.Fallout) && ReferenceEquals(factions, PavlovBot.Core.Factions.FactionRegistry.Police));
 
     internal static bool MayFallBackToSet(string? path, string? setName) =>
         path is { Length: > 0 } &&

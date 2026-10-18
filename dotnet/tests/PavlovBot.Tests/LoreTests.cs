@@ -32,7 +32,7 @@ public class LoreTests
            one currency is how a booking ends up quoting dollars next to a balance in caps. */
         var booking = PenalCode.Book(["PC 100"], 1.0);
 
-        Assert.Equal(Lore.Amount(booking.Bail), booking.BailLabel());
+        Assert.Equal(Lore.Amount(booking.Bail), booking.BailLabel(Lore.Money));
     }
 
     [Fact]
@@ -116,30 +116,16 @@ public class LoreTests
         }
     }
 
-    [Fact]
-    public void NoTwoColoursInThePaletteAreTheSame()
+    [Theory]
+    [InlineData("fallout")]
+    [InlineData("police")]
+    public void NoTwoColoursInThePaletteAreTheSame(string skin)
     {
         /* THE BAR IS READ BEFORE THE WORDS ARE. Every embed picks its colour by meaning -
            cleared, warned, banned - so two entries landing on the same hue silently merges
            two meanings, and nothing about the code would show it. Cheap to pin, and the sort
-           of thing a theme pass breaks. */
-        var palette = new Dictionary<string, Discord.Color>
-        {
-            ["Green"] = Theme.Green,
-            ["Amber"] = Theme.Amber,
-            ["Gold"] = Theme.Gold,
-            ["Blue"] = Theme.Blue,
-            ["Sky"] = Theme.Sky,
-            ["BanRed"] = Theme.BanRed,
-            ["ErrorRed"] = Theme.ErrorRed,
-            ["Grey"] = Theme.Grey,
-            ["Purple"] = Theme.Purple,
-            ["Pink"] = Theme.Pink,
-            ["Teal"] = Theme.Teal,
-            ["Orange"] = Theme.Orange,
-        };
-
-        var duplicates = palette
+           of thing a theme pass breaks. Every skin, not just the one running. */
+        var duplicates = Skins.Named(skin)!.Colors.Entries
             .GroupBy(entry => entry.Value.RawValue)
             .Where(group => group.Count() > 1)
             .Select(group => string.Join(" = ", group.Select(entry => entry.Key)))

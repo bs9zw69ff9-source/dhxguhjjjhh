@@ -1,4 +1,5 @@
 using PavlovBot.Core.Penal;
+using PavlovBot.Core.Text;
 using PavlovBot.Host.Discord.Commands;
 using Xunit;
 
@@ -100,7 +101,7 @@ public class SentenceCapTests
         var overridden = ArrestCommand.Override(PenalCode.Book(["PC 801"]), minutes: 1, capMinutes: 0);
 
         Assert.False(overridden.Bailable);
-        Assert.Equal("No bail - the sentence must be served", overridden.BailLabel());
+        Assert.Equal("No bail - the sentence must be served", overridden.BailLabel(Currency.Caps));
     }
 
     [Fact]

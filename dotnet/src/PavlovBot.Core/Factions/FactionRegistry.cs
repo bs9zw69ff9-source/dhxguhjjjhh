@@ -50,6 +50,19 @@ public sealed record FactionDefinition
     public IReadOnlyDictionary<string, string> Subclasses { get; init; } =
         new Dictionary<string, string>();
 
+    /// <summary>
+    /// What this faction used to be called. Looked up as this faction, never listed as one.
+    /// </summary>
+    /// <remarks>
+    /// A FACTION'S NAME IS STORED DATA, not just a label. It is the key a membership record,
+    /// a rank suspension and a delegated roster role are filed under, and an operator may
+    /// still have the old name in PAYROLL_FACTION. Renaming the faction without this would
+    /// leave every one of those pointing at a faction that no longer exists - nobody loses
+    /// game access, because the roster FILES keep their names, but /promotion by user,
+    /// suspensions and delegated roles quietly stop finding anybody.
+    /// </remarks>
+    public IReadOnlyList<string> FormerNames { get; init; } = [];
+
     public string Lowest => Order[0];
     public string Highest => Order[^1];
 
@@ -80,6 +93,9 @@ public static class FactionRegistry
 {
     /// <summary>The single nominal rank a spawn-only faction uses. Never shown to a user.</summary>
     public const string SpawnOnly = "Member";
+
+    /// <summary>The police faction's name in the police set.</summary>
+    public const string PoliceName = "GWPD";
 
     public static readonly FrozenDictionary<string, FactionDefinition> All =
         new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase)
@@ -112,9 +128,14 @@ public static class FactionRegistry
                 SpawnFile = "colombospawn.txt",
                 RankFiles = new Dictionary<string, string> { [SpawnOnly] = "colombospawn.txt" },
             },
-            ["NYPD"] = new()
+            /* GWPD, AND IT WAS NYPD. Only the name moved: every roster file below is the one
+               the game already reads, because renaming a faction must never repoint a file -
+               everybody listed in the old one would silently lose the rank in game. The old
+               name is kept as a former name so records filed under it still resolve here. */
+            [PoliceName] = new()
             {
-                Name = "NYPD",
+                Name = PoliceName,
+                FormerNames = ["NYPD"],
                 Order = ["Cadet", "Patrolman", "Corporal", "Sergeant", "Lieutenant", "Captain", "Deputy Chief", "Chief of Police"],
                 Default = "Cadet",
                 SpawnFile = "policespawn.txt",
@@ -142,7 +163,7 @@ public static class FactionRegistry
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The police ladders - Gambino, Colombo and NYPD. A preset, not the default any more.
+    /// The police ladders - Gambino, Colombo and GWPD. A preset, not the default any more.
     /// </summary>
     /// <remarks>
     /// THIS USED TO BE THE DEFAULT. The bot it was written for is gone: the Fallout server is
@@ -317,7 +338,7 @@ public static class FactionRegistry
     public static FactionSet? Preset(string? name) => name?.Trim().ToLowerInvariant() switch
     {
         "fallout" or "default" or "builtin" or "built-in" => FalloutSet,
-        "police" or "nypd" => Police,
+        "police" or "gwpd" or "nypd" => Police,
         _ => null,
     };
 
@@ -339,8 +360,7 @@ public static class FactionRegistry
     public static FactionDefinition? Get(string? faction) =>
         faction is null ? null
             : Fallout.TryGetValue(faction, out var themed) ? themed
-            : All.TryGetValue(faction, out var def) ? def
-            : null;
+            : Police.Get(faction);
 
     public static IReadOnlyCollection<string> Names => All.Keys;
 }

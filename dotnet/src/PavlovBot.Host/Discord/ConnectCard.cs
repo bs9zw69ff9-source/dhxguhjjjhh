@@ -59,8 +59,8 @@ public static class ConnectCard
         var who = Sanitize.Message(name);
         var where = Sanitize.Message(server);
 
-        var title = EmbedBudget.Truncate($"Dossier — {who}", EmbedBudget.TitleLimit);
-        var description = $"{who} just walked into **{where}**.";
+        var title = EmbedBudget.Truncate($"{Lore.Say.ConnectTitle} — {who}", EmbedBudget.TitleLimit);
+        var description = $"{who} {Lore.Say.Arrived} **{where}**.";
 
         var embed = new EmbedBuilder()
             .WithColor(flagged ? Theme.BanRed : vpn?.Decision.Flagged == true ? Theme.Amber : Theme.Green)
@@ -126,7 +126,7 @@ public static class ConnectCard
 
         Add("Recent addresses", Addresses(account));
 
-        return embed.Brand($"Arrival log — {EasternTime.Stamp(at)} Eastern").Build();
+        return embed.Brand($"{Lore.Say.ConnectLog} — {EasternTime.Stamp(at)} Eastern").Build();
     }
 
     /// <summary>

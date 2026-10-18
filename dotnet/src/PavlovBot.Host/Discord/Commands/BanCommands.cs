@@ -209,7 +209,7 @@ public abstract class BanCommandBase : ISlashCommand
             flags?.Pending == true ? " (pending confirmation)" : "", EasternTime.Stamp(now));
 
         var embed = Theme.Punishment(
-            permanent ? $"{Theme.Deny} Exiled from {Lore.World}" : $"{Theme.Deny} Run out of {Lore.World}",
+            permanent ? $"{Theme.Deny} {Lore.Say.BannedForGood}" : $"{Theme.Deny} {Lore.Say.BannedForAWhile}",
             $"**{Sanitize.Code(name)}** — {Sanitize.Code(Sanitize.RedactPrivate(record.Reason ?? "no reason given"))}")
             .AddField("Length", permanent ? "Permanent" : $"{record.DurationLabel} (until {Theme.Relative(record.Expires!.Value)})", true)
             .AddField("Issued by", command.User.Username, true);
@@ -405,7 +405,7 @@ public sealed class UnbanCommand(
 
         await Audit.RecordAsync("unban", command.User.Username, player, existing.Reason, ct).ConfigureAwait(false);
 
-        var embed = Theme.Success("Exile lifted", $"**{Sanitize.Code(player)}** may walk back in.")
+        var embed = Theme.Success(Lore.Say.BanLifted, $"**{Sanitize.Code(player)}** {Lore.Say.MayReturn}")
             .AddField("Was", $"{Sanitize.Code(Sanitize.RedactPrivate(existing.Reason ?? "no reason recorded"))} — by {existing.Moderator ?? "unknown"}")
             .AddField("Lifted by", command.User.Username, true);
 
@@ -472,7 +472,7 @@ public sealed class CheckBanCommand(
             var body = $"**{Sanitize.Code(player)}** is not banned{(note is null ? "." : $".\n\n{note}")}";
 
             await Reply(command, WithHistory(listed.Listed
-                ? Theme.Punishment($"{Theme.Deny} Exiled by the server", body)
+                ? Theme.Punishment($"{Theme.Deny} {Lore.Say.BannedByTheServer}", body)
                     .AddField("Lift it", "`/unban` removes them from that file.")
                     .Brand()
                 : Theme.Success("No active ban", body), player)).ConfigureAwait(false);
@@ -483,13 +483,13 @@ public sealed class CheckBanCommand(
         {
             // A record whose time has passed but which the sweep has not cleared yet. Say
             // so plainly rather than reporting them as banned.
-            await Reply(command, WithHistory(Theme.Notice("Sentence served",
+            await Reply(command, WithHistory(Theme.Notice(Lore.Say.BanServed,
                 $"**{Sanitize.Code(player)}** served their ban; it expired {Theme.Relative(record.Expires!.Value)}."), player))
                 .ConfigureAwait(false);
             return;
         }
 
-        var embed = Theme.Punishment($"{Theme.Deny} Exiled", $"**{Sanitize.Code(player)}**")
+        var embed = Theme.Punishment($"{Theme.Deny} {Lore.Say.Banned}", $"**{Sanitize.Code(player)}**")
             // Redacted: an auto-ban reason embeds the address or account id that triggered it
             // ("blacklisted ip 1.2.3.4"), and /checkban is not an address-viewing command.
             .AddField("Reason", Sanitize.Code(Sanitize.RedactPrivate(record.Reason ?? "none recorded")))

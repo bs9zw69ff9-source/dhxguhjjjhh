@@ -39,7 +39,7 @@ public class RosterCommandGateTests
         store.WriteAsync(Datasets.Roles, new RoleMap
         {
             FactionLeaderRole = LeaderRole,
-            FactionRoles = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { ["NYPD"] = NcrRole },
+            FactionRoles = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { ["GWPD"] = NcrRole },
         }).GetAwaiter().GetResult();
         return access;
     }
