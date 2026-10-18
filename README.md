@@ -16,8 +16,9 @@ self-service RCON menus, and a layered owner/admin/mod/whitelist permission
 model — all behind slash commands.
 
 It runs two looks from one binary: `THEME=fallout` (the default: caps, bounties,
-the Mojave) or `THEME=police` (dollars, warrants, the GWPD). Pair it with the
-matching `FACTION_SET`. `BOT_NAME` overrides the name stamped on every embed.
+the Mojave) or `THEME=police` (dollars, warrants, the GWPD). The theme brings its
+own factions unless `FACTION_SET` says otherwise. `BOT_NAME` overrides the name
+stamped on every embed.
 
 ## Requirements
 
