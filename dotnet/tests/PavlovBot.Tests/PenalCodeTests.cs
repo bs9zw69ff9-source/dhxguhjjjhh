@@ -1,4 +1,5 @@
 using PavlovBot.Core.Penal;
+using PavlovBot.Core.Text;
 using Xunit;
 
 namespace PavlovBot.Tests;
@@ -128,7 +129,7 @@ public class PenalCodeTests
         var booking = PenalCode.Book(["PC 211"]);
 
         Assert.False(booking.Bailable);
-        Assert.Equal("No bail - the sentence must be served", booking.BailLabel());
+        Assert.Equal("No bail - the sentence must be served", booking.BailLabel(Currency.Caps));
         Assert.Equal(10, booking.JailMinutes);   // and the sentence is still served
     }
 
@@ -140,7 +141,7 @@ public class PenalCodeTests
         var booking = PenalCode.Book(["VC 607", "PC 801"]);
 
         Assert.False(booking.Bailable);
-        Assert.Equal("No bail - the sentence must be served", booking.BailLabel());
+        Assert.Equal("No bail - the sentence must be served", booking.BailLabel(Currency.Caps));
     }
 
     [Fact]
@@ -152,7 +153,7 @@ public class PenalCodeTests
         Assert.Equal(2, booking.Charges.Count);
         Assert.Equal(6, booking.JailMinutes);
         Assert.Equal(85, booking.Bail);
-        Assert.Equal("85 caps", booking.BailLabel());
+        Assert.Equal("85 caps", booking.BailLabel(Currency.Caps));
     }
 
     [Fact]
@@ -161,11 +162,11 @@ public class PenalCodeTests
         // PC 700 is the only charge whose price is set by whatever it attaches to.
         var alone = PenalCode.Book(["PC 700"]);
         Assert.True(alone.Bailable);
-        Assert.Equal("Based on the associated charge", alone.BailLabel());
+        Assert.Equal("Based on the associated charge", alone.BailLabel(Currency.Caps));
         Assert.Equal(3, alone.JailMinutes);      // the sentence is fixed even so
 
         var withOthers = PenalCode.Book(["PC 100", "PC 700"]);
-        Assert.Equal("10 caps + based on the associated charge", withOthers.BailLabel());
+        Assert.Equal("10 caps + based on the associated charge", withOthers.BailLabel(Currency.Caps));
     }
 
     [Fact]
@@ -230,7 +231,7 @@ public class PenalCodeTests
         Assert.Empty(booking.Charges);
         Assert.True(booking.Bailable);
         Assert.Equal("No jail time", booking.SentenceLabel());
-        Assert.Equal("0 caps", booking.BailLabel());
+        Assert.Equal("0 caps", booking.BailLabel(Currency.Caps));
     }
 
     [Fact]
@@ -240,7 +241,7 @@ public class PenalCodeTests
         var big = PenalCode.Book(PenalCode.Charges.Where(c => c.Rule == BailRule.Fixed).Select(c => c.Code), 10);
 
         Assert.True(big.Bailable);
-        Assert.Contains(",", big.BailLabel(), StringComparison.Ordinal);
+        Assert.Contains(",", big.BailLabel(Currency.Caps), StringComparison.Ordinal);
     }
 
     [Fact]

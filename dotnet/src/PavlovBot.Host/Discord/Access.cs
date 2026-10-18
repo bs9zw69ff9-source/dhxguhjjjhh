@@ -174,7 +174,8 @@ public sealed record RoleMap
         return faction switch
         {
             var f when Same(f, "Gambino") || Same(f, "Colombo") => MafiaRole,
-            var f when Same(f, "NYPD") => NypdRole,
+            // The legacy police slot, under the police faction's name or the one it had before.
+            var f when PavlovBot.Core.Factions.FactionRegistry.Police.Get(f) is { Name: PavlovBot.Core.Factions.FactionRegistry.PoliceName } => NypdRole,
             _ => null,
         };
     }
@@ -469,8 +470,12 @@ public sealed class Access
         return [.. _factions.Names.Where(name => Has(user, roles.RoleFor(name)))];
     }
 
+    /// <remarks>
+    /// A FORMER NAME COUNTS AS THE FACTION IT BECAME, so "NYPD" asks about the GWPD rather than
+    /// about a faction that no longer exists and is therefore managed by nobody.
+    /// </remarks>
     public bool CanManage(IUser? user, string faction) =>
-        ManageableFactions(user).Contains(faction, StringComparer.OrdinalIgnoreCase);
+        ManageableFactions(user).Contains(_factions.Get(faction)?.Name ?? faction, StringComparer.OrdinalIgnoreCase);
 
     public StaffTier TierOf(IUser? user) =>
         StaffHierarchy.TierOf(IsSuperOwner(user), IsOwner(user), IsAdmin(user), IsMod(user), IsMasterOwner(user));

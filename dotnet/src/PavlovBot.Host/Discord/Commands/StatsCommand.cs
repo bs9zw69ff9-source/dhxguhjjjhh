@@ -126,7 +126,7 @@ public sealed class StatsCommand(
             : "—", inline: true);
 
         if (profile.Economy.Balance is { } balance)
-            embed.AddField("Caps", Lore.Amount(balance), inline: true);
+            embed.AddField(Lore.MoneyLabel, Lore.Amount(balance), inline: true);
 
         embed.AddField("Status", profile.Activity.Online
             ? $"{Theme.Up} online now" + (profile.Activity.Servers.Count > 0

@@ -112,7 +112,7 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
 
                 logger.LogInformation("warrant issued | player=\"{Player}\" | by={By} | {Reason}", player, command.User.Username, reason);
 
-                await Reply(command, Theme.Warning($"{Lore.Bounty} Bounty posted",
+                await Reply(command, Theme.Warning($"{Lore.Bounty} {Lore.Say.WarrantIssued}",
                     $"**{Sanitize.Code(player)}** — {Sanitize.Code(reason)}")
                     .AddField("Issued by", command.User.Username, true)).ConfigureAwait(false);
                 break;
@@ -126,8 +126,8 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
                     warrants => { warrants.Remove(player); return warrants; }, ct).ConfigureAwait(false);
 
                 await Reply(command, had > 0
-                    ? Theme.Success("Bounties cleared", $"Cleared **{had}** bounty(s) on **{Sanitize.Code(player)}**.")
-                    : Theme.Notice("Nothing to clear", $"**{Sanitize.Code(player)}** has no bounties.")).ConfigureAwait(false);
+                    ? Theme.Success($"{Lore.WarrantsHeading} cleared", $"Cleared **{had}** {Lore.Warrant}(s) on **{Sanitize.Code(player)}**.")
+                    : Theme.Notice("Nothing to clear", $"**{Sanitize.Code(player)}** has no {Lore.Warrants}.")).ConfigureAwait(false);
                 break;
             }
 
@@ -138,8 +138,8 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
                 {
                     var list = all.GetValueOrDefault(player) ?? [];
                     await Reply(command, list.Count == 0
-                        ? Theme.Success("No bounties", $"**{Sanitize.Code(player)}** is clean.")
-                        : Theme.Warning($"{Lore.Bounty} {list.Count} bounty(s) on {Sanitize.Code(player)}",
+                        ? Theme.Success($"No {Lore.Warrants}", $"**{Sanitize.Code(player)}** is clean.")
+                        : Theme.Warning($"{Lore.Bounty} {list.Count} {Lore.Warrant}(s) on {Sanitize.Code(player)}",
                             string.Join("\n", list.Select((w, i) =>
                                 $"**{i + 1}.** {Sanitize.Code(w.Reason)} — {w.IssuedBy}, {Theme.Relative(w.At)}")))).ConfigureAwait(false);
                     return;
@@ -152,7 +152,7 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
 
                 if (wanted.Count == 0)
                 {
-                    await Reply(command, Theme.Success("Nobody is wanted in the Mojave")).ConfigureAwait(false);
+                    await Reply(command, Theme.Success($"Nobody is wanted in {Lore.World}")).ConfigureAwait(false);
                     break;
                 }
 
@@ -311,7 +311,7 @@ public sealed class ArrestCommand : ISlashCommand
 
         var embed = Theme.Punishment($"{Lore.Irons} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
             .AddField("Sentence", booking.SentenceLabel(), true)
-            .AddField("Bail", booking.BailLabel(), true)
+            .AddField("Bail", booking.BailLabel(Lore.Money), true)
             .AddField("Arresting officer", officer, true);
 
         // Said out loud, because a receipt whose sentence does not match its charges is

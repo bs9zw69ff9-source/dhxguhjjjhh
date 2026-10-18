@@ -40,7 +40,7 @@ public class FactionSetTests : IDisposable
 
         // Still shipped, still valid, now chosen by name.
         Assert.Empty(FactionRegistry.Police.Problems());
-        Assert.Contains("NYPD", FactionRegistry.Police.Names, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("GWPD", FactionRegistry.Police.Names, StringComparer.OrdinalIgnoreCase);
     }
 
     // ---- loading ----

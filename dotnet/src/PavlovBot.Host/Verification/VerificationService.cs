@@ -66,11 +66,10 @@ public sealed class VerificationService(
 
     /// <summary>The panel embed. Posted and kept current by <see cref="AutoPost"/>.</summary>
     public Embed BuildPanel() =>
-        Theme.Success($"{Lore.Rads} Check in at the gate",
+        Theme.Success($"{Lore.Rads} {Lore.Say.VerifyTitle}",
                 "Press **Verify** and enter your **exact** Pavlov in-game name.\n\n" +
-                "A staff member looks over every arrival. Once you are cleared, the rest of " +
-                $"{Lore.World} opens up.\n\n" +
-                "One account per person — alts do not get through.")
+                $"{Lore.Say.VerifyReview}\n\n" +
+                Lore.Say.VerifyAlts)
             .Brand()
             .Build();
 
@@ -294,7 +293,7 @@ public sealed class VerificationService(
                 $"ips={string.Join(",", request.Ips)}  |  by {Sanitize.Message(decidedBy)}", ct).ConfigureAwait(false);
         }
 
-        await Close(component, Theme.Success("Cleared at the gate", $"`{Sanitize.Code(request.Name)}` is now verified.")
+        await Close(component, Theme.Success(Lore.Say.Verified, $"`{Sanitize.Code(request.Name)}` is now verified.")
             .AddField("By", decidedBy, true)
             .AddField("Role", roleNote, true)).ConfigureAwait(false);
     }

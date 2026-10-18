@@ -136,8 +136,8 @@ public sealed class Boards(
            board that just never updates. */
         if (standing is null)
         {
-            return Theme.Failure($"{Theme.Money} Deepest pockets in {Lore.World}",
-                    "The caps ledgers are unreadable. `MODSAVE_PATH` is not set, or the bot cannot read it.")
+            return Theme.Failure($"{Theme.Money} {Lore.Say.RichestTitle}",
+                    $"{Lore.Say.LedgersUnreadable} `MODSAVE_PATH` is not set, or the bot cannot read it.")
                 .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
                 .Build();
         }
@@ -149,8 +149,8 @@ public sealed class Boards(
            indefinitely, looking for all the world like it was still being updated. */
         if (standing.Ledgers == 0)
         {
-            return Theme.Notice($"{Theme.Money} Deepest pockets in {Lore.World}",
-                    "Nobody has a cap to their name yet.")
+            return Theme.Notice($"{Theme.Money} {Lore.Say.RichestTitle}",
+                    Lore.Say.NoLedgers)
                 .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
                 .Build();
         }
@@ -166,8 +166,8 @@ public sealed class Boards(
                      (shown < standing.Top.Count ? $" - showing {shown}, the rest would not fit" : "") +
                      $" - updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern";
 
-        return Theme.Notice($"{Theme.Money} Deepest pockets in {Lore.World}",
-                $"**The {TopRows} richest in the wasteland**\n\n{table}")
+        return Theme.Notice($"{Theme.Money} {Lore.Say.RichestTitle}",
+                $"**{Lore.RichestHeading(TopRows)}**\n\n{table}")
             .Brand(footer)
             .Build();
     }
@@ -288,7 +288,7 @@ public sealed class Boards(
            never appears. */
         if (rows.Count == 0)
         {
-            return Theme.Notice($"{Lore.Irons} Most wanted in {Lore.World}", "Nobody has done time yet.")
+            return Theme.Notice($"{Lore.Irons} {Lore.Say.MostWantedTitle}", Lore.Say.NoArrests)
                 .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
                 .Build();
         }
@@ -298,7 +298,7 @@ public sealed class Boards(
             $"`{i + 1,2}.` {Medal(i)} **{Sanitize.Code(r.Player)}** — {r.Minutes} min over {r.Count} arrest(s)\n" +
             $"{Theme.Bar(r.Minutes, top)}");
 
-        return Theme.Punishment($"{Lore.Irons} Most wanted in {Lore.World}", string.Join("\n", lines))
+        return Theme.Punishment($"{Lore.Irons} {Lore.Say.MostWantedTitle}", string.Join("\n", lines))
             .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
             .Build();
     }
@@ -337,7 +337,7 @@ public sealed class Boards(
 
         if (rows.Count == 0)
         {
-            return Theme.Success($"{Lore.Bounty} No open bounties", "Nobody is wanted in the Mojave right now.")
+            return Theme.Success($"{Lore.Bounty} {Lore.Say.NoWarrantsTitle}", Lore.Say.NobodyWanted)
                 .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
                 .Build();
         }
@@ -348,9 +348,9 @@ public sealed class Boards(
 
         var total = warrants.Where(kv => kv.Value is { Count: > 0 }).Sum(kv => kv.Value.Count);
 
-        var embed = Theme.Punishment($"{Lore.Bounty} Open bounties", string.Join("\n", lines))
+        var embed = Theme.Punishment($"{Lore.Bounty} {Lore.Say.WarrantBoardTitle}", string.Join("\n", lines))
             .AddField("Wanted", rows.Count.ToString(CultureInfo.InvariantCulture), true)
-            .AddField("Bounties", total.ToString(CultureInfo.InvariantCulture), true);
+            .AddField(Lore.WarrantsHeading, total.ToString(CultureInfo.InvariantCulture), true);
 
         if (warrants.Count(kv => kv.Value is { Count: > 0 }) > ArrestRows)
             embed.AddField("Not shown", $"{warrants.Count(kv => kv.Value is { Count: > 0 }) - ArrestRows} more wanted.");
@@ -376,7 +376,7 @@ public sealed class Boards(
         var lines = rows.Select((r, i) =>
             $"`{i + 1,2}.` **{Sanitize.Code(r.Staff)}** — {r.Count} action(s), last {Theme.Relative(r.Last)}");
 
-        return Theme.Notice($"{Lore.Badge} Keeping the peace", string.Join("\n", lines))
+        return Theme.Notice($"{Lore.Badge} {Lore.Say.StaffBoardTitle}", string.Join("\n", lines))
             .Brand($"{log.Count} recorded action(s)")
             .Build();
     }
@@ -414,17 +414,17 @@ public sealed class Boards(
                 Name: Clamp(Sanitize.Code(r.Player)),
                 /* No glyph and no unit in the table: it is a fixed-width block, an emoji
                    is not one character wide in a monospace font, and the column header
-                   already says caps. */
+                   already names the money. */
                 Money: r.Balance.ToString("N0", CultureInfo.InvariantCulture)))
             .ToList();
 
         // An empty table still needs columns wide enough for its own header.
         var nameWidth = cells.Count == 0 ? "Username".Length : cells.Max(c => c.Name.Length);
-        var moneyWidth = cells.Count == 0 ? "Caps".Length : cells.Max(c => c.Money.Length);
+        var moneyWidth = cells.Count == 0 ? Lore.MoneyLabel.Length : cells.Max(c => c.Money.Length);
 
         var header = "#".PadRight(RankWidth) +
                      "Username".PadRight(nameWidth + Gutter) +
-                     "Caps".PadLeft(moneyWidth);
+                     Lore.MoneyLabel.PadLeft(moneyWidth);
 
         var rowWidth = RankWidth + nameWidth + Gutter + moneyWidth + 1;
         var overhead = "```\n".Length + header.Length + 1 + "```".Length;

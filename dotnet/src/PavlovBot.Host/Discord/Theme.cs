@@ -17,37 +17,49 @@ namespace PavlovBot.Host.Discord;
 /// </remarks>
 public static class Theme
 {
-    /* ---- palette: a Pip-Boy, not a dashboard - in its Christmas colours ----
+    /* ---- the skin ----
 
-       THE VALUES BELOW ARE THE SEASONAL SKIN (holly green, red, snow white, gold). The prose
-       that follows describes the standing Pip-Boy palette these replaced; the meanings it
-       describes are unchanged.
+       THE PALETTE IS THE SKIN'S, and the names below keep their meanings in every skin:
+       green is cleared, red is a ban, amber is a warning. A reader learns that bar before
+       they learn the words. The values live in <see cref="Skins"/>.
 
-       THE NAMES KEEP THEIR MEANINGS AND ONLY THE VALUES MOVED. Every embed in the bot picks
-       a colour by what it MEANS - green is cleared, red is a ban, amber is a warning - and a
-       reader learns that bar before they learn the words. Rethinking the semantics to suit a
-       theme would cost the one thing the palette is for; rethinking the hues costs nothing.
+       CHOSEN ONCE, AT STARTUP, by THEME - before the gateway connects and before anything can
+       build an embed. Nothing changes it afterwards; the field is volatile so a reader on any
+       thread sees the skin startup chose rather than a stale default. */
+    private static volatile Skin _skin = Skins.Fallout;
 
-       PIP-BOY GREEN IS THE HOUSE COLOUR because it is the one everybody recognises: a CRT
-       phosphor green, pulled up in brightness so it survives Discord's dark background,
-       which is dark enough to eat the original.
+    /// <summary>The skin this instance runs. Fallout unless <c>THEME</c> says otherwise.</summary>
+    public static Skin Skin => _skin;
 
-       The rest are the Fallout set pieces - Vault-Tec's blue and yellow, terminal amber,
-       radiation orange, rusted steel - chosen so no two land within a few percent of each
-       other at a glance. A palette whose warning and whose error are the same orange is a
-       palette that says nothing. */
-    public static readonly Color Green = new(0x1F, 0x8A, 0x4C);        // holly green: success, online, cleared
-    public static readonly Color Amber = new(0xDD, 0xA1, 0x1E);        // gold: warnings
-    public static readonly Color Gold = new(0xF1, 0xDA, 0x94);         // champagne gold: caps, economy
-    public static readonly Color Blue = new(0xF2, 0xEF, 0xE6);         // snow white: information
-    public static readonly Color Sky = new(0xB5, 0xD9, 0xCD);          // frost: neutral accent
-    public static readonly Color BanRed = new(0xD9, 0x30, 0x3F);       // Christmas red: bans, blocks, denied
-    public static readonly Color ErrorRed = new(0xE8, 0x70, 0x7A);     // cranberry: errors, softer than a ban
-    public static readonly Color Grey = new(0x8B, 0x94, 0x90);         // winter grey: disabled, void
-    public static readonly Color Purple = new(0xA6, 0x3A, 0x5A);       // mulled wine
-    public static readonly Color Pink = new(0xF4, 0xAE, 0xB6);         // blush
-    public static readonly Color Teal = new(0x2E, 0x9C, 0x86);         // spruce
-    public static readonly Color Orange = new(0xAD, 0x73, 0x26);       // antique gold
+    /// <summary>
+    /// Dress the bot in <paramref name="skin"/>, and stamp its name unless BOT_NAME overrides it.
+    /// </summary>
+    /// <remarks>
+    /// THE BRAND IS RESET WITH IT, because a police skin stamping "Mojave Authority" on every
+    /// footer is the half-applied theme this exists to prevent. Program sets
+    /// <see cref="BrandName"/> from BOT_NAME AFTER this, so an explicit name still wins.
+    /// </remarks>
+    public static void Use(Skin skin)
+    {
+        ArgumentNullException.ThrowIfNull(skin);
+        _skin = skin;
+        BrandName = skin.Brand;
+    }
+
+    public static Color Green => _skin.Colors.Green;        // success, online, cleared
+    public static Color Amber => _skin.Colors.Amber;        // warnings
+    public static Color Gold => _skin.Colors.Gold;          // economy
+    public static Color Blue => _skin.Colors.Blue;          // information
+    public static Color Sky => _skin.Colors.Sky;            // neutral accent
+    public static Color BanRed => _skin.Colors.BanRed;      // bans, blocks, denied
+    public static Color ErrorRed => _skin.Colors.ErrorRed;  // errors, softer than a ban
+    public static Color Grey => _skin.Colors.Grey;          // disabled, void
+    public static Color Purple => _skin.Colors.Purple;
+    public static Color Pink => _skin.Colors.Pink;
+    public static Color Teal => _skin.Colors.Teal;
+    public static Color Orange => _skin.Colors.Orange;
+    public static Color ServerUp => _skin.Colors.ServerUp;      // the /serverinfo card
+    public static Color ServerDown => _skin.Colors.ServerDown;
 
     // ---- glyphs ----
     public const string Ok = "✅";
@@ -58,8 +70,8 @@ public static class Theme
     public const string Dot = "•";
     public const string Up = "🟢";
     public const string Down = "🔴";
-    /// <summary>Money. Caps, not coins - see <see cref="Lore"/>.</summary>
-    public const string Money = Lore.Caps;
+    /// <summary>Money, in this skin's glyph - see <see cref="Lore"/>.</summary>
+    public static string Money => Lore.Caps;
     public const string Rank = "🏅";
 
     /// <summary>A terminal rule, for the places that need a break rather than a heading.</summary>
@@ -75,7 +87,7 @@ public static class Theme
     /// sets the variable and waits for a change that never comes. <see cref="Brand"/> now
     /// stamps it, and Program wires the variable in.
     /// </remarks>
-    public static string BrandName { get; set; } = "Mojave Authority";
+    public static string BrandName { get; set; } = Skins.Fallout.Brand;
 
     // Discord's hard limits. Exceeding any one of them rejects the entire message.
     private const int MaxTitle = 256;

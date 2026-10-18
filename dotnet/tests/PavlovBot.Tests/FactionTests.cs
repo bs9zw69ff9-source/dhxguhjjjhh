@@ -318,7 +318,7 @@ public class MembershipRulesTests
     [Fact]
     public void RejoiningTheSameFactionIsANoChange()
     {
-        var d = MembershipRules.Join(Nypd, ["NYPD"]);
+        var d = MembershipRules.Join(Nypd, [Nypd.Name]);
         Assert.Equal(MembershipOutcome.NoChange, d.Outcome);
     }
 

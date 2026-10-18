@@ -22,15 +22,40 @@ namespace PavlovBot.Core.Factions;
 /// </remarks>
 public sealed class FactionSet
 {
-    private FactionSet(FrozenDictionary<string, FactionDefinition> all) => All = all;
+    private FactionSet(FrozenDictionary<string, FactionDefinition> all, FrozenDictionary<string, FactionDefinition> former)
+    {
+        All = all;
+        _former = former;
+    }
+
+    /// <summary>Former name -> the faction it is now. Resolved by <see cref="Get"/>, never listed.</summary>
+    private readonly FrozenDictionary<string, FactionDefinition> _former;
 
     /// <summary>Faction name -> its definition. Case-insensitive, like every name here.</summary>
+    /// <remarks>
+    /// CURRENT NAMES ONLY, because this is what pickers, startup and roster sweeps enumerate.
+    /// A former name listed here would show the same faction twice.
+    /// </remarks>
     public FrozenDictionary<string, FactionDefinition> All { get; }
 
     public IReadOnlyCollection<string> Names => All.Keys;
 
+    /// <summary>
+    /// A faction by its name or by a name it used to have, or null.
+    /// </summary>
+    /// <remarks>
+    /// THE CURRENT NAME WINS, so a former name that is also some other faction's current name
+    /// (a configuration <see cref="Problems"/> reports) can never steal that faction's lookups.
+    /// </remarks>
     public FactionDefinition? Get(string? faction) =>
-        faction is not null && All.TryGetValue(faction, out var found) ? found : null;
+        faction is null ? null
+            : All.TryGetValue(faction, out var found) ? found
+            : _former.TryGetValue(faction, out var renamed) ? renamed
+            : null;
+
+    /// <summary>Every former name -> the current name of the faction that had it.</summary>
+    public IReadOnlyDictionary<string, string> Renames =>
+        _former.ToDictionary(kv => kv.Key, kv => kv.Value.Name, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Build a set from definitions. Duplicate names are a configuration error.</summary>
     /// <remarks>
@@ -43,9 +68,16 @@ public sealed class FactionSet
         ArgumentNullException.ThrowIfNull(factions);
 
         var map = new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase);
-        foreach (var faction in factions) map[faction.Name] = faction;
+        var former = new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase);
+        foreach (var faction in factions)
+        {
+            map[faction.Name] = faction;
+            foreach (var old in faction.FormerNames) former[old] = faction;
+        }
 
-        return new FactionSet(map.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase));
+        return new FactionSet(
+            map.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase),
+            former.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -103,6 +135,23 @@ public sealed class FactionSet
                     problems.Add($"{faction.Name} and {owner} both use \"{file}\"; two factions sharing a roster file merge their members in game.");
                 else
                     files[file] = faction.Name;
+            }
+        }
+
+        /* A FORMER NAME MUST POINT AT ONE FACTION. Records filed under it are carried over to
+           whichever faction claims it, so two claimants - or a former name that is another
+           faction's current one - would hand somebody's memberships to the wrong roster. */
+        var claimed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var faction in All.Values)
+        {
+            foreach (var old in faction.FormerNames)
+            {
+                if (All.ContainsKey(old))
+                    problems.Add($"{faction.Name} lists \"{old}\" as a former name, but that is a faction of its own.");
+                else if (claimed.TryGetValue(old, out var other) && !string.Equals(other, faction.Name, StringComparison.OrdinalIgnoreCase))
+                    problems.Add($"{faction.Name} and {other} both list \"{old}\" as a former name.");
+                else
+                    claimed[old] = faction.Name;
             }
         }
 

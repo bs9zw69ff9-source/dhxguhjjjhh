@@ -130,7 +130,7 @@ public sealed class CapsCommand : ISlashCommand
         _logger.LogInformation("{Command} | player=\"{Player}\" | {Before} -> {After} | by={By}",
             Name, player, change.Before, change.After, command.User.Username);
 
-        await Reply(command, Theme.Success($"{Theme.Money} Caps moved",
+        await Reply(command, Theme.Success($"{Theme.Money} {Lore.Say.MoneyMoved}",
             $"**{Sanitize.Code(player)}** — {(amount > 0 ? "+" : "")}{Money(amount)}")
             .AddField("Was", Money(change.Before), true)
             .AddField("Now", Money(change.After), true)

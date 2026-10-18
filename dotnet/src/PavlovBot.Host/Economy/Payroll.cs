@@ -195,7 +195,7 @@ public sealed class Payroll(
     ILogger<Payroll> logger,
     long amount,
     TimeSpan period,
-    string factionName = "NYPD",
+    string factionName = FactionRegistry.PoliceName,
     TimeProvider? time = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
@@ -231,8 +231,14 @@ public sealed class Payroll(
 
         if (!Enabled) return new PayrollRun(now, factionName, none, none, "payroll is not configured");
 
-        if (!rosters.Factions.All.TryGetValue(factionName, out var faction))
+        if (rosters.Factions.Get(factionName) is not { } faction)
             return new PayrollRun(now, factionName, none, none, $"no faction named \"{factionName}\"");
+
+        /* THE FACTION'S CURRENT NAME FROM HERE ON, not the configured one. PAYROLL_FACTION may
+           still say a name the faction used to have (NYPD, now GWPD), and the state below is
+           filed by faction - keyed on the configured spelling, a rename would split one
+           faction's pay clock in two. */
+        var name = faction.Name;
 
         /* ---- guard: is the roster current ----
            Checked before ANYTHING, including settlement, because settling needs to know who
@@ -243,8 +249,8 @@ public sealed class Payroll(
         {
             logger.LogWarning(
                 "Payroll for {Faction} SKIPPED - no server has a fresh player list. Nothing was accrued, " +
-                "nothing was banked, and no period was consumed", factionName);
-            return new PayrollRun(now, factionName, none, none, "no server has a fresh player list");
+                "nothing was banked, and no period was consumed", name);
+            return new PayrollRun(now, name, none, none, "no server has a fresh player list");
         }
 
         // CONFIRMED, not Online: a crashed server's frozen roster must not keep drawing wages.
@@ -268,14 +274,14 @@ public sealed class Payroll(
            twelve minutes carried - and eighteen minutes later, the second 30. */
         var state = store.Read(Datasets.PayrollState, PayrollState.New());
 
-        var previous = state.Previous.GetValueOrDefault(factionName) ?? [];
+        var previous = state.Previous.GetValueOrDefault(name) ?? [];
         var wasOnDuty = previous.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         /* CAPPED AT ONE PERIOD. If the bot was down for six hours, the members online when it
            comes back were not necessarily on duty for those hours - nobody was watching. The
            existing rule was "a run accrues ONE period, whatever happened before it", and this
            keeps it: an outage can never mint more than a single period per member. */
-        var sinceLast = state.LastPaid.TryGetValue(factionName, out var last)
+        var sinceLast = state.LastPaid.TryGetValue(name, out var last)
             ? now - last
             : TimeSpan.Zero;
         var credited = sinceLast > period ? period : sinceLast;
@@ -304,19 +310,19 @@ public sealed class Payroll(
             carried[player] = seconds;
         }
 
-        await StampAsync(now, factionName, accrued, carried, onDuty, ct).ConfigureAwait(false);
+        await StampAsync(now, name, accrued, carried, onDuty, ct).ConfigureAwait(false);
 
         if (accrued.Count > 0)
         {
             logger.LogInformation(
                 "Payroll accrued {Total:N0} across {Count} {Faction} member(s) who completed a full period - banked when they log off",
-                accrued.Values.Sum(), accrued.Count, factionName);
+                accrued.Values.Sum(), accrued.Count, name);
         }
 
         var skipped = onDuty.Count == 0
-            ? $"no {factionName} member is online"
+            ? $"no {name} member is online"
             : accrued.Count == 0 ? "nobody has completed a full period yet" : null;
-        var run = new PayrollRun(now, factionName, paid, accrued, skipped);
+        var run = new PayrollRun(now, name, paid, accrued, skipped);
 
         // History records money that MOVED, not money promised - so it is written from the
         // settlement, which is the only part that touches a balance.

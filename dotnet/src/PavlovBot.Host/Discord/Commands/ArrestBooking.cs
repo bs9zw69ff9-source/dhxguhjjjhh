@@ -105,7 +105,7 @@ public sealed class ArrestBooking(ILogger<ArrestBooking> logger) : IComponentHan
 
         var sentence = $"**Jail:** {result.SentenceLabel()}" +
                        (booking.Minutes is not null ? " *(set by you)*" : "") +
-                       $"  •  **Bail:** {result.BailLabel()}";
+                       $"  •  **Bail:** {result.BailLabel(Lore.Money)}";
 
         var note = result.Capped
             ? $"\n*Charges total more than the {result.CapMinutes} min cap. Bail is not capped.*"

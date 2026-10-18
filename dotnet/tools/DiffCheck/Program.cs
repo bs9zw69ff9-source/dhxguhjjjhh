@@ -186,14 +186,15 @@ if (Stage("--penal", 1) is { } penalArgs)
               && b.AssociatedBail == sc.GetProperty("associated").GetBoolean()
               && b.Ranges == sc.GetProperty("ranges").GetBoolean()
               && b.SentenceLabel() == sc.GetProperty("sentence").GetString()
-              && b.BailLabel() == sc.GetProperty("bailLabel").GetString();
+              // Dollars: the reference labels were written by the Node bot, which quoted "$".
+              && b.BailLabel(PavlovBot.Core.Text.Currency.Dollars) == sc.GetProperty("bailLabel").GetString();
         if (!ok)
         {
             pf++;
             if (firstFailures.Count < 5)
                 firstFailures.Add($"  [{string.Join(",", codes)}] rate={rate}  " +
                     $"js(min={sc.GetProperty("minutes").GetInt32()},bail={sc.GetProperty("bail").GetInt32()},\"{sc.GetProperty("bailLabel").GetString()}\")  " +
-                    $"cs(min={b.JailMinutes},bail={b.Bail},\"{b.BailLabel()}\")");
+                    $"cs(min={b.JailMinutes},bail={b.Bail},\"{b.BailLabel(PavlovBot.Core.Text.Currency.Dollars)}\")");
         }
     }
     Console.WriteLine();

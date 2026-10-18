@@ -63,7 +63,7 @@ public class PayrollTests : IDisposable
 
     private void PutOnRoster(params string[] players)
     {
-        var faction = FactionRegistry.All["NYPD"];
+        var faction = FactionRegistry.All[FactionRegistry.PoliceName];
         File.WriteAllText(
             Path.Combine(_rosters, faction.RankFiles[faction.Default]),
             string.Join("\n", players) + "\n");
