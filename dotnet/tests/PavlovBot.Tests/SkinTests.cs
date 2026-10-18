@@ -160,6 +160,62 @@ public sealed class SkinTests : IDisposable
         Assert.Null(Bind().ThemeName);
     }
 
+    private sealed class NoBalances : PavlovBot.Core.Economy.IBalanceStore
+    {
+        public long? Read(string playerId) => null;
+        public bool Write(string playerId, long balance) => false;
+    }
+
+    private static string MoneyCommand(bool adjust)
+    {
+        var store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
+        var ledger = new PavlovBot.Core.Economy.Ledger(new NoBalances());
+        var audit = new PavlovBot.Host.Moderation.AuditLog(store);
+        var access = new Access(store, [], []);
+        var logger = NullLogger<PavlovBot.Host.Discord.Commands.CapsCommand>.Instance;
+
+        return (adjust
+            ? PavlovBot.Host.Discord.Commands.CapsCommand.Adjust(ledger, audit, access, logger)
+            : PavlovBot.Host.Discord.Commands.CapsCommand.Give(ledger, audit, access, logger)).Name;
+    }
+
+    [Fact]
+    public void ThePoliceBotTypesGiveMoneyNotGiveCaps()
+    {
+        Theme.Use(Skins.Police);
+        Assert.Equal("givemoney", MoneyCommand(adjust: false));
+        Assert.Equal("adjustmoney", MoneyCommand(adjust: true));
+
+        // The Fallout bot keeps the names its staff already type.
+        Theme.Use(Skins.Fallout);
+        Assert.Equal("givecaps", MoneyCommand(adjust: false));
+        Assert.Equal("adjustcaps", MoneyCommand(adjust: true));
+    }
+
+    [Theory]
+    [InlineData("givemoney")]
+    [InlineData("adjustmoney")]
+    public void TheRenamedMoneyCommandsStillFileUnderEconomy(string name) =>
+        Assert.Equal(PavlovBot.Core.Events.EventCategory.Economy, PavlovBot.Core.Events.EventMapping.CategoryOf(name));
+
+    [Fact]
+    public void EachThemeBringsItsOwnFactions()
+    {
+        /* THEME=police without FACTION_SET used to run the Fallout ladders, so /setroles on the
+           police bot offered NCR, Legion, Brotherhood and Enclave roles. */
+        Assert.Same(FactionRegistry.Police, FactionRegistry.Preset(Skins.Police.Factions));
+        Assert.Same(FactionRegistry.FalloutSet, FactionRegistry.Preset(Skins.Fallout.Factions));
+    }
+
+    [Fact]
+    public void NoFalloutFactionReachesThePoliceBot()
+    {
+        string[] fallout = ["NCR", "Legion", "Brotherhood of Steel", "Enclave"];
+        var police = FactionRegistry.Preset(Skins.Police.Factions)!;
+
+        Assert.Empty(police.Names.Intersect(fallout, StringComparer.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public void ASkinFromTheOtherServerIsCaught()
     {

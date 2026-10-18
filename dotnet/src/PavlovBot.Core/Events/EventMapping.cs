@@ -30,6 +30,8 @@ public static class EventMapping
         // ---- economy ----
         ["givecaps"] = EventCategory.Economy,
         ["adjustcaps"] = EventCategory.Economy,
+        ["givemoney"] = EventCategory.Economy,      // the same two, under the police theme
+        ["adjustmoney"] = EventCategory.Economy,
         ["payroll"] = EventCategory.Economy,
         ["money-alert"] = EventCategory.Economy,
 

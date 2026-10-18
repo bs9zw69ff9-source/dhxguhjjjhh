@@ -53,8 +53,9 @@ public sealed record Palette(
 /// </summary>
 /// <remarks>
 /// WHAT BELONGS HERE: what a thing is CALLED - titles, captions, glyphs, the currency. What
-/// does not: anything a person has to act on and anything a machine reads. Command names,
-/// option names, error causes, stored data and log lines are the same in every skin.
+/// does not: anything a person has to act on and anything a machine reads. Option names,
+/// error causes, stored data and log lines are the same in every skin, and so is every
+/// command name except the two money commands (see <see cref="GiveMoneyCommand"/>).
 ///
 /// EVERY MEMBER IS REQUIRED, so a skin that forgets a phrase does not compile rather than
 /// rendering an empty title on a live server.
@@ -140,6 +141,14 @@ public sealed record Vocabulary
     // ---- everything else ----
 
     public required string MoneyMoved { get; init; }
+
+    /// <summary>
+    /// The two money commands' NAMES. The one exception to "command names are the same in
+    /// every skin": a police server typing /givecaps is the Mojave leaking through the one
+    /// place staff see on every use. Read once, when the commands are built at startup.
+    /// </summary>
+    public required string GiveMoneyCommand { get; init; }
+    public required string AdjustMoneyCommand { get; init; }
     public required string HelpTitle { get; init; }
     public required string ConnectTitle { get; init; }
 
@@ -161,7 +170,18 @@ public sealed record Vocabulary
 /// <summary>One whole look: the words, the colours, and the name stamped on every embed.</summary>
 /// <param name="Name">What <c>THEME</c> is set to to choose it.</param>
 /// <param name="Brand">The footer name when <c>BOT_NAME</c> is not set.</param>
-public sealed record Skin(string Name, string Brand, Vocabulary Words, Palette Colors);
+/// <param name="Factions">
+/// The built-in faction set this skin belongs to, run when neither <c>FACTION_SET</c> nor
+/// <c>FACTIONS_PATH</c> says otherwise.
+/// </param>
+/// <remarks>
+/// THE THEME PICKS ITS OWN FACTIONS because the two were separate settings and the gap
+/// between them showed up on a live server: <c>THEME=police</c> without <c>FACTION_SET</c>
+/// gave a police bot that offered NCR, Legion, Brotherhood and Enclave roles in /setroles.
+/// A startup warning had said so, and nobody reads a startup log to find out why a picker
+/// looks wrong. The explicit settings still win, for anybody who really means a mismatch.
+/// </remarks>
+public sealed record Skin(string Name, string Brand, Vocabulary Words, Palette Colors, string Factions);
 
 /// <summary>
 /// The skins this bot ships, chosen per instance by <c>THEME</c>.
@@ -222,6 +242,8 @@ public static class Skins
             Kicked = "Thrown out",
 
             MoneyMoved = "Caps moved",
+            GiveMoneyCommand = "givecaps",
+            AdjustMoneyCommand = "adjustcaps",
             HelpTitle = "Terminal — available commands",
             ConnectTitle = "Dossier",
             Arrived = "just walked into",
@@ -247,7 +269,8 @@ public static class Skins
             Teal: new Color(0x2E, 0x9C, 0x86),        // spruce
             Orange: new Color(0xAD, 0x73, 0x26),      // antique gold
             ServerUp: new Color(0x2E, 0x94, 0x55),    // the /serverinfo card, online
-            ServerDown: new Color(0xA3, 0x26, 0x36))); // the /serverinfo card, offline
+            ServerDown: new Color(0xA3, 0x26, 0x36)), // the /serverinfo card, offline
+        Factions: "fallout");
 
     /// <summary>
     /// The city: dollars, warrants, bans, and the GWPD on every footer.
@@ -302,6 +325,8 @@ public static class Skins
             Kicked = "Kicked",
 
             MoneyMoved = "Balance updated",
+            GiveMoneyCommand = "givemoney",
+            AdjustMoneyCommand = "adjustmoney",
             HelpTitle = "Commands",
             ConnectTitle = "Player information",
             Arrived = "just connected on",
@@ -325,7 +350,8 @@ public static class Skins
             Teal: new Color(0x2D, 0xD4, 0xBF),
             Orange: new Color(0xFB, 0x92, 0x3C),
             ServerUp: new Color(0x3F, 0xA2, 0x5F),
-            ServerDown: new Color(0x9E, 0x3B, 0x2F)));
+            ServerDown: new Color(0x9E, 0x3B, 0x2F)),
+        Factions: "police");
 
     public static IReadOnlyList<Skin> All { get; } = [Fallout, Police];
 

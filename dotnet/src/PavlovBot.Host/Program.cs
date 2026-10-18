@@ -139,9 +139,12 @@ public static class Program
            configuration error and belongs with the others - reported in full, then exit,
            rather than surfacing as an empty picker three subsystems later.
 
-           UNSET IS THE BUILT-IN SET. The normal bots configure nothing and get exactly what
-           they have today; only a themed clone points this at a file. */
-        var factions = PavlovBot.Core.Factions.FactionRegistry.Default;
+           UNSET IS THE THEME'S OWN SET: THEME=police runs Gambino, Colombo and the GWPD, and
+           no THEME at all runs the Fallout ladders, which is what every bot ran before. A theme
+           whose set is missing is a bug in Skins, not configuration, so it falls back to the
+           default rather than stopping. */
+        var factions = PavlovBot.Core.Factions.FactionRegistry.Preset(skin.Factions)
+                       ?? PavlovBot.Core.Factions.FactionRegistry.Default;
 
         /* A NAMED SET, CHECKED BEFORE THE FILE and overridden by it. Keeping a JSON file by
            hand - SSH, an exact path, valid JSON, a restart - for ladders that do not change is
@@ -835,7 +838,9 @@ public static class Program
            built-in factions and writing the other bot's files. Printing the names is the
            check that takes one glance; nothing else would say which set is loaded. */
         logger.LogInformation("  factions: {Count} from {Source} - {Names}",
-            factions.Names.Count, FactionSource(features.FactionsPath, features.FactionSetName),
+            factions.Names.Count,
+            FactionSource(features.FactionsPath,
+                features.FactionSetName ?? (features.ThemeName is { Length: > 0 } ? skin.Factions : null)),
             string.Join(", ", factions.Names));
 
         /* A RENAMED FACTION'S RECORDS FOLLOW IT, before anything can read them. NYPD is the
@@ -848,11 +853,11 @@ public static class Program
         logger.LogInformation("  theme: {Theme} (THEME), footer \"{Brand}\"",
             Discord.Theme.Skin.Name, Discord.Theme.BrandName);
 
-        /* A SKIN AND A FACTION SET FROM DIFFERENT SERVERS IS SAID OUT LOUD. They are two
-           settings on purpose - one decides what the bot says, the other which roster files it
-           writes - and that leaves room to set one and forget the other: the police skin
-           over Fallout ladders, or the reverse. A warning, not a refusal, because neither
-           combination loses data; it just looks wrong to everybody in the server. */
+        /* A SKIN AND A FACTION SET FROM DIFFERENT SERVERS IS SAID OUT LOUD. The theme picks
+           its own set, so this only fires when FACTION_SET was set explicitly to the other
+           server's - the police skin over Fallout ladders, or the reverse. A warning, not a
+           refusal, because neither combination loses data; it just looks wrong to everybody
+           in the server. */
         if (SkinAndFactionsDisagree(Discord.Theme.Skin, factions))
         {
             logger.LogWarning(

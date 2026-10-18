@@ -51,10 +51,10 @@ public sealed class CapsCommand : ISlashCommand
     }
 
     public static CapsCommand Give(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg, IBalanceStore? b = null) =>
-        new(l, a, ac, lg, "givecaps", allowNegative: false, balances: b);
+        new(l, a, ac, lg, Lore.Say.GiveMoneyCommand, allowNegative: false, balances: b);
 
     public static CapsCommand Adjust(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg, IBalanceStore? b = null) =>
-        new(l, a, ac, lg, "adjustcaps", allowNegative: true, balances: b);
+        new(l, a, ac, lg, Lore.Say.AdjustMoneyCommand, allowNegative: true, balances: b);
 
     public string Name { get; }
 
@@ -101,7 +101,7 @@ public sealed class CapsCommand : ISlashCommand
             /* Refused rather than silently taking the absolute value. A moderator who typed
                a minus meant something, and guessing which thing is worse than asking. */
             await Reply(command, Theme.Failure("That is a deduction, not a payout",
-                "`/givecaps` only ever adds. Use `/adjustcaps` to correct a balance downwards.")).ConfigureAwait(false);
+                $"`/{Lore.Say.GiveMoneyCommand}` only ever adds. Use `/{Lore.Say.AdjustMoneyCommand}` to correct a balance downwards.")).ConfigureAwait(false);
             return;
         }
 
