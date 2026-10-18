@@ -1325,12 +1325,21 @@ public static class Program
                "5 disabled" above six names whenever one of them was a typo, which undercuts
                the warning immediately below it. */
             var removed = options.DisabledCommands
-                .Except(gateway.UnknownDisabledCommands, StringComparer.OrdinalIgnoreCase);
+                .Except(gateway.UnknownDisabledCommands, StringComparer.OrdinalIgnoreCase)
+                .Where(c => !c.Contains(' ', StringComparison.Ordinal));
 
             Console.WriteLine(
                 $"selftest: {available - registered.Count} command(s) disabled by COMMANDS_DISABLED: " +
                 string.Join(", ", removed.Select(c => "/" + c)));
         }
+
+        // Subcommands on their own line: they remove an entry from a command, not a command.
+        var subcommands = options.DisabledCommands
+            .Except(gateway.UnknownDisabledCommands, StringComparer.OrdinalIgnoreCase)
+            .Where(c => c.Contains(' ', StringComparison.Ordinal))
+            .ToList();
+        if (subcommands.Count > 0)
+            Console.WriteLine($"selftest: subcommand(s) disabled: {string.Join(", ", subcommands.Select(c => "/" + c))}");
 
         foreach (var unknown in gateway.UnknownDisabledCommands)
             Console.WriteLine($"selftest: WARNING - COMMANDS_DISABLED names \"{unknown}\", which is not a command here");

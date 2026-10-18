@@ -98,23 +98,21 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
            the same filter covers registration, dispatch and the /help catalogue. Filtering at
            registration alone would leave a disabled command dispatchable from a picker entry
            Discord had not caught up on yet. */
-        var disabled = options.DisabledCommands.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        /* "whitelist playtime" switches off one subcommand and keeps the rest of /whitelist;
+           see SubcommandFilter. */
+        var disabled = DisabledCommandList.Parse(options.DisabledCommands);
 
         // Materialised once. The container hands back a fresh enumerable, and the three passes
         // below would otherwise resolve every command three times.
         var all = commands.ToList();
 
-        _commands = all
-            .Where(c => !disabled.Contains(c.Name))
-            .ToDictionary(c => c.Name, StringComparer.Ordinal);
-
         /* A NAME THAT MATCHES NOTHING IS REPORTED, because the failure is silent otherwise:
            COMMANDS_DISABLED=arrests would leave /arrest enabled and look exactly like the
            setting being ignored. Held rather than logged - the logger is injected but the
-           startup summary is where an operator is already looking. */
-        _unknownDisabled = [.. options.DisabledCommands
-            .Where(name => !all.Any(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
-            .Distinct(StringComparer.OrdinalIgnoreCase)];
+           startup summary is where an operator is already looking. The same goes for a
+           subcommand the command does not have. */
+        _commands = SubcommandFilter.Apply(all, disabled, out _unknownDisabled)
+            .ToDictionary(c => c.Name, StringComparer.Ordinal);
 
         _disabledCount = all.Count - _commands.Count;
 
@@ -265,9 +263,11 @@ public sealed class DiscordGateway : IHostedService, IAsyncDisposable
         await _client.StartAsync().ConfigureAwait(false);
         _logger.LogInformation("Discord gateway starting with {Count} command(s)", _commands.Count);
 
-        if (_disabledCount > 0)
+        // On any entry, not only a removed command: "whitelist playtime" removes no command,
+        // and a setting that took effect with nothing said about it reads as one ignored.
+        if (_options.DisabledCommands.Count > 0)
         {
-            _logger.LogInformation("{Count} command(s) disabled by COMMANDS_DISABLED: {Names}",
+            _logger.LogInformation("{Count} command(s) removed by COMMANDS_DISABLED: {Names}",
                 _disabledCount, string.Join(", ", _options.DisabledCommands));
         }
 
