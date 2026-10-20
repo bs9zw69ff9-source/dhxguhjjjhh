@@ -24,7 +24,7 @@ public class RosterServiceTests : IDisposable
         Directory.CreateDirectory(_directory);
         _backups = Path.Combine(_directory, "_bak");
         /* THE POLICE LADDERS, NAMED. They stopped being the default when the Fallout server
-           became the only one this bot runs; these tests are about Gambino, Colombo and NYPD,
+           became the only one this bot runs; these tests are about the police ladder,
            so they ask for that set rather than whatever the default happens to be. */
         _rosters = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups,
             factions: FactionRegistry.Police);
@@ -531,8 +531,9 @@ public class RosterServiceTests : IDisposable
     [Fact]
     public async Task ALadderlessFactionIsWrittenOnceNotTwice()
     {
-        var spawnOnly = FactionRegistry.All.Values.First(f => !f.HasRanks);
-        var service = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups);
+        var spawnOnly = TestFactions.Gambino;
+        var service = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups,
+            factions: TestFactions.WithMafias);
 
         await service.JoinAsync(spawnOnly, "Alice");
 
@@ -626,7 +627,7 @@ public class RosterServiceTests : IDisposable
     [Fact]
     public async Task WipingOneFactionLeavesTheOthersAlone()
     {
-        var other = FactionRegistry.All.Values.First(f => f.Name != Nypd.Name);
+        var other = TestFactions.Gambino;
         Seed("policecadet.txt", "Alice");
         Seed(other.SpawnFile, "Bob");
 

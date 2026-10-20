@@ -17,8 +17,8 @@ namespace PavlovBot.Core.Factions;
 /// keeps it out of the "global mutable state" the house rules forbid: the built-in set is a
 /// constant, and a configured one is built once and never written to.
 ///
-/// <see cref="FactionRegistry"/> holds the BUILT-IN set - the mafias and the police - which
-/// stays the default so an existing deployment needs no configuration at all.
+/// <see cref="FactionRegistry"/> holds the BUILT-IN sets - the Fallout ladders, the default, and the GWPD -
+/// so an existing deployment needs no configuration at all.
 /// </remarks>
 public sealed class FactionSet
 {

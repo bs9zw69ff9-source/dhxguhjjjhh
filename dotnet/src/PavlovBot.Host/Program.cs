@@ -139,7 +139,7 @@ public static class Program
            configuration error and belongs with the others - reported in full, then exit,
            rather than surfacing as an empty picker three subsystems later.
 
-           UNSET IS THE THEME'S OWN SET: THEME=police runs Gambino, Colombo and the GWPD, and
+           UNSET IS THE THEME'S OWN SET: THEME=police runs the GWPD alone, and
            no THEME at all runs the Fallout ladders, which is what every bot ran before. A theme
            whose set is missing is a bug in Skins, not configuration, so it falls back to the
            default rather than stopping. */

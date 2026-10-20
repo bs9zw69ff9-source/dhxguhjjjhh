@@ -132,7 +132,7 @@ public class FalloutPresetTests
 
            The police ladders are still shipped whole, one name away. */
         Assert.Equal(["NCR", "Legion", "Brotherhood of Steel", "Enclave"], FactionRegistry.Default.Names);
-        Assert.Equal(["Gambino", "Colombo", "GWPD"], FactionRegistry.Police.Names);
+        Assert.Equal(["GWPD"], FactionRegistry.Police.Names);
         Assert.Same(FactionRegistry.FalloutSet, FactionRegistry.Preset("default"));
         Assert.Same(FactionRegistry.Police, FactionRegistry.Preset("police"));
     }

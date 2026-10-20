@@ -28,6 +28,34 @@ internal static class TestFactions
             ["Underboss"] = "otherunderboss.txt", ["Boss"] = "otherboss.txt",
         },
     };
+
+    /// <summary>A faction with no ladder: one nominal rank, one file that is also the spawn file.</summary>
+    public static FactionDefinition SpawnOnly(string name)
+    {
+        var file = $"{name.ToLowerInvariant()}spawn.txt";
+        return new()
+        {
+            Name = name,
+            Order = ["Member"],
+            Default = "Member",
+            SpawnFile = file,
+            RankFiles = new Dictionary<string, string> { ["Member"] = file },
+        };
+    }
+
+    public static FactionDefinition Gambino { get; } = SpawnOnly("Gambino");
+
+    public static FactionDefinition Colombo { get; } = SpawnOnly("Colombo");
+
+    /// <summary>
+    /// The GWPD with the two mafias beside it, as a FACTIONS_PATH could still configure them.
+    /// </summary>
+    /// <remarks>
+    /// The built-in police set is the GWPD alone now, so anything that needs a second faction
+    /// to tell apart from the first - delegation, a wipe that must not spread - builds one.
+    /// </remarks>
+    public static FactionSet WithMafias { get; } =
+        FactionSet.Of([Gambino, Colombo, FactionRegistry.Police.Get(FactionRegistry.PoliceName)!]);
 }
 
 
@@ -76,14 +104,7 @@ public class FactionRegistryTests
     [Fact]
     public void RosterFilenamesMatchTheOnesTheGameInstallHas()
     {
-        Assert.Equal("gambinospawn.txt", FactionRegistry.Get("Gambino")!.SpawnFile);
-        Assert.Equal("colombospawn.txt", FactionRegistry.Get("Colombo")!.SpawnFile);
         Assert.Equal("policespawn.txt", FactionRegistry.Get("NYPD")!.SpawnFile);
-
-        // A ladderless faction's single roster IS its spawn file: there is no separate
-        // membership list to be a member of.
-        foreach (var faction in FactionRegistry.All.Values.Where(f => !f.HasRanks))
-            Assert.Equal(faction.SpawnFile, faction.RankFiles[faction.Default]);
 
         // A faction WITH a ladder keeps them separate: the rank files say what you are, the
         // spawn file says whether you are in at all.

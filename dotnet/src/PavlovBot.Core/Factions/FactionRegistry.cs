@@ -72,8 +72,8 @@ public sealed record FactionDefinition
     /// <remarks>
     /// DERIVED FROM THE DATA, not a separate flag that could disagree with it. A faction with
     /// one entry in <see cref="Order"/> has nowhere to be promoted TO, so promotion and
-    /// demotion are meaningless rather than merely unavailable - the mafias are spawn access
-    /// and nothing else.
+    /// demotion are meaningless rather than merely unavailable - a spawn-only faction loaded
+    /// from FACTIONS_PATH is spawn access and nothing else.
     ///
     /// A flag would let somebody set HasRanks = true on a one-rank faction and get a
     /// promotion command that silently does nothing.
@@ -91,43 +91,12 @@ public sealed record FactionDefinition
 /// <summary>The factions this server runs. Ported verbatim from factions/ranks.js.</summary>
 public static class FactionRegistry
 {
-    /// <summary>The single nominal rank a spawn-only faction uses. Never shown to a user.</summary>
-    public const string SpawnOnly = "Member";
-
     /// <summary>The police faction's name in the police set.</summary>
     public const string PoliceName = "GWPD";
 
     public static readonly FrozenDictionary<string, FactionDefinition> All =
         new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase)
         {
-            /* SPAWN ACCESS, NO LADDER. The mafias used to carry a six-rank ladder with caps
-               (Associate through Boss). They are whitelist-only now: one file each, one
-               nominal rank, nothing to promote to.
-
-               "Member" is not shown to anybody - it exists because Order and Default are
-               required and the roster writer needs a key for the file. HasRanks reports false
-               off the back of it, and the promotion commands refuse on that.
-
-               THE FILE NAME IS THE SPAWN FILE, and this used to say gambino.txt. No such file
-               exists in a live install - the roster directory holds gambinospawn.txt - so
-               every mafia whitelist created a brand new file the game never opens, reported
-               success, and left the player unable to spawn. */
-            ["Gambino"] = new()
-            {
-                Name = "Gambino",
-                Order = [SpawnOnly],
-                Default = SpawnOnly,
-                SpawnFile = "gambinospawn.txt",
-                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "gambinospawn.txt" },
-            },
-            ["Colombo"] = new()
-            {
-                Name = "Colombo",
-                Order = [SpawnOnly],
-                Default = SpawnOnly,
-                SpawnFile = "colombospawn.txt",
-                RankFiles = new Dictionary<string, string> { [SpawnOnly] = "colombospawn.txt" },
-            },
             /* GWPD, AND IT WAS NYPD. Only the name moved: every roster file below is the one
                the game already reads, because renaming a faction must never repoint a file -
                everybody listed in the old one would silently lose the rank in game. The old
@@ -163,13 +132,19 @@ public static class FactionRegistry
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The police ladders - Gambino, Colombo and GWPD. A preset, not the default any more.
+    /// The police ladder - the GWPD and nothing else. A preset, not the default any more.
     /// </summary>
     /// <remarks>
     /// THIS USED TO BE THE DEFAULT. The bot it was written for is gone: the Fallout server is
     /// the only one this runs now, so the ladders nothing is configured for are that server's.
     /// Kept whole and reachable as <c>FACTION_SET=police</c>, because deleting a working set
     /// of ladders to express a deployment change would be throwing away data to make a point.
+    ///
+    /// THE MAFIAS ARE GONE FROM IT. Gambino and Colombo sat beside the GWPD as spawn-only
+    /// factions until the police bot dropped them. Their roster files were not touched:
+    /// gambinospawn.txt and colombospawn.txt stay on disk with whatever is in them, for the
+    /// same reason. A membership record still filed under either name reads as a faction that
+    /// is gone, which every lookup already handles.
     /// </remarks>
     public static FactionSet Police { get; } = FactionSet.Of(All.Values);
 
@@ -196,7 +171,7 @@ public static class FactionRegistry
     /// the same on every server running this theme. A preset is one setting.
     ///
     /// THE BUILT-IN DEFAULT IS UNTOUCHED. One binary runs both bots, and the other one has no
-    /// FACTIONS_PATH at all and expects Gambino, Colombo and NYPD. Replacing <see cref="All"/>
+    /// FACTIONS_PATH at all and expects the GWPD. Replacing <see cref="All"/>
     /// would have swapped the factions out from under it, which is a roster outage rather than
     /// a rename. This is a second set, chosen by name.
     ///

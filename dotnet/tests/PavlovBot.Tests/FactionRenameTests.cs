@@ -20,7 +20,7 @@ public class FactionRenameTests
     [Fact]
     public void ThePoliceAreTheGwpd()
     {
-        Assert.Equal(["Gambino", "Colombo", "GWPD"], FactionRegistry.Police.Names);
+        Assert.Equal(["GWPD"], FactionRegistry.Police.Names);
         Assert.Empty(FactionRegistry.Police.Problems());
     }
 
@@ -165,13 +165,15 @@ public class FactionRenameTests
         Assert.False(map.ContainsKey("NYPD"));
     }
 
+    private const string SpawnOnly = "Member";
+
     private static FactionDefinition Faction(string name, IReadOnlyList<string>? former = null) => new()
     {
         Name = name,
-        Order = [FactionRegistry.SpawnOnly],
-        Default = FactionRegistry.SpawnOnly,
+        Order = [SpawnOnly],
+        Default = SpawnOnly,
         SpawnFile = $"{name.ToLowerInvariant()}spawn.txt",
-        RankFiles = new Dictionary<string, string> { [FactionRegistry.SpawnOnly] = $"{name.ToLowerInvariant()}spawn.txt" },
+        RankFiles = new Dictionary<string, string> { [SpawnOnly] = $"{name.ToLowerInvariant()}spawn.txt" },
         FormerNames = former ?? [],
     };
 }

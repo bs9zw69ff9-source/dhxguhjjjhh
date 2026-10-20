@@ -7,7 +7,7 @@ using Xunit;
 namespace PavlovBot.Tests;
 
 /// <summary>
-/// The mafias as spawn access, and members reachable by Discord account.
+/// Spawn-only factions, and members reachable by Discord account.
 /// </summary>
 public class SpawnFactionTests : IDisposable
 {
@@ -24,22 +24,28 @@ public class SpawnFactionTests : IDisposable
     [Theory]
     [InlineData("Gambino")]
     [InlineData("Colombo")]
-    public void AMafiaIsSpawnAccessWithNoLadder(string name)
+    public void TheMafiasAreGoneFromThePoliceBot(string name)
     {
-        var faction = FactionRegistry.Get(name);
+        // The police set is the GWPD alone. Neither name is offered, listed or looked up.
+        Assert.Null(FactionRegistry.Police.Get(name));
+        Assert.Null(FactionRegistry.Get(name));
+        Assert.DoesNotContain(name, FactionRegistry.Police.Names, StringComparer.OrdinalIgnoreCase);
+    }
 
-        Assert.NotNull(faction);
-        Assert.False(faction!.HasRanks);
+    [Fact]
+    public void AOneRankFactionHasNoLadder()
+    {
+        var faction = TestFactions.SpawnOnly("Gambino");
+
+        Assert.False(faction.HasRanks);
         Assert.Single(faction.Order);
-        Assert.Single(faction.RankFiles);
-        Assert.Empty(faction.Subclasses);
+        Assert.Equal(faction.SpawnFile, faction.RankFiles[faction.Default]);
     }
 
     [Fact]
     public void NypdStillHasItsLadder()
     {
-        /* The regression that would matter most: making the mafias rank-less must not flatten
-           the police, whose eight ranks are the reason the ladder exists at all. */
+        // The police's eight ranks are the reason the ladder exists at all.
         var nypd = FactionRegistry.Get("NYPD")!;
 
         Assert.True(nypd.HasRanks);

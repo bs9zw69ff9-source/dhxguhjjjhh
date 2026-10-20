@@ -144,16 +144,15 @@ Read-only `/whitelist list\|playtime` are public. `/setroles` and `/setrconroles
 Owner-only: they decide who IS staff, so an admin could otherwise make access for
 themselves that outlives their own. Roles map to tiers with
 `/setroles` (`mod_role`, `admin_role`, `whitelist_leader_role`, `police_role`,
-`gambino_role`, `colombo_role`, `nypd_role`); an unset tier role means that tier
-is unrestricted.
+plus one role per faction, such as `gwpd_role`); an unset tier role means that
+tier is unrestricted.
 
 **Whitelist management is per-faction.** The general **Whitelist Leader**
-(`whitelist_leader_role`) manages every whitelist, while the **Gambino**
-(`gambino_role`), **Colombo** (`colombo_role`), and **NYPD** (`nypd_role`) roles
-manage only their own whitelist. Those per-faction options are **built from the
-factions this bot actually runs**, so a deployment using `FACTIONS_PATH` gets one
-option per faction of its own (`ncr_role`, `legion_role`, …) rather than these
-three. One role may manage several factions by naming it in more than one option.
+(`whitelist_leader_role`) manages every whitelist, while a per-faction role
+such as **GWPD** (`gwpd_role`) manages only its own whitelist. Those per-faction
+options are **built from the factions this bot actually runs**, so a deployment
+using the Fallout set or `FACTIONS_PATH` gets one option per faction of its own
+(`ncr_role`, `legion_role`, …) instead. One role may manage several factions by naming it in more than one option.
 Mods, admins, and owners can manage any of them. A manager can
 `/promotion` / `/demotion` a member one rank up or down the faction's ladder, and
 `/subclass` assigns or removes a **sub-class** — an extra designation a member
