@@ -23,7 +23,7 @@ public class RankRestorerTests : IDisposable
     public RankRestorerTests()
     {
         Directory.CreateDirectory(_root);
-        _rosters = new RosterService(_root, NullLogger<RosterService>.Instance, factions: FactionRegistry.Police);
+        _rosters = new RosterService(_root, NullLogger<RosterService>.Instance, factions: TestFactions.WithMafias);
         _rosters.EnsureRosterFiles();
     }
 
@@ -99,7 +99,7 @@ public class RankRestorerTests : IDisposable
     [Fact]
     public async Task AMemberWhoJoinedAnotherFactionIsNotReportedRestored()
     {
-        await _rosters.JoinAsync(FactionRegistry.Police.Get("Gambino")!, "Alice");
+        await _rosters.JoinAsync(TestFactions.Gambino, "Alice");
         await Suspend("Alice", "Sergeant", Now.AddMinutes(-1));
 
         await Restorer().RestoreExpiredAsync(Now);

@@ -1,7 +1,7 @@
 {
   // ── Fallout faction roster ────────────────────────────────────────────────
   // Point FACTIONS_PATH at a copy of this file. It REPLACES the built-in set
-  // (Gambino, Colombo, GWPD) entirely, so this bot will not answer for those.
+  // (the GWPD) entirely, so this bot will not answer for those.
   //
   // RANKS ARE LOWEST FIRST. Order is the hierarchy: /promotion moves one entry
   // down this list to the next, /demotion moves back.

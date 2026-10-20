@@ -118,7 +118,7 @@ public class FactionRoleTests
     [Fact]
     public void TheOldMafiaSlotStillManagesBothMafias()
     {
-        var access = Build(FactionRegistry.Police, new RoleMap { MafiaRole = LegacyMafiaRoleId }, out _);
+        var access = Build(TestFactions.WithMafias, new RoleMap { MafiaRole = LegacyMafiaRoleId }, out _);
 
         var member = new FakeMember(MemberId, LegacyMafiaRoleId);
 
@@ -130,7 +130,7 @@ public class FactionRoleTests
     [Fact]
     public void TheOldNypdSlotStillManagesTheNypd()
     {
-        var access = Build(FactionRegistry.Police, new RoleMap { NypdRole = LegacyNypdRoleId }, out _);
+        var access = Build(TestFactions.WithMafias, new RoleMap { NypdRole = LegacyNypdRoleId }, out _);
 
         var member = new FakeMember(MemberId, LegacyNypdRoleId);
 
@@ -143,7 +143,7 @@ public class FactionRoleTests
     {
         /* Otherwise setting Gambino's role would appear to do nothing: the old shared mafia
            role would keep answering and the new setting would be stored and ignored. */
-        var access = Build(FactionRegistry.Police, new RoleMap
+        var access = Build(TestFactions.WithMafias, new RoleMap
         {
             MafiaRole = LegacyMafiaRoleId,
             FactionRoles = new Dictionary<string, ulong> { ["Gambino"] = NcrRoleId },
@@ -327,16 +327,18 @@ public class SetRolesShapeTests
     [Fact]
     public void ThePoliceBotIsOfferedTheGwpdNotTheNypd()
     {
-        /* FACTION_SET=police. The police faction is the GWPD now, so that is the role /setroles
-           offers and the one it files the mapping under - an "nypd_role" option would write a
-           key nothing looks up. */
+        /* FACTION_SET=police. The police faction is the GWPD now, and the only one, so that is
+           the role /setroles offers and the one it files the mapping under - an "nypd_role"
+           option would write a key nothing looks up. */
         var options = Options(FactionRegistry.Police);
 
         Assert.Equal(
             ["mod_role", "admin_role", "whitelist_leader_role", "police_role",
-             "colombo_role", "gambino_role", "gwpd_role"],
+             "gwpd_role"],
             options);
         Assert.DoesNotContain("nypd_role", options);
+        Assert.DoesNotContain("gambino_role", options);
+        Assert.DoesNotContain("colombo_role", options);
     }
 
     [Fact]

@@ -35,7 +35,7 @@ public class RosterCommandGateTests
     private static Access WithFactionRoles(out SerializedStore store)
     {
         store = new SerializedStore(new MemoryBackend(), new SystemTextJsonCodec());
-        var access = new Access(store, owners: [], factions: FactionRegistry.Police);
+        var access = new Access(store, owners: [], factions: TestFactions.WithMafias);
         store.WriteAsync(Datasets.Roles, new RoleMap
         {
             FactionLeaderRole = LeaderRole,
