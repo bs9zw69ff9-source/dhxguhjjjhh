@@ -99,11 +99,10 @@ public sealed class Boards(
 
                 try
                 {
-                    var text = File.ReadAllText(file).Trim();
                     // A ledger the game is mid-write on parses as nothing. Skipping it drops
                     // one row for one cycle; guessing zero would announce that somebody lost
-                    // all their money.
-                    if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var balance))
+                    // all their money. Either shape counts - the keyed one keeps licences too.
+                    if (PavlovBot.Core.Sync.ModSaveFile.Parse(File.ReadAllText(file))?.Money is { } balance)
                         balances.Add((player, balance));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }

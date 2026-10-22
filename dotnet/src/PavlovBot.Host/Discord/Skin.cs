@@ -174,6 +174,10 @@ public sealed record Vocabulary
 /// The built-in faction set this skin belongs to, run when neither <c>FACTION_SET</c> nor
 /// <c>FACTIONS_PATH</c> says otherwise.
 /// </param>
+/// <param name="Licenses">
+/// Whether this world's save files carry driver's and firearm licenses, and so whether
+/// <c>/license</c> is offered at all.
+/// </param>
 /// <remarks>
 /// THE THEME PICKS ITS OWN FACTIONS because the two were separate settings and the gap
 /// between them showed up on a live server: <c>THEME=police</c> without <c>FACTION_SET</c>
@@ -181,7 +185,7 @@ public sealed record Vocabulary
 /// A startup warning had said so, and nobody reads a startup log to find out why a picker
 /// looks wrong. The explicit settings still win, for anybody who really means a mismatch.
 /// </remarks>
-public sealed record Skin(string Name, string Brand, Vocabulary Words, Palette Colors, string Factions);
+public sealed record Skin(string Name, string Brand, Vocabulary Words, Palette Colors, string Factions, bool Licenses = false);
 
 /// <summary>
 /// The skins this bot ships, chosen per instance by <c>THEME</c>.
@@ -351,7 +355,8 @@ public static class Skins
             Orange: new Color(0xFB, 0x92, 0x3C),
             ServerUp: new Color(0x3F, 0xA2, 0x5F),
             ServerDown: new Color(0x9E, 0x3B, 0x2F)),
-        Factions: "police");
+        Factions: "police",
+        Licenses: true);
 
     public static IReadOnlyList<Skin> All { get; } = [Fallout, Police];
 

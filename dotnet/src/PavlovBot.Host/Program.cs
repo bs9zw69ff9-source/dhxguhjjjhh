@@ -724,6 +724,10 @@ public static class Program
             sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
             sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>(),
             sp.GetRequiredService<IBalanceStore>()));
+        /* ONLY WHERE THE SAVE FILES HAVE LICENSES. The Fallout mod writes a bare balance, so
+           /license there would be a command that can only ever say "no such license". */
+        if (skin.Licenses)
+            builder.Services.AddSingleton<ISlashCommand, LicenseCommand>();
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
