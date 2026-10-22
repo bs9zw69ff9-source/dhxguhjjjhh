@@ -136,7 +136,7 @@ locked.
 | 🌐 Public | `/help` `/serverinfo` `/checkban` |
 | 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
 | ⚔️ Whitelist Leader | `/whitelist add\|remove` `/promotion` `/demotion` `/subclass` |
-| 🚔 Police Officer | `/warrant give\|remove\|check` `/arrest` `/backgroundcheck` |
+| 🚔 Police Officer | `/warrant give\|remove\|check` `/arrest` `/backgroundcheck` `/license remove` (police theme) |
 | 🔒 Admin | `/permban` `/cleartempbans` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
 | 👑 Owner | `/setroles` `/setrconroles` `/configure` (control panel — incl. wipe money / wipe all player data) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
@@ -170,6 +170,12 @@ given. Admins and owners can manage warrants too.
 `/tempban` takes a free-text reason and a ban length picked from a list (1h, 1d, 1w, ... or Permanent).
 
 ### Police RP (arrests & records)
+
+`/license remove <player> <drivers|firearm|both>` revokes a license in the
+player's `modsave/<player>.txt` (`DriversLiscense` / `FirearmLiscense`, spelled as
+the mod spells them). Like a payout it is applied only while the player is
+offline, because the game rewrites that file from memory on its next save. Only
+the police theme offers it; the Fallout save files hold a bare balance.
 
 `/arrest <player>` opens an interactive booking: pick a penal-code section, then
 the charge(s) from it, with a running total for jail time and bail - add as many

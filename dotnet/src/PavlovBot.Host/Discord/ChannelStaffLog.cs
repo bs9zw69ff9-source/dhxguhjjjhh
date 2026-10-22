@@ -75,6 +75,7 @@ public sealed class ChannelStaffLog(
     {
         "arrest", "release", "sentence", "warrant", "warrant-clear", "bail",
         "suspendrank", "unsuspendrank", "promotion", "demotion", "subclass",
+        "license-remove",
     };
 
     internal static bool IsPoliceAction(string action) => PoliceActions.Contains(action.Trim());
