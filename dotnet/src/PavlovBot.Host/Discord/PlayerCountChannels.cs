@@ -265,7 +265,7 @@ public sealed class PlayerCountChannels(
                    a different problem from a server that is simply off, and leaving the last
                    count up is the right call for exactly this one. */
                 UnitState.Starting => "the unit is still starting up",
-                UnitState.Unknown => "systemd could not be asked, and RCON is not answering either",
+                UnitState.Unknown => "the service manager could not be asked, and RCON is not answering either",
                 _ => rcon.RosterProblem(server)
                      ?? (roster.TakenAt == DateTimeOffset.MinValue
                          ? "the roster has never been fetched"

@@ -120,7 +120,7 @@ public static class IncidentDetector
         if (health.UnitFailed)
         {
             return new Incident(health.Server, IncidentKind.ServiceFailed, IncidentSeverity.Critical, now,
-                ["systemd reports the unit in the failed state"],
+                ["the service manager (systemd or Docker) reports the server in the failed state"],
                 "Crash recovery restarts this automatically when it is enabled. If it is not, restart it by hand.");
         }
 
@@ -129,7 +129,7 @@ public static class IncidentDetector
             return new Incident(health.Server, IncidentKind.RconDown, IncidentSeverity.High, now,
             [
                 "RCON did not answer",
-                "the systemd unit is NOT failed, so the process is still up",
+                "the service manager does NOT report it failed, so the process is still up",
             ],
             "The process is alive and not answering RCON. Check the RCON password and port " +
             "before restarting - a wrong password looks exactly like this.");

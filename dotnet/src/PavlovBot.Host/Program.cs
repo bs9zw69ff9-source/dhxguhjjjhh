@@ -1020,12 +1020,15 @@ public static class Program
                 "alt and VPN detections sent to somebody");
         }
 
-        logger.LogInformation("systemctl runs {Elevation} | units: {Units}",
-            systemd.Elevation, string.Join(", ", systemd.Units));
+        logger.LogInformation("server control (systemctl / docker) runs {Elevation} | units: {Units} | new servers: {Runtime}",
+            systemd.Elevation, string.Join(", ", systemd.Units),
+            features.ProvisionRuntime is { } runtime
+                ? runtime == PavlovBot.Host.Servers.ServerRuntime.Docker ? $"Docker ({features.DockerImage})" : "systemd"
+                : $"PAVLOV_RUNTIME={features.ProvisionRuntimeSetting} is not docker or systemd - /provisionserver will refuse");
 
         /* Said at startup so an operator learns BEFORE running /provisionserver that a non-root
-           bot will refuse it - provisioning writes /etc/systemd/system, enables a service and
-           runs SteamCMD as steam, none of which fit the narrow sudoers line systemctl uses. */
+           bot will refuse it - provisioning runs Docker (or writes /etc/systemd/system and runs
+           SteamCMD) and hands files to the game's user, none of which fit a narrow sudoers line. */
         logger.LogInformation("/provisionserver is {State}",
             Environment.IsPrivilegedProcess
                 ? "available (the bot is root)"
@@ -1279,7 +1282,7 @@ public static class Program
         if (Environment.IsPrivilegedProcess)
             logger.LogWarning("The bot is running as ROOT. Anything that compromises it - a library bug, a bad " +
                               "plugin - owns the whole host. Run it as an unprivileged user with sudoers grants " +
-                              "for systemctl and ufw (see INSTALL.md); only /provisionserver needs root");
+                              "for systemctl or docker, and ufw (see INSTALL.md); only /provisionserver needs root");
 
         if (features.Owners.Count == 0 && features.SuperOwners.Count == 0)
             logger.LogWarning("OWNER_IDS and SUPER_OWNER_IDS are both unset - only the built-in super owner " +

@@ -57,6 +57,12 @@ public readonly record struct ServerUnit(ServerRuntime Runtime, string Name)
 
     public bool IsDocker => Runtime == ServerRuntime.Docker;
 
+    /// <summary>What a person calls the thing running it: "Docker" or "systemd".</summary>
+    public string Manager => IsDocker ? "Docker" : "systemd";
+
+    /// <summary>The manager for an entry, or "the service manager" when the entry does not parse.</summary>
+    public static string ManagerOf(string? entry) => Parse(entry)?.Manager ?? "the service manager";
+
     /// <summary>How it is written back into <c>PAVLOV_UNITS</c>.</summary>
     public override string ToString() => IsDocker ? DockerEntry(Name) : Name;
 

@@ -19,6 +19,85 @@ public sealed class PavlovServerDetectionTests : IDisposable
         Directory.CreateDirectory(_units);
     }
 
+    /// <summary>No Docker on this "box", whatever the machine running the tests has.</summary>
+    private static IReadOnlyList<DetectedServer> NoContainers() => [];
+
+    /// <summary>A Docker install: only Pavlov/Saved on the host, as /provisionserver leaves it.</summary>
+    private string DockerInstall(string folder)
+    {
+        var install = Path.Combine(_root, "steam", folder);
+        Directory.CreateDirectory(Path.Combine(install, "Pavlov", "Saved"));
+        return install;
+    }
+
+    // ---- Docker ----
+
+    [Fact]
+    public void AContainerIsFoundByTheFolderItMountsAsSaved()
+    {
+        var install = DockerInstall("pavlovserver2");
+
+        var found = PavlovServerDetection.ParseDocker($"/pavlovserver2|{install}/Pavlov/Saved\n");
+
+        var server = Assert.Single(found);
+        Assert.Equal("docker:pavlovserver2", server.Unit);
+        Assert.Equal(install, server.Install);
+    }
+
+    [Theory]
+    [InlineData("/somethingelse|")]                                   // no Saved mount: not a game server
+    [InlineData("/web|/srv/web/data")]                                // mounts something else
+    [InlineData("/--rm|/home/steam/x/Pavlov/Saved")]                  // a name that could be a flag
+    [InlineData("garbage")]
+    public void AnythingElseIsNotAServer(string line) =>
+        Assert.Empty(PavlovServerDetection.ParseDocker(line, _ => true));
+
+    [Fact]
+    public void AContainerWhoseInstallIsGoneIsNotAServer() =>
+        Assert.Empty(PavlovServerDetection.ParseDocker("/pavlovserver2|/nowhere/pavlovserver2/Pavlov/Saved"));
+
+    [Fact]
+    public void SystemdAndDockerServersComeOutInOneServerOrder()
+    {
+        // Servers 1 and 2 still on systemd, server 3 moved into a container.
+        var one = Server("pavlovserver");
+        var two = Server("pavlovserver1");
+        var three = DockerInstall("pavlovserver2");
+
+        var found = PavlovServerDetection.Detect(_units, () => [new DetectedServer("docker:pavlovserver2", three)]);
+
+        Assert.Equal(["pavlovserver", "pavlovserver1", "docker:pavlovserver2"], found.Select(f => f.Unit));
+        Assert.Equal([one, two, three], found.Select(f => f.Install));
+    }
+
+    [Fact]
+    public void AContainerBeatsALeftoverUnitForTheSameInstall()
+    {
+        /* Half way through a move: the unit file is still there, the container is what runs.
+           Restarting the unit would start a second copy of the server on the same ports. */
+        var install = Server("pavlovserver2");
+
+        var found = Assert.Single(PavlovServerDetection.Detect(_units, () => [new DetectedServer("docker:pavlovserver2", install)]));
+
+        Assert.Equal("docker:pavlovserver2", found.Unit);
+    }
+
+    [Fact]
+    public void BlankSettingsFindADockerOnlyBox()
+    {
+        var one = DockerInstall("pavlovserver");
+        var two = DockerInstall("pavlovserver1");
+
+        var installs = PavlovInstalls.Discover(null, null, unitDirectory: _units,
+            docker: () => [new DetectedServer("docker:pavlovserver1", two), new DetectedServer("docker:pavlovserver", one)]);
+
+        Assert.Equal([one, two], installs);
+    }
+
+    [Fact]
+    public void TheInspectFormatReadsTheMountTheProvisionerMakes() =>
+        Assert.Contains("\"/home/steam/pavlovserver/Pavlov/Saved\"", PavlovServerDetection.InspectFormat, StringComparison.Ordinal);
+
     /// <summary>An install, and the unit /provisionserver would write for it.</summary>
     private string Server(string unit, string? folder = null, bool installed = true)
     {
@@ -79,7 +158,7 @@ public sealed class PavlovServerDetectionTests : IDisposable
         var one = Server("pavlovserver");
         var two = Server("pavlovserver1");
 
-        Assert.Equal([one, two], PavlovInstalls.Discover(null, null, unitDirectory: _units));
+        Assert.Equal([one, two], PavlovInstalls.Discover(null, null, unitDirectory: _units, docker: NoContainers));
     }
 
     [Fact]
@@ -87,7 +166,7 @@ public sealed class PavlovServerDetectionTests : IDisposable
     {
         Server("pavlovserver");
 
-        Assert.Equal(["/srv/a", "/srv/b"], PavlovInstalls.Discover("/srv/a,/srv/b", null, unitDirectory: _units));
+        Assert.Equal(["/srv/a", "/srv/b"], PavlovInstalls.Discover("/srv/a,/srv/b", null, unitDirectory: _units, docker: NoContainers));
     }
 
     [Fact]

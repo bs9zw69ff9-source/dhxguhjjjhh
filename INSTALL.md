@@ -140,6 +140,11 @@ pavlovbot ALL=(root) NOPASSWD: /usr/sbin/ufw
 The ufw line is only for `/firewall`. As a non-root user the bot calls both through
 `sudo -n`, so a missing grant fails with a message instead of hanging.
 
+**Docker servers need a root bot.** Controlling a container means talking to the Docker
+daemon, and a sudoers line for `docker`, or membership of the `docker` group, is root
+in all but name, so there is no narrow grant to give. If your servers are `docker:`
+entries, run the bot as root.
+
 Getting group permissions wrong does not fail loudly. Reads succeed and writes fail,
 so `/whitelist add` answers "the roster could not be written" while everything else
 looks healthy.
@@ -192,7 +197,12 @@ docker run -d --name pavlovserver2 --restart unless-stopped --network host \
 ```
 
 Use that server's own game port for `SERVER_PORT`. Then change its entry in
-`PAVLOV_UNITS` from `pavlovserver2` to `docker:pavlovserver2` and restart the bot.
+`PAVLOV_UNITS` from `pavlovserver2` to `docker:pavlovserver2` and restart the bot
+(or leave `PAVLOV_UNITS` blank: the label lets the bot find the container itself).
+
+Everything that used to act on the systemd service now acts on the container:
+`/serverswitch`, `/testmode`, crash recovery, the player-count channels, `/monitor`
+and `/server status` (CPU, memory, uptime from `docker stats`), and `/deleteserver`.
 
 ---
 

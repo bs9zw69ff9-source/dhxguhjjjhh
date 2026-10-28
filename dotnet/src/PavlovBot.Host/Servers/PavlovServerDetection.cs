@@ -3,11 +3,14 @@ using PavlovBot.Host.Storage;
 
 namespace PavlovBot.Host.Servers;
 
-/// <summary>One Pavlov server found on this box: the systemd unit that runs it and the install it runs.</summary>
+/// <summary>
+/// One Pavlov server found on this box: its <c>PAVLOV_UNITS</c> entry (a systemd unit, or
+/// <c>docker:</c> and a container) and the install it runs.
+/// </summary>
 public sealed record DetectedServer(string Unit, string Install);
 
 /// <summary>
-/// Finding the Pavlov servers from systemd, so PAVLOV_UNITS and PAVLOV_BASE_1 can be left blank.
+/// Finding the Pavlov servers from systemd and Docker, so PAVLOV_UNITS and PAVLOV_BASE_1 can be left blank.
 /// </summary>
 /// <remarks>
 /// THE UNIT FILES ALREADY SAY IT. Every server is a service whose ExecStart runs
@@ -21,6 +24,11 @@ public sealed record DetectedServer(string Unit, string Install);
 ///
 /// Only a unit whose install actually holds a <c>Pavlov</c> directory counts, the same test install
 /// discovery uses, so a leftover unit pointing at a deleted server is not picked up.
+///
+/// A CONTAINER SAYS IT TOO: the host folder it mounts as <c>Pavlov/Saved</c> is two levels under
+/// its install. Only containers carrying the bot's label are read, so an unrelated container on
+/// the box is never mistaken for a game server, and the label is on everything /provisionserver
+/// creates and in the INSTALL.md migration command.
 /// </remarks>
 public static class PavlovServerDetection
 {
@@ -28,6 +36,89 @@ public static class PavlovServerDetection
     public const string UnitDirectory = "/etc/systemd/system";
 
     private const string Launcher = "PavlovServer.sh";
+
+    /// <summary>
+    /// Every Pavlov server on the box - systemd units and the bot's containers - in server order.
+    /// </summary>
+    /// <param name="unitDirectory">Where to read unit files.</param>
+    /// <param name="docker">The container lookup; null asks the real Docker daemon.</param>
+    /// <remarks>
+    /// A CONTAINER WINS OVER A UNIT FOR THE SAME INSTALL. That is a server half way through moving
+    /// to Docker: the unit file can outlive the move, the container is what is actually running.
+    /// </remarks>
+    public static IReadOnlyList<DetectedServer> Detect(
+        string unitDirectory = UnitDirectory, Func<IReadOnlyList<DetectedServer>>? docker = null) =>
+        [.. (docker ?? FromDocker)()
+            .Concat(FromSystemd(unitDirectory))
+            .DistinctBy(s => s.Install, StringComparer.Ordinal)
+            .OrderBy(s => Stem(BareName(s.Unit)), StringComparer.Ordinal)
+            .ThenBy(s => Number(BareName(s.Unit)))];
+
+    /// <summary>
+    /// The bot's labelled containers and the installs they mount, or none when Docker cannot say.
+    /// </summary>
+    /// <remarks>
+    /// RUNS AT STARTUP, while configuration is bound, which is synchronous - so this blocks on the
+    /// two short <c>docker</c> calls, bounded at five seconds each. A box without Docker, or a bot
+    /// that may not reach its socket, gets an empty list rather than a delay or an error: systemd
+    /// detection and the configured lists still apply.
+    /// </remarks>
+    public static IReadOnlyList<DetectedServer> FromDocker()
+    {
+        var ids = Docker(["ps", "-aq", "--filter", "label=" + DockerCli.ManagedLabel]);
+        if (ids is null) return [];
+
+        var list = ids.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(id => id.All(char.IsAsciiHexDigit))
+            .ToList();
+        if (list.Count == 0) return [];
+
+        return ParseDocker(Docker(["container", "inspect", "--format", InspectFormat, .. list]));
+    }
+
+    /// <summary>Name, then the host source of the Saved mount: <c>/pavlovserver2|/home/steam/pavlovserver2/Pavlov/Saved</c>.</summary>
+    internal const string InspectFormat =
+        "{{.Name}}|{{range .Mounts}}{{if eq .Destination \"" + DockerCli.ContainerSavedDir + "\"}}{{.Source}}{{end}}{{end}}";
+
+    /// <summary>What <see cref="InspectFormat"/> printed, as servers whose install is really there.</summary>
+    internal static IReadOnlyList<DetectedServer> ParseDocker(string? stdout, Func<string, bool>? installExists = null)
+    {
+        var exists = installExists ?? (install => Directory.Exists(Path.Combine(install, "Pavlov")));
+        var found = new List<DetectedServer>();
+
+        foreach (var line in (stdout ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = line.Split('|', 2);
+            if (parts.Length != 2) continue;
+
+            var name = parts[0].TrimStart('/');
+            var saved = parts[1].Trim().TrimEnd('/');
+            const string suffix = "/Pavlov/Saved";
+            if (!ServerUnit.IsPlausibleContainerName(name) || !saved.EndsWith(suffix, StringComparison.Ordinal)) continue;
+
+            var install = saved[..^suffix.Length];
+            if (install.Length > 0 && exists(install)) found.Add(new DetectedServer(ServerUnit.DockerEntry(name), install));
+        }
+
+        return found;
+    }
+
+    /// <summary>One <c>docker</c> call's stdout, or null when it could not run or failed.</summary>
+    private static string? Docker(IReadOnlyList<string> argv)
+    {
+        try
+        {
+            var run = ProcessRunner.RunAsync("docker", argv, TimeSpan.FromSeconds(5), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            return run.Started && !run.TimedOut && run.ExitCode == 0 ? run.Stdout : null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return null;
+        }
+    }
+
+    private static string BareName(string unit) => ServerUnit.Parse(unit)?.Name ?? unit;
 
     /// <summary>Every Pavlov server with a unit file in <paramref name="unitDirectory"/>, in server order.</summary>
     public static IReadOnlyList<DetectedServer> FromSystemd(string unitDirectory = UnitDirectory)

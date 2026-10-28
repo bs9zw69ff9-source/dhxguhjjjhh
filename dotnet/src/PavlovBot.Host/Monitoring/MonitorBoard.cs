@@ -47,7 +47,7 @@ public sealed class MonitorBoard(ServerMonitor monitor, ServiceControl service)
         var embed = new EmbedBuilder()
             .WithColor(MonitorFormat.StateColour(worst))
             .WithTitle($"{MonitorFormat.StateDot(worst)} Server monitor")
-            .WithFooter($"{servers.Count} server(s) · CPU%: cgroup, 100% = 1 core · RTT: RCON round-trip · updated {DateTimeOffset.UtcNow:HH:mm:ss} UTC")
+            .WithFooter($"{servers.Count} server(s) · CPU%: 100% = 1 core · RTT: RCON round-trip · updated {DateTimeOffset.UtcNow:HH:mm:ss} UTC")
             .WithCurrentTimestamp();
 
         if (servers.Count == 0)

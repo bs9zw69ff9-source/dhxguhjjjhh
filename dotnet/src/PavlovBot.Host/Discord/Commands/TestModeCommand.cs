@@ -195,7 +195,7 @@ public sealed class TestModeCommand(
             warned.Delivered ? $"Yes, {PlayerNotice.Grace.TotalSeconds:0}s beforehand" : $"No — {warned.Detail}",
             inline: true);
 
-        if (!result.Ok) embed.AddField("systemd said", $"```\n{Sanitize.Code(Truncate(result.Detail))}\n```");
+        if (!result.Ok) embed.AddField($"{ServerUnit.ManagerOf(unit)} said", $"```\n{Sanitize.Code(Truncate(result.Detail))}\n```");
         if (advice is not null) embed.AddField($"{Theme.Warn} How to fix this", advice);
 
         return embed;

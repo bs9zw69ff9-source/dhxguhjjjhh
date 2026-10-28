@@ -147,7 +147,7 @@ public sealed class BotStatsCommand(
     {
         UnitState.Inactive => "stopped",
         UnitState.Failed => "failed",
-        _ => "systemd could not be asked",
+        _ => "the service manager could not be asked",
     };
 
     /// <summary>Bytes as the unit a person would use for that magnitude.</summary>
