@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace PavlovBot.Host.Servers;
 
 /// <param name="Ok">The action succeeded. False means it did not, for the reason given.</param>
-/// <param name="Unit">The systemd unit this concerns.</param>
+/// <param name="Unit">The <c>PAVLOV_UNITS</c> entry this concerns: a systemd unit or <c>docker:</c> container.</param>
 /// <param name="Detail">stderr/stdout, or the reason nothing ran. Never empty.</param>
 public sealed record UnitResult(bool Ok, string Unit, string Detail);
 
@@ -58,7 +58,7 @@ public enum UnitState
 }
 
 /// <summary>
-/// Restarting the Pavlov game servers through systemd.
+/// Starting, stopping and watching the Pavlov game servers: systemd units, or Docker containers.
 /// </summary>
 /// <remarks>
 /// THE UNIT NAMES NEVER COME FROM DISCORD. They are configuration, and the command picks
@@ -74,6 +74,11 @@ public enum UnitState
 /// A bot running as <c>steam</c> gets "Access denied" from systemd, which without help reads
 /// as "the command is broken". The reason is reported verbatim, with the two things that fix
 /// it, because a permission problem that presents as a bug costs an evening.
+///
+/// TWO RUNTIMES, CHOSEN PER ENTRY. <c>docker:pavlovserver2</c> is a container and a bare name is
+/// a systemd unit (see <see cref="ServerUnit"/>), so a box can move server by server and the
+/// Fallout bot's systemd servers keep working on the same binary. Every public method here
+/// answers the same question for either; only the command line differs.
 /// </remarks>
 public sealed class ServiceControl(
     IReadOnlyList<string> units,
@@ -187,10 +192,13 @@ public sealed class ServiceControl(
     /// Leading <c>.</c> and <c>@</c> go the same way: neither names a real unit, and both
     /// are the kind of thing that ends up somewhere unintended.
     /// </remarks>
-    internal static bool IsPlausibleUnitName(string name) =>
+    internal static bool IsPlausibleSystemdName(string name) =>
         name.Length is > 0 and <= 64 &&
         char.IsAsciiLetterOrDigit(name[0]) &&
         name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '@' or '\\');
+
+    /// <summary>Whether this is a usable <c>PAVLOV_UNITS</c> entry: a systemd unit or a <c>docker:</c> container.</summary>
+    internal static bool IsPlausibleUnitName(string name) => ServerUnit.Parse(name) is not null;
 
     /// <summary>The unit for a 1-based server number, or null when there is no such server.</summary>
     public string? UnitFor(int serverNumber) =>
@@ -247,7 +255,8 @@ public sealed class ServiceControl(
 
     public async Task<UnitState> StateAsync(string unit, CancellationToken ct = default)
     {
-        if (!IsPlausibleUnitName(unit)) return UnitState.Unknown;
+        if (ServerUnit.Parse(unit) is not { } parsed) return UnitState.Unknown;
+        if (parsed.IsDocker) return (await InspectAsync(parsed.Name, ct).ConfigureAwait(false)).State;
 
         try
         {
@@ -308,7 +317,9 @@ public sealed class ServiceControl(
         var first = new Dictionary<string, (long Cpu, long At)>(StringComparer.Ordinal);
         var properties = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
 
-        foreach (var unit in Units)
+        var docker = await DockerStatsAsync(ct).ConfigureAwait(false);
+
+        foreach (var unit in Units.Where(u => !IsDockerEntry(u)))
         {
             var shown = await ShowAsync(unit, ct).ConfigureAwait(false);
             properties[unit] = shown;
@@ -328,6 +339,12 @@ public sealed class ServiceControl(
         var results = new List<UnitStats>();
         foreach (var unit in Units)
         {
+            if (docker.TryGetValue(unit, out var container))
+            {
+                results.Add(container);
+                continue;
+            }
+
             var shown = properties[unit];
             var state = StateOf(Text(shown, "ActiveState"));
 
@@ -407,7 +424,7 @@ public sealed class ServiceControl(
         string unit, CancellationToken ct, string? only = null)
     {
         var empty = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!IsPlausibleUnitName(unit)) return empty;
+        if (!IsPlausibleSystemdName(unit)) return empty;
 
         try
         {
@@ -461,20 +478,17 @@ public sealed class ServiceControl(
     /// </summary>
     public async Task<UnitResult> RunAsync(string unit, UnitAction action, CancellationToken ct = default)
     {
-        if (!IsPlausibleUnitName(unit))
-            return new UnitResult(false, unit, "not a usable systemd unit name - refused before running anything");
+        if (ServerUnit.Parse(unit) is not { } parsed)
+            return new UnitResult(false, unit, "not a usable systemd unit or docker container name - refused before running anything");
 
         var verb = Verb(action);
-
-        var (file, argv) = _useSudo
-            // -n: fail rather than block forever on a password prompt nobody can answer.
-            ? ("sudo", new[] { "-n", "systemctl", verb, unit })
-            : ("systemctl", new[] { verb, unit });
+        var tool = parsed.IsDocker ? "docker" : "systemctl";
+        var (file, argv) = Elevated(tool, parsed.IsDocker ? DockerCli.VerbArgv(action, parsed.Name) : [verb, parsed.Name]);
 
         /* At WARNING, always. Every one of these disconnects players or leaves a server
            down, and "who took server 2 offline and when" is a question that gets asked. */
-        logger.LogWarning("systemctl {Verb} {Unit} (via {File}) - players on it will be disconnected",
-            verb, unit, file);
+        logger.LogWarning("{Tool} {Verb} {Unit} (via {File}) - players on it will be disconnected",
+            tool, verb, unit, file);
 
         try
         {
@@ -488,16 +502,16 @@ public sealed class ServiceControl(
 
             if (run.TimedOut)
             {
-                logger.LogError("systemctl {Verb} {Unit} timed out after 90s - it may still be in progress", verb, unit);
+                logger.LogError("{Tool} {Verb} {Unit} timed out after 90s - it may still be in progress", tool, verb, unit);
                 return new UnitResult(false, unit,
-                    $"`{verb}` timed out after 90s. It may still be in progress - check `systemctl status {unit}`");
+                    $"`{verb}` timed out after 90s. It may still be in progress - check `{parsed.StatusHint()}`");
             }
 
             var output = run.Combined;
             var ok = run.ExitCode == 0;
 
-            if (ok) logger.LogInformation("systemctl {Verb} {Unit} succeeded", verb, unit);
-            else logger.LogError("systemctl {Verb} {Unit} FAILED (exit {Code}): {Output}", verb, unit, run.ExitCode, output);
+            if (ok) logger.LogInformation("{Tool} {Verb} {Unit} succeeded", tool, verb, unit);
+            else logger.LogError("{Tool} {Verb} {Unit} FAILED (exit {Code}): {Output}", tool, verb, unit, run.ExitCode, output);
 
             return new UnitResult(ok, unit,
                 output.Length > 0 ? output : ok ? $"{verb} ok" : $"exit code {run.ExitCode}");
@@ -527,6 +541,31 @@ public sealed class ServiceControl(
 
         var text = string.Join(" ", failed.Select(f => f.Detail)).ToLowerInvariant();
 
+        if (failed.All(f => IsDockerEntry(f.Unit)))
+        {
+            if (text.Contains("permission denied", StringComparison.Ordinal) ||
+                text.Contains("password is required", StringComparison.Ordinal) ||
+                text.Contains("a terminal is required", StringComparison.Ordinal))
+            {
+                return "docker has to run as **root** (or as a member of the `docker` group, which is root in all " +
+                       "but name), and the bot is neither. Run the bot as root.";
+            }
+
+            if (text.Contains("no such container", StringComparison.Ordinal))
+            {
+                return "Docker has no container by that name. Check them with `docker ps -a` and fix the `docker:` " +
+                       $"entries in `PAVLOV_UNITS` (currently `{string.Join(", ", Units)}`).";
+            }
+
+            if (text.Contains("cannot connect to the docker daemon", StringComparison.Ordinal) ||
+                text.Contains("could not start", StringComparison.Ordinal))
+            {
+                return "The Docker daemon is not answering. Check it with `systemctl status docker`.";
+            }
+
+            return null;
+        }
+
         if (text.Contains("access denied", StringComparison.Ordinal) ||
             text.Contains("permission denied", StringComparison.Ordinal) ||
             text.Contains("interactive authentication required", StringComparison.Ordinal) ||
@@ -554,5 +593,94 @@ public sealed class ServiceControl(
         }
 
         return null;
+    }
+
+    private static bool IsDockerEntry(string unit) => ServerUnit.Parse(unit) is { IsDocker: true };
+
+    /// <summary>The argv, through <c>sudo -n</c> when the bot is not root.</summary>
+    /// <remarks>
+    /// Docker reads go through it too, unlike systemd's: asking the daemon anything needs its
+    /// socket, which is root's, so an unelevated <c>docker inspect</c> would read every server
+    /// as Unknown.
+    /// </remarks>
+    private (string File, string[] Argv) Elevated(string tool, IReadOnlyList<string> argv) =>
+        _useSudo
+            // -n: fail rather than block forever on a password prompt nobody can answer.
+            ? ("sudo", ["-n", tool, .. argv])
+            : (tool, [.. argv]);
+
+    /// <summary>State, uptime and memory limit of one container. Unknown when Docker cannot say.</summary>
+    private async Task<(UnitState State, TimeSpan? Uptime, long? MemoryLimit)> InspectAsync(
+        string container, CancellationToken ct)
+    {
+        try
+        {
+            var (file, argv) = Elevated("docker", DockerCli.InspectArgv(container));
+            var run = await ProcessRunner.RunAsync(file, argv, TimeSpan.FromSeconds(5), logger, ct).ConfigureAwait(false);
+
+            // A missing container exits non-zero with nothing on stdout: Unknown, like a unit
+            // systemd has never heard of - not "stopped".
+            if (!run.Started || run.TimedOut || run.ExitCode != 0) return (UnitState.Unknown, null, null);
+            return DockerCli.ParseInspect(run.Stdout, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "Could not inspect container {Container}", container);
+            return (UnitState.Unknown, null, null);
+        }
+    }
+
+    /// <summary>
+    /// Stats for every Docker entry, keyed by entry.
+    /// </summary>
+    /// <remarks>
+    /// ONE <c>docker stats</c> FOR ALL OF THEM. It samples for about two seconds on its own, so
+    /// one call per container would make a three-server status take six. It is skipped entirely
+    /// when nothing is running, because it fails outright on a stopped container.
+    /// </remarks>
+    private async Task<Dictionary<string, UnitStats>> DockerStatsAsync(CancellationToken ct)
+    {
+        var results = new Dictionary<string, UnitStats>(StringComparer.Ordinal);
+        var containers = Units.Select(u => (Entry: u, Parsed: ServerUnit.Parse(u)))
+            .Where(u => u.Parsed is { IsDocker: true })
+            .Select(u => (u.Entry, Name: u.Parsed!.Value.Name))
+            .ToList();
+        if (containers.Count == 0) return results;
+
+        var inspected = new Dictionary<string, (UnitState State, TimeSpan? Uptime, long? MemoryLimit)>(StringComparer.Ordinal);
+        foreach (var (_, name) in containers)
+            inspected[name] = await InspectAsync(name, ct).ConfigureAwait(false);
+
+        var sampled = new Dictionary<string, (double? Cpu, long? Memory, int? Pids)>(StringComparer.Ordinal);
+        var running = containers.Where(c => inspected[c.Name].State == UnitState.Active).Select(c => c.Name).ToList();
+        if (running.Count > 0)
+        {
+            try
+            {
+                var (file, argv) = Elevated("docker", DockerCli.StatsArgv(running));
+                var run = await ProcessRunner.RunAsync(file, argv, TimeSpan.FromSeconds(15), logger, ct).ConfigureAwait(false);
+                if (run.Started && !run.TimedOut)
+                {
+                    foreach (var line in run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (DockerCli.ParseStatsLine(line) is { } stat) sampled[stat.Name] = (stat.Cpu, stat.Memory, stat.Pids);
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                logger.LogDebug(ex, "Could not sample docker stats");
+            }
+        }
+
+        foreach (var (entry, name) in containers)
+        {
+            var (state, uptime, limit) = inspected[name];
+            sampled.TryGetValue(name, out var stat);
+            results[entry] = new UnitStats(entry, state,
+                MemoryBytes: stat.Memory, MemoryLimitBytes: limit, CpuPercent: stat.Cpu, Tasks: stat.Pids, Uptime: uptime);
+        }
+
+        return results;
     }
 }

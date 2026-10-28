@@ -90,7 +90,7 @@ public sealed class ProvisionServerCommand(
                install directory and the slot all have to agree. Letting any of them be typed in
                is how they stop agreeing, so the slot decides all three. */
             .AddOption("copy", ApplicationCommandOptionType.Boolean,
-                "Copy server 1's install instead of downloading it with SteamCMD", isRequired: false)
+                "systemd only: copy server 1's install instead of downloading it with SteamCMD", isRequired: false)
             .AddOption("rconpassword", ApplicationCommandOptionType.String, "RCON password (default: a strong one is generated)", isRequired: false)
             .AddOption("gamepassword", ApplicationCommandOptionType.String, "Optional join password (default: open)", isRequired: false)
             .Build();
@@ -142,15 +142,35 @@ public sealed class ProvisionServerCommand(
            install behind it is the slot to build - otherwise asking for a first server on a box
            where RCON_HOST_1 was set but nothing was ever installed produced a SECOND one, leaving
            the first as a hole that every later run then skipped too. */
-        var installed = InstalledSlots(usedIndices.Count);
+        var installed = InstalledSlots(usedIndices.Count, existingUnits);
         var prospectiveSlot = ServerSlotPlanner.TargetSlot(usedIndices.Count, installed);
         var refilling = prospectiveSlot <= usedIndices.Count;
 
         /* THE CONVENTION DECIDES BOTH, from the slot alone: server 1 is pavlovserver, server 2 is
            pavlovserver1, server 3 is pavlovserver2. The unit is named for the directory and the
            directory sits beside its siblings, so the two cannot disagree. */
-        var unit = $"pavlovserver{Off(prospectiveSlot)}";
-        var installDir = Path.Combine(DefaultInstallParent(), unit);
+        if (features.ProvisionRuntime is not { } runtime)
+        {
+            await Reply(command, Theme.Failure("Cannot provision a server",
+                $"`PAVLOV_RUNTIME` is `{Sanitize.Code(features.ProvisionRuntimeSetting ?? "")}`, which is neither `docker` " +
+                "nor `systemd`. Fix it in `.env` and restart the bot.")).ConfigureAwait(false);
+            return false;
+        }
+
+        var docker = runtime == ServerRuntime.Docker;
+        if (docker && BoolOption(command, "copy") == true)
+        {
+            /* Refused rather than ignored: somebody who asked for a copy expected not to wait for a
+               download, and the image is that download whatever this option says. */
+            await Reply(command, Theme.Failure("Cannot provision a server",
+                "`copy` does nothing for a Docker server - the image already contains the game. Run it again without " +
+                "`copy`, or set `PAVLOV_RUNTIME=systemd` for a SteamCMD install.")).ConfigureAwait(false);
+            return false;
+        }
+
+        var name = $"pavlovserver{Off(prospectiveSlot)}";
+        var unit = docker ? ServerUnit.DockerEntry(name) : name;
+        var installDir = Path.Combine(DefaultInstallParent(), name);
 
         /* When filling in a slot that is already configured, its OWN current port, unit and base
            are what is being replaced - counting them as collisions would make the command refuse
@@ -222,7 +242,8 @@ public sealed class ProvisionServerCommand(
             Path.Combine(Directory.GetCurrentDirectory(), ".env"),
             RconHostFor(prospectiveSlot),
             copyFrom,
-            refilling);
+            refilling,
+            docker ? features.DockerImage : null);
 
         var channelId = command.Channel.Id;
         var messageId = await Post.SendAsync(channelId, Checklist(spec, InitialSteps()), null, ct).ConfigureAwait(false);
@@ -272,9 +293,11 @@ public sealed class ProvisionServerCommand(
     private static Embed StartedEmbed(
         ServerProvisionSpec spec, bool generatedPassword, string? copyFrom, bool refilling)
     {
-        var source = copyFrom is null
-            ? "SteamCMD downloads several GB, so this"
-            : $"Copying `{Sanitize.Code(copyFrom)}` rather than downloading, so this";
+        var source = ServerUnit.Parse(spec.UnitName) is { IsDocker: true }
+            ? "Docker pulls several GB the first time, so this"
+            : copyFrom is null
+                ? "SteamCMD downloads several GB, so this"
+                : $"Copying `{Sanitize.Code(copyFrom)}` rather than downloading, so this";
 
         var embed = Theme.Notice($"Provisioning server {spec.Slot} started",
                 $"Installing **{Sanitize.Code(spec.ServerName)}** as `{spec.UnitName}`. {source} " +
@@ -348,16 +371,24 @@ public sealed class ProvisionServerCommand(
     /// unit's ExecStart runs, so its absence means there is nothing to start no matter what else
     /// is in the tree - and an empty or half-deleted directory left over from a failed run would
     /// otherwise read as a working server and get skipped forever.
+    ///
+    /// A DOCKER SLOT HAS NO SCRIPT ON THE HOST - the game lives in the image - so it is keyed on
+    /// the RconSettings.txt the provision writes into the mounted tree instead, which is the
+    /// same "a completed install is here" test for the half that does live on the host.
     /// </remarks>
-    private IReadOnlyCollection<int> InstalledSlots(int configuredCount)
+    private IReadOnlyCollection<int> InstalledSlots(int configuredCount, IReadOnlyList<string> configuredUnits)
     {
         var parent = DefaultInstallParent();
         var installed = new List<int>();
 
         for (var slot = 1; slot <= configuredCount; slot++)
         {
-            var path = Path.Combine(parent, $"pavlovserver{Off(slot)}", "PavlovServer.sh");
-            if (File.Exists(path)) installed.Add(slot);
+            var dir = Path.Combine(parent, $"pavlovserver{Off(slot)}");
+            var isDocker = slot <= configuredUnits.Count && ServerUnit.Parse(configuredUnits[slot - 1]) is { IsDocker: true };
+            var marker = isDocker
+                ? Path.Combine(DockerCli.HostSavedDir(dir), "Config", "RconSettings.txt")
+                : Path.Combine(dir, "PavlovServer.sh");
+            if (File.Exists(marker)) installed.Add(slot);
         }
 
         return installed;

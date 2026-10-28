@@ -1015,18 +1015,33 @@ public class ProvisioningTests
            otherwise worked. A full provision needs root, so no test drives one; this counts the
            Start() calls in the source against the lists instead.
 
-           ProvisionAsync starts one copy-only step and two SteamCMD-only steps on its two
-           branches, so it holds one more Start() than either checklist minus the restart. */
+           The systemd ProvisionAsync starts one copy-only step and two SteamCMD-only steps on its
+           two branches, so it holds one more Start() than either checklist needs from it. The
+           steps every runtime shares - kept player data, firewall, RCON, .env - live in their own
+           methods and count once into each list that runs them. */
         var provision = Starts(MethodSource("public async Task<ProvisionOutcome> ProvisionAsync(",
+            "private async Task<ProvisionOutcome> ProvisionDockerAsync("));
+        var docker = Starts(MethodSource("private async Task<ProvisionOutcome> ProvisionDockerAsync(",
+            "private async Task<string?> DockerPreflightAsync("));
+        var wireIn = Starts(MethodSource("private async Task<ProvisionOutcome> WireInAsync(",
+            "private static async Task RestoreKeptDataAsync("));
+        var restore = Starts(MethodSource("private static async Task RestoreKeptDataAsync(",
             "public async Task<ProvisionOutcome> DeleteAsync("));
         var delete = Starts(MethodSource("public async Task<ProvisionOutcome> DeleteAsync(",
+            "private async Task<ProvisionOutcome> DeleteDockerAsync("));
+        var dockerDelete = Starts(MethodSource("private async Task<ProvisionOutcome> DeleteDockerAsync(",
+            "private async Task<ProvisionOutcome> RemoveInstallAsync("));
+        var removeInstall = Starts(MethodSource("private async Task<ProvisionOutcome> RemoveInstallAsync(",
             "internal static string? DeletableInstallProblem("));
         var restart = Starts(MethodSource("private async Task<ProvisionOutcome> RestartAsync(", "\n    }\n"));
 
         Assert.Equal(1, restart);
-        Assert.Equal(ServerProvisioner.StepNames.Length, provision + restart - 1);
-        Assert.Equal(ServerProvisioner.CopyStepNames.Length, provision + restart - 2);
-        Assert.Equal(ServerProvisioner.DeleteStepNames.Length, delete + restart);
+        Assert.Equal(1, restore);
+        Assert.Equal(ServerProvisioner.StepNames.Length, provision - 1 + restore + wireIn + restart);
+        Assert.Equal(ServerProvisioner.CopyStepNames.Length, provision - 2 + restore + wireIn + restart);
+        Assert.Equal(ServerProvisioner.DockerStepNames.Length, docker + restore + wireIn + restart);
+        Assert.Equal(ServerProvisioner.DeleteStepNames.Length, delete + removeInstall + restart);
+        Assert.Equal(ServerProvisioner.DockerDeleteStepNames.Length, dockerDelete + removeInstall + restart);
     }
 
     private static ServerProvisioner.Run NewRun(out List<IReadOnlyList<ProvisionStep>> snapshots)
