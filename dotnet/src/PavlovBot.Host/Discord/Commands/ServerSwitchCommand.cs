@@ -205,7 +205,7 @@ public sealed class ServerSwitchCommand(
                 inline: true);
         }
 
-        if (!result.Ok) embed.AddField("systemd said", $"```\n{Sanitize.Code(Truncate(result.Detail))}\n```");
+        if (!result.Ok) embed.AddField($"{ServerUnit.ManagerOf(unit)} said", $"```\n{Sanitize.Code(Truncate(result.Detail))}\n```");
 
         // The fix, not just the failure. A permission error is the expected outcome on a bot
         // that is not root, and without this it presents as the command being broken.

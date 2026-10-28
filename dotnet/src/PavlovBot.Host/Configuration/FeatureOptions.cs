@@ -650,7 +650,7 @@ public sealed record FeatureOptions
     /// one per discovered install otherwise. See <see cref="BanFilePaths"/>.
     /// </summary>
     /// <summary>
-    /// PAVLOV_UNITS when set; otherwise the unit systemd runs each install with, in install order.
+    /// PAVLOV_UNITS when set; otherwise the unit or container that runs each install, in install order.
     /// </summary>
     /// <remarks>
     /// Detected rather than defaulted: the fixed pavlovserver, pavlovserver1, pavlovserver2 list was
@@ -662,7 +662,7 @@ public sealed record FeatureOptions
         if (Text(configuration, "PAVLOV_UNITS") is { } configured)
             return PavlovBot.Host.Servers.ServiceControl.ParseUnits(configured);
 
-        var detected = PavlovBot.Host.Servers.PavlovServerDetection.FromSystemd();
+        var detected = PavlovBot.Host.Servers.PavlovServerDetection.Detect();
         if (detected.Count == 0) return PavlovBot.Host.Servers.ServiceControl.DefaultUnits;
 
         var installs = PavlovBot.Host.Storage.PavlovInstalls.Discover(
@@ -778,7 +778,7 @@ public sealed record FeatureOptions
         $"ignored paths: {(IgnoredPaths.Count == 0
             ? "none (IGNORE_PATHS not set) - this bot may write every file it is given"
             : string.Join(", ", IgnoredPaths))}",
-        $"systemd units: {string.Join(", ", PavlovUnits)}",
+        $"server units: {string.Join(", ", PavlovUnits)}",
         $"join feed: {(JoinWebhook is null ? "off" : "on")}",
         $"kill feed: {(KillWebhook is null ? "off" : "on")}",
         $"rcon feed: {(RconWebhook is null ? "off" : "on")}",

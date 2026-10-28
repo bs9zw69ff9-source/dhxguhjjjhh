@@ -28,13 +28,16 @@ public static class PavlovInstalls
     /// Where to look for systemd units when neither setting is given; null for
     /// <see cref="PavlovBot.Host.Servers.PavlovServerDetection.UnitDirectory"/>.
     /// </param>
+    /// <param name="docker">The container lookup; null asks the real Docker daemon. For tests.</param>
     /// <remarks>
-    /// WITH NOTHING CONFIGURED, systemd is asked first: every service that runs PavlovServer.sh
-    /// names its install, so a box set up by /provisionserver needs neither setting. The sibling
+    /// WITH NOTHING CONFIGURED, systemd and Docker are asked first: every service that runs
+    /// PavlovServer.sh names its install, and so does the Saved mount of every container the bot
+    /// labelled, so a box set up by /provisionserver needs neither setting. The sibling
     /// scan from the default base is the fallback when no such unit is found.
     /// </remarks>
     public static IReadOnlyList<string> Discover(
-        string? explicitBases = null, string? firstBase = null, ILogger? logger = null, string? unitDirectory = null)
+        string? explicitBases = null, string? firstBase = null, ILogger? logger = null, string? unitDirectory = null,
+        Func<IReadOnlyList<PavlovBot.Host.Servers.DetectedServer>>? docker = null)
     {
         var listed = (explicitBases ?? "")
             .Split([',', ':'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -49,11 +52,11 @@ public static class PavlovInstalls
 
         if (string.IsNullOrWhiteSpace(firstBase))
         {
-            var detected = PavlovBot.Host.Servers.PavlovServerDetection.FromSystemd(
-                unitDirectory ?? PavlovBot.Host.Servers.PavlovServerDetection.UnitDirectory);
+            var detected = PavlovBot.Host.Servers.PavlovServerDetection.Detect(
+                unitDirectory ?? PavlovBot.Host.Servers.PavlovServerDetection.UnitDirectory, docker);
             if (detected.Count > 0)
             {
-                logger?.LogInformation("Found {Count} Pavlov server(s) from their systemd units", detected.Count);
+                logger?.LogInformation("Found {Count} Pavlov server(s) from their systemd units and Docker containers", detected.Count);
                 return [.. detected.Select(d => d.Install)];
             }
         }
