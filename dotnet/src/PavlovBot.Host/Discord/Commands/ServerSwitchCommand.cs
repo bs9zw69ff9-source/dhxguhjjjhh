@@ -179,7 +179,8 @@ public sealed class ServerSwitchCommand(
 
         var embed = result.Ok
             ? Theme.Success($"{title} ✓", $"`{Sanitize.Code(unit)}` is {Past(action)}.")
-            : Theme.Failure($"{title} failed", $"`{Sanitize.Code(unit)}` did not respond to `systemctl {ServiceControl.Verb(action)}`.");
+            : Theme.Failure($"{title} failed", $"`{Sanitize.Code(unit)}` did not respond to " +
+                $"`{(ServerUnit.Parse(unit) is { IsDocker: true } ? "docker" : "systemctl")} {ServiceControl.Verb(action)}`.");
 
         if (result.Ok && action is UnitAction.Stop)
         {

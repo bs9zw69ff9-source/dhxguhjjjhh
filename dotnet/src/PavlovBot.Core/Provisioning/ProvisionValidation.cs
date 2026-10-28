@@ -132,8 +132,11 @@ public static partial class ProvisionValidation
             problems.Add($"The install directory \"{spec.InstallDir}\" must be an absolute path (no \"..\") using letters, digits and _-./ only.");
 
         // ---- collisions with what is already configured ----
-        if (unitsInUse.Contains(spec.UnitName, StringComparer.Ordinal))
-            problems.Add($"The systemd unit \"{spec.UnitName}\" is already configured for another server.");
+        /* COMPARED WITHOUT THE RUNTIME. "docker:pavlovserver2" and "pavlovserver2" are the same
+           server name - the install directory and the ports go by it - so one cannot be added
+           beside the other just because one of them runs in a container. */
+        if (unitsInUse.Any(u => string.Equals(BareName(u), BareName(spec.UnitName), StringComparison.Ordinal)))
+            problems.Add($"The server unit \"{spec.UnitName}\" is already configured for another server.");
         if (installDirsInUse.Contains(spec.InstallDir, StringComparer.Ordinal))
             problems.Add($"The install directory \"{spec.InstallDir}\" is already configured for another server.");
 
@@ -147,4 +150,8 @@ public static partial class ProvisionValidation
         if (value is <= 0 or > 65535)
             problems.Add($"The {label} is not a valid port (got {value}); it must be between 1 and 65535.");
     }
+
+    /// <summary>A <c>PAVLOV_UNITS</c> entry without its <c>docker:</c> prefix.</summary>
+    internal static string BareName(string unit) =>
+        unit.StartsWith("docker:", StringComparison.OrdinalIgnoreCase) ? unit["docker:".Length..] : unit;
 }

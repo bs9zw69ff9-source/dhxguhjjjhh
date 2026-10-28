@@ -6,7 +6,8 @@ using PavlovBot.Rcon;
 namespace PavlovBot.Host.Servers;
 
 /// <summary>
-/// The real, privileged provisioner: SteamCMD, config, systemd, ufw, then wire-in and restart.
+/// The real, privileged provisioner: the game (a Docker image, or SteamCMD and a systemd unit),
+/// its config, ufw, then wire-in and restart.
 /// </summary>
 /// <remarks>
 /// A SIBLING of <see cref="ServiceControl"/>, not an extension of it. ServiceControl's whole
@@ -86,8 +87,36 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Restart the bot",
     ];
 
+    /// <summary>
+    /// A server that runs in Docker. No steam account and no SteamCMD on the host: the image
+    /// carries the game and updates it itself on every start.
+    /// </summary>
+    internal static readonly string[] DockerStepNames =
+    [
+        "Pre-flight checks",
+        "Remove legacy steam sudo grant",
+        "Docker image (pull)",
+        "Server config (RconSettings.txt, Game.ini)",
+        "Restore kept player data",
+        "Docker container (create and start)",
+        "Firewall (ufw)",
+        "RCON reachability",
+        "Wire into the bot (.env)",
+        "Restart the bot",
+    ];
+
     /// <summary>Which checklist a run follows. Copying skips SteamCMD entirely.</summary>
     internal static IReadOnlyList<string> StepsFor(bool copying) => copying ? CopyStepNames : StepNames;
+
+    /// <summary>The checklist for taking a Docker server back off the box.</summary>
+    internal static readonly string[] DockerDeleteStepNames =
+    [
+        "Pre-flight checks",
+        "Stop and remove the container",
+        "Delete the install directory",
+        "Unwire from the bot (.env)",
+        "Restart the bot",
+    ];
 
     /// <summary>The checklist for taking a server back off the box.</summary>
     internal static readonly string[] DeleteStepNames =
@@ -204,6 +233,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(onProgress);
+
+        if (ServerUnit.Parse(request.Spec.UnitName) is { IsDocker: true } docker)
+            return await ProvisionDockerAsync(request, docker.Name, onProgress, ct).ConfigureAwait(false);
 
         var copying = request.CopyFromInstallDir is { Length: > 0 };
         var run = new Run(StepsFor(copying), onProgress);
@@ -328,17 +360,221 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         // ---- config files ----
         await run.Start("writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
-        if (await WriteConfigAsync(spec, ct).ConfigureAwait(false) is { } configProblem)
+        if (await WriteConfigAsync(spec, SteamUser, ct).ConfigureAwait(false) is { } configProblem)
         {
             await run.Fail(configProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
         await run.Ok("written and owned by steam.").ConfigureAwait(false);
 
-        /* ---- player data kept by an earlier /deleteserver of this slot ----
-           ALWAYS A STEP, even with nothing to restore. The checklist is a cursor over a fixed
-           list: a Start() that only happens sometimes shifts every later step by one, and the
-           last one then indexes past the end - which is exactly how this shipped the first time. */
+        await RestoreKeptDataAsync(run, spec).ConfigureAwait(false);
+
+        // ---- systemd unit ----
+        await run.Start("installing and enabling the service…").ConfigureAwait(false);
+        if (await InstallUnitAsync(spec, unitPath, ct).ConfigureAwait(false) is { } unitProblem)
+        {
+            await run.Fail(unitProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"{spec.UnitName} enabled and started.").ConfigureAwait(false);
+
+        return await WireInAsync(run, request, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The Docker provision: pull, write the config into the mounted tree, run the container.
+    /// </summary>
+    /// <remarks>
+    /// ONLY <c>Pavlov/Saved</c> LIVES ON THE HOST, at <c>{InstallDir}/Pavlov/Saved</c>, and the
+    /// container mounts it. That is every path the bot reads or writes, so the rest of the bot -
+    /// rosters, bans, ModSave, the log tail - finds it exactly where it found a systemd install's.
+    ///
+    /// A BIND MOUNT HIDES WHAT THE IMAGE KEPT THERE. The image ships its own Game.ini and
+    /// RconSettings.txt under Saved; mounting an empty host folder over it would start a server
+    /// with neither, so the bot writes both before the container ever starts.
+    /// </remarks>
+    private async Task<ProvisionOutcome> ProvisionDockerAsync(
+        ProvisionRequest request, string container, Func<IReadOnlyList<ProvisionStep>, Task> onProgress, CancellationToken ct)
+    {
+        var run = new Run(DockerStepNames, onProgress);
+        var spec = request.Spec;
+        var image = request.DockerImage ?? DockerCli.DefaultImage;
+
+        // ---- pre-flight ----
+        await run.Start("checking privileges, Docker and the slot…").ConfigureAwait(false);
+        if (await DockerPreflightAsync(spec, container, image, request.RebuildingExistingSlot, ct).ConfigureAwait(false) is { } problem)
+        {
+            await run.Fail(problem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok("root, Docker is running, and the container name and slot are free.").ConfigureAwait(false);
+
+        // ---- undo the full-sudo grant earlier versions installed ----
+        await run.Start($"checking for {LegacySudoersDropIn}…").ConfigureAwait(false);
+        var (sudoProblem, removed) = RemoveLegacySudoGrant();
+        if (sudoProblem is not null)
+        {
+            await run.Fail(sudoProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok(removed
+            ? $"removed {LegacySudoersDropIn} - steam no longer has sudo."
+            : "none present - steam has no sudo grant from this bot.").ConfigureAwait(false);
+
+        // ---- the image ----
+        await run.Start($"pulling {image} (several GB the first time - this is slow)…").ConfigureAwait(false);
+        var pull = await RunAsync(null, "docker", DockerCli.PullArgv(image), SteamCmdTimeout, ct).ConfigureAwait(false);
+        if (!pull.Ok)
+        {
+            await run.Fail(pull.TimedOut
+                ? $"the pull did not finish within {SteamCmdTimeout.TotalMinutes:0} minutes."
+                : $"docker pull {image} failed: {Tail(pull.Combined)}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"{image} is on the box.").ConfigureAwait(false);
+
+        // ---- config files, written as root and handed to the container's user below ----
+        await run.Start("writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
+        if (await WriteConfigAsync(spec, owner: null, ct).ConfigureAwait(false) is { } configProblem)
+        {
+            await run.Fail(configProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"written under {DockerCli.HostSavedDir(spec.InstallDir)}.").ConfigureAwait(false);
+
+        await RestoreKeptDataAsync(run, spec).ConfigureAwait(false);
+
+        // ---- the container ----
+        await run.Start($"starting {container}…").ConfigureAwait(false);
+        if (await StartContainerAsync(spec, container, image, request.RebuildingExistingSlot, ct).ConfigureAwait(false) is { } runProblem)
+        {
+            await run.Fail(runProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"{container} is running. It updates the game before it opens, so give it a few minutes.").ConfigureAwait(false);
+
+        return await WireInAsync(run, request, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Every reason a Docker provision must not start, or null when it may.</summary>
+    private async Task<string?> DockerPreflightAsync(
+        ServerProvisionSpec spec, string container, string image, bool rebuildingExistingSlot, CancellationToken ct)
+    {
+        if (!Environment.IsPrivilegedProcess)
+            return "the bot is not running as root, so it cannot run Docker or hand the server's files to the container's user. " +
+                   "Run the bot as root for this command.";
+
+        if (!ServerUnit.IsPlausibleContainerName(container))
+            return $"\"{container}\" is not a usable Docker container name.";
+
+        if (!DockerCli.IsPlausibleImage(image))
+            return $"\"{image}\" is not a usable Docker image reference - check PAVLOV_DOCKER_IMAGE.";
+
+        var version = await RunAsync(null, "docker", DockerCli.VersionArgv(), QuickTimeout, ct).ConfigureAwait(false);
+        if (!version.Started)
+            return "docker is not installed - install Docker Engine first (https://docs.docker.com/engine/install/).";
+        if (!version.Ok)
+            return $"the Docker daemon is not answering: {Tail(version.Combined)}. Check `systemctl status docker`.";
+
+        /* THE SAME NAME UNDER SYSTEMD WOULD FIGHT IT FOR THE PORTS. Moving a slot from systemd to
+           Docker means its old service is still enabled and comes back on the next boot, on the
+           same ports, so the switch has to be made on purpose rather than here behind its back. */
+        if (File.Exists($"/etc/systemd/system/{container}.service"))
+            return $"a systemd service called {container} is still installed and would take the same ports. Move it off " +
+                   $"systemd first: `systemctl disable --now {container}`, then delete /etc/systemd/system/{container}.service.";
+
+        if (!rebuildingExistingSlot &&
+            (await RunAsync(null, "docker", DockerCli.ExistsArgv(container), QuickTimeout, ct).ConfigureAwait(false)).Ok)
+        {
+            return $"a Docker container called {container} already exists - refusing to replace it. Remove it with " +
+                   $"`docker rm -f {container}` if it is a leftover.";
+        }
+
+        try
+        {
+            if (Directory.Exists(spec.InstallDir) && Directory.EnumerateFileSystemEntries(spec.InstallDir).Any())
+                return $"{spec.InstallDir} already exists and is not empty - refusing to install over it.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"could not inspect {spec.InstallDir}: {ex.Message}";
+        }
+
+        return null;
+    }
+
+    /// <summary>Hand the mounted tree to the image's user, then run the container. Null on success.</summary>
+    private async Task<string?> StartContainerAsync(
+        ServerProvisionSpec spec, string container, string image, bool rebuildingExistingSlot, CancellationToken ct)
+    {
+        /* ASKED OF THE IMAGE, NOT ASSUMED. The game inside runs as the image's steam user, whose
+           uid need not match the host's steam account; a tree owned by the wrong uid is a server
+           that cannot write its own saves. Everything the bot writes later inherits the owner of
+           its folder (see AtomicFile), so this one chown is enough. */
+        var uid = await RunAsync(null, "docker", DockerCli.UserIdArgv(image, group: false), TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        var gid = await RunAsync(null, "docker", DockerCli.UserIdArgv(image, group: true), TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        if (!uid.Ok || !gid.Ok ||
+            !uint.TryParse(uid.Stdout.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var u) ||
+            !uint.TryParse(gid.Stdout.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var g))
+        {
+            return $"could not ask {image} which user it runs as: {Tail(uid.Combined + gid.Combined)}";
+        }
+
+        var owner = $"{u.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{g.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var chown = await RunAsync(null, "chown", ["-R", owner, spec.InstallDir], QuickTimeout, ct).ConfigureAwait(false);
+        if (!chown.Ok) return $"could not chown {spec.InstallDir} to {owner}: {Tail(chown.Combined)}";
+
+        // Rebuilding replaces this slot's own container; a fresh slot was already refused one.
+        if (rebuildingExistingSlot)
+            await RunAsync(null, "docker", DockerCli.RemoveArgv(container), SystemctlTimeout, ct).ConfigureAwait(false);
+
+        var started = await RunAsync(null, "docker", DockerCli.RunArgv(spec, container, image), SystemctlTimeout, ct).ConfigureAwait(false);
+        return started.Ok ? null : $"docker run failed: {Tail(started.Combined)}";
+    }
+
+    /// <summary>
+    /// Firewall, the RCON probe, the .env and the restart: the same for every runtime.
+    /// </summary>
+    private async Task<ProvisionOutcome> WireInAsync(Run run, ProvisionRequest request, CancellationToken ct)
+    {
+        var spec = request.Spec;
+
+        // ---- firewall (non-critical) ----
+        await run.Start("opening the game, query and RCON ports…").ConfigureAwait(false);
+        var ufw = await OpenPortsAsync(spec, ct).ConfigureAwait(false);
+        if (ufw is null) await run.Ok($"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
+        else await run.SoftFail(ufw).ConfigureAwait(false);
+
+        // ---- RCON reachability (non-critical) ----
+        await run.Start("asking the new server for ServerInfo…").ConfigureAwait(false);
+        if (await RconReachableAsync(spec, ct).ConfigureAwait(false))
+            await run.Ok("answered RCON.").ConfigureAwait(false);
+        else
+            await run.SoftFail("no RCON answer yet - the server may still be starting; check /health after a minute.").ConfigureAwait(false);
+
+        // ---- wire into the bot's .env (only reached when every critical step passed) ----
+        await run.Start("appending the server to .env…").ConfigureAwait(false);
+        if (await AppendEnvAsync(request, ct).ConfigureAwait(false) is { } envProblem)
+        {
+            await run.Fail(envProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok($"added as server {spec.Slot}.").ConfigureAwait(false);
+
+        // ---- restart the bot ----
+        return await RestartAsync(run, $"to bring server {spec.Slot} online", ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Move back any player data an earlier <c>/deleteserver</c> of this slot kept.
+    /// </summary>
+    /// <remarks>
+    /// ALWAYS A STEP, even with nothing to restore. The checklist is a cursor over a fixed
+    /// list: a Start() that only happens sometimes shifts every later step by one, and the
+    /// last one then indexes past the end - which is exactly how this shipped the first time.
+    /// </remarks>
+    private static async Task RestoreKeptDataAsync(Run run, ServerProvisionSpec spec)
+    {
         await run.Start("looking for player data kept when this server was deleted…").ConfigureAwait(false);
         if (!Directory.Exists(PreservedPlayerData.PreservedDir(spec.InstallDir)))
         {
@@ -367,40 +603,6 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
                                    $"{PreservedPlayerData.PreservedDir(spec.InstallDir)}.").ConfigureAwait(false);
             }
         }
-
-        // ---- systemd unit ----
-        await run.Start("installing and enabling the service…").ConfigureAwait(false);
-        if (await InstallUnitAsync(spec, unitPath, ct).ConfigureAwait(false) is { } unitProblem)
-        {
-            await run.Fail(unitProblem).ConfigureAwait(false);
-            return await run.Abort().ConfigureAwait(false);
-        }
-        await run.Ok($"{spec.UnitName} enabled and started.").ConfigureAwait(false);
-
-        // ---- firewall (non-critical) ----
-        await run.Start("opening the game, query and RCON ports…").ConfigureAwait(false);
-        var ufw = await OpenPortsAsync(spec, ct).ConfigureAwait(false);
-        if (ufw is null) await run.Ok($"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
-        else await run.SoftFail(ufw).ConfigureAwait(false);
-
-        // ---- RCON reachability (non-critical) ----
-        await run.Start("asking the new server for ServerInfo…").ConfigureAwait(false);
-        if (await RconReachableAsync(spec, ct).ConfigureAwait(false))
-            await run.Ok("answered RCON.").ConfigureAwait(false);
-        else
-            await run.SoftFail("no RCON answer yet - the server may still be starting; check /health after a minute.").ConfigureAwait(false);
-
-        // ---- wire into the bot's .env (only reached when every critical step passed) ----
-        await run.Start("appending the server to .env…").ConfigureAwait(false);
-        if (await AppendEnvAsync(request, ct).ConfigureAwait(false) is { } envProblem)
-        {
-            await run.Fail(envProblem).ConfigureAwait(false);
-            return await run.Abort().ConfigureAwait(false);
-        }
-        await run.Ok($"added as server {spec.Slot}.").ConfigureAwait(false);
-
-        // ---- restart the bot ----
-        return await RestartAsync(run, $"to bring server {spec.Slot} online", ct).ConfigureAwait(false);
     }
 
     public async Task<ProvisionOutcome> DeleteAsync(
@@ -410,6 +612,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(onProgress);
+
+        if (ServerUnit.Parse(request.UnitName) is { IsDocker: true } docker)
+            return await DeleteDockerAsync(request, docker.Name, onProgress, ct).ConfigureAwait(false);
 
         var run = new Run(DeleteStepNames, onProgress);
         var unitPath = $"/etc/systemd/system/{request.UnitName}.service";
@@ -457,6 +662,54 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok("removed, and systemd reloaded.").ConfigureAwait(false);
 
+        return await RemoveInstallAsync(run, request, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The Docker delete: remove the container, then the same install removal as systemd.</summary>
+    private async Task<ProvisionOutcome> DeleteDockerAsync(
+        DeleteRequest request, string container, Func<IReadOnlyList<ProvisionStep>, Task> onProgress, CancellationToken ct)
+    {
+        var run = new Run(DockerDeleteStepNames, onProgress);
+
+        // ---- pre-flight ----
+        await run.Start("checking privileges and the container name…").ConfigureAwait(false);
+        if (!Environment.IsPrivilegedProcess)
+        {
+            await run.Fail("the bot is not running as root, so it cannot remove a container.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        if (!ServerUnit.IsPlausibleContainerName(container))
+        {
+            await run.Fail($"\"{container}\" is not a usable Docker container name.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok("root, and the container name is usable.").ConfigureAwait(false);
+
+        // ---- stop and remove ----
+        /* NOT FATAL WHEN IT IS ALREADY GONE, for the same reason as the systemd branch: absent is
+           the state being asked for. A daemon that cannot be reached at all IS fatal, though -
+           deleting the install from under a container that may still be running would leave a
+           server writing into a folder that no longer exists. */
+        await run.Start($"removing {container}…").ConfigureAwait(false);
+        var remove = await RunAsync(null, "docker", DockerCli.RemoveArgv(container), SystemctlTimeout, ct).ConfigureAwait(false);
+        if (!remove.Started)
+        {
+            await run.Fail("docker is not installed or could not be run, so the container may still be running.").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        if (!remove.Ok && !remove.Combined.Contains("No such container", StringComparison.OrdinalIgnoreCase))
+        {
+            await run.Fail($"docker rm -f {container} failed: {Tail(remove.Combined)}").ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok(remove.Ok ? "stopped and removed." : "already gone.").ConfigureAwait(false);
+
+        return await RemoveInstallAsync(run, request, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Keep the player data, delete the install, unwire it, restart. Shared by both runtimes.</summary>
+    private async Task<ProvisionOutcome> RemoveInstallAsync(Run run, DeleteRequest request, CancellationToken ct)
+    {
         // ---- delete the install ----
         await run.Start($"deleting {request.InstallDir}…").ConfigureAwait(false);
         if (DeletableInstallProblem(request.InstallDir) is { } pathProblem)
@@ -726,21 +979,25 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     }
 
     /// <summary>Create the directories and files, then write the two configs. Null on success.</summary>
-    private async Task<string?> WriteConfigAsync(ServerProvisionSpec spec, CancellationToken ct)
+    /// <param name="owner">
+    /// The account that creates and owns them: steam for a systemd server. Null for a Docker one,
+    /// where root writes them and the whole tree is handed to the image's user before it starts.
+    /// </param>
+    private async Task<string?> WriteConfigAsync(ServerProvisionSpec spec, string? owner, CancellationToken ct)
     {
         var configDir = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "Config");
         var linuxDir = Path.Combine(configDir, "LinuxServer");
 
         foreach (var directory in ConfigDirectories(spec.InstallDir))
         {
-            var mk = await RunAsync(SteamUser, "mkdir", ["-p", directory], QuickTimeout, ct).ConfigureAwait(false);
+            var mk = await RunAsync(owner, "mkdir", ["-p", directory], QuickTimeout, ct).ConfigureAwait(false);
             if (!mk.Ok) return $"could not create {directory}: {Tail(mk.Combined)}";
         }
 
         foreach (var file in OptionalConfigFiles(spec.InstallDir))
         {
             // touch: creates it empty, and leaves an existing one untouched.
-            var mkFile = await RunAsync(SteamUser, "touch", [file], QuickTimeout, ct).ConfigureAwait(false);
+            var mkFile = await RunAsync(owner, "touch", [file], QuickTimeout, ct).ConfigureAwait(false);
             if (!mkFile.Ok) return $"could not create {file}: {Tail(mkFile.Combined)}";
         }
 
@@ -753,10 +1010,10 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             await AtomicFile.WriteAsync(gameIniPath, ProvisionText.GameIni(spec), ct).ConfigureAwait(false);
 
             // Written by root into a steam-owned tree; hand ownership back so the server reads them.
-            foreach (var path in new[] { rconPath, gameIniPath })
+            foreach (var path in owner is null ? [] : new[] { rconPath, gameIniPath })
             {
-                var chown = await RunAsync(null, "chown", [SteamUser, path], QuickTimeout, ct).ConfigureAwait(false);
-                if (!chown.Ok) return $"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}";
+                var chown = await RunAsync(null, "chown", [owner!, path], QuickTimeout, ct).ConfigureAwait(false);
+                if (!chown.Ok) return $"could not chown {path} to {owner}: {Tail(chown.Combined)}";
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

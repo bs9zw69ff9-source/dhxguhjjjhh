@@ -77,7 +77,7 @@ public sealed record BotSupervisor(SupervisorKind Kind, string Name)
 
         var unit = env("PAVLOV_SYSTEMD_UNIT") ?? UnitFromCgroup(cgroup);
         return unit is not null && unit.EndsWith(".service", StringComparison.Ordinal) &&
-               ServiceControl.IsPlausibleUnitName(unit)
+               ServiceControl.IsPlausibleSystemdName(unit)
             ? new BotSupervisor(SupervisorKind.Systemd, unit[..^".service".Length])
             : Unmanaged;
     }

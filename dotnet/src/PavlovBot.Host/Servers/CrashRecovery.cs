@@ -152,9 +152,9 @@ public sealed class CrashRecovery(
                    two commands to run are what makes this line actionable at 4am. */
                 logger.LogCritical(
                     "{Unit} has failed {Count} times in {Minutes} minutes. AUTOMATIC RESTARTS ARE NOW OFF " +
-                    "for it - something is wrong that restarting does not fix. Check `systemctl status {StatusUnit}` " +
-                    "and `journalctl -u {JournalUnit}`",
-                    unit, attempts.At.Count, (int)AttemptWindow.TotalMinutes, unit, unit);
+                    "for it - something is wrong that restarting does not fix. Check `{StatusHint}`",
+                    unit, attempts.At.Count, (int)AttemptWindow.TotalMinutes,
+                    ServerUnit.Parse(unit)?.StatusHint() ?? $"systemctl status {unit}` and `journalctl -u {unit}");
 
                 return new Gate(false,
                     $"failed {attempts.At.Count} times in {(int)AttemptWindow.TotalMinutes} minutes - " +

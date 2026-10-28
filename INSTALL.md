@@ -161,6 +161,39 @@ passwd -l steam
 (`/provisionserver` now removes that sudoers file itself when it runs, but only
 then.)
 
+### Game servers in Docker
+
+`/provisionserver` builds new servers as Docker containers (set `PAVLOV_RUNTIME=systemd`
+for the old SteamCMD-and-systemd way). It needs Docker Engine on the box and the bot
+running as root:
+
+```bash
+curl -fsSL https://get.docker.com | sh
+```
+
+Each server is one container from `powersjk/pavlov-vr-shack-server`, on host networking
+with `--restart unless-stopped`, and its entry in `PAVLOV_UNITS` is `docker:<name>`.
+Only `Pavlov/Saved` lives on the host, at `<install>/Pavlov/Saved`, owned by the image's
+user (uid 1000). The game updates itself every time the container starts, so a restart
+after a Pavlov update is enough.
+
+**Moving an existing systemd server into Docker** keeps its players' data, because the
+container mounts the same `Pavlov/Saved`. For server 3 (`pavlovserver2`):
+
+```bash
+systemctl disable --now pavlovserver2
+rm /etc/systemd/system/pavlovserver2.service && systemctl daemon-reload
+chown -R 1000:1000 /home/steam/pavlovserver2/Pavlov/Saved
+docker run -d --name pavlovserver2 --restart unless-stopped --network host \
+  --stop-timeout 30 --label pavlovbot.managed=true --label pavlovbot.slot=3 \
+  -e SERVER_NAME=pavlovserver2 -e SERVER_PORT=7779 \
+  -v /home/steam/pavlovserver2/Pavlov/Saved:/home/steam/pavlovserver/Pavlov/Saved \
+  powersjk/pavlov-vr-shack-server:1.8.0
+```
+
+Use that server's own game port for `SERVER_PORT`. Then change its entry in
+`PAVLOV_UNITS` from `pavlovserver2` to `docker:pavlovserver2` and restart the bot.
+
 ---
 
 ## 5. Build and verify

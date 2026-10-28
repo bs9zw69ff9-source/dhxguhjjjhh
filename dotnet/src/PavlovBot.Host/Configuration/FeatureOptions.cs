@@ -388,6 +388,23 @@ public sealed record FeatureOptions
     /// </remarks>
     public string? PavlovVersion { get; init; }
 
+    /// <summary>
+    /// What <c>/provisionserver</c> builds a new server on: Docker unless <c>PAVLOV_RUNTIME=systemd</c>.
+    /// </summary>
+    /// <remarks>
+    /// NULL IS A TYPO, not a default. <c>PAVLOV_RUNTIME=dokcer</c> must not quietly build a
+    /// systemd server, so a value that is neither word reads as null and the command refuses.
+    /// Existing servers are unaffected either way: each <c>PAVLOV_UNITS</c> entry names its own
+    /// runtime (see <see cref="PavlovBot.Host.Servers.ServerUnit"/>).
+    /// </remarks>
+    public PavlovBot.Host.Servers.ServerRuntime? ProvisionRuntime { get; init; } = PavlovBot.Host.Servers.ServerRuntime.Docker;
+
+    /// <summary>The raw <c>PAVLOV_RUNTIME</c>, for the refusal when it is not a runtime.</summary>
+    public string? ProvisionRuntimeSetting { get; init; }
+
+    /// <summary>The image a new Docker server runs (<c>PAVLOV_DOCKER_IMAGE</c>).</summary>
+    public string DockerImage { get; init; } = PavlovBot.Host.Servers.DockerCli.DefaultImage;
+
     public TimeSpan LogPollInterval { get; init; } = TimeSpan.FromMilliseconds(1500);
     /// <summary>
     /// How often the boards redraw. Also how long after a restart the first one appears.
@@ -467,6 +484,9 @@ public sealed record FeatureOptions
             LogPaths = Text(configuration, "PAVLOV_LOGS"),
             StatsLogPaths = Text(configuration, "STATS_LOGS"),
             PavlovVersion = Text(configuration, "PAVLOV_VERSION"),
+            ProvisionRuntimeSetting = Text(configuration, "PAVLOV_RUNTIME"),
+            ProvisionRuntime = RuntimeFrom(Text(configuration, "PAVLOV_RUNTIME")),
+            DockerImage = Text(configuration, "PAVLOV_DOCKER_IMAGE") ?? PavlovBot.Host.Servers.DockerCli.DefaultImage,
             RosterDirectory = Text(configuration, "FACTION_ROLES_PATH"),
             FactionsPath = Text(configuration, "FACTIONS_PATH"),
             FactionSetName = Text(configuration, "FACTION_SET"),
@@ -613,6 +633,14 @@ public sealed record FeatureOptions
             LeaderboardInterval = Milliseconds(configuration, "LEADERBOARD_INTERVAL_MS", TimeSpan.FromMinutes(1)),
         };
     }
+
+    /// <summary><c>PAVLOV_RUNTIME</c>: unset or "docker" is Docker, "systemd" is systemd, anything else null.</summary>
+    internal static PavlovBot.Host.Servers.ServerRuntime? RuntimeFrom(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "docker" => PavlovBot.Host.Servers.ServerRuntime.Docker,
+        "systemd" => PavlovBot.Host.Servers.ServerRuntime.Systemd,
+        _ => null,
+    };
 
     private static string? Text(IConfiguration configuration, string key) =>
         configuration[key]?.Trim() is { Length: > 0 } value ? value : null;

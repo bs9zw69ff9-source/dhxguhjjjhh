@@ -59,6 +59,10 @@ public sealed record ProvisionOutcome(IReadOnlyList<ProvisionStep> Steps, bool R
 /// file may well already be there, and replacing it is the whole point - refusing to overwrite it
 /// would block exactly the repair being asked for.
 /// </param>
+/// <param name="DockerImage">
+/// The image a <c>docker:</c> server runs. Null uses <see cref="DockerCli.DefaultImage"/>; ignored
+/// for a systemd server.
+/// </param>
 public sealed record ProvisionRequest(
     ServerProvisionSpec Spec,
     IReadOnlyList<string> FinalPavlovUnits,
@@ -67,7 +71,8 @@ public sealed record ProvisionRequest(
     string EnvPath,
     string RconHost = "127.0.0.1",
     string? CopyFromInstallDir = null,
-    bool RebuildingExistingSlot = false);
+    bool RebuildingExistingSlot = false,
+    string? DockerImage = null);
 
 /// <summary>
 /// Standing up a new Pavlov dedicated server on this box and wiring it into the bot.
@@ -107,7 +112,7 @@ public interface IServerProvisioner
 }
 
 /// <param name="Slot">The 1-based server number being removed.</param>
-/// <param name="UnitName">Its systemd unit.</param>
+/// <param name="UnitName">Its <c>PAVLOV_UNITS</c> entry: a systemd unit, or <c>docker:</c> and a container.</param>
 /// <param name="InstallDir">Its install directory, which is deleted outright.</param>
 /// <param name="FinalPavlovUnits">The unit list WITHOUT it.</param>
 /// <param name="FinalPavlovBases">The base list WITHOUT it.</param>
