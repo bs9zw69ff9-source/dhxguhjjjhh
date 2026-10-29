@@ -1,5 +1,6 @@
 using Discord;
 using PavlovBot.Core.Network;
+using PavlovBot.Core.Text;
 using PavlovBot.Host.Discord;
 
 namespace PavlovBot.Host.Network;
@@ -24,7 +25,9 @@ public static class AttackEmbeds
             .Brand();
     }
 
-    public static EmbedBuilder Live(string host, string iface, IReadOnlyList<LinkSecond> timeline, int activeSeconds, FloodDetector detector)
+    public static EmbedBuilder Live(
+        string host, string iface, IReadOnlyList<LinkSecond> timeline, int activeSeconds, FloodDetector detector,
+        IReadOnlyList<PlayerDrop>? drops = null)
     {
         ArgumentNullException.ThrowIfNull(timeline);
         ArgumentNullException.ThrowIfNull(detector);
@@ -35,6 +38,7 @@ public static class AttackEmbeds
             .AddField("Now", Rate(now), true)
             .AddField("Peak so far", Rate(peak), true)
             .AddField("Flooding for", AttackReport.Duration(TimeSpan.FromSeconds(activeSeconds)), true)
+            .AddField("Players dropped", Dropped(drops ?? [], 10), false)
             .AddField("Timeline", $"`{AttackReport.Sparkline([.. timeline.Select(s => s.Packets)])}`", false)
             .Brand();
     }
@@ -90,10 +94,30 @@ public static class AttackEmbeds
                 $"online: {report.Players.Before} before · {report.Players.Lowest} lowest · {report.Players.After} after" +
                 (report.Capture.Ran
                     ? $"\n{AttackReport.Count(d.PlayerPackets)} packets from {report.Players.AddressesKnown} known player address(es), kept out of the attack figures"
-                    : ""), false);
+                    : "") +
+                (report.Players.StaleSeconds > 0
+                    ? $"\nRCON could not be read for {report.Players.StaleSeconds}s, so a disconnect then may be missing"
+                    : ""), false)
+            .AddField(report.Players.Drops.Count == 0
+                    ? "Players dropped"
+                    : $"Players dropped: {report.Players.Drops.Count} ({report.Players.Rejoined} rejoined)",
+                Dropped(report.Players.Drops, 15), false);
 
         return embed.Brand();
     }
+
+    /// <summary>The dropped players, newest last, capped so the field stays inside Discord's 1,024 characters.</summary>
+    private static string Dropped(IReadOnlyList<PlayerDrop> drops, int shown)
+    {
+        if (drops.Count == 0) return "nobody so far";
+
+        var lines = drops.Take(shown).Select(d =>
+            $"`{d.At.UtcDateTime:HH:mm:ss}` {Sanitize.Code(Shorten(d.Name, 32))}{(d.Back is { } back ? $" · back {back.UtcDateTime:HH:mm:ss}" : " · not back")}");
+        var text = string.Join("\n", lines);
+        return drops.Count > shown ? $"{text}\n…and {drops.Count - shown} more (all in the attached report)" : text;
+    }
+
+    private static string Shorten(string name, int max) => name.Length <= max ? name : name[..(max - 1)] + "…";
 
     private static EmbedBuilder Alert(string host, string iface) =>
         new EmbedBuilder().WithColor(Theme.Amber).WithTitle($"🚨 Attack in progress · {host}")

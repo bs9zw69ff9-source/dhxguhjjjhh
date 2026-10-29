@@ -319,6 +319,75 @@ public class FloodAnalysisTests
         Assert.Equal('▁', line[0]);
     }
 
+    // ---- who got knocked off ----
+
+    [Fact]
+    public void DropsAndRejoinsAreRecordedInOrder()
+    {
+        var tracker = new PlayerDropTracker();
+        tracker.Baseline(["Alice", "Bob", "Cara"]);
+
+        tracker.Observe(["Alice", "Cara"], T0.AddSeconds(5), fresh: true);
+        tracker.Observe(["Alice"], T0.AddSeconds(9), fresh: true);
+        tracker.Observe(["alice", "BOB"], T0.AddSeconds(30), fresh: true);   // names compare without case
+
+        var drops = tracker.Drops;
+        Assert.Equal(["Bob", "Cara"], drops.Select(d => d.Name));
+        Assert.Equal(T0.AddSeconds(30), drops[0].Back);
+        Assert.Null(drops[1].Back);
+    }
+
+    [Fact]
+    public void SomebodyWhoJoinsDuringTheAttackAndDropsCounts()
+    {
+        var tracker = new PlayerDropTracker();
+        tracker.Baseline(["Alice"]);
+        tracker.Observe(["Alice", "Dan"], T0.AddSeconds(1), fresh: true);
+        tracker.Observe(["Alice"], T0.AddSeconds(2), fresh: true);
+
+        Assert.Equal("Dan", Assert.Single(tracker.Drops).Name);
+    }
+
+    [Fact]
+    public void AStaleRosterIsNotCompared()
+    {
+        var tracker = new PlayerDropTracker();
+        tracker.Baseline(["Alice", "Bob"]);
+        tracker.Observe([], T0.AddSeconds(1), fresh: false);
+        tracker.Observe(["Alice", "Bob"], T0.AddSeconds(2), fresh: true);
+
+        Assert.Empty(tracker.Drops);
+        Assert.Equal(1, tracker.StaleSeconds);
+    }
+
+    [Fact]
+    public void ANewBaselineForgetsTheLastAttack()
+    {
+        var tracker = new PlayerDropTracker();
+        tracker.Baseline(["Alice"]);
+        tracker.Observe([], T0, fresh: true);
+        tracker.Baseline(["Alice"]);
+
+        Assert.Empty(tracker.Drops);
+    }
+
+    [Fact]
+    public void TwentyDropsStayInsideTheFieldLimit()
+    {
+        var drops = Enumerable.Range(1, 40)
+            .Select(i => new PlayerDrop($"A-Very-Long-Player-Name-Number-{i:00}-xxxxxxxx", T0.AddSeconds(i), i % 2 == 0 ? T0.AddSeconds(i + 30) : null))
+            .ToList();
+        var report = Report() with { Players = new PlayerImpact(40, 0, 20, 40, drops) };
+
+        var embed = AttackEmbeds.Summary(report).Build();
+        var field = Assert.Single(embed.Fields, f => f.Name.StartsWith("Players dropped", StringComparison.Ordinal));
+
+        Assert.True(field.Value.Length <= 1024, $"{field.Value.Length} characters");
+        Assert.Contains("and 25 more", field.Value, StringComparison.Ordinal);
+        Assert.Contains("40 player(s) dropped", report.Verdict, StringComparison.Ordinal);
+        Assert.True(embed.Length <= 6000);
+    }
+
     // ---- the embeds ----
 
     [Fact]
@@ -373,7 +442,11 @@ public class AttackMonitorTests
 {
     private sealed class Players : IPlayerTraffic
     {
-        public int OnlineCount { get; set; } = 28;
+        public List<string> Names { get; set; } = [.. Enumerable.Range(1, 28).Select(i => $"Player{i}")];
+
+        public bool RosterFresh { get; set; } = true;
+
+        public IReadOnlyCollection<string> OnlineNames() => [.. Names];
 
         public IReadOnlySet<uint> OnlineAddresses() => new HashSet<uint> { CapturedPacket.Number("10.1.1.1")!.Value };
     }
@@ -468,9 +541,11 @@ public class AttackMonitorTests
 
         for (var i = 0; i < 10; i++) await rig.SecondAsync(50_000);
         rig.Recorder!.Add(new CapturedPacket(CapturedPacket.Number("203.0.113.5")!.Value, 7777, PacketProtocol.Udp, 1300), false);
-        rig.Players.OnlineCount = 26;
+        var everyone = rig.Players.Names;
+        rig.Players.Names = [.. everyone.Where(n => n is not "Player3" and not "Player7")];   // two knocked off
         await rig.SecondAsync(50_000);
-        rig.Players.OnlineCount = 28;
+        rig.Players.Names = [.. everyone.Where(n => n is not "Player7")];                     // one comes back
+        await rig.SecondAsync(50_000);
 
         for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
 
@@ -482,8 +557,37 @@ public class AttackMonitorTests
         Assert.Equal("Attack ended · summary", summary.Title);
         Assert.StartsWith("attack-", file, StringComparison.Ordinal);
         Assert.Contains("203.0.113.5", content, StringComparison.Ordinal);
-        Assert.Contains("online 28 before · 26 lowest · 28 after", content, StringComparison.Ordinal);
+        Assert.Contains("online 28 before · 26 lowest · 27 after", content, StringComparison.Ordinal);
+        Assert.Contains("2 disconnected, 1 rejoined", content, StringComparison.Ordinal);
+        Assert.Contains("2 player(s) dropped", summary.Description, StringComparison.Ordinal);
+        var dropped = Assert.Single(summary.Fields, f => f.Name.StartsWith("Players dropped", StringComparison.Ordinal));
+        Assert.Contains("Player3", dropped.Value, StringComparison.Ordinal);
+        Assert.Contains("Player7", dropped.Value, StringComparison.Ordinal);
+        Assert.Contains("not back", dropped.Value, StringComparison.Ordinal);
         Assert.True(rig.Captures.Single().Stopped);
+    }
+
+    [Fact]
+    public async Task AStaleRosterUnderAttackIsNotEverybodyDisconnecting()
+    {
+        /* RCON is often the first thing a flood takes out. Its roster going empty or stale must
+           not turn into "28 players dropped". */
+        var rig = new Rig();
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+
+        rig.Players.RosterFresh = false;
+        rig.Players.Names = [];
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+
+        rig.Players.RosterFresh = true;
+        rig.Players.Names = [.. Enumerable.Range(1, 28).Select(i => $"Player{i}")];
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+        var (summary, _, content) = Assert.Single(rig.Posts.Files);
+        Assert.DoesNotContain("player(s) dropped", summary.Description, StringComparison.Ordinal);
+        Assert.Contains("RCON could not be read for 4s", content, StringComparison.Ordinal);
     }
 
     [Fact]

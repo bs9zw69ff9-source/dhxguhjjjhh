@@ -3,9 +3,82 @@ using System.Text;
 
 namespace PavlovBot.Core.Network;
 
-/// <summary>How the players fared: online before, at the worst point, and after.</summary>
+/// <summary>How the players fared: online before, at the worst point, after, and who was knocked off.</summary>
 /// <param name="AddressesKnown">How many of the online players the bot had an address for.</param>
-public sealed record PlayerImpact(int Before, int Lowest, int After, int AddressesKnown);
+/// <param name="Dropped">Every player who disconnected during the attack, and when they came back if they did.</param>
+/// <param name="StaleSeconds">Seconds the RCON rosters could not be read, when a drop would have gone unseen.</param>
+public sealed record PlayerImpact(
+    int Before, int Lowest, int After, int AddressesKnown,
+    IReadOnlyList<PlayerDrop>? Dropped = null, int StaleSeconds = 0)
+{
+    public IReadOnlyList<PlayerDrop> Drops => Dropped ?? [];
+
+    public int Rejoined => Drops.Count(d => d.Back is not null);
+}
+
+/// <summary>One player knocked off during an attack.</summary>
+/// <param name="Back">When they reappeared on a roster, or null when they had not by the end.</param>
+public sealed record PlayerDrop(string Name, DateTimeOffset At, DateTimeOffset? Back);
+
+/// <summary>
+/// Who disconnected during an attack, from one roster to the next.
+/// </summary>
+/// <remarks>
+/// THE POINT OF THE WHOLE SUMMARY for a game server: the packet counts say how hard it was hit,
+/// this says whether anybody felt it. A drop is a name on the roster before the attack (or
+/// joined during it) that is missing from a later one; a name that comes back is marked as
+/// rejoined rather than counted twice.
+///
+/// A STALE ROSTER IS NOT A DISCONNECT. RCON is often the first thing a flood takes down, and a
+/// roster that could not be read must not report every player as gone - so a stale second is
+/// counted as such and compared against nothing.
+///
+/// Somebody who simply chose to leave mid-attack is counted too; the roster cannot tell the
+/// difference, and the report says "disconnected", not "kicked by the attack".
+/// </remarks>
+public sealed class PlayerDropTracker
+{
+    private HashSet<string> _last = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (DateTimeOffset At, DateTimeOffset? Back)> _drops = new(StringComparer.OrdinalIgnoreCase);
+
+    public int StaleSeconds { get; private set; }
+
+    /// <summary>Who is on now, outside an attack: the starting point, with nothing recorded.</summary>
+    public void Baseline(IEnumerable<string> online)
+    {
+        _last = new HashSet<string>(online, StringComparer.OrdinalIgnoreCase);
+        _drops.Clear();
+        StaleSeconds = 0;
+    }
+
+    /// <summary>One roster during an attack.</summary>
+    /// <param name="fresh">False when RCON could not be read: the roster is then old and is not compared.</param>
+    public void Observe(IEnumerable<string> online, DateTimeOffset at, bool fresh)
+    {
+        if (!fresh)
+        {
+            StaleSeconds++;
+            return;
+        }
+
+        var now = new HashSet<string>(online, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var gone in _last.Where(n => !now.Contains(n)))
+        {
+            // A second drop after a rejoin starts over; the report keeps the latest.
+            _drops[gone] = (at, null);
+        }
+
+        foreach (var back in now.Where(n => _drops.TryGetValue(n, out var d) && d.Back is null))
+            _drops[back] = (_drops[back].At, at);
+
+        _last = now;
+    }
+
+    public IReadOnlyList<PlayerDrop> Drops =>
+        [.. _drops.OrderBy(d => d.Value.At).ThenBy(d => d.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(d => new PlayerDrop(d.Key, d.Value.At, d.Value.Back))];
+}
 
 /// <summary>Whether the breakdown can be trusted, in tcpdump's own numbers.</summary>
 /// <param name="Problem">Why there is no breakdown at all, or null when tcpdump ran.</param>
@@ -55,7 +128,8 @@ public sealed record AttackReport(
     public string Pattern => Capture.Ran ? Breakdown.Pattern : "Flood";
 
     public string Verdict =>
-        $"{Pattern} on {Host} · {Duration(TimeSpan.FromSeconds(ActiveSeconds))} · peak {Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s";
+        $"{Pattern} on {Host} · {Duration(TimeSpan.FromSeconds(ActiveSeconds))} · peak {Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s" +
+        (Players.Drops.Count > 0 ? $" · {Players.Drops.Count} player(s) dropped" : "");
 
     /// <summary>The attached report: everything, including the addresses the embed leaves out.</summary>
     public string ToText()
@@ -98,6 +172,16 @@ public sealed record AttackReport(
 
         b.AppendLine();
         Line(b, "players", $"online {Players.Before} before · {Players.Lowest} lowest · {Players.After} after");
+        Line(b, "dropped", Players.Drops.Count == 0
+            ? "nobody disconnected during the attack"
+            : $"{Players.Drops.Count} disconnected, {Players.Rejoined} rejoined");
+        foreach (var drop in Players.Drops)
+        {
+            b.AppendLine(CultureInfo.InvariantCulture,
+                $"  {drop.At.UtcDateTime:HH:mm:ss}  {drop.Name,-32} {(drop.Back is { } back ? $"back at {back.UtcDateTime:HH:mm:ss} ({Duration(back - drop.At)} later)" : "not back")}");
+        }
+        if (Players.StaleSeconds > 0)
+            Line(b, "rosters", $"RCON could not be read for {Players.StaleSeconds}s - a disconnect in that time may be missing");
         Line(b, "player packets", Capture.Ran
             ? $"{Count(Breakdown.PlayerPackets)} from {Players.AddressesKnown} known player address(es) - not counted as attack"
             : "unknown without a capture");
