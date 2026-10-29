@@ -12,7 +12,7 @@ public class PacketToolsCommandTests
     public void ItInstallsWiresharkAndTsharkWithoutAPrompt()
     {
         // apt install wireshark tshark -y, as asked for, with no question left to block on.
-        Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "wireshark", "tshark"],
+        Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "wireshark", "tshark", "iftop", "nftables"],
             PacketToolsCommand.InstallArgv());
         Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "update"], PacketToolsCommand.UpdateArgv());
     }
@@ -49,13 +49,13 @@ public class PacketToolsCommandTests
     public void TheVersionIsTheFirstLine(string? output, string? line) => Assert.Equal(line, PacketToolsCommand.FirstLine(output));
 
     [Fact]
-    public void ItHasStatusInstallAndAnalyze()
+    public void ItHasStatusInstallAnalyzeAndUnblock()
     {
-        var command = new PacketToolsCommand(null!, null!, null!, null!, null!);
+        var command = new PacketToolsCommand(null!, null!, null!, null!, null!, null!);
         var built = (SlashCommandProperties)command.Build();
 
         Assert.Equal("packettools", built.Name.Value);
-        Assert.Equal(["status", "install", "analyze"], built.Options.Value.Select(o => o.Name));
+        Assert.Equal(["status", "install", "analyze", "unblock"], built.Options.Value.Select(o => o.Name));
         Assert.True(command.Ephemeral);
     }
 

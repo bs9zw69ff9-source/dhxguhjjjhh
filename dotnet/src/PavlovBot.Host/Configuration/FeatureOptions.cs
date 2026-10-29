@@ -416,6 +416,18 @@ public sealed record FeatureOptions
     /// <summary>Megabits a second that always count as an attack (<c>ATTACK_MBPS</c>).</summary>
     public int AttackMbps { get; init; } = 200;
 
+    /// <summary>
+    /// Whether this bot blocks and rate-limits floods with nftables (<c>ATTACK_MITIGATION</c>). Off by default.
+    /// </summary>
+    /// <remarks>
+    /// OFF UNLESS SET, and only ever on ONE bot per box: the firewall is the host's, and two bots
+    /// managing one table would undo each other's limits.
+    /// </remarks>
+    public bool AttackMitigation { get; init; }
+
+    /// <summary>The shield's limits: ATTACK_GAME_PORTS, ATTACK_PER_IP_PPS, ATTACK_UNKNOWN_PPS, ATTACK_BLOCK_MINUTES.</summary>
+    public PavlovBot.Core.Network.ShieldLimits AttackLimits { get; init; } = new();
+
     /// <summary>The image a new Docker server runs (<c>PAVLOV_DOCKER_IMAGE</c>).</summary>
     public string DockerImage { get; init; } = PavlovBot.Host.Servers.DockerCli.DefaultImage;
 
@@ -554,6 +566,12 @@ public sealed record FeatureOptions
             AttackInterface = Text(configuration, "ATTACK_INTERFACE"),
             AttackPps = Int(configuration, "ATTACK_PPS", 20_000),
             AttackMbps = Int(configuration, "ATTACK_MBPS", 200),
+            AttackMitigation = Flag(configuration, "ATTACK_MITIGATION"),
+            AttackLimits = new PavlovBot.Core.Network.ShieldLimits(
+                Text(configuration, "ATTACK_GAME_PORTS") ?? new PavlovBot.Core.Network.ShieldLimits().GamePorts,
+                Int(configuration, "ATTACK_PER_IP_PPS", 1000),
+                Int(configuration, "ATTACK_UNKNOWN_PPS", 5000),
+                Int(configuration, "ATTACK_BLOCK_MINUTES", 10)),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             CommandLogChannel = Snowflake(configuration, "COMMAND_LOG_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),

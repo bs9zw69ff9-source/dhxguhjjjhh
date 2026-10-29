@@ -15,19 +15,20 @@ namespace PavlovBot.Host.Network;
 /// </remarks>
 public static class AttackEmbeds
 {
-    public static EmbedBuilder Started(string host, string iface, LinkSecond now, FloodDetector detector)
+    public static EmbedBuilder Started(string host, string iface, LinkSecond now, FloodDetector detector, ShieldOutcome? shield = null)
     {
         ArgumentNullException.ThrowIfNull(detector);
         return Alert(host, iface)
             .AddField("Now", Rate(now), true)
             .AddField("Threshold", $"{AttackReport.Count(detector.TriggerPps)} pkt/s or {detector.TriggerBytes * 8 / 1_000_000:0} Mbit/s", true)
             .AddField("Started", $"<t:{now.At.ToUnixTimeSeconds()}:T>", true)
+            .AddField("Filter", Filter(shield), false)
             .Brand();
     }
 
     public static EmbedBuilder Live(
         string host, string iface, IReadOnlyList<LinkSecond> timeline, int activeSeconds, FloodDetector detector,
-        IReadOnlyList<PlayerDrop>? drops = null)
+        IReadOnlyList<PlayerDrop>? drops = null, ShieldOutcome? shield = null)
     {
         ArgumentNullException.ThrowIfNull(timeline);
         ArgumentNullException.ThrowIfNull(detector);
@@ -39,6 +40,7 @@ public static class AttackEmbeds
             .AddField("Peak so far", Rate(peak), true)
             .AddField("Flooding for", AttackReport.Duration(TimeSpan.FromSeconds(activeSeconds)), true)
             .AddField("Players dropped", Dropped(drops ?? [], 10), false)
+            .AddField("Filter", Filter(shield), false)
             .AddField("Timeline", $"`{AttackReport.Sparkline([.. timeline.Select(s => s.Packets)])}`", false)
             .Brand();
     }
@@ -88,6 +90,18 @@ public static class AttackEmbeds
             embed.AddField("Breakdown", $"none - {report.Capture.Problem}", false);
         }
 
+        embed.AddField("Dropped by the filter", report.Shield switch
+        {
+            null => "nothing - `ATTACK_MITIGATION` is off, so nothing was blocked",
+            { Engaged: false } s => $"nothing - the filter could not engage: {s.Problem}",
+            { Stats: null } => "engaged, but its counters could not be read",
+            { Stats: { } st } =>
+                $"{AttackReport.Count(st.Dropped)} packets · {AttackReport.Percent(report.DroppedShare)} of the attack\n" +
+                $"blocked addresses: {AttackReport.Count(st.BlockedPackets)} · over the per-address limit: {AttackReport.Count(st.PerSourcePackets)} · " +
+                $"over the unknown cap: {AttackReport.Count(st.CappedPackets)}\n" +
+                $"{AttackReport.Count(st.BlockedSources)} address(es) blocked for {report.Shield.Limits.BlockMinutes} min · known players were never limited",
+        }, false);
+
         embed.AddField("Timeline (packets/s)",
                 $"`{AttackReport.Sparkline([.. report.Timeline.Select(s => s.Packets)])}`\n" +
                 $"{report.Start.UtcDateTime:HH:mm:ss} → {report.End.UtcDateTime:HH:mm:ss} · peak at {peak.At.UtcDateTime:HH:mm:ss}", false)
@@ -119,6 +133,15 @@ public static class AttackEmbeds
     }
 
     private static string Shorten(string name, int max) => name.Length <= max ? name : name[..(max - 1)] + "…";
+
+    private static string Filter(ShieldOutcome? shield) => shield switch
+    {
+        null => "off - `ATTACK_MITIGATION` is not on, so nothing is being blocked",
+        { Engaged: false } s => $"could not engage: {s.Problem}",
+        { Limits: var l } =>
+            $"**engaged** · over {AttackReport.Count(l.PerSourcePps)} pkt/s from one address is blocked for {l.BlockMinutes} min · " +
+            $"unknown traffic to the game ports capped at {AttackReport.Count(l.UnknownPps)} pkt/s · known players always pass",
+    };
 
     private static EmbedBuilder Alert(string host, string iface) =>
         new EmbedBuilder().WithColor(Theme.Amber).WithTitle($"🚨 Attack in progress · {host}")
