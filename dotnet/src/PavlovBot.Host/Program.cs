@@ -620,6 +620,7 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
         builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();
+        builder.Services.AddSingleton<ISlashCommand, PacketToolsCommand>();
         /* Standing up a WHOLE NEW server - SteamCMD, a systemd unit, ufw, then a rewrite of the
            bot's own .env and a restart. A far larger privileged surface than restarting a
            configured unit, so it lives behind its own provisioner rather than on ServiceControl,
