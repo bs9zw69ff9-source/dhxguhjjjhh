@@ -739,20 +739,46 @@ public static class Program
         /* ATTACK_CHANNEL turns the DDoS monitor on: interface counters every second, tshark during
            an attack, an alert and a summary in that channel. It touches the firewall only with
            ATTACK_MITIGATION=on, and then only its own nftables table. */
+        var watchedInterface = features.AttackInterface ?? PavlovBot.Host.Network.LinkCounters.DefaultInterface();
+        builder.Services.AddSingleton<PavlovBot.Host.Network.IPlayerTraffic>(sp =>
+            new PavlovBot.Host.Network.PlayerTraffic(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<IpTrackingService>()));
+
+        /* PACKET_LOG (on with ATTACK_CHANNEL): a rolling pcap of every inbound header and a
+           per-minute log of every source address, written whether or not an attack is detected,
+           so the data survives the floods detection misses. An attack rides on its capture. */
+        if (features.PacketLog)
+        {
+            builder.Services.AddSingleton(sp => new PavlovBot.Host.Network.PacketLog(
+                // No interface found: it starts, refuses, and /packettools status says why.
+                watchedInterface ?? "",
+                Path.Combine(options.DataDirectory, "packets"),
+                features.PacketRingMegabytes,
+                features.PacketLogDays,
+                sp.GetRequiredService<PavlovBot.Host.Network.IPlayerTraffic>(),
+                TimeProvider.System,
+                sp.GetRequiredService<ILogger<PavlovBot.Host.Network.PacketLog>>()));
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<PavlovBot.Host.Network.PacketLog>());
+        }
+
         if (features.AttackChannel is { } attackChannel)
         {
             builder.Services.AddHostedService(sp =>
             {
                 var monitorLogger = sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AttackMonitor>>();
+                var packetLog = sp.GetService<PavlovBot.Host.Network.PacketLog>();
                 return new PavlovBot.Host.Network.AttackMonitor(
                     attackChannel,
-                    features.AttackInterface ?? PavlovBot.Host.Network.LinkCounters.DefaultInterface(),
+                    watchedInterface,
                     new PavlovBot.Core.Network.FloodThresholds(features.AttackPps, features.AttackMbps),
                     Path.Combine(options.DataDirectory, "attacks"),
                     iface => PavlovBot.Host.Network.LinkCounters.Read(iface),
-                    new PavlovBot.Host.Network.PlayerTraffic(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<IpTrackingService>()),
+                    sp.GetRequiredService<PavlovBot.Host.Network.IPlayerTraffic>(),
                     (iface, pcap, recorder, addresses) =>
                     {
+                        // The always-on capture when it is up; a capture of its own when it is not.
+                        if (packetLog is { Running: true } && packetLog.Interface == iface)
+                            return (packetLog.Attach(recorder, addresses, pcap), null);
+
                         var (capture, problem) = PavlovBot.Host.Network.TsharkCapture.Start(iface, pcap,
                             packet => recorder.Add(packet, addresses().Contains(packet.Source)), monitorLogger);
                         return (capture, problem);
