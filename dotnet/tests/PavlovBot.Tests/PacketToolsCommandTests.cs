@@ -9,16 +9,13 @@ namespace PavlovBot.Tests;
 public class PacketToolsCommandTests
 {
     [Fact]
-    public void ItInstallsExactlyTcpdumpAndTsharkWithoutAPrompt()
+    public void ItInstallsWiresharkAndTsharkWithoutAPrompt()
     {
-        Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends", "tcpdump", "tshark"],
+        // apt install wireshark tshark -y, as asked for, with no question left to block on.
+        Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "wireshark", "tshark"],
             PacketToolsCommand.InstallArgv());
         Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "update"], PacketToolsCommand.UpdateArgv());
     }
-
-    [Fact]
-    public void TheDesktopWiresharkIsNotPulledOntoAServer() =>
-        Assert.DoesNotContain("wireshark", PacketToolsCommand.Packages);
 
     [Fact]
     public void AStepThatWorkedIsNoProblem() =>
@@ -52,13 +49,35 @@ public class PacketToolsCommandTests
     public void TheVersionIsTheFirstLine(string? output, string? line) => Assert.Equal(line, PacketToolsCommand.FirstLine(output));
 
     [Fact]
-    public void ItHasStatusAndInstall()
+    public void ItHasStatusInstallAndAnalyze()
     {
-        var command = new PacketToolsCommand(null!, null!, null!, null!);
+        var command = new PacketToolsCommand(null!, null!, null!, null!, null!);
         var built = (SlashCommandProperties)command.Build();
 
         Assert.Equal("packettools", built.Name.Value);
-        Assert.Equal(["status", "install"], built.Options.Value.Select(o => o.Name));
+        Assert.Equal(["status", "install", "analyze"], built.Options.Value.Select(o => o.Name));
         Assert.True(command.Ephemeral);
+    }
+
+    [Fact]
+    public void AnalyzeReadsTheNewestCaptureAndNothingElse()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "pavlovbot-pcaps-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            Assert.Null(PacketToolsCommand.LatestPcap(directory));
+
+            File.WriteAllText(Path.Combine(directory, "attack-20261018-135034.pcap"), "");
+            File.WriteAllText(Path.Combine(directory, "attack-20261029-152908.pcap"), "");
+            File.WriteAllText(Path.Combine(directory, "zzz-not-an-attack.pcap"), "");
+
+            Assert.Equal("attack-20261029-152908.pcap", Path.GetFileName(PacketToolsCommand.LatestPcap(directory)));
+            Assert.Null(PacketToolsCommand.LatestPcap(Path.Combine(directory, "missing")));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 }

@@ -3,37 +3,40 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Text;
+using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Moderation;
+using PavlovBot.Host.Network;
 using PavlovBot.Host.Servers;
 
 namespace PavlovBot.Host.Discord.Commands;
 
 /// <summary>
-/// <c>/packettools</c> - install and check tcpdump and tshark, the tools the DDoS monitor uses.
+/// <c>/packettools</c> - install Wireshark and tshark, check them, and read an attack's pcap.
 /// </summary>
 /// <remarks>
-/// TSHARK IS WIRESHARK FOR A SERVER: the same dissectors and the same capture files, without
-/// the window a headless box has no screen for. The Wireshark window goes on somebody's own PC,
-/// where it opens the pcaps the monitor saves.
+/// TSHARK IS WIRESHARK ON A SERVER: the same dissectors and statistics without the window, so
+/// <c>analyze</c> posts what Wireshark's Statistics menu would show - protocol hierarchy, top
+/// endpoints, top conversations - straight into Discord. Nobody needs a computer to look at an
+/// attack.
 ///
-/// OWNER ONLY, AND NOTHING FROM DISCORD REACHES THE COMMAND LINE. The package names are
-/// constants and the only choice is which of two fixed actions to run, so this is "run this one
-/// apt command", not "run a command". It still installs software as root, which is why it is the
-/// owner's and why it is audited.
+/// OWNER ONLY, AND NOTHING FROM DISCORD REACHES A COMMAND LINE. The packages are constants, the
+/// pcap is always the newest file the monitor itself wrote, and each action is a fixed argv. It
+/// still installs software as root, which is why it is the owner's and why it is audited.
 ///
-/// DETACHED, because <c>apt-get update</c> and a tshark install together can outlast the
-/// five-minute command budget. The work runs under the host's lifetime and edits the command's
-/// own reply, which Discord keeps editable for fifteen minutes - longer than both steps' caps
-/// put together.
+/// THE INSTALL IS DETACHED, because <c>apt-get update</c> and a Wireshark install together can
+/// outlast the five-minute command budget. It runs under the host's lifetime and edits the
+/// command's own reply, which Discord keeps editable for fifteen minutes - longer than both
+/// steps' caps put together.
 /// </remarks>
 public sealed class PacketToolsCommand(
-    Access access, AuditLog audit, IHostApplicationLifetime lifetime, ILogger<PacketToolsCommand> logger) : ISlashCommand
+    Access access, AuditLog audit, BotOptions options, IHostApplicationLifetime lifetime, ILogger<PacketToolsCommand> logger)
+    : ISlashCommand
 {
-    /// <summary>What gets installed. tcpdump does the live capture; tshark reads the pcaps.</summary>
-    internal static readonly string[] Packages = ["tcpdump", "tshark"];
+    /// <summary>What gets installed: <c>apt install wireshark tshark -y</c>.</summary>
+    internal static readonly string[] Packages = ["wireshark", "tshark"];
 
     private static readonly TimeSpan UpdateTimeout = TimeSpan.FromMinutes(4);
-    private static readonly TimeSpan InstallTimeout = TimeSpan.FromMinutes(8);
+    private static readonly TimeSpan InstallTimeout = TimeSpan.FromMinutes(9);
 
     /// <summary>One install at a time: apt holds a lock, and a second run would only fail on it.</summary>
     private static readonly SemaphoreSlim Installing = new(1, 1);
@@ -42,15 +45,21 @@ public sealed class PacketToolsCommand(
 
     public bool Ephemeral => true;
 
+    /// <summary>Where the DDoS monitor keeps its pcaps.</summary>
+    private string AttackDirectory => Path.Combine(options.DataDirectory, "attacks");
+
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Owner - tcpdump and tshark (Wireshark) for the DDoS monitor")
+            .WithDescription("Owner - Wireshark/tshark for the DDoS monitor")
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("status").WithDescription("Owner - Which packet tools are installed")
+                .WithName("status").WithDescription("Owner - Whether Wireshark and tshark are installed")
                 .WithType(ApplicationCommandOptionType.SubCommand))
             .AddOption(new SlashCommandOptionBuilder()
-                .WithName("install").WithDescription("Owner - Install tcpdump and tshark with apt (needs root)")
+                .WithName("install").WithDescription("Owner - apt install wireshark tshark (needs root)")
+                .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("analyze").WithDescription("Owner - Wireshark statistics for the latest attack capture")
                 .WithType(ApplicationCommandOptionType.SubCommand))
             .Build();
 
@@ -58,16 +67,15 @@ public sealed class PacketToolsCommand(
     internal static IReadOnlyList<string> UpdateArgv() => ["DEBIAN_FRONTEND=noninteractive", "apt-get", "update"];
 
     /// <summary>
-    /// <c>apt-get install -y</c> of exactly <see cref="Packages"/>.
+    /// <c>apt-get install -y wireshark tshark</c>.
     /// </summary>
     /// <remarks>
-    /// NON-INTERACTIVE, because tshark's package asks whether ordinary users may capture. With no
-    /// terminal the question takes its default, which is no: only root captures, and the bot is
-    /// root. <c>--no-install-recommends</c> keeps the desktop Wireshark and its dependencies off
-    /// a server that has no use for them.
+    /// NON-INTERACTIVE, because Wireshark's package asks whether ordinary users may capture. With
+    /// no terminal the question takes its default, which is no: only root captures, and the bot
+    /// is root.
     /// </remarks>
     internal static IReadOnlyList<string> InstallArgv() =>
-        ["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends", .. Packages];
+        ["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", .. Packages];
 
     public async Task HandleAsync(SocketSlashCommand command, CancellationToken ct)
     {
@@ -79,24 +87,80 @@ public sealed class PacketToolsCommand(
             return;
         }
 
-        var sub = command.Data.Options.FirstOrDefault(o => o.Type == ApplicationCommandOptionType.SubCommand)?.Name;
-        if (sub == "status")
+        switch (command.Data.Options.FirstOrDefault(o => o.Type == ApplicationCommandOptionType.SubCommand)?.Name)
         {
-            await Reply(command, await StatusAsync("Packet tools", ct).ConfigureAwait(false)).ConfigureAwait(false);
+            case "status":
+                await Reply(command, await StatusAsync("Packet tools", ct).ConfigureAwait(false)).ConfigureAwait(false);
+                return;
+            case "install":
+                await InstallAsync(command, ct).ConfigureAwait(false);
+                return;
+            case "analyze":
+                await AnalyzeAsync(command, ct).ConfigureAwait(false);
+                return;
+            default:
+                await Reply(command, Theme.Failure("Unknown subcommand")).ConfigureAwait(false);
+                return;
+        }
+    }
+
+    // ---- analyze ----
+
+    /// <summary>The newest pcap the monitor wrote, or null when there is none.</summary>
+    internal static string? LatestPcap(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "attack-*.pcap").OrderByDescending(f => f, StringComparer.Ordinal).FirstOrDefault()
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private async Task AnalyzeAsync(SocketSlashCommand command, CancellationToken ct)
+    {
+        if (LatestPcap(AttackDirectory) is not { } pcap)
+        {
+            await Reply(command, Theme.Notice("No captures yet",
+                $"The DDoS monitor has not saved an attack pcap in `{Sanitize.Code(AttackDirectory)}`. One is written for " +
+                "every attack while `ATTACK_CHANNEL` is set.")).ConfigureAwait(false);
             return;
         }
 
-        if (sub != "install")
+        if (await TsharkCapture.StatisticsAsync(pcap, logger, ct).ConfigureAwait(false) is not { } statistics)
         {
-            await Reply(command, Theme.Failure("Unknown subcommand")).ConfigureAwait(false);
+            await Reply(command, Theme.Failure("Could not read the capture",
+                $"tshark could not analyse `{Sanitize.Code(Path.GetFileName(pcap))}`. Check `/packettools status`.")).ConfigureAwait(false);
             return;
         }
 
+        var name = Path.GetFileNameWithoutExtension(pcap) + "-statistics.txt";
+        var embed = Theme.Notice($"Wireshark statistics · {Path.GetFileName(pcap)}",
+            "Protocol hierarchy, top IPv4 endpoints and top conversations, from tshark. The busiest rows of each table " +
+            $"are kept ({TsharkCapture.StatisticsRows} per table).");
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(statistics));
+        await command.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = embed.Build();
+            m.Attachments = new[] { new FileAttachment(stream, name) };
+            m.AllowedMentions = AllowedMentions.None;
+        }).ConfigureAwait(false);
+    }
+
+    // ---- install ----
+
+    private async Task InstallAsync(SocketSlashCommand command, CancellationToken ct)
+    {
         if (!Environment.IsPrivilegedProcess)
         {
             await Reply(command, Theme.Failure("Cannot install",
                 "The bot is not running as root, so it cannot install packages. Run this on the host instead:\n" +
-                $"```\napt-get install -y --no-install-recommends {string.Join(' ', Packages)}\n```")).ConfigureAwait(false);
+                $"```\nsudo apt update\nsudo apt install {string.Join(' ', Packages)} -y\n```")).ConfigureAwait(false);
             return;
         }
 
@@ -110,35 +174,35 @@ public sealed class PacketToolsCommand(
             .ConfigureAwait(false);
         logger.LogWarning("PACKETTOOLS install by {User}: {Packages}", command.User.Username, string.Join(", ", Packages));
 
-        await Reply(command, Theme.Notice("Installing packet tools",
-            $"Running `apt-get update`, then installing {string.Join(" and ", Packages.Select(p => $"`{p}`"))}. " +
-            "This can take a few minutes; this message updates when it is done.")).ConfigureAwait(false);
+        await Reply(command, Theme.Notice("Installing Wireshark and tshark",
+            "Running `apt update`, then `apt install wireshark tshark -y`. Wireshark brings a few hundred MB of " +
+            "libraries, so this can take several minutes; this message updates when it is done.")).ConfigureAwait(false);
 
         // Detached, under the host's lifetime: see the remarks. The semaphore is released there.
-        _ = Task.Run(() => InstallAsync(command), CancellationToken.None);
+        _ = Task.Run(() => RunInstallAsync(command), CancellationToken.None);
     }
 
-    private async Task InstallAsync(SocketSlashCommand command)
+    private async Task RunInstallAsync(SocketSlashCommand command)
     {
         var stopping = lifetime.ApplicationStopping;
         try
         {
             var update = await ProcessRunner.RunAsync("env", UpdateArgv(), UpdateTimeout, logger, stopping).ConfigureAwait(false);
-            if (Problem("apt-get update", update, UpdateTimeout) is { } updateProblem)
+            if (Problem("apt update", update, UpdateTimeout) is { } updateProblem)
             {
                 await Reply(command, Theme.Failure("Install failed", updateProblem)).ConfigureAwait(false);
                 return;
             }
 
             var install = await ProcessRunner.RunAsync("env", InstallArgv(), InstallTimeout, logger, stopping).ConfigureAwait(false);
-            if (Problem("apt-get install", install, InstallTimeout) is { } installProblem)
+            if (Problem("apt install", install, InstallTimeout) is { } installProblem)
             {
                 await Reply(command, Theme.Failure("Install failed", installProblem)).ConfigureAwait(false);
                 return;
             }
 
             logger.LogWarning("PACKETTOOLS installed {Packages}", string.Join(", ", Packages));
-            await Reply(command, await StatusAsync("Packet tools installed", stopping).ConfigureAwait(false)).ConfigureAwait(false);
+            await Reply(command, await StatusAsync("Wireshark and tshark installed", stopping).ConfigureAwait(false)).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
@@ -165,7 +229,7 @@ public sealed class PacketToolsCommand(
     /// <summary>Why a step failed, in words, or null when it worked.</summary>
     internal static string? Problem(string step, ProcessOutcome outcome, TimeSpan timeout)
     {
-        if (!outcome.Started) return $"`{step}` could not start - this box has no apt. Install tcpdump and tshark with its own package manager.";
+        if (!outcome.Started) return $"`{step}` could not start - this box has no apt. Install wireshark and tshark with its own package manager.";
         if (outcome.TimedOut) return $"`{step}` did not finish within {timeout.TotalMinutes:0} minutes.";
         if (outcome.ExitCode == 0) return null;
 
@@ -173,32 +237,33 @@ public sealed class PacketToolsCommand(
         return $"`{step}` exited {outcome.ExitCode}:\n```\n{Sanitize.Code(tail)}\n```";
     }
 
-    /// <summary>Each tool's version, or that it is missing, plus whether the bot can capture at all.</summary>
+    // ---- status ----
+
     private async Task<EmbedBuilder> StatusAsync(string title, CancellationToken ct)
     {
-        var tcpdump = await VersionAsync("tcpdump", ct).ConfigureAwait(false);
-        var tshark = await VersionAsync("tshark", ct).ConfigureAwait(false);
+        var tshark = await FirstLineOfAsync("tshark", ["--version"], ct).ConfigureAwait(false);
+        // Wireshark is a desktop program; asking it for --version needs no screen, but the package is the surer answer.
+        var wireshark = await FirstLineOfAsync("dpkg-query", ["-W", "-f", "${Version}", "wireshark"], ct).ConfigureAwait(false);
+        var latest = LatestPcap(AttackDirectory);
 
-        var embed = (tcpdump is not null && tshark is not null ? Theme.Success(title) : Theme.Warning(title))
-            .AddField("tcpdump", tcpdump is null ? "not installed" : $"`{Sanitize.Code(tcpdump)}`", true)
-            .AddField("tshark (Wireshark)", tshark is null ? "not installed" : $"`{Sanitize.Code(tshark)}`", true)
+        var embed = (tshark is not null ? Theme.Success(title) : Theme.Warning(title))
+            .AddField("tshark", tshark is null ? "not installed" : $"`{Sanitize.Code(tshark)}`", true)
+            .AddField("Wireshark", wireshark is null ? "not installed" : $"`{Sanitize.Code(wireshark)}`", true)
             .AddField("Capture", Environment.IsPrivilegedProcess
-                ? "the bot is root, so the DDoS monitor can capture"
-                : "the bot is NOT root, so the DDoS monitor reports totals only", false);
+                ? "the bot is root, so the DDoS monitor captures with tshark"
+                : "the bot is NOT root, so the DDoS monitor reports totals only", false)
+            .AddField("Latest attack capture", latest is null
+                ? "none yet"
+                : $"`{Sanitize.Code(Path.GetFileName(latest))}` - `/packettools analyze` reads it", false);
 
-        if (tcpdump is null || tshark is null)
-            embed.AddField("To install", "`/packettools install`", false);
-
-        embed.AddField("Opening a pcap",
-            "The monitor saves attack pcaps in the bot's `data/attacks`. Copy one to your PC and open it in Wireshark, " +
-            "or read it on the server: `tshark -r <file> -q -z io,phs`", false);
+        if (tshark is null) embed.AddField("To install", "`/packettools install`", false);
         return embed;
     }
 
-    /// <summary>The first line of <c>&lt;tool&gt; --version</c>, or null when it is not installed.</summary>
-    private async Task<string?> VersionAsync(string tool, CancellationToken ct)
+    /// <summary>The first line a tool prints, or null when it is not installed or fails.</summary>
+    private async Task<string?> FirstLineOfAsync(string tool, IReadOnlyList<string> argv, CancellationToken ct)
     {
-        var run = await ProcessRunner.RunAsync(tool, ["--version"], TimeSpan.FromSeconds(10), logger, ct).ConfigureAwait(false);
+        var run = await ProcessRunner.RunAsync(tool, argv, TimeSpan.FromSeconds(10), logger, ct).ConfigureAwait(false);
         // Stdout first: tshark warns about running as root on stderr, and that is not its version.
         return run.Started && run.ExitCode == 0 ? FirstLine(run.Stdout) ?? FirstLine(run.Stderr) : null;
     }

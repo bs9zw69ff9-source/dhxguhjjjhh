@@ -80,15 +80,15 @@ public sealed class PlayerDropTracker
             .Select(d => new PlayerDrop(d.Key, d.Value.At, d.Value.Back))];
 }
 
-/// <summary>Whether the breakdown can be trusted, in tcpdump's own numbers.</summary>
-/// <param name="Problem">Why there is no breakdown at all, or null when tcpdump ran.</param>
-/// <param name="Captured">Packets tcpdump printed.</param>
-/// <param name="DroppedByKernel">Packets the kernel dropped because tcpdump could not keep up.</param>
+/// <summary>Whether the breakdown can be trusted, in tshark's own numbers.</summary>
+/// <param name="Problem">Why there is no breakdown at all, or null when tshark ran.</param>
+/// <param name="Captured">Packets tshark captured.</param>
+/// <param name="DroppedByKernel">Packets dropped because tshark could not keep up.</param>
 public sealed record CaptureHealth(string? Problem, long Captured = 0, long DroppedByKernel = 0)
 {
     public bool Ran => Problem is null;
 
-    /// <summary>Share of the packets tcpdump saw that it actually got, 0..1.</summary>
+    /// <summary>Share of the packets tshark saw that it actually got, 0..1.</summary>
     public double Completeness => Captured + DroppedByKernel == 0 ? 1 : (double)Captured / (Captured + DroppedByKernel);
 }
 
@@ -98,7 +98,7 @@ public sealed record CaptureHealth(string? Problem, long Captured = 0, long Drop
 /// <remarks>
 /// TWO SOURCES, NAMED APART. The totals, the peak and the timeline come from the interface's own
 /// counters, which are exact however hard the box is hit. The breakdown - sources, sizes, ports,
-/// pattern - comes from tcpdump, which can fall behind a big enough flood; when it does, the
+/// pattern - comes from tshark, which can fall behind a big enough flood; when it does, the
 /// kernel says by how much, and the report says so rather than presenting a sample as a census.
 /// </remarks>
 public sealed record AttackReport(
@@ -111,7 +111,8 @@ public sealed record AttackReport(
     FloodBreakdown Breakdown,
     PlayerImpact Players,
     CaptureHealth Capture,
-    string? PcapPath)
+    string? PcapPath,
+    string? Statistics = null)
 {
     public long LinkPackets => Timeline.Sum(s => s.Packets);
 
@@ -185,7 +186,14 @@ public sealed record AttackReport(
         Line(b, "player packets", Capture.Ran
             ? $"{Count(Breakdown.PlayerPackets)} from {Players.AddressesKnown} known player address(es) - not counted as attack"
             : "unknown without a capture");
-        if (PcapPath is not null) Line(b, "pcap", $"{PcapPath} - open it in Wireshark");
+        if (PcapPath is not null) Line(b, "pcap", $"{PcapPath} - /packettools analyze reads it again");
+
+        if (!string.IsNullOrWhiteSpace(Statistics))
+        {
+            b.AppendLine();
+            b.AppendLine("tshark statistics of the pcap (Wireshark's Statistics menu)");
+            b.AppendLine(Statistics.TrimEnd());
+        }
 
         b.AppendLine();
         b.AppendLine("timeline (packets/s, Mbit/s)");

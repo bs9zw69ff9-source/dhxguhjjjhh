@@ -11,10 +11,10 @@ public enum PacketProtocol
     Other,
 }
 
-/// <summary>One inbound packet as tcpdump described it.</summary>
+/// <summary>One inbound packet as tshark described it.</summary>
 /// <param name="Source">The sender's IPv4 address.</param>
 /// <param name="DestinationPort">0 for ICMP, fragments and anything without ports.</param>
-/// <param name="Payload">Bytes after the transport header, as tcpdump's "length" reports it.</param>
+/// <param name="Payload">Bytes after the transport header (after the IP header for ICMP and fragments).</param>
 /// <param name="Syn">A TCP SYN without an ACK: a new connection attempt.</param>
 public readonly record struct CapturedPacket(
     uint Source, ushort DestinationPort, PacketProtocol Protocol, int Payload, bool Syn = false)
@@ -33,85 +33,84 @@ public readonly record struct CapturedPacket(
     }
 
     /// <summary>
-    /// One line of <c>tcpdump -n -t</c>, or null when it is not an IPv4 packet line.
+    /// The fields tshark prints for each packet, in order, by <see cref="ParseFields"/>.
     /// </summary>
     /// <remarks>
-    /// The shapes, from tcpdump 4.99:
-    /// <code>
-    /// IP 203.0.113.5.51234 > 10.0.0.2.7777: UDP, length 1200
-    /// IP 203.0.113.5.40000 > 10.0.0.2.22: Flags [S], seq 1, win 64240, options [...], length 0
-    /// IP 203.0.113.5 > 10.0.0.2: ICMP echo request, id 1, seq 1, length 64
-    /// IP 203.0.113.5 > 10.0.0.2: ip-proto-17
-    /// </code>
-    /// The last is a non-first fragment, which carries no ports: counted, as Other.
-    ///
-    /// A LINE IS UNTRUSTED TEXT. It comes from a packet an attacker chose, through tcpdump's own
-    /// printing, so nothing here assumes a field is present: anything that does not fit is
-    /// dropped rather than guessed at.
+    /// <c>ip.len</c> is the whole IP packet, used for ICMP and fragments, which have no transport
+    /// length of their own; <c>udp.length</c> includes UDP's 8-byte header.
     /// </remarks>
-    public static CapturedPacket? Parse(string? line)
+    public static readonly string[] TsharkFields =
+    [
+        "ip.src", "ip.proto", "udp.dstport", "tcp.dstport", "udp.length", "tcp.len",
+        "tcp.flags.syn", "tcp.flags.ack", "ip.len", "ip.frag_offset",
+    ];
+
+    /// <summary>
+    /// One line of <c>tshark -T fields -E separator=, -E occurrence=f</c> with <see cref="TsharkFields"/>,
+    /// or null when it is not one.
+    /// </summary>
+    /// <remarks>
+    /// From tshark 4.2 on a live interface:
+    /// <code>
+    /// 203.0.113.5,17,7777,,1208,,,,1228,0        UDP to 7777, 1,200 bytes of payload
+    /// 203.0.113.5,6,,22,,0,True,False,60,0       a TCP SYN to 22
+    /// 127.0.0.1,1,7779,,1224,,,,576,0            ICMP port-unreachable
+    /// </code>
+    /// THE PROTOCOL NUMBER DECIDES WHICH FIELDS COUNT. An ICMP error quotes the packet it is about,
+    /// so tshark fills in the quoted packet's UDP port and length too - the third line is not UDP
+    /// traffic to 7779, and taking the UDP fields because they are present would say it was.
+    /// <c>occurrence=f</c> keeps tshark to the first (outer) value of each field for the same reason.
+    ///
+    /// A LINE IS UNTRUSTED TEXT. Its values come from a packet an attacker chose, so a field that
+    /// does not parse drops the line rather than being guessed at.
+    /// </remarks>
+    public static CapturedPacket? ParseFields(string? line)
     {
-        if (line is null || !line.StartsWith("IP ", StringComparison.Ordinal)) return null;
+        if (string.IsNullOrWhiteSpace(line)) return null;
 
-        var colon = line.IndexOf(": ", 3, StringComparison.Ordinal);
-        if (colon < 0) return null;
+        var f = line.Trim().Split(',');
+        if (f.Length < TsharkFields.Length) return null;
 
-        var arrow = line.IndexOf(" > ", 3, StringComparison.Ordinal);
-        if (arrow < 0 || arrow > colon) return null;
+        if (Number(f[0]) is not { } source) return null;
+        if (!int.TryParse(f[1], NumberStyles.None, CultureInfo.InvariantCulture, out var proto)) return null;
 
-        var from = line[3..arrow];
-        var to = line[(arrow + 3)..colon];
-        var rest = line[(colon + 2)..];
+        var fragment = int.TryParse(f[9], NumberStyles.None, CultureInfo.InvariantCulture, out var offset) && offset > 0;
+        var ipLength = int.TryParse(f[8], NumberStyles.None, CultureInfo.InvariantCulture, out var total) ? total : 0;
+        var withoutIpHeader = Math.Max(0, ipLength - 20);
 
-        PacketProtocol protocol;
-        bool hasPorts;
-        if (rest.StartsWith("UDP", StringComparison.Ordinal)) (protocol, hasPorts) = (PacketProtocol.Udp, true);
-        else if (rest.StartsWith("Flags [", StringComparison.Ordinal)) (protocol, hasPorts) = (PacketProtocol.Tcp, true);
-        else if (rest.StartsWith("ICMP", StringComparison.Ordinal)) (protocol, hasPorts) = (PacketProtocol.Icmp, false);
-        else (protocol, hasPorts) = (PacketProtocol.Other, false);
+        // A non-first fragment has no transport header of its own, whatever its protocol says.
+        if (fragment) return new CapturedPacket(source, 0, PacketProtocol.Other, withoutIpHeader);
 
-        var source = Number(hasPorts ? StripPort(from) : from);
-        if (source is null) return null;
-
-        ushort port = 0;
-        if (hasPorts)
+        switch (proto)
         {
-            var dot = to.LastIndexOf('.');
-            if (dot < 0 || !ushort.TryParse(to.AsSpan(dot + 1), NumberStyles.None, CultureInfo.InvariantCulture, out port))
-                return null;
+            case 17:
+                if (!ushort.TryParse(f[2], NumberStyles.None, CultureInfo.InvariantCulture, out var udpPort)) return null;
+                var udpLength = int.TryParse(f[4], NumberStyles.None, CultureInfo.InvariantCulture, out var ul) ? ul : 8;
+                return new CapturedPacket(source, udpPort, PacketProtocol.Udp, Math.Max(0, udpLength - 8));
+
+            case 6:
+                if (!ushort.TryParse(f[3], NumberStyles.None, CultureInfo.InvariantCulture, out var tcpPort)) return null;
+                var tcpLength = int.TryParse(f[5], NumberStyles.None, CultureInfo.InvariantCulture, out var tl) ? tl : 0;
+                return new CapturedPacket(source, tcpPort, PacketProtocol.Tcp, tcpLength, IsSet(f[6]) && !IsSet(f[7]));
+
+            case 1:
+                return new CapturedPacket(source, 0, PacketProtocol.Icmp, withoutIpHeader);
+
+            default:
+                return new CapturedPacket(source, 0, PacketProtocol.Other, withoutIpHeader);
         }
-
-        var syn = protocol == PacketProtocol.Tcp &&
-                  rest.Length > 8 && rest.IndexOf(']', 7) is var close and > 7 &&
-                  rest[7..close] is var flags && flags.Contains('S') && !flags.Contains('.');
-
-        return new CapturedPacket(source.Value, port, protocol, LastLength(rest), syn);
     }
 
-    private static string StripPort(string endpoint)
-    {
-        var dot = endpoint.LastIndexOf('.');
-        return dot < 0 ? endpoint : endpoint[..dot];
-    }
-
-    /// <summary>The number after the LAST "length ", which is the payload; 0 when there is none.</summary>
-    private static int LastLength(string rest)
-    {
-        var at = rest.LastIndexOf("length ", StringComparison.Ordinal);
-        if (at < 0) return 0;
-
-        var start = at + "length ".Length;
-        var end = start;
-        while (end < rest.Length && char.IsAsciiDigit(rest[end])) end++;
-        return int.TryParse(rest.AsSpan(start, end - start), NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : 0;
-    }
+    /// <summary>tshark prints a flag as True/False, and older releases as 1/0.</summary>
+    private static bool IsSet(string value) =>
+        value.Trim() is "1" || value.Trim().Equals("True", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
 /// The breakdown of an attack: who sent it, how big, at what, and how much reached players.
 /// </summary>
 /// <remarks>
-/// FED FROM ONE THREAD, READ FROM ANOTHER - tcpdump's reader adds, the monitor's timer reads -
+/// FED FROM ONE THREAD, READ FROM ANOTHER - tshark's reader adds, the monitor's timer reads -
 /// so every member takes the same lock. At tens of thousands of packets a second an
 /// uncontended lock is a rounding error next to reading the line in the first place.
 ///

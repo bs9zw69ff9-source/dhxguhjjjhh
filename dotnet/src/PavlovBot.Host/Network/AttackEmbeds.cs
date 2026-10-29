@@ -78,9 +78,10 @@ public static class AttackEmbeds
                 $"{b.Label,10} {AttackReport.Bar(b.Packets, d.AttackPackets),-20} {AttackReport.Share(b.Packets, d.AttackPackets)}")) + "\n```", false);
 
             embed.AddField("Capture",
-                $"tcpdump saw {AttackReport.Percent(report.Capture.Completeness)} of the packets" +
+                $"tshark saw {AttackReport.Percent(report.Capture.Completeness)} of the packets" +
                 $"{(report.Capture.DroppedByKernel > 0 ? $" ({AttackReport.Count(report.Capture.DroppedByKernel)} dropped by the kernel - the breakdown is a sample)" : "")}" +
-                $"{(report.PcapPath is { } pcap ? $"\npcap for Wireshark: `{pcap}`" : "")}", false);
+                $"{(report.Statistics is not null ? "\nWireshark statistics (protocols, top endpoints, conversations) are in the attached report" : "")}" +
+                $"{(report.PcapPath is { } pcap ? $"\npcap kept at `{pcap}` - `/packettools analyze` reads it again" : "")}", false);
         }
         else
         {
