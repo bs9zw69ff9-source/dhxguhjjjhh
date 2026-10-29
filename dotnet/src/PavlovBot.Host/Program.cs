@@ -761,7 +761,8 @@ public static class Program
                     sp.GetRequiredService<IAutoPostTarget>(),
                     sp.GetRequiredService<IFilePostTarget>(),
                     TimeProvider.System,
-                    monitorLogger);
+                    monitorLogger,
+                    () => sp.GetRequiredService<DiscordGateway>().IsReady);
             });
         }
 

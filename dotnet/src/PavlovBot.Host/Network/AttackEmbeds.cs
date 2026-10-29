@@ -45,7 +45,8 @@ public static class AttackEmbeds
             .Brand();
     }
 
-    public static EmbedBuilder Summary(AttackReport report)
+    /// <param name="postedLate">True when the bot could not post it at the time and is posting it now.</param>
+    public static EmbedBuilder Summary(AttackReport report, bool postedLate = false)
     {
         ArgumentNullException.ThrowIfNull(report);
         var d = report.Breakdown;
@@ -53,7 +54,10 @@ public static class AttackEmbeds
 
         // Plain rather than Theme.Failure: a report is not an error, and its ❌ would say it was.
         var embed = new EmbedBuilder().WithColor(Theme.BanRed).WithTitle("Attack ended · summary")
-            .WithDescription($"**{report.Verdict}** · players {report.Players.Before} → {report.Players.Lowest} lowest → {report.Players.After}")
+            .WithDescription($"**{report.Verdict}** · players {report.Players.Before} → {report.Players.Lowest} lowest → {report.Players.After}" +
+                (postedLate
+                    ? $"\n⚠️ **Posted late** - the bot could not reach Discord when this attack ended at <t:{report.End.ToUnixTimeSeconds()}:T>."
+                    : ""))
             .AddField("Window",
                 $"{AttackReport.Stamp(report.Start)} → {report.End.UtcDateTime:HH:mm:ss} ({AttackReport.Duration(report.Window)})", false)
             .AddField("Traffic that reached the server",
@@ -88,6 +92,14 @@ public static class AttackEmbeds
         else
         {
             embed.AddField("Breakdown", $"none - {report.Capture.Problem}", false);
+        }
+
+        if (report.Connection is { } lost)
+        {
+            embed.AddField("⚠️ Connection lost",
+                $"The bot could not reach Discord for **{AttackReport.Duration(TimeSpan.FromSeconds(lost.Seconds))}** " +
+                $"(<t:{lost.From.ToUnixTimeSeconds()}:T> → <t:{lost.Until.ToUnixTimeSeconds()}:T>). The flood was likely filling the " +
+                "server's connection itself - no firewall on the server can stop that; it needs the host's DDoS protection.", false);
         }
 
         embed.AddField("Dropped by the filter", report.Shield switch

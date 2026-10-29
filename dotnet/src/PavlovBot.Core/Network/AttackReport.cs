@@ -3,6 +3,17 @@ using System.Text;
 
 namespace PavlovBot.Core.Network;
 
+/// <summary>
+/// How long the bot could not reach Discord during the attack.
+/// </summary>
+/// <remarks>
+/// THE BEST EVIDENCE THE BOT HAS THAT THE LINK ITSELF WAS FULL. A flood big enough to saturate the
+/// server's connection drops the bot's own traffic along with the players', and a bot that lost
+/// Discord in the middle of an attack is a bot whose uplink was being filled - which no firewall
+/// on this box can fix, and which is the question to take to the host.
+/// </remarks>
+public sealed record ConnectionLoss(int Seconds, DateTimeOffset From, DateTimeOffset Until);
+
 /// <summary>What the firewall shield did during the attack.</summary>
 /// <param name="Problem">Why it could not engage, or null when it did.</param>
 /// <param name="Stats">Its counters at the end, when they could be read.</param>
@@ -122,7 +133,8 @@ public sealed record AttackReport(
     string? PcapPath,
     string? Statistics = null,
     ShieldOutcome? Shield = null,
-    string? Iftop = null)
+    string? Iftop = null,
+    ConnectionLoss? Connection = null)
 {
     /// <summary>Packets the shield dropped, against the attack's own packets when there is a capture.</summary>
     public double DroppedShare
@@ -209,6 +221,13 @@ public sealed record AttackReport(
             ? $"{Count(Breakdown.PlayerPackets)} from {Players.AddressesKnown} known player address(es) - not counted as attack"
             : "unknown without a capture");
         if (PcapPath is not null) Line(b, "pcap", $"{PcapPath} - /packettools analyze reads it again");
+
+        if (Connection is { } lost)
+        {
+            Line(b, "connection", $"the bot could not reach Discord for {Duration(TimeSpan.FromSeconds(lost.Seconds))} " +
+                                  $"({lost.From.UtcDateTime:HH:mm:ss} -> {lost.Until.UtcDateTime:HH:mm:ss}) - the flood was likely filling " +
+                                  "the server's connection itself, which only the host's DDoS protection can stop");
+        }
 
         b.AppendLine();
         if (Shield is null)
