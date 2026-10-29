@@ -91,7 +91,7 @@ public sealed partial class TcpdumpCapture : IAttackCapture
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return (null, "tcpdump is not installed - `apt install tcpdump`");
+            return (null, "tcpdump is not installed - run `/packettools install`");
         }
 
         Process? pcap = null;
