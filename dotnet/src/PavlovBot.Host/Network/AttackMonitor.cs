@@ -8,8 +8,11 @@ namespace PavlovBot.Host.Network;
 /// <summary>Who is playing right now, and from where.</summary>
 public interface IPlayerTraffic
 {
-    /// <summary>Players online across every server.</summary>
-    int OnlineCount { get; }
+    /// <summary>The names of the players online across every server.</summary>
+    IReadOnlyCollection<string> OnlineNames();
+
+    /// <summary>Whether the rosters are fresh. False while RCON cannot be read - often the case under attack.</summary>
+    bool RosterFresh { get; }
 
     /// <summary>The addresses of the players online now, as <see cref="CapturedPacket.Source"/> numbers.</summary>
     IReadOnlySet<uint> OnlineAddresses();
@@ -72,6 +75,7 @@ public sealed class AttackMonitor : BackgroundService
     private DateTimeOffset _lastWatch;
     private int _playersBefore;
     private int _playersLowest;
+    private readonly PlayerDropTracker _drops = new();
     private int _activeSeconds;
     private ulong? _alertMessage;
     private DateTimeOffset _lastLive;
@@ -159,7 +163,8 @@ public sealed class AttackMonitor : BackgroundService
         if (previous is not { } before || counters.Packets < before.Packets || counters.Bytes < before.Bytes) return;
 
         var second = new LinkSecond(now, counters.Packets - before.Packets, counters.Bytes - before.Bytes);
-        var online = _players.OnlineCount;
+        var names = _players.OnlineNames();
+        var online = names.Count;
         RefreshPlayerAddresses(now);
         var wasRunning = _detector.InAttack || _detector.RunStartedAt is not null;
         var signal = _detector.Observe(second);
@@ -171,12 +176,14 @@ public sealed class AttackMonitor : BackgroundService
         {
             if (_timeline.Count < MaxTimeline) _timeline.Add(second);
             if (_detector.IsOver(second)) _activeSeconds++;
+            _drops.Observe(names, now, _players.RosterFresh);
         }
         else if (!wasRunning)
         {
             _timeline.Clear();
             _activeSeconds = 0;
             _playersBefore = online;
+            _drops.Baseline(names);
         }
 
         if (_detector.InAttack) _playersLowest = Math.Min(_playersLowest, online);
@@ -193,7 +200,7 @@ public sealed class AttackMonitor : BackgroundService
 
             case FloodSignal.Ongoing when _alertMessage is { } id && now - _lastLive >= LiveEvery:
                 _lastLive = now;
-                await _post.EditAsync(_channel, id, AttackEmbeds.Live(_host, _iface!, _timeline, _activeSeconds, _detector).Build(), null, ct)
+                await _post.EditAsync(_channel, id, AttackEmbeds.Live(_host, _iface!, _timeline, _activeSeconds, _detector, _drops.Drops).Build(), null, ct)
                     .ConfigureAwait(false);
                 break;
 
@@ -248,7 +255,7 @@ public sealed class AttackMonitor : BackgroundService
             Timeline: [.. _timeline],
             ActiveSeconds: _activeSeconds,
             Breakdown: _capture is null ? FloodBreakdown.Empty : _recorder.Snapshot(),
-            Players: new PlayerImpact(_playersBefore, _playersLowest, online, _playerAddresses.Count),
+            Players: new PlayerImpact(_playersBefore, _playersLowest, online, _playerAddresses.Count, _drops.Drops, _drops.StaleSeconds),
             Capture: health,
             PcapPath: _capture?.PcapPath);
 
@@ -265,6 +272,7 @@ public sealed class AttackMonitor : BackgroundService
         _timeline.Clear();
         _activeSeconds = 0;
         _playersBefore = online;
+        _drops.Baseline(_players.OnlineNames());
     }
 
     private async Task DeleteAsync(IAttackCapture capture)

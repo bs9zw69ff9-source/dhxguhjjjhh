@@ -14,7 +14,14 @@ namespace PavlovBot.Host.Network;
 /// </remarks>
 public sealed class PlayerTraffic(RconRegistry rcon, IpTrackingService ips) : IPlayerTraffic
 {
-    public int OnlineCount => rcon.AllOnlinePlayers().Count;
+    /// <remarks>
+    /// EVERY server's roster, stale ones included, so a server RCON lost touch with keeps its
+    /// players rather than reporting them all as disconnected; <see cref="RosterFresh"/> says
+    /// when that is happening.
+    /// </remarks>
+    public IReadOnlyCollection<string> OnlineNames() => rcon.AllOnlinePlayers();
+
+    public bool RosterFresh => ((IOnlineRoster)rcon).IsTrustworthy;
 
     public IReadOnlySet<uint> OnlineAddresses()
     {
