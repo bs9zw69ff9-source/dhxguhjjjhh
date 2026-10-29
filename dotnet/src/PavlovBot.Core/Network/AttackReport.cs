@@ -3,6 +3,14 @@ using System.Text;
 
 namespace PavlovBot.Core.Network;
 
+/// <summary>What the firewall shield did during the attack.</summary>
+/// <param name="Problem">Why it could not engage, or null when it did.</param>
+/// <param name="Stats">Its counters at the end, when they could be read.</param>
+public sealed record ShieldOutcome(string? Problem, ShieldStats? Stats, ShieldLimits Limits)
+{
+    public bool Engaged => Problem is null;
+}
+
 /// <summary>How the players fared: online before, at the worst point, after, and who was knocked off.</summary>
 /// <param name="AddressesKnown">How many of the online players the bot had an address for.</param>
 /// <param name="Dropped">Every player who disconnected during the attack, and when they came back if they did.</param>
@@ -112,8 +120,21 @@ public sealed record AttackReport(
     PlayerImpact Players,
     CaptureHealth Capture,
     string? PcapPath,
-    string? Statistics = null)
+    string? Statistics = null,
+    ShieldOutcome? Shield = null,
+    string? Iftop = null)
 {
+    /// <summary>Packets the shield dropped, against the attack's own packets when there is a capture.</summary>
+    public double DroppedShare
+    {
+        get
+        {
+            if (Shield?.Stats is not { } stats) return 0;
+            var whole = Capture.Ran && Breakdown.AttackPackets > 0 ? Breakdown.AttackPackets : LinkPackets;
+            return whole == 0 ? 0 : Math.Min(1, (double)stats.Dropped / whole);
+        }
+    }
+
     public long LinkPackets => Timeline.Sum(s => s.Packets);
 
     public long LinkBytes => Timeline.Sum(s => s.Bytes);
@@ -130,6 +151,7 @@ public sealed record AttackReport(
 
     public string Verdict =>
         $"{Pattern} on {Host} · {Duration(TimeSpan.FromSeconds(ActiveSeconds))} · peak {Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s" +
+        (Shield is { Engaged: true, Stats: not null } ? $" · {Percent(DroppedShare)} dropped by the filter" : "") +
         (Players.Drops.Count > 0 ? $" · {Players.Drops.Count} player(s) dropped" : "");
 
     /// <summary>The attached report: everything, including the addresses the embed leaves out.</summary>
@@ -187,6 +209,33 @@ public sealed record AttackReport(
             ? $"{Count(Breakdown.PlayerPackets)} from {Players.AddressesKnown} known player address(es) - not counted as attack"
             : "unknown without a capture");
         if (PcapPath is not null) Line(b, "pcap", $"{PcapPath} - /packettools analyze reads it again");
+
+        b.AppendLine();
+        if (Shield is null)
+        {
+            Line(b, "filter", "off (ATTACK_MITIGATION is not on) - nothing was blocked");
+        }
+        else if (!Shield.Engaged)
+        {
+            Line(b, "filter", $"could not engage - {Shield.Problem}");
+        }
+        else
+        {
+            var l = Shield.Limits;
+            Line(b, "filter", $"nftables: over {Count(l.PerSourcePps)} pkt/s from one address blocked for {l.BlockMinutes} min; unknown traffic to {l.GamePorts} capped at {Count(l.UnknownPps)} pkt/s");
+            if (Shield.Stats is { } s)
+            {
+                Line(b, "dropped", $"{Count(s.Dropped)} packets ({Percent(DroppedShare)}): {Count(s.BlockedPackets)} from blocked addresses, {Count(s.PerSourcePackets)} over the per-address limit, {Count(s.CappedPackets)} over the unknown-traffic cap");
+                Line(b, "blocked", $"{Count(s.BlockedSources)} address(es) on the block list now");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(Iftop))
+        {
+            b.AppendLine();
+            b.AppendLine("iftop -nNP, a few seconds into the attack (bandwidth by connection)");
+            b.AppendLine(Iftop.TrimEnd());
+        }
 
         if (!string.IsNullOrWhiteSpace(Statistics))
         {

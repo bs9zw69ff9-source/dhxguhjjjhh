@@ -23,6 +23,26 @@ public sealed class PlayerTraffic(RconRegistry rcon, IpTrackingService ips) : IP
 
     public bool RosterFresh => ((IOnlineRoster)rcon).IsTrustworthy;
 
+    /// <summary>How recently a player must have been seen to stay on the shield's allow list.</summary>
+    private static readonly TimeSpan KnownFor = TimeSpan.FromDays(30);
+
+    /// <remarks>
+    /// EVERY RECENT PLAYER, not just who is on now, so somebody reconnecting after the attack
+    /// knocked them off is let back in rather than counted against the cap with the flood.
+    /// </remarks>
+    public IReadOnlySet<uint> KnownAddresses()
+    {
+        var since = DateTimeOffset.UtcNow - KnownFor;
+        var addresses = new HashSet<uint>(OnlineAddresses());
+        foreach (var account in ips.Accounts().Values)
+        {
+            if (account.LastSeen is { } seen && seen < since) continue;
+            foreach (var ip in account.ConfirmedIps)
+                if (CapturedPacket.Number(ip) is { } n) addresses.Add(n);
+        }
+        return addresses;
+    }
+
     public IReadOnlySet<uint> OnlineAddresses()
     {
         var addresses = new HashSet<uint>();

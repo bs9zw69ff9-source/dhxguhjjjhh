@@ -733,10 +733,12 @@ public static class Program
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
         builder.Services.AddSingleton<IFilePostTarget>(sp => (IFilePostTarget)sp.GetRequiredService<IAutoPostTarget>());
+        builder.Services.AddSingleton<PavlovBot.Host.Network.IFloodShield>(sp => new PavlovBot.Host.Network.FloodShield(
+            features.AttackMitigation, features.AttackLimits, sp.GetRequiredService<ILogger<PavlovBot.Host.Network.FloodShield>>()));
 
         /* ATTACK_CHANNEL turns the DDoS monitor on: interface counters every second, tshark during
-           an attack, an alert and a summary in that channel. Detect and report only - it never
-           touches the firewall. */
+           an attack, an alert and a summary in that channel. It touches the firewall only with
+           ATTACK_MITIGATION=on, and then only its own nftables table. */
         if (features.AttackChannel is { } attackChannel)
         {
             builder.Services.AddHostedService(sp =>
@@ -755,6 +757,7 @@ public static class Program
                             packet => recorder.Add(packet, addresses().Contains(packet.Source)), monitorLogger);
                         return (capture, problem);
                     },
+                    sp.GetRequiredService<PavlovBot.Host.Network.IFloodShield>(),
                     sp.GetRequiredService<IAutoPostTarget>(),
                     sp.GetRequiredService<IFilePostTarget>(),
                     TimeProvider.System,

@@ -487,6 +487,35 @@ public class AttackMonitorTests
         public IReadOnlyCollection<string> OnlineNames() => [.. Names];
 
         public IReadOnlySet<uint> OnlineAddresses() => new HashSet<uint> { CapturedPacket.Number("10.1.1.1")!.Value };
+
+        public IReadOnlySet<uint> KnownAddresses() =>
+            new HashSet<uint> { CapturedPacket.Number("10.1.1.1")!.Value, CapturedPacket.Number("10.2.2.2")!.Value };
+    }
+
+    private sealed class Shield(bool enabled) : IFloodShield
+    {
+        public List<string> Calls { get; } = [];
+        public string? Problem { get; set; }
+
+        public bool Enabled => enabled;
+
+        public ShieldLimits Limits { get; } = new();
+
+        public Task<string?> ApplyAsync(bool engaged, CancellationToken ct)
+        {
+            Calls.Add(engaged ? "engage" : "standby");
+            return Task.FromResult(engaged ? Problem : null);
+        }
+
+        public Task AllowAsync(IReadOnlySet<uint> addresses, CancellationToken ct)
+        {
+            Calls.Add($"allow {addresses.Count}");
+            return Task.CompletedTask;
+        }
+
+        public Task<ShieldStats?> StatsAsync(CancellationToken ct) => Task.FromResult<ShieldStats?>(new ShieldStats(240_000, 2_000, 8_000, 34));
+
+        public Task<string?> UnblockAllAsync(CancellationToken ct) => Task.FromResult<string?>(null);
     }
 
     private sealed class Capture(string? pcap) : IAttackCapture
@@ -542,12 +571,15 @@ public class AttackMonitorTests
         public Func<IReadOnlySet<uint>>? Addresses { get; private set; }
         public string? CaptureProblem { get; set; }
         public int StartCalls { get; private set; }
+        public Shield Shield { get; }
         public AttackMonitor Monitor { get; }
 
         private long _packets;
         private long _bytes;
 
-        public Rig() =>
+        public Rig(bool mitigation = false)
+        {
+            Shield = new Shield(mitigation);
             Monitor = new AttackMonitor(42, "eth0", new FloodThresholds(Pps: 10_000), pcapDirectory: null,
                 _ => (_packets, _bytes),
                 Players,
@@ -561,7 +593,8 @@ public class AttackMonitorTests
                     Captures.Add(capture);
                     return (capture, null);
                 },
-                Posts, Posts, Clock, NullLogger<AttackMonitor>.Instance);
+                Shield, Posts, Posts, Clock, NullLogger<AttackMonitor>.Instance);
+        }
 
         /// <summary>One second carrying <paramref name="pps"/> packets of 1,200 bytes.</summary>
         public async Task SecondAsync(long pps)
@@ -630,6 +663,58 @@ public class AttackMonitorTests
         var (summary, _, content) = Assert.Single(rig.Posts.Files);
         Assert.DoesNotContain("player(s) dropped", summary.Description, StringComparison.Ordinal);
         Assert.Contains("RCON could not be read for 4s", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheShieldLetsPlayersInFirstThenEngagesAndStandsDownAfter()
+    {
+        var rig = new Rig(mitigation: true);
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+
+        // The allow list goes in before the limits, so no player can be blocked in between.
+        Assert.Equal(["standby", "allow 2", "engage"], rig.Shield.Calls);
+
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+        Assert.Equal("standby", rig.Shield.Calls[^1]);
+        var (summary, _, content) = Assert.Single(rig.Posts.Files);
+        Assert.Contains("dropped by the filter", summary.Description, StringComparison.Ordinal);
+        var filter = Assert.Single(summary.Fields, f => f.Name == "Dropped by the filter");
+        Assert.Contains("250,000 packets", filter.Value, StringComparison.Ordinal);
+        Assert.Contains("34 address(es) blocked", filter.Value, StringComparison.Ordinal);
+        Assert.Contains("34 address(es) on the block list now", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WithMitigationOffNothingTouchesTheFirewall()
+    {
+        var rig = new Rig(mitigation: false);
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+        Assert.Empty(rig.Shield.Calls);
+        var (summary, _, _) = Assert.Single(rig.Posts.Files);
+        Assert.Contains(summary.Fields, f => f.Name == "Dropped by the filter" && f.Value.Contains("ATTACK_MITIGATION", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AShieldThatCannotEngageIsReportedNotHidden()
+    {
+        var rig = new Rig(mitigation: true);
+        rig.Shield.Problem = "nft is not installed - run `/packettools install`";
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+        var alert = Assert.Single(rig.Posts.Sent);
+        Assert.Contains(alert.Fields, f => f.Name == "Filter" && f.Value.Contains("could not engage", StringComparison.Ordinal));
+        var (summary, _, _) = Assert.Single(rig.Posts.Files);
+        Assert.Contains(summary.Fields, f => f.Name == "Dropped by the filter" && f.Value.Contains("nft is not installed", StringComparison.Ordinal));
     }
 
     [Fact]

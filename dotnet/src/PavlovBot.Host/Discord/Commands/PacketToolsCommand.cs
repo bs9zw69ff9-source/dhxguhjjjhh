@@ -29,11 +29,15 @@ namespace PavlovBot.Host.Discord.Commands;
 /// steps' caps put together.
 /// </remarks>
 public sealed class PacketToolsCommand(
-    Access access, AuditLog audit, BotOptions options, IHostApplicationLifetime lifetime, ILogger<PacketToolsCommand> logger)
+    Access access, AuditLog audit, BotOptions options, IFloodShield shield, IHostApplicationLifetime lifetime,
+    ILogger<PacketToolsCommand> logger)
     : ISlashCommand
 {
-    /// <summary>What gets installed: <c>apt install wireshark tshark -y</c>.</summary>
-    internal static readonly string[] Packages = ["wireshark", "tshark"];
+    /// <summary>
+    /// What gets installed: <c>apt install wireshark tshark iftop -y</c>, plus nftables, which the
+    /// flood filter is written in (Ubuntu usually has it already).
+    /// </summary>
+    internal static readonly string[] Packages = ["wireshark", "tshark", "iftop", "nftables"];
 
     private static readonly TimeSpan UpdateTimeout = TimeSpan.FromMinutes(4);
     private static readonly TimeSpan InstallTimeout = TimeSpan.FromMinutes(9);
@@ -60,6 +64,9 @@ public sealed class PacketToolsCommand(
                 .WithType(ApplicationCommandOptionType.SubCommand))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("analyze").WithDescription("Owner - Wireshark statistics for the latest attack capture")
+                .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("unblock").WithDescription("Owner - Let every address the DDoS filter blocked back in now")
                 .WithType(ApplicationCommandOptionType.SubCommand))
             .Build();
 
@@ -97,6 +104,9 @@ public sealed class PacketToolsCommand(
                 return;
             case "analyze":
                 await AnalyzeAsync(command, ct).ConfigureAwait(false);
+                return;
+            case "unblock":
+                await UnblockAsync(command, ct).ConfigureAwait(false);
                 return;
             default:
                 await Reply(command, Theme.Failure("Unknown subcommand")).ConfigureAwait(false);
@@ -152,6 +162,24 @@ public sealed class PacketToolsCommand(
         }).ConfigureAwait(false);
     }
 
+    // ---- unblock ----
+
+    private async Task UnblockAsync(SocketSlashCommand command, CancellationToken ct)
+    {
+        var before = await shield.StatsAsync(ct).ConfigureAwait(false);
+        if (await shield.UnblockAllAsync(ct).ConfigureAwait(false) is { } problem)
+        {
+            await Reply(command, Theme.Failure("Could not unblock", problem)).ConfigureAwait(false);
+            return;
+        }
+
+        await audit.RecordAsync("ddos-unblock", command.User.Username, "all", $"{before?.BlockedSources ?? 0} address(es)", ct)
+            .ConfigureAwait(false);
+        logger.LogWarning("DDoS filter block list emptied by {User} ({Count} addresses)", command.User.Username, before?.BlockedSources ?? 0);
+        await Reply(command, Theme.Success("Unblocked",
+            $"{before?.BlockedSources ?? 0} address(es) the DDoS filter had blocked can connect again.")).ConfigureAwait(false);
+    }
+
     // ---- install ----
 
     private async Task InstallAsync(SocketSlashCommand command, CancellationToken ct)
@@ -175,7 +203,7 @@ public sealed class PacketToolsCommand(
         logger.LogWarning("PACKETTOOLS install by {User}: {Packages}", command.User.Username, string.Join(", ", Packages));
 
         await Reply(command, Theme.Notice("Installing Wireshark and tshark",
-            "Running `apt update`, then `apt install wireshark tshark -y`. Wireshark brings a few hundred MB of " +
+            $"Running `apt update`, then `apt install {string.Join(' ', Packages)} -y`. Wireshark brings a few hundred MB of " +
             "libraries, so this can take several minutes; this message updates when it is done.")).ConfigureAwait(false);
 
         // Detached, under the host's lifetime: see the remarks. The semaphore is released there.
@@ -244,11 +272,19 @@ public sealed class PacketToolsCommand(
         var tshark = await FirstLineOfAsync("tshark", ["--version"], ct).ConfigureAwait(false);
         // Wireshark is a desktop program; asking it for --version needs no screen, but the package is the surer answer.
         var wireshark = await FirstLineOfAsync("dpkg-query", ["-W", "-f", "${Version}", "wireshark"], ct).ConfigureAwait(false);
+        var iftop = await FirstLineOfAsync("dpkg-query", ["-W", "-f", "${Version}", "iftop"], ct).ConfigureAwait(false);
+        var nft = await FirstLineOfAsync("nft", ["--version"], ct).ConfigureAwait(false);
+        var blocked = await shield.StatsAsync(ct).ConfigureAwait(false);
         var latest = LatestPcap(AttackDirectory);
 
         var embed = (tshark is not null ? Theme.Success(title) : Theme.Warning(title))
             .AddField("tshark", tshark is null ? "not installed" : $"`{Sanitize.Code(tshark)}`", true)
             .AddField("Wireshark", wireshark is null ? "not installed" : $"`{Sanitize.Code(wireshark)}`", true)
+            .AddField("iftop", iftop is null ? "not installed" : $"`{Sanitize.Code(iftop)}`", true)
+            .AddField("DDoS filter (nftables)",
+                !shield.Enabled ? "off - set `ATTACK_MITIGATION=on` on ONE bot to block and rate-limit floods"
+                : nft is null ? "on, but `nft` is not installed - `/packettools install`"
+                : $"on · {Sanitize.Code(nft)} · {blocked?.BlockedSources ?? 0} address(es) blocked now (`/packettools unblock` lets them back)", false)
             .AddField("Capture", Environment.IsPrivilegedProcess
                 ? "the bot is root, so the DDoS monitor captures with tshark"
                 : "the bot is NOT root, so the DDoS monitor reports totals only", false)

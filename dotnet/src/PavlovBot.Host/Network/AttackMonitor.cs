@@ -16,6 +16,9 @@ public interface IPlayerTraffic
 
     /// <summary>The addresses of the players online now, as <see cref="CapturedPacket.Source"/> numbers.</summary>
     IReadOnlySet<uint> OnlineAddresses();
+
+    /// <summary>Every confirmed address of a player seen recently, online or not: who the shield must never block.</summary>
+    IReadOnlySet<uint> KnownAddresses();
 }
 
 /// <summary>A running capture: started when an attack may be coming, stopped when it is over.</summary>
@@ -50,6 +53,7 @@ public sealed class AttackMonitor : BackgroundService
     private static readonly TimeSpan LiveEvery = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AbandonWatchAfter = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RefreshPlayersEvery = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan RefreshAllowListEvery = TimeSpan.FromMinutes(1);
 
     /// <summary>The longest timeline one report keeps: four hours of seconds.</summary>
     private const int MaxTimeline = 4 * 60 * 60;
@@ -64,6 +68,7 @@ public sealed class AttackMonitor : BackgroundService
     private readonly Func<string, (long Packets, long Bytes)?> _readCounters;
     private readonly IPlayerTraffic _players;
     private readonly Func<string, string?, FloodRecorder, Func<IReadOnlySet<uint>>, (IAttackCapture? Capture, string? Problem)> _startCapture;
+    private readonly IFloodShield _shield;
     private readonly IAutoPostTarget _post;
     private readonly IFilePostTarget _files;
     private readonly TimeProvider _time;
@@ -85,6 +90,9 @@ public sealed class AttackMonitor : BackgroundService
     /// <summary>Replaced whole on the timer thread, read by tshark's reader: volatile, never mutated.</summary>
     private volatile IReadOnlySet<uint> _playerAddresses = new HashSet<uint>();
     private DateTimeOffset _playersRefreshed;
+    private ShieldOutcome? _shieldOutcome;
+    private DateTimeOffset _allowRefreshed;
+    private Task<string?>? _iftop;
 
     public AttackMonitor(
         ulong channel,
@@ -94,6 +102,7 @@ public sealed class AttackMonitor : BackgroundService
         Func<string, (long Packets, long Bytes)?> readCounters,
         IPlayerTraffic players,
         Func<string, string?, FloodRecorder, Func<IReadOnlySet<uint>>, (IAttackCapture? Capture, string? Problem)> startCapture,
+        IFloodShield shield,
         IAutoPostTarget post,
         IFilePostTarget files,
         TimeProvider time,
@@ -105,6 +114,7 @@ public sealed class AttackMonitor : BackgroundService
         _readCounters = readCounters;
         _players = players;
         _startCapture = startCapture;
+        _shield = shield;
         _post = post;
         _files = files;
         _time = time;
@@ -128,6 +138,10 @@ public sealed class AttackMonitor : BackgroundService
             _iface, _detector.Thresholds.Pps, _detector.Thresholds.Mbps, _detector.Thresholds.BaselineFactor,
             _detector.Thresholds.StartSeconds, _channel);
 
+        // Stand the shield up with the limits off, so blocks carried over from before a restart still apply.
+        if (_shield.Enabled && await _shield.ApplyAsync(engaged: false, stoppingToken).ConfigureAwait(false) is { } standBy)
+            _logger.LogWarning("DDoS shield is unavailable: {Problem}", standBy);
+
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), _time);
         try
         {
@@ -150,6 +164,9 @@ public sealed class AttackMonitor : BackgroundService
         finally
         {
             if (_capture is not null) await _capture.DisposeAsync().ConfigureAwait(false);
+
+            // Never leave the limits on behind a bot that is no longer watching to lift them.
+            if (_shieldOutcome is { Engaged: true }) await _shield.ApplyAsync(engaged: false, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -195,15 +212,24 @@ public sealed class AttackMonitor : BackgroundService
         {
             case FloodSignal.Started:
                 _playersLowest = online;
+                await EngageShieldAsync(now, ct).ConfigureAwait(false);
+                _iftop = Environment.IsPrivilegedProcess
+                    ? Task.Run(() => IftopSnapshot.TakeAsync(_iface!, _logger, CancellationToken.None), CancellationToken.None)
+                    : null;
                 _logger.LogWarning("ATTACK started on {Interface}: {Pps} pkt/s, {Mbps:0.0} Mbit/s", _iface, second.Packets, second.Mbps);
-                _alertMessage = await _post.SendAsync(_channel, AttackEmbeds.Started(_host, _iface!, second, _detector).Build(), null, ct)
+                _alertMessage = await _post.SendAsync(_channel, AttackEmbeds.Started(_host, _iface!, second, _detector, _shieldOutcome).Build(), null, ct)
                     .ConfigureAwait(false);
                 _lastLive = now;
                 break;
 
+            case FloodSignal.Ongoing when _shieldOutcome is { Engaged: true } && now - _allowRefreshed >= RefreshAllowListEvery:
+                _allowRefreshed = now;
+                await _shield.AllowAsync(_players.KnownAddresses(), ct).ConfigureAwait(false);
+                break;
+
             case FloodSignal.Ongoing when _alertMessage is { } id && now - _lastLive >= LiveEvery:
                 _lastLive = now;
-                await _post.EditAsync(_channel, id, AttackEmbeds.Live(_host, _iface!, _timeline, _activeSeconds, _detector, _drops.Drops).Build(), null, ct)
+                await _post.EditAsync(_channel, id, AttackEmbeds.Live(_host, _iface!, _timeline, _activeSeconds, _detector, _drops.Drops, _shieldOutcome).Build(), null, ct)
                     .ConfigureAwait(false);
                 break;
 
@@ -223,6 +249,27 @@ public sealed class AttackMonitor : BackgroundService
 
         // A capture that could not start is retried on the next attack, not every second of this one.
         if (signal == FloodSignal.Quiet && _capture is null) _captureProblem = null;
+    }
+
+    /// <summary>
+    /// Turn the limits on, players first.
+    /// </summary>
+    /// <remarks>
+    /// THE ALLOW LIST GOES IN BEFORE THE LIMITS. Otherwise the second between the two would be one
+    /// in which a real player sending a burst could be blocked for ten minutes.
+    /// </remarks>
+    private async Task EngageShieldAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        _shieldOutcome = null;
+        if (!_shield.Enabled) return;
+
+        var standBy = await _shield.ApplyAsync(engaged: false, ct).ConfigureAwait(false);
+        if (standBy is null) await _shield.AllowAsync(_players.KnownAddresses(), ct).ConfigureAwait(false);
+        var problem = standBy ?? await _shield.ApplyAsync(engaged: true, ct).ConfigureAwait(false);
+
+        _allowRefreshed = now;
+        _shieldOutcome = new ShieldOutcome(problem, null, _shield.Limits);
+        if (problem is not null) _logger.LogWarning("DDoS shield could not engage: {Problem}", problem);
     }
 
     private void StartCapture(DateTimeOffset now)
@@ -252,6 +299,16 @@ public sealed class AttackMonitor : BackgroundService
             : await _capture.StopAsync().ConfigureAwait(false);
         var statistics = _capture is null ? null : await _capture.StatisticsAsync(ct).ConfigureAwait(false);
 
+        ShieldOutcome? shield = null;
+        if (_shieldOutcome is { } outcome)
+        {
+            var stats = outcome.Engaged ? await _shield.StatsAsync(ct).ConfigureAwait(false) : null;
+            shield = outcome with { Stats = stats };
+            if (outcome.Engaged) await _shield.ApplyAsync(engaged: false, ct).ConfigureAwait(false);
+        }
+
+        var iftop = _iftop is null ? null : await _iftop.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+
         var report = new AttackReport(
             _host, _iface!,
             Start: _timeline.Count > 0 ? _timeline[0].At : now,
@@ -262,7 +319,9 @@ public sealed class AttackMonitor : BackgroundService
             Players: new PlayerImpact(_playersBefore, _playersLowest, online, _playerAddresses.Count, _drops.Drops, _drops.StaleSeconds),
             Capture: health,
             PcapPath: _capture?.PcapPath,
-            Statistics: statistics);
+            Statistics: statistics,
+            Shield: shield,
+            Iftop: iftop);
 
         _logger.LogWarning("ATTACK ended on {Interface}: {Verdict}", _iface, report.Verdict);
 
@@ -274,6 +333,8 @@ public sealed class AttackMonitor : BackgroundService
         _capture = null;
         _captureProblem = null;
         _alertMessage = null;
+        _shieldOutcome = null;
+        _iftop = null;
         _timeline.Clear();
         _activeSeconds = 0;
         _playersBefore = online;
