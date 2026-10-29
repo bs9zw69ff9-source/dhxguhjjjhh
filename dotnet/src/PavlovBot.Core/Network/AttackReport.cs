@@ -1,0 +1,164 @@
+using System.Globalization;
+using System.Text;
+
+namespace PavlovBot.Core.Network;
+
+/// <summary>How the players fared: online before, at the worst point, and after.</summary>
+/// <param name="AddressesKnown">How many of the online players the bot had an address for.</param>
+public sealed record PlayerImpact(int Before, int Lowest, int After, int AddressesKnown);
+
+/// <summary>Whether the breakdown can be trusted, in tcpdump's own numbers.</summary>
+/// <param name="Problem">Why there is no breakdown at all, or null when tcpdump ran.</param>
+/// <param name="Captured">Packets tcpdump printed.</param>
+/// <param name="DroppedByKernel">Packets the kernel dropped because tcpdump could not keep up.</param>
+public sealed record CaptureHealth(string? Problem, long Captured = 0, long DroppedByKernel = 0)
+{
+    public bool Ran => Problem is null;
+
+    /// <summary>Share of the packets tcpdump saw that it actually got, 0..1.</summary>
+    public double Completeness => Captured + DroppedByKernel == 0 ? 1 : (double)Captured / (Captured + DroppedByKernel);
+}
+
+/// <summary>
+/// One attack, start to finish: the numbers behind the summary embed and the attached report.
+/// </summary>
+/// <remarks>
+/// TWO SOURCES, NAMED APART. The totals, the peak and the timeline come from the interface's own
+/// counters, which are exact however hard the box is hit. The breakdown - sources, sizes, ports,
+/// pattern - comes from tcpdump, which can fall behind a big enough flood; when it does, the
+/// kernel says by how much, and the report says so rather than presenting a sample as a census.
+/// </remarks>
+public sealed record AttackReport(
+    string Host,
+    string Interface,
+    DateTimeOffset Start,
+    DateTimeOffset End,
+    IReadOnlyList<LinkSecond> Timeline,
+    int ActiveSeconds,
+    FloodBreakdown Breakdown,
+    PlayerImpact Players,
+    CaptureHealth Capture,
+    string? PcapPath)
+{
+    public long LinkPackets => Timeline.Sum(s => s.Packets);
+
+    public long LinkBytes => Timeline.Sum(s => s.Bytes);
+
+    public LinkSecond Peak => Timeline.Count == 0 ? default : Timeline.MaxBy(s => s.Packets);
+
+    public TimeSpan Window => End - Start;
+
+    /// <summary>Average over the seconds that were actually over the trigger, not over the quiet tail.</summary>
+    public double AverageActiveMbps =>
+        ActiveSeconds == 0 ? 0 : Timeline.OrderByDescending(s => s.Packets).Take(ActiveSeconds).Average(s => s.Mbps);
+
+    public string Pattern => Capture.Ran ? Breakdown.Pattern : "Flood";
+
+    public string Verdict =>
+        $"{Pattern} on {Host} · {Duration(TimeSpan.FromSeconds(ActiveSeconds))} · peak {Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s";
+
+    /// <summary>The attached report: everything, including the addresses the embed leaves out.</summary>
+    public string ToText()
+    {
+        var b = new StringBuilder();
+        b.AppendLine("pavlov bot attack report");
+        Line(b, "window", $"{Stamp(Start)} -> {Stamp(End)} ({Duration(Window)})");
+        Line(b, "verdict", Verdict);
+        Line(b, "interface", $"{Interface} on {Host}");
+        b.AppendLine();
+
+        Line(b, "link traffic", $"{Count(LinkPackets)} packets, {Bytes(LinkBytes)}, active {Duration(TimeSpan.FromSeconds(ActiveSeconds))}, avg {AverageActiveMbps:0.0} Mbit/s");
+        Line(b, "peak", $"{Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s at {Stamp(Peak.At)}");
+        b.AppendLine();
+
+        if (!Capture.Ran)
+        {
+            Line(b, "breakdown", $"none - {Capture.Problem}");
+        }
+        else
+        {
+            var d = Breakdown;
+            Line(b, "captured", $"{Count(Capture.Captured)} packets, {Count(Capture.DroppedByKernel)} dropped by the kernel ({Percent(Capture.Completeness)} seen)");
+            Line(b, "attack packets", $"{Count(d.AttackPackets)}, {Bytes(d.AttackPayloadBytes)} payload, from {Count(d.DistinctSources)} address(es){(d.SourcesCapped ? " (more than tracked)" : "")}");
+            Line(b, "protocols", $"UDP {Count(d.Udp)} · TCP {Count(d.Tcp)} (SYN {Count(d.Syn)}) · ICMP {Count(d.Icmp)} · other {Count(d.Other)}");
+            Line(b, "sizes", $"{d.MinSize}-{d.MaxSize} B, {d.DistinctSizes} different");
+            foreach (var (label, packets) in d.Bands)
+                b.AppendLine(CultureInfo.InvariantCulture, $"  {label,-12} {Share(packets, d.AttackPackets),6}  {Count(packets)}");
+
+            b.AppendLine();
+            b.AppendLine("targets (destination port)");
+            foreach (var (port, packets) in d.TopPorts)
+                b.AppendLine(CultureInfo.InvariantCulture, $"  {port,-6} {Share(packets, d.AttackPackets),6}  {Count(packets)}");
+
+            b.AppendLine();
+            b.AppendLine(CultureInfo.InvariantCulture, $"top {d.TopSources.Count} sources");
+            foreach (var s in d.TopSources)
+                b.AppendLine(CultureInfo.InvariantCulture, $"  {s.Address,-15} {Count(s.Packets),12} pkts  {Bytes(s.PayloadBytes),10}");
+        }
+
+        b.AppendLine();
+        Line(b, "players", $"online {Players.Before} before · {Players.Lowest} lowest · {Players.After} after");
+        Line(b, "player packets", Capture.Ran
+            ? $"{Count(Breakdown.PlayerPackets)} from {Players.AddressesKnown} known player address(es) - not counted as attack"
+            : "unknown without a capture");
+        if (PcapPath is not null) Line(b, "pcap", $"{PcapPath} - open it in Wireshark");
+
+        b.AppendLine();
+        b.AppendLine("timeline (packets/s, Mbit/s)");
+        foreach (var s in Timeline)
+            b.AppendLine(CultureInfo.InvariantCulture, $"  {s.At.UtcDateTime:HH:mm:ss}  {s.Packets,9}  {s.Mbps,8:0.0}");
+
+        return b.ToString();
+    }
+
+    private static void Line(StringBuilder b, string label, string value) =>
+        b.AppendLine(CultureInfo.InvariantCulture, $"{label,-16}{value}");
+
+    public static string Stamp(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture);
+
+    public static string Duration(TimeSpan span) =>
+        span.TotalMinutes >= 1
+            ? string.Create(CultureInfo.InvariantCulture, $"{(int)span.TotalMinutes}m {span.Seconds}s")
+            : string.Create(CultureInfo.InvariantCulture, $"{(int)span.TotalSeconds}s");
+
+    public static string Count(long n) => n.ToString("N0", CultureInfo.InvariantCulture);
+
+    public static string Share(long part, long whole) => whole == 0 ? "0.0%" : Percent((double)part / whole);
+
+    /// <summary>"97.2%": the invariant culture's P1 puts a space before the sign, which reads oddly.</summary>
+    public static string Percent(double fraction) =>
+        fraction.ToString("P1", CultureInfo.InvariantCulture).Replace(" ", "", StringComparison.Ordinal);
+
+    public static string Bytes(long bytes) => bytes switch
+    {
+        >= 1_000_000_000 => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1e9:0.0} GB"),
+        >= 1_000_000 => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1e6:0.0} MB"),
+        >= 1_000 => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1e3:0.0} KB"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{bytes} B"),
+    };
+
+    /// <summary>A one-line chart of <paramref name="values"/>, squeezed into <paramref name="width"/> blocks.</summary>
+    public static string Sparkline(IReadOnlyList<long> values, int width = 40)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return "";
+
+        const string blocks = "▁▂▃▄▅▆▇█";
+        var buckets = Math.Min(width, values.Count);
+        var max = Math.Max(1, values.Max());
+        var b = new StringBuilder(buckets);
+        for (var i = 0; i < buckets; i++)
+        {
+            var from = i * values.Count / buckets;
+            var to = Math.Max(from + 1, (i + 1) * values.Count / buckets);
+            var peak = values.Skip(from).Take(to - from).Max();
+            b.Append(blocks[(int)Math.Round((double)peak / max * (blocks.Length - 1))]);
+        }
+        return b.ToString();
+    }
+
+    /// <summary>A bar for a share, <paramref name="width"/> blocks long at 100%.</summary>
+    public static string Bar(long part, long whole, int width = 20) =>
+        whole <= 0 ? "" : new string('█', (int)Math.Round((double)part / whole * width));
+}
