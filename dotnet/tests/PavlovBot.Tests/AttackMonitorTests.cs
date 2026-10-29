@@ -554,8 +554,18 @@ public class AttackMonitorTests
             return Task.FromResult<ulong?>(1);
         }
 
+        /// <summary>False makes every post fail, as when the bot cannot reach Discord.</summary>
+        public bool Reachable { get; set; } = true;
+
+        public int FailedPosts { get; private set; }
+
         public Task<ulong?> SendWithFileAsync(ulong channelId, Embed embed, string fileName, string content, CancellationToken ct)
         {
+            if (!Reachable)
+            {
+                FailedPosts++;
+                return Task.FromResult<ulong?>(null);
+            }
             Files.Add((embed, fileName, content));
             return Task.FromResult<ulong?>(2);
         }
@@ -577,10 +587,10 @@ public class AttackMonitorTests
         private long _packets;
         private long _bytes;
 
-        public Rig(bool mitigation = false)
+        public Rig(bool mitigation = false, string? directory = null)
         {
             Shield = new Shield(mitigation);
-            Monitor = new AttackMonitor(42, "eth0", new FloodThresholds(Pps: 10_000), pcapDirectory: null,
+            Monitor = new AttackMonitor(42, "eth0", new FloodThresholds(Pps: 10_000), pcapDirectory: directory,
                 _ => (_packets, _bytes),
                 Players,
                 (_, pcap, recorder, addresses) =>
@@ -593,7 +603,8 @@ public class AttackMonitorTests
                     Captures.Add(capture);
                     return (capture, null);
                 },
-                Shield, Posts, Posts, Clock, NullLogger<AttackMonitor>.Instance);
+                Shield, Posts, Posts, Clock, NullLogger<AttackMonitor>.Instance, () => Posts.Reachable,
+                (_, _) => Task.FromResult<string?>("iftop snapshot"));
         }
 
         /// <summary>One second carrying <paramref name="pps"/> packets of 1,200 bytes.</summary>
@@ -715,6 +726,59 @@ public class AttackMonitorTests
         Assert.Contains(alert.Fields, f => f.Name == "Filter" && f.Value.Contains("could not engage", StringComparison.Ordinal));
         var (summary, _, _) = Assert.Single(rig.Posts.Files);
         Assert.Contains(summary.Fields, f => f.Name == "Dropped by the filter" && f.Value.Contains("nft is not installed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ASummaryThatCannotBePostedIsKeptAndPostedLateWhenDiscordIsBack()
+    {
+        /* The flood that fills the server's connection takes the bot's Discord link with it, so the
+           summary is written exactly when it cannot be sent. It must not be lost. */
+        var rig = new Rig();
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+
+        rig.Posts.Reachable = false;
+        for (var i = 0; i < 6; i++) await rig.SecondAsync(50_000);
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+        for (var i = 0; i < 40; i++) await rig.SecondAsync(500);   // still down: retried, still failing
+
+        // Tried once when the attack ended, then not again until Discord answers: no hammering a dead link.
+        Assert.Empty(rig.Posts.Files);
+        Assert.Equal(1, rig.Posts.FailedPosts);
+
+        rig.Posts.Reachable = true;
+        for (var i = 0; i < 31; i++) await rig.SecondAsync(500);
+
+        var (summary, _, content) = Assert.Single(rig.Posts.Files);
+        Assert.Contains("Posted late", summary.Description, StringComparison.Ordinal);
+        var lost = Assert.Single(summary.Fields, f => f.Name.Contains("Connection lost", StringComparison.Ordinal));
+        // Down for the six flood seconds and the quiet tail until the attack was called over.
+        Assert.Contains("20s", lost.Value, StringComparison.Ordinal);
+        Assert.Contains("could not reach Discord for 20s", content, StringComparison.Ordinal);
+        Assert.Contains("iftop snapshot", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EveryReportIsSavedToDiskBesideItsPcap()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "pavlovbot-attacks-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var rig = new Rig(directory: directory);
+            rig.Posts.Reachable = false;   // even when nothing reaches Discord
+            await rig.SecondAsync(500);
+            await rig.SecondAsync(500);
+            for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+            for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+            var saved = Assert.Single(Directory.GetFiles(directory, "attack-*.txt"));
+            Assert.Contains("pavlov bot attack report", File.ReadAllText(saved), StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

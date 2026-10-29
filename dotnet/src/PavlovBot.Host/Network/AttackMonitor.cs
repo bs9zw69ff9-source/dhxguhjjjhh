@@ -58,8 +58,14 @@ public sealed class AttackMonitor : BackgroundService
     /// <summary>The longest timeline one report keeps: four hours of seconds.</summary>
     private const int MaxTimeline = 4 * 60 * 60;
 
-    /// <summary>How many pcaps are kept on disk; older ones are deleted.</summary>
+    /// <summary>How many pcaps and reports are kept on disk; older ones are deleted.</summary>
     private const int PcapsKept = 10;
+
+    /// <summary>How often a summary that could not be posted is tried again.</summary>
+    private static readonly TimeSpan RetryEvery = TimeSpan.FromSeconds(30);
+
+    /// <summary>The most summaries held back while Discord is unreachable; the oldest go first past this.</summary>
+    private const int MaxPending = 20;
 
     private readonly ulong _channel;
     private readonly string _host = Environment.MachineName;
@@ -69,6 +75,13 @@ public sealed class AttackMonitor : BackgroundService
     private readonly IPlayerTraffic _players;
     private readonly Func<string, string?, FloodRecorder, Func<IReadOnlySet<uint>>, (IAttackCapture? Capture, string? Problem)> _startCapture;
     private readonly IFloodShield _shield;
+    private readonly Func<bool> _discordConnected;
+    private readonly Func<string, CancellationToken, Task<string?>> _iftopSnapshot;
+    private readonly List<AttackReport> _pending = [];
+    private DateTimeOffset _lastRetry;
+    private int _offlineSeconds;
+    private DateTimeOffset? _offlineFrom;
+    private DateTimeOffset _offlineUntil;
     private readonly IAutoPostTarget _post;
     private readonly IFilePostTarget _files;
     private readonly TimeProvider _time;
@@ -106,8 +119,12 @@ public sealed class AttackMonitor : BackgroundService
         IAutoPostTarget post,
         IFilePostTarget files,
         TimeProvider time,
-        ILogger<AttackMonitor> logger)
+        ILogger<AttackMonitor> logger,
+        Func<bool>? discordConnected = null,
+        Func<string, CancellationToken, Task<string?>>? iftopSnapshot = null)
     {
+        _discordConnected = discordConnected ?? (() => true);
+        _iftopSnapshot = iftopSnapshot ?? ((iface, token) => IftopSnapshot.TakeAsync(iface, logger, token));
         _channel = channel;
         _iface = iface;
         _pcapDirectory = pcapDirectory;
@@ -206,16 +223,31 @@ public sealed class AttackMonitor : BackgroundService
             _drops.Baseline(names);
         }
 
-        if (_detector.InAttack) _playersLowest = Math.Min(_playersLowest, online);
+        if (_detector.InAttack)
+        {
+            _playersLowest = Math.Min(_playersLowest, online);
+
+            // A bot cut off from Discord mid-attack is a bot whose own connection was full.
+            if (!_discordConnected())
+            {
+                _offlineSeconds++;
+                _offlineFrom ??= now;
+                _offlineUntil = now;
+            }
+        }
+
+        if (_pending.Count > 0 && now - _lastRetry >= RetryEvery && _discordConnected())
+        {
+            _lastRetry = now;
+            await RetryPendingAsync(ct).ConfigureAwait(false);
+        }
 
         switch (signal)
         {
             case FloodSignal.Started:
                 _playersLowest = online;
                 await EngageShieldAsync(now, ct).ConfigureAwait(false);
-                _iftop = Environment.IsPrivilegedProcess
-                    ? Task.Run(() => IftopSnapshot.TakeAsync(_iface!, _logger, CancellationToken.None), CancellationToken.None)
-                    : null;
+                _iftop = Task.Run(() => _iftopSnapshot(_iface!, CancellationToken.None), CancellationToken.None);
                 _logger.LogWarning("ATTACK started on {Interface}: {Pps} pkt/s, {Mbps:0.0} Mbit/s", _iface, second.Packets, second.Mbps);
                 _alertMessage = await _post.SendAsync(_channel, AttackEmbeds.Started(_host, _iface!, second, _detector, _shieldOutcome).Build(), null, ct)
                     .ConfigureAwait(false);
@@ -321,13 +353,22 @@ public sealed class AttackMonitor : BackgroundService
             PcapPath: _capture?.PcapPath,
             Statistics: statistics,
             Shield: shield,
-            Iftop: iftop);
+            Iftop: iftop,
+            Connection: _offlineFrom is { } from ? new ConnectionLoss(_offlineSeconds, from, _offlineUntil) : null);
 
         _logger.LogWarning("ATTACK ended on {Interface}: {Verdict}", _iface, report.Verdict);
 
-        var fileName = $"attack-{report.Start.UtcDateTime:yyyyMMdd-HHmmss}.txt";
-        await _files.SendWithFileAsync(_channel, AttackEmbeds.Summary(report).Build(), fileName, report.ToText(), ct)
-            .ConfigureAwait(false);
+        // ON DISK FIRST, so a report survives a Discord that is still unreachable - or a bot restart.
+        SaveReport(report);
+
+        if (await PostAsync(report, postedLate: false, ct).ConfigureAwait(false) is null)
+        {
+            _logger.LogWarning("Could not post the attack summary; it will be retried every {Seconds}s until Discord answers",
+                RetryEvery.TotalSeconds);
+            if (_pending.Count >= MaxPending) _pending.RemoveAt(0);
+            _pending.Add(report);
+            _lastRetry = now;
+        }
 
         if (_capture is not null) await _capture.DisposeAsync().ConfigureAwait(false);
         _capture = null;
@@ -335,10 +376,43 @@ public sealed class AttackMonitor : BackgroundService
         _alertMessage = null;
         _shieldOutcome = null;
         _iftop = null;
+        _offlineSeconds = 0;
+        _offlineFrom = null;
         _timeline.Clear();
         _activeSeconds = 0;
         _playersBefore = online;
         _drops.Baseline(_players.OnlineNames());
+    }
+
+    private static string ReportName(AttackReport report) => $"attack-{report.Start.UtcDateTime:yyyyMMdd-HHmmss}.txt";
+
+    private Task<ulong?> PostAsync(AttackReport report, bool postedLate, CancellationToken ct) =>
+        _files.SendWithFileAsync(_channel, AttackEmbeds.Summary(report, postedLate).Build(), ReportName(report), report.ToText(), ct);
+
+    /// <summary>Post the held-back summaries, oldest first, stopping at the first that still fails.</summary>
+    private async Task RetryPendingAsync(CancellationToken ct)
+    {
+        while (_pending.Count > 0)
+        {
+            if (await PostAsync(_pending[0], postedLate: true, ct).ConfigureAwait(false) is null) return;
+            _logger.LogInformation("Posted the held-back summary of the attack at {Start}", _pending[0].Start);
+            _pending.RemoveAt(0);
+        }
+    }
+
+    /// <summary>The report beside its pcap, so nothing depends on Discord being reachable.</summary>
+    private void SaveReport(AttackReport report)
+    {
+        if (_pcapDirectory is null) return;
+        try
+        {
+            PrepareDirectory(_pcapDirectory);
+            File.WriteAllText(Path.Combine(_pcapDirectory, ReportName(report)), report.ToText());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not save the attack report to {Directory}", _pcapDirectory);
+        }
     }
 
     private async Task DeleteAsync(IAttackCapture capture)
@@ -361,10 +435,13 @@ public sealed class AttackMonitor : BackgroundService
         try
         {
             Directory.CreateDirectory(directory);
-            foreach (var old in Directory.EnumerateFiles(directory, "attack-*.pcap")
-                         .OrderByDescending(f => f, StringComparer.Ordinal).Skip(PcapsKept - 1))
+            foreach (var pattern in new[] { "attack-*.pcap", "attack-*.txt" })
             {
-                File.Delete(old);
+                foreach (var old in Directory.EnumerateFiles(directory, pattern)
+                             .OrderByDescending(f => f, StringComparer.Ordinal).Skip(PcapsKept - 1))
+                {
+                    File.Delete(old);
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
