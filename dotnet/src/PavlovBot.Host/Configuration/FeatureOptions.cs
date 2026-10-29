@@ -428,6 +428,21 @@ public sealed record FeatureOptions
     /// <summary>The shield's limits: ATTACK_GAME_PORTS, ATTACK_PER_IP_PPS, ATTACK_UNKNOWN_PPS, ATTACK_BLOCK_MINUTES.</summary>
     public PavlovBot.Core.Network.ShieldLimits AttackLimits { get; init; } = new();
 
+    /// <summary>
+    /// Whether every inbound header and every source address is logged all the time (<c>PACKET_LOG</c>).
+    /// </summary>
+    /// <remarks>
+    /// ON WITH THE DDOS MONITOR unless set off, OFF without it unless set on: one bot per box
+    /// should log, and that is the one already watching the interface.
+    /// </remarks>
+    public bool PacketLog { get; init; }
+
+    /// <summary>Days the per-minute source logs are kept (<c>PACKET_LOG_DAYS</c>).</summary>
+    public int PacketLogDays { get; init; } = 30;
+
+    /// <summary>The disk the rolling header capture may use, in megabytes (<c>PACKET_RING_MB</c>).</summary>
+    public int PacketRingMegabytes { get; init; } = 2048;
+
     /// <summary>The image a new Docker server runs (<c>PAVLOV_DOCKER_IMAGE</c>).</summary>
     public string DockerImage { get; init; } = PavlovBot.Host.Servers.DockerCli.DefaultImage;
 
@@ -572,6 +587,9 @@ public sealed record FeatureOptions
                 Int(configuration, "ATTACK_PER_IP_PPS", 1000),
                 Int(configuration, "ATTACK_UNKNOWN_PPS", 5000),
                 Int(configuration, "ATTACK_BLOCK_MINUTES", 10)),
+            PacketLog = OptionalFlag(configuration, "PACKET_LOG") ?? Snowflake(configuration, "ATTACK_CHANNEL") is not null,
+            PacketLogDays = Int(configuration, "PACKET_LOG_DAYS", 30),
+            PacketRingMegabytes = Int(configuration, "PACKET_RING_MB", 2048),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             CommandLogChannel = Snowflake(configuration, "COMMAND_LOG_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),

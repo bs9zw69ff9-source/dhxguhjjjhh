@@ -49,13 +49,17 @@ public class PacketToolsCommandTests
     public void TheVersionIsTheFirstLine(string? output, string? line) => Assert.Equal(line, PacketToolsCommand.FirstLine(output));
 
     [Fact]
-    public void ItHasStatusInstallAnalyzeAndUnblock()
+    public void ItHasStatusInstallAnalyzeSourcesAndUnblock()
     {
         var command = new PacketToolsCommand(null!, null!, null!, null!, null!, null!);
         var built = (SlashCommandProperties)command.Build();
 
         Assert.Equal("packettools", built.Name.Value);
-        Assert.Equal(["status", "install", "analyze", "unblock"], built.Options.Value.Select(o => o.Name));
+        Assert.Equal(["status", "install", "analyze", "sources", "unblock"], built.Options.Value.Select(o => o.Name));
+        var sources = built.Options.Value.Single(o => o.Name == "sources");
+        Assert.True(sources.Options.Single(o => o.Name == "ip").IsRequired);
+        var days = sources.Options.Single(o => o.Name == "days");
+        Assert.Equal(PacketToolsCommand.MaxSearchDays, days.MaxValue);
         Assert.True(command.Ephemeral);
     }
 
