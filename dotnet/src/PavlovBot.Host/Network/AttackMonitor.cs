@@ -24,6 +24,9 @@ public interface IAttackCapture : IAsyncDisposable
     string? PcapPath { get; }
 
     Task<CaptureHealth> StopAsync();
+
+    /// <summary>Wireshark's statistics for the pcap, once stopped. Null when there is none.</summary>
+    Task<string?> StatisticsAsync(CancellationToken ct);
 }
 
 /// <summary>
@@ -34,7 +37,7 @@ public interface IAttackCapture : IAsyncDisposable
 /// be dropped is left to whoever reads the report, because a wrong automatic block lands on
 /// real players.
 ///
-/// THE CAPTURE STARTS EARLY. tcpdump is switched on at half the trigger, so the breakdown already
+/// THE CAPTURE STARTS EARLY. tshark is switched on at half the trigger, so the breakdown already
 /// covers the seconds that took traffic over it; waiting for the attack to be declared would lose
 /// its opening, which is usually its peak. If traffic falls back without becoming an attack, the
 /// capture is stopped and thrown away after a minute.
@@ -79,7 +82,7 @@ public sealed class AttackMonitor : BackgroundService
     private int _activeSeconds;
     private ulong? _alertMessage;
     private DateTimeOffset _lastLive;
-    /// <summary>Replaced whole on the timer thread, read by tcpdump's reader: volatile, never mutated.</summary>
+    /// <summary>Replaced whole on the timer thread, read by tshark's reader: volatile, never mutated.</summary>
     private volatile IReadOnlySet<uint> _playerAddresses = new HashSet<uint>();
     private DateTimeOffset _playersRefreshed;
 
@@ -209,7 +212,7 @@ public sealed class AttackMonitor : BackgroundService
                 break;
         }
 
-        // A watch that never became an attack: drop the capture rather than keep tcpdump running.
+        // A watch that never became an attack: drop the capture rather than keep tshark running.
         if (!_detector.InAttack && _detector.RunStartedAt is null && signal != FloodSignal.Ended &&
             _capture is not null && now - _lastWatch >= AbandonWatchAfter)
         {
@@ -247,6 +250,7 @@ public sealed class AttackMonitor : BackgroundService
         var health = _capture is null
             ? new CaptureHealth(_captureProblem ?? "no capture was running")
             : await _capture.StopAsync().ConfigureAwait(false);
+        var statistics = _capture is null ? null : await _capture.StatisticsAsync(ct).ConfigureAwait(false);
 
         var report = new AttackReport(
             _host, _iface!,
@@ -257,7 +261,8 @@ public sealed class AttackMonitor : BackgroundService
             Breakdown: _capture is null ? FloodBreakdown.Empty : _recorder.Snapshot(),
             Players: new PlayerImpact(_playersBefore, _playersLowest, online, _playerAddresses.Count, _drops.Drops, _drops.StaleSeconds),
             Capture: health,
-            PcapPath: _capture?.PcapPath);
+            PcapPath: _capture?.PcapPath,
+            Statistics: statistics);
 
         _logger.LogWarning("ATTACK ended on {Interface}: {Verdict}", _iface, report.Verdict);
 

@@ -7,7 +7,7 @@ namespace PavlovBot.Host.Network;
 /// </summary>
 /// <remarks>
 /// <c>/sys/class/net/&lt;if&gt;/statistics</c> rather than a capture, because these are EXACT
-/// at any rate: the driver counts every frame it receives, so a flood that tcpdump cannot keep
+/// at any rate: the driver counts every frame it receives, so a flood that tshark cannot keep
 /// up with is still measured to the packet. Reading them costs two small file reads a second,
 /// which is why detection runs on these all the time and the capture only during an attack.
 /// </remarks>
@@ -54,7 +54,7 @@ public static class LinkCounters
     /// <summary>
     /// A Linux interface name: up to 15 characters, nothing that could be a path or a flag.
     /// </summary>
-    /// <remarks>It becomes both a path segment here and an argument to tcpdump, so it is allow-listed.</remarks>
+    /// <remarks>It becomes both a path segment here and an argument to tshark, so it is allow-listed.</remarks>
     public static bool IsPlausibleInterface(string? name) =>
         name is { Length: > 0 and <= 15 } &&
         char.IsAsciiLetterOrDigit(name[0]) &&

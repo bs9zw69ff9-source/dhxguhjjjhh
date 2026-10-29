@@ -7,43 +7,45 @@ using Xunit;
 
 namespace PavlovBot.Tests;
 
-/// <summary>Reading tcpdump, deciding what is an attack, and the numbers in the report.</summary>
-/// <remarks>The sample lines and statistics are copied from tcpdump 4.99.4 / libpcap 1.10.4.</remarks>
+/// <summary>Reading tshark, deciding what is an attack, and the numbers in the report.</summary>
+/// <remarks>The sample lines and statistics are copied from tshark 4.2.2 captures.</remarks>
 public class FloodAnalysisTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 18, 13, 50, 34, TimeSpan.Zero);
 
-    // ---- tcpdump lines ----
+    // ---- tshark fields ----
 
     [Fact]
     public void AUdpLine()
     {
-        var p = CapturedPacket.Parse("IP 203.0.113.5.51234 > 10.0.0.2.7777: UDP, length 1200")!.Value;
+        var p = CapturedPacket.ParseFields("203.0.113.5,17,7777,,1208,,,,1228,0")!.Value;
 
         Assert.Equal("203.0.113.5", CapturedPacket.Address(p.Source));
         Assert.Equal(7777, p.DestinationPort);
         Assert.Equal(PacketProtocol.Udp, p.Protocol);
-        Assert.Equal(1200, p.Payload);
+        Assert.Equal(1200, p.Payload);   // udp.length includes UDP's 8-byte header
         Assert.False(p.Syn);
     }
 
     [Theory]
-    [InlineData("IP 127.0.0.1.56920 > 127.0.0.1.9999: Flags [S], seq 1442071647, win 65495, options [mss 65495,sackOK,TS val 588826661 ecr 0,nop,wscale 10], length 0", true)]
-    [InlineData("IP 127.0.0.1.9999 > 127.0.0.1.56920: Flags [R.], seq 0, ack 1442071648, win 0, length 0", false)]
-    [InlineData("IP 10.0.0.9.443 > 10.0.0.2.51000: Flags [S.], seq 1, ack 2, win 64240, length 0", false)]
-    [InlineData("IP 10.0.0.9.5000 > 10.0.0.2.80: Flags [P.], seq 1:101, ack 1, win 501, length 100", false)]
+    [InlineData("203.0.113.5,6,,22,,0,True,False,60,0", true)]       // tshark 4.x
+    [InlineData("203.0.113.5,6,,22,,0,1,0,60,0", true)]              // older releases print 1/0
+    [InlineData("34.149.66.165,6,,50860,,0,False,True,52,0", false)]  // a bare ACK, from a real capture
+    [InlineData("10.0.0.9,6,,443,,0,True,True,60,0", false)]          // SYN-ACK: a reply, not a new connection
     public void TcpOnlyABareSynIsASyn(string line, bool syn)
     {
-        var p = CapturedPacket.Parse(line)!.Value;
+        var p = CapturedPacket.ParseFields(line)!.Value;
 
         Assert.Equal(PacketProtocol.Tcp, p.Protocol);
         Assert.Equal(syn, p.Syn);
     }
 
     [Fact]
-    public void AnIcmpLineHasNoPortAndTakesTheLastLength()
+    public void AnIcmpErrorIsNotTheUdpPacketItQuotes()
     {
-        var p = CapturedPacket.Parse("IP 127.0.0.1 > 127.0.0.1: ICMP 127.0.0.1 udp port 7779 unreachable, length 556")!.Value;
+        /* From a real capture: an ICMP port-unreachable carries the UDP header it is about, and
+           tshark fills in that quoted port and length. It is ICMP, not UDP traffic to 7779. */
+        var p = CapturedPacket.ParseFields("127.0.0.1,1,7779,,1224,,,,576,0")!.Value;
 
         Assert.Equal(PacketProtocol.Icmp, p.Protocol);
         Assert.Equal(0, p.DestinationPort);
@@ -51,31 +53,30 @@ public class FloodAnalysisTests
     }
 
     [Fact]
-    public void AFragmentIsCountedAsOther()
+    public void ANonFirstFragmentHasNoPorts()
     {
-        var p = CapturedPacket.Parse("IP 198.51.100.7 > 10.0.0.2: ip-proto-17")!.Value;
+        var p = CapturedPacket.ParseFields("198.51.100.7,17,,,,,,,1500,185")!.Value;
 
         Assert.Equal(PacketProtocol.Other, p.Protocol);
-        Assert.Equal("198.51.100.7", CapturedPacket.Address(p.Source));
+        Assert.Equal(0, p.DestinationPort);
     }
 
     [Theory]
-    [InlineData("listening on lo, link-type EN10MB (Ethernet), snapshot length 128 bytes")]
-    [InlineData("IP6 ::1.5000 > ::1.7777: UDP, length 10")]
-    [InlineData("IP 999.1.1.1.5 > 10.0.0.2.7777: UDP, length 10")]
-    [InlineData("IP 10.0.0.1.5 > 10.0.0.2.port: UDP, length 10")]
-    [InlineData("IP no arrow here: UDP")]
+    [InlineData("Running as user \"root\" and group \"root\". This could be dangerous.")]
+    [InlineData("Capturing on 'eth0'")]
+    [InlineData("999.1.1.1,17,7777,,40,,,,60,0")]
+    [InlineData("203.0.113.5,17,notaport,,40,,,,60,0")]
+    [InlineData("203.0.113.5,17,7777")]
     [InlineData("")]
     [InlineData(null)]
-    public void AnythingElseIsNotAPacket(string? line) => Assert.Null(CapturedPacket.Parse(line));
+    public void AnythingElseIsNotAPacket(string? line) => Assert.Null(CapturedPacket.ParseFields(line));
 
     [Fact]
-    public void TcpdumpsClosingStatisticsAreRead()
+    public void TsharksClosingStatisticsAreRead()
     {
-        var health = TcpdumpCapture.Health(
-            "tcpdump: verbose output suppressed, use -v[v]... for full protocol decode\n" +
-            "listening on eth0, link-type EN10MB (Ethernet), snapshot length 128 bytes\n" +
-            "2465096 packets captured\n2470000 packets received by filter\n4904 packets dropped by kernel\n");
+        var health = TsharkCapture.Health(
+            "Running as user \"root\" and group \"root\". This could be dangerous.\n" +
+            "Capturing on 'eth0'\n2465096 packets captured\n4904 packets dropped from eth0\n");
 
         Assert.Equal(2_465_096, health.Captured);
         Assert.Equal(4_904, health.DroppedByKernel);
@@ -83,22 +84,59 @@ public class FloodAnalysisTests
     }
 
     [Fact]
-    public void TheStreamCopyKeepsHeadersOnlyAndDecodesNothingExtra()
+    public void TheStreamCopyDissectsOnlyWhatTheBreakdownReads()
     {
-        var argv = TcpdumpCapture.StreamArgv("eth0");
+        var argv = TsharkCapture.StreamArgv("eth0");
 
-        Assert.Equal(["-i", "eth0", "-l", "-n", "-t", "-s", "128", "-B", "16384", "inbound", "and", "ip"], argv);
-        Assert.DoesNotContain(argv, a => a.StartsWith("-v", StringComparison.Ordinal));
+        Assert.Equal("inbound and ip", argv[argv.ToList().IndexOf("-f") + 1]);
+        Assert.Equal("128", argv[argv.ToList().IndexOf("-s") + 1]);
+        Assert.Contains("--disable-all-protocols", argv);
+        Assert.Equal("frame,eth,sll,ip,udp,tcp,icmp", argv[argv.ToList().IndexOf("--enable-protocol") + 1]);
+        Assert.Contains("occurrence=f", argv);   // outer values only, never a quoted packet's
+        Assert.Equal(CapturedPacket.TsharkFields, argv.Where((a, i) => i > 0 && argv[i - 1] == "-e"));
     }
 
     [Fact]
     public void ThePcapCopyIsCappedAndWritesWhereItIsTold()
     {
-        var argv = TcpdumpCapture.PcapArgv("eth0", "/root/pavlov-bot/data/attacks/attack-1.pcap");
+        var argv = TsharkCapture.PcapArgv("eth0", "/root/pavlov-bot/data/attacks/attack-1.pcap");
 
-        Assert.Contains("-c", argv);
-        Assert.Equal(TcpdumpCapture.PcapPacketLimit.ToString(System.Globalization.CultureInfo.InvariantCulture), argv[argv.ToList().IndexOf("-c") + 1]);
+        Assert.Equal(TsharkCapture.PcapPacketLimit.ToString(System.Globalization.CultureInfo.InvariantCulture), argv[argv.ToList().IndexOf("-c") + 1]);
         Assert.Equal("/root/pavlov-bot/data/attacks/attack-1.pcap", argv[argv.ToList().IndexOf("-w") + 1]);
+    }
+
+    [Fact]
+    public void TheStatisticsAreWiresharksMenuInOnePass()
+    {
+        var argv = TsharkCapture.StatisticsArgv("/x/attack.pcap");
+
+        Assert.Equal(["io,phs", "endpoints,ip", "conv,ip", "conv,udp"], argv.Where((a, i) => i > 0 && argv[i - 1] == "-z"));
+        Assert.Contains("--disable-all-protocols", argv);
+    }
+
+    [Fact]
+    public void BigTablesAreCutToTheirBusiestRowsAndTheHierarchyIsKept()
+    {
+        var rows = string.Join("\n", Enumerable.Range(1, 40).Select(i => $"203.0.113.{i}            {1000 - i}     {(1000 - i) * 1200}"));
+        var statistics =
+            "================================================================================\n" +
+            "IPv4 Endpoints\nFilter:<No Filter>\n" +
+            "                       |  Packets  | |  Bytes  |\n" + rows + "\n" +
+            "================================================================================\n" +
+            "===================================================================\n" +
+            "Protocol Hierarchy Statistics\nFilter: \n\n" +
+            "eth                                      frames:200000 bytes:178153300\n" +
+            "  ip                                     frames:200000 bytes:178153300\n" +
+            "    udp                                  frames:100000 bytes:119153300\n" +
+            "===================================================================\n";
+
+        var trimmed = TsharkCapture.Trim(statistics, rows: 5);
+
+        Assert.Contains("203.0.113.5 ", trimmed, StringComparison.Ordinal);
+        Assert.DoesNotContain("203.0.113.6 ", trimmed, StringComparison.Ordinal);
+        Assert.Contains("… 35 more row(s)", trimmed, StringComparison.Ordinal);
+        Assert.Contains("    udp", trimmed, StringComparison.Ordinal);
+        Assert.Contains("IPv4 Endpoints", trimmed, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -296,7 +334,7 @@ public class FloodAnalysisTests
         Assert.Contains("top 50 sources", text, StringComparison.Ordinal);
         Assert.Contains("203.0.113.0", text, StringComparison.Ordinal);
         Assert.Contains("timeline (packets/s, Mbit/s)", text, StringComparison.Ordinal);
-        Assert.Contains("open it in Wireshark", text, StringComparison.Ordinal);
+        Assert.Contains("/packettools analyze reads it again", text, StringComparison.Ordinal);
         Assert.Contains("online 28 before · 26 lowest · 28 after", text, StringComparison.Ordinal);
     }
 
@@ -437,7 +475,7 @@ public class FloodAnalysisTests
     }
 }
 
-/// <summary>The monitor itself, one tick at a time, with the link, tcpdump and Discord faked.</summary>
+/// <summary>The monitor itself, one tick at a time, with the link, tshark and Discord faked.</summary>
 public class AttackMonitorTests
 {
     private sealed class Players : IPlayerTraffic
@@ -462,6 +500,9 @@ public class AttackMonitorTests
             Stopped = true;
             return Task.FromResult(new CaptureHealth(null, 1000, 0));
         }
+
+        public Task<string?> StatisticsAsync(CancellationToken ct) =>
+            Task.FromResult<string?>("Protocol Hierarchy Statistics\neth  frames:1000");
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
@@ -565,6 +606,7 @@ public class AttackMonitorTests
         Assert.Contains("Player7", dropped.Value, StringComparison.Ordinal);
         Assert.Contains("not back", dropped.Value, StringComparison.Ordinal);
         Assert.True(rig.Captures.Single().Stopped);
+        Assert.Contains("tshark statistics of the pcap", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -621,21 +663,21 @@ public class AttackMonitorTests
     [Fact]
     public async Task WithoutTcpdumpTheSummaryStillComesFromTheCounters()
     {
-        var rig = new Rig { CaptureProblem = "tcpdump is not installed - `apt install tcpdump`" };
+        var rig = new Rig { CaptureProblem = "tshark is not installed - run `/packettools install`" };
         await rig.SecondAsync(500);
         await rig.SecondAsync(500);
         for (var i = 0; i < 5; i++) await rig.SecondAsync(50_000);
         for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
 
         var (summary, _, content) = Assert.Single(rig.Posts.Files);
-        Assert.Contains(summary.Fields, f => f.Name == "Breakdown" && f.Value.Contains("apt install tcpdump", StringComparison.Ordinal));
+        Assert.Contains(summary.Fields, f => f.Name == "Breakdown" && f.Value.Contains("/packettools install", StringComparison.Ordinal));
         Assert.Contains("257,500 packets", content, StringComparison.Ordinal);   // 5 s of flood + the 15 s quiet tail
     }
 
     [Fact]
     public async Task ACaptureThatCannotStartIsNotRetriedEverySecond()
     {
-        var rig = new Rig { CaptureProblem = "tcpdump is not installed" };
+        var rig = new Rig { CaptureProblem = "tshark is not installed" };
         await rig.SecondAsync(500);
         await rig.SecondAsync(500);
         for (var i = 0; i < 10; i++) await rig.SecondAsync(50_000);

@@ -734,7 +734,7 @@ public static class Program
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
         builder.Services.AddSingleton<IFilePostTarget>(sp => (IFilePostTarget)sp.GetRequiredService<IAutoPostTarget>());
 
-        /* ATTACK_CHANNEL turns the DDoS monitor on: interface counters every second, tcpdump during
+        /* ATTACK_CHANNEL turns the DDoS monitor on: interface counters every second, tshark during
            an attack, an alert and a summary in that channel. Detect and report only - it never
            touches the firewall. */
         if (features.AttackChannel is { } attackChannel)
@@ -751,7 +751,7 @@ public static class Program
                     new PavlovBot.Host.Network.PlayerTraffic(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<IpTrackingService>()),
                     (iface, pcap, recorder, addresses) =>
                     {
-                        var (capture, problem) = PavlovBot.Host.Network.TcpdumpCapture.Start(iface, pcap,
+                        var (capture, problem) = PavlovBot.Host.Network.TsharkCapture.Start(iface, pcap,
                             packet => recorder.Add(packet, addresses().Contains(packet.Source)), monitorLogger);
                         return (capture, problem);
                     },
