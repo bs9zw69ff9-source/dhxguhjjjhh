@@ -402,6 +402,20 @@ public sealed record FeatureOptions
     /// <summary>The raw <c>PAVLOV_RUNTIME</c>, for the refusal when it is not a runtime.</summary>
     public string? ProvisionRuntimeSetting { get; init; }
 
+    /// <summary>
+    /// Where DDoS alerts and attack summaries go (<c>ATTACK_CHANNEL</c>). Null leaves the monitor off.
+    /// </summary>
+    public ulong? AttackChannel { get; init; }
+
+    /// <summary>The interface to watch (<c>ATTACK_INTERFACE</c>). Null uses the one the default route leaves by.</summary>
+    public string? AttackInterface { get; init; }
+
+    /// <summary>Packets a second that always count as an attack (<c>ATTACK_PPS</c>).</summary>
+    public int AttackPps { get; init; } = 20_000;
+
+    /// <summary>Megabits a second that always count as an attack (<c>ATTACK_MBPS</c>).</summary>
+    public int AttackMbps { get; init; } = 200;
+
     /// <summary>The image a new Docker server runs (<c>PAVLOV_DOCKER_IMAGE</c>).</summary>
     public string DockerImage { get; init; } = PavlovBot.Host.Servers.DockerCli.DefaultImage;
 
@@ -536,6 +550,10 @@ public sealed record FeatureOptions
             ThemeName = Text(configuration, "THEME"),
             BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
             PoliceLogChannel = Snowflake(configuration, "POLICE_LOG_CHANNEL"),
+            AttackChannel = Snowflake(configuration, "ATTACK_CHANNEL"),
+            AttackInterface = Text(configuration, "ATTACK_INTERFACE"),
+            AttackPps = Int(configuration, "ATTACK_PPS", 20_000),
+            AttackMbps = Int(configuration, "ATTACK_MBPS", 200),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             CommandLogChannel = Snowflake(configuration, "COMMAND_LOG_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),

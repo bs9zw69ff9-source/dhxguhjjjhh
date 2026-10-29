@@ -731,6 +731,35 @@ public static class Program
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
+        builder.Services.AddSingleton<IFilePostTarget>(sp => (IFilePostTarget)sp.GetRequiredService<IAutoPostTarget>());
+
+        /* ATTACK_CHANNEL turns the DDoS monitor on: interface counters every second, tcpdump during
+           an attack, an alert and a summary in that channel. Detect and report only - it never
+           touches the firewall. */
+        if (features.AttackChannel is { } attackChannel)
+        {
+            builder.Services.AddHostedService(sp =>
+            {
+                var monitorLogger = sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AttackMonitor>>();
+                return new PavlovBot.Host.Network.AttackMonitor(
+                    attackChannel,
+                    features.AttackInterface ?? PavlovBot.Host.Network.LinkCounters.DefaultInterface(),
+                    new PavlovBot.Core.Network.FloodThresholds(features.AttackPps, features.AttackMbps),
+                    Path.Combine(options.DataDirectory, "attacks"),
+                    iface => PavlovBot.Host.Network.LinkCounters.Read(iface),
+                    new PavlovBot.Host.Network.PlayerTraffic(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<IpTrackingService>()),
+                    (iface, pcap, recorder, addresses) =>
+                    {
+                        var (capture, problem) = PavlovBot.Host.Network.TcpdumpCapture.Start(iface, pcap,
+                            packet => recorder.Add(packet, addresses().Contains(packet.Source)), monitorLogger);
+                        return (capture, problem);
+                    },
+                    sp.GetRequiredService<IAutoPostTarget>(),
+                    sp.GetRequiredService<IFilePostTarget>(),
+                    TimeProvider.System,
+                    monitorLogger);
+            });
+        }
 
         // ---- server monitoring: probe -> state machine -> alerts + history, on the background timer ----
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.MonitorHistory(

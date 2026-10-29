@@ -50,6 +50,17 @@ public interface IAutoPostTarget
     Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct);
 }
 
+/// <summary>Posting an embed with a text file attached, e.g. a full attack report.</summary>
+/// <remarks>
+/// A SEPARATE INTERFACE so the many test doubles of <see cref="IAutoPostTarget"/> need not grow a
+/// method only one caller uses; the gateway target implements both.
+/// </remarks>
+public interface IFilePostTarget
+{
+    /// <summary>Post <paramref name="embed"/> with <paramref name="content"/> attached as <paramref name="fileName"/>.</summary>
+    Task<ulong?> SendWithFileAsync(ulong channelId, Embed embed, string fileName, string content, CancellationToken ct);
+}
+
 /// <summary>
 /// A board that lives as ONE message and is edited in place.
 /// </summary>

@@ -14,7 +14,7 @@ namespace PavlovBot.Host.Discord;
 /// this interface, so it tests without a gateway connection. What is left here is only the
 /// Discord API calls, which cannot be tested without one anyway.
 /// </remarks>
-public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<GatewayAutoPostTarget> logger) : IAutoPostTarget
+public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<GatewayAutoPostTarget> logger) : IAutoPostTarget, IFilePostTarget
 {
     /// <summary>
     /// Edit the board, and say which KIND of failure it was if it did not work.
@@ -107,6 +107,35 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Could not post to channel {Channel}", channelId);
+            return null;
+        }
+    }
+
+    public async Task<ulong?> SendWithFileAsync(ulong channelId, Embed embed, string fileName, string content, CancellationToken ct)
+    {
+        try
+        {
+            if (await gateway.GetChannelAsync(channelId).ConfigureAwait(false) is not IMessageChannel channel)
+            {
+                logger.LogWarning("Channel {Channel} is not visible to the bot, so {File} was not posted", channelId, fileName);
+                return null;
+            }
+
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+            var message = await channel.SendFileAsync(new FileAttachment(stream, fileName), embed: embed,
+                allowedMentions: AllowedMentions.None).ConfigureAwait(false);
+            return message.Id;
+        }
+        catch (HttpException ex) when (ex.HttpCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            logger.LogWarning(
+                "Missing permission to post {File} in channel {Channel}. The bot needs Send Messages, Embed Links " +
+                "and Attach Files there", fileName, channelId);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not post {File} to channel {Channel}", fileName, channelId);
             return null;
         }
     }
