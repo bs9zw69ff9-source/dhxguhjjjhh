@@ -32,6 +32,18 @@ public interface IAttackCapture : IAsyncDisposable
     Task<string?> StatisticsAsync(CancellationToken ct);
 }
 
+/// <summary>What else wants to know about floods: the anti-DDoS service, for its event log and logging mode.</summary>
+/// <remarks>Called on the monitor's one-second tick; an implementation must be quick and must not throw.</remarks>
+public interface IAttackListener
+{
+    /// <summary>Every second's link reading, whether or not anything is happening.</summary>
+    void OnSecond(LinkSecond second);
+
+    void OnStarted(DateTimeOffset at, LinkSecond second, ShieldOutcome? shield);
+
+    void OnEnded(AttackReport report);
+}
+
 /// <summary>
 /// Watches the link for floods: an alert when one starts, a summary and a report when it ends.
 /// </summary>
@@ -77,6 +89,7 @@ public sealed class AttackMonitor : BackgroundService
     private readonly IFloodShield _shield;
     private readonly Func<bool> _discordConnected;
     private readonly Func<string, CancellationToken, Task<string?>> _iftopSnapshot;
+    private readonly IAttackListener? _listener;
     private readonly List<AttackReport> _pending = [];
     private DateTimeOffset _lastRetry;
     private int _offlineSeconds;
@@ -121,8 +134,10 @@ public sealed class AttackMonitor : BackgroundService
         TimeProvider time,
         ILogger<AttackMonitor> logger,
         Func<bool>? discordConnected = null,
-        Func<string, CancellationToken, Task<string?>>? iftopSnapshot = null)
+        Func<string, CancellationToken, Task<string?>>? iftopSnapshot = null,
+        IAttackListener? listener = null)
     {
+        _listener = listener;
         _discordConnected = discordConnected ?? (() => true);
         _iftopSnapshot = iftopSnapshot ?? ((iface, token) => IftopSnapshot.TakeAsync(iface, logger, token));
         _channel = channel;
@@ -200,6 +215,7 @@ public sealed class AttackMonitor : BackgroundService
         if (previous is not { } before || counters.Packets < before.Packets || counters.Bytes < before.Bytes) return;
 
         var second = new LinkSecond(now, counters.Packets - before.Packets, counters.Bytes - before.Bytes);
+        Notify(l => l.OnSecond(second));
         var names = _players.OnlineNames();
         var online = names.Count;
         RefreshPlayerAddresses(now);
@@ -249,6 +265,7 @@ public sealed class AttackMonitor : BackgroundService
                 await EngageShieldAsync(now, ct).ConfigureAwait(false);
                 _iftop = Task.Run(() => _iftopSnapshot(_iface!, CancellationToken.None), CancellationToken.None);
                 _logger.LogWarning("ATTACK started on {Interface}: {Pps} pkt/s, {Mbps:0.0} Mbit/s", _iface, second.Packets, second.Mbps);
+                Notify(l => l.OnStarted(now, second, _shieldOutcome));
                 _alertMessage = await _post.SendAsync(_channel, AttackEmbeds.Started(_host, _iface!, second, _detector, _shieldOutcome).Build(), null, ct)
                     .ConfigureAwait(false);
                 _lastLive = now;
@@ -281,6 +298,20 @@ public sealed class AttackMonitor : BackgroundService
 
         // A capture that could not start is retried on the next attack, not every second of this one.
         if (signal == FloodSignal.Quiet && _capture is null) _captureProblem = null;
+    }
+
+    private void Notify(Action<IAttackListener> call)
+    {
+        if (_listener is null) return;
+        try
+        {
+            call(_listener);
+        }
+        catch (Exception ex)
+        {
+            // The listener is bookkeeping; a fault in it must never cost the monitor a tick.
+            _logger.LogWarning(ex, "Attack listener failed; carrying on");
+        }
     }
 
     /// <summary>
@@ -357,6 +388,7 @@ public sealed class AttackMonitor : BackgroundService
             Connection: _offlineFrom is { } from ? new ConnectionLoss(_offlineSeconds, from, _offlineUntil) : null);
 
         _logger.LogWarning("ATTACK ended on {Interface}: {Verdict}", _iface, report.Verdict);
+        Notify(l => l.OnEnded(report));
 
         // ON DISK FIRST, so a report survives a Discord that is still unreachable - or a bot restart.
         SaveReport(report);

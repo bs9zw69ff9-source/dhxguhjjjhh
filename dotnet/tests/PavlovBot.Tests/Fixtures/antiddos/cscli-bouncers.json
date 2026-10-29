@@ -1,0 +1,15 @@
+[
+ {
+  "created_at": "2026-10-29T17:19:58.856058554Z",
+  "updated_at": "2026-10-29T17:27:24.68192858Z",
+  "name": "cs-firewall-bouncer-1793294398",
+  "revoked": false,
+  "ip_address": "127.0.0.1",
+  "type": "crowdsec-firewall-bouncer",
+  "version": "v0.0.36-debian-pragmatic-amd64-4c315193cd4f19e3937cdee2f15183ec4d602f56",
+  "last_pull": "2026-10-29T17:27:24.681130266Z",
+  "auth_type": "api-key",
+  "os": "?",
+  "auto_created": false
+ }
+]
