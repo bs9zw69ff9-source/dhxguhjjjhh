@@ -121,12 +121,22 @@ fi
 # warnings, and a reflection failure under trimming does not show up at startup —
 # it shows up the first time a particular gateway payload arrives, which is the
 # worst possible time to find out.
+# LEFTOVERS FROM AN INTERRUPTED DEPLOY ARE CLEARED FIRST. A selftest that was hung
+# and abandoned keeps running, and so do the compiler server and MSBuild nodes of a
+# build that was cancelled; a wedged compiler server makes the next build sit on
+# PavlovBot.Core forever. Both have happened. Only this checkout's selftest is
+# matched - never the running bot, never the game servers.
+pkill -f -- "$OUT/PavlovBot --selftest" 2>/dev/null || true
+dotnet build-server shutdown >/dev/null 2>&1 || true
+
 echo "==> Building (self-contained, ReadyToRun)"
 # The commit is stamped INTO the binary so the running process can say which build it
 # is. That is the only way to tell "the fix does not work" apart from "the fix was
 # never actually started".
 REVISION="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-dotnet publish dotnet/src/PavlovBot.Host \
+# --disable-build-servers: nothing outlives this build to wedge the next one. It costs
+# a few seconds of compiler start-up, which a deploy can afford.
+dotnet publish dotnet/src/PavlovBot.Host --disable-build-servers \
   -c Release -r linux-x64 --self-contained true \
   -p:PublishReadyToRun=true -p:PublishTrimmed=false \
   -p:SourceRevisionId="$REVISION" \
@@ -142,7 +152,20 @@ trap 'rm -f "$SELFTEST_LOG"' EXIT
 
 # pipefail (set at the top) is what makes this test the bot's exit status rather
 # than tee's.
-if ! "$OUT/PavlovBot" --selftest 2>&1 | tee "$SELFTEST_LOG"; then
+#
+# BOUNDED. A selftest normally takes a few seconds; one that never finishes is a
+# dependency cycle in the bot (it happened), and must fail the deploy rather than
+# hang it - and leave a stray process behind for the next deploy to trip over.
+SELFTEST_SECONDS=120
+SELFTEST_RC=0
+timeout --kill-after=10 "$SELFTEST_SECONDS" "$OUT/PavlovBot" --selftest 2>&1 | tee "$SELFTEST_LOG" || SELFTEST_RC=$?
+if [ "$SELFTEST_RC" -ne 0 ]; then
+  # 124: timeout stopped it; 137: it ignored that and was killed.
+  if [ "$SELFTEST_RC" = 124 ] || [ "$SELFTEST_RC" = 137 ]; then
+    echo >&2
+    echo "The selftest did not finish within ${SELFTEST_SECONDS}s - the bot's startup hangs." >&2
+    echo "That is a bug in the bot, not in your configuration: report it with the log above." >&2
+  fi
   echo >&2
   echo "SELFTEST FAILED — nothing was started, nothing was changed." >&2
 
