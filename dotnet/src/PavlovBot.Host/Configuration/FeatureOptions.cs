@@ -608,6 +608,8 @@ public sealed record FeatureOptions
                 MaxBanHours = Int(configuration, "ANTIDDOS_MAX_BAN_HOURS", 168),
                 MaxBansPerHour = Int(configuration, "ANTIDDOS_MAX_BANS_PER_HOUR", 30),
                 SpoofSources = Int(configuration, "ANTIDDOS_SPOOF_SOURCES", 5000),
+                AttackPermaban = OptionalFlag(configuration, "ANTIDDOS_ATTACK_PERMABAN") != false,
+                AttackBansPerHour = Int(configuration, "ANTIDDOS_ATTACK_BANS_PER_HOUR", 300),
                 LogMode = AntiDdosOptions.ModeFrom(Text(configuration, "ANTIDDOS_LOG_MODE")),
                 IncidentMinutes = Int(configuration, "ANTIDDOS_INCIDENT_MINUTES", 30),
                 AutoIncident = OptionalFlag(configuration, "ANTIDDOS_AUTO_INCIDENT") != false,

@@ -390,7 +390,27 @@ changes ("CrowdSec needs attention", then "CrowdSec healthy again"):
      sustained 1,500 UDP packets/s from a non-player, or 250 ports scanned.
 4. **Escalate.** A repeat within a day doubles the ban, up to `ANTIDDOS_MAX_BAN_HOURS`. The last
    day's bans are reloaded from the event log at startup, so a restart doesn't reset the doubling.
-   Bans always expire. Permanent bans are only ever placed by hand (`/antiddos block duration:permanent`).
+   Outside a flood, automatic bans always expire.
+5. **Permanent ban during a flood** (`ANTIDDOS_ATTACK_PERMABAN`, on by default; the
+   `attack_permaban` threshold turns it off without a restart).
+   - **When it applies:** while the attack monitor has a flood on, and for one correlation window
+     after it ends. The per-minute judging lags the flood, so detections just after it still count.
+   - **What it does:** any address detected in that time (`udp-rate`, `syn-burst`, `port-spread`,
+     or a `firewall-block`) is banned through CrowdSec in that first minute, for ten years, which
+     is CrowdSec's "forever". The ban event carries `"permanent":"true"`.
+   - **Limits:**
+     - The hourly cap rises to `ANTIDDOS_ATTACK_BANS_PER_HOUR` (300), because a botnet is hundreds
+       of addresses.
+     - Every safeguard below still holds.
+     - An address CrowdSec already holds for a year or more is not banned again.
+     - `/antiddos unban` lifts a ban, and the address can then be banned by a later flood.
+   - **Without CrowdSec:** the kernel's block list is lost at a reboot, so the address gets the
+     longest temporary ban instead (`ANTIDDOS_MAX_BAN_HOURS`), and the event says why.
+   - **It only fires when a flood is detected.** If `ATTACK_PPS` and `ATTACK_MBPS` are above what
+     an attack actually reaches, no flood starts and these bans never happen.
+   - **The cost:** botnet addresses are mostly home connections that get reassigned, so a permanent
+     ban can outlive its attacker and land on a future player. A ban on a known player shows in
+     the CrowdSec alerts for you to lift.
 
 **Safeguards against spoofing and false positives.** A UDP source address is whatever the sender
 wrote, so:

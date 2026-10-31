@@ -43,6 +43,12 @@ public sealed record AntiDdosOptions
     public int MaxBansPerHour { get; init; } = 30;
     public int SpoofSources { get; init; } = 5000;
 
+    /// <summary>Ban a source detected during a flood at once and permanently (<c>ANTIDDOS_ATTACK_PERMABAN</c>, on unless off).</summary>
+    public bool AttackPermaban { get; init; } = true;
+
+    /// <summary>The hourly cap on automatic bans while a flood is on (<c>ANTIDDOS_ATTACK_BANS_PER_HOUR</c>).</summary>
+    public int AttackBansPerHour { get; init; } = 300;
+
     /// <summary>The logging mode the bot returns to (<c>ANTIDDOS_LOG_MODE</c>): normal or elevated.</summary>
     public LogMode LogMode { get; init; } = LogMode.Normal;
 
@@ -74,5 +80,6 @@ public sealed record AntiDdosOptions
 
     public ResponsePolicy Response => new(
         AutoBan, EscalateAfter, TimeSpan.FromMinutes(CorrelationMinutes), TimeSpan.FromMinutes(BanMinutes),
-        TimeSpan.FromHours(MaxBanHours), MaxBansPerHour, SpoofSources);
+        TimeSpan.FromHours(MaxBanHours), MaxBansPerHour, SpoofSources,
+        PermanentInAttack: AttackPermaban, AttackBansPerHour: AttackBansPerHour);
 }
