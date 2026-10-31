@@ -100,13 +100,13 @@ public sealed class PacketToolsCommand(
                 await Reply(command, await StatusAsync("Packet tools", ct).ConfigureAwait(false)).ConfigureAwait(false);
                 return;
             case "install":
-                await InstallAsync(command, ct).ConfigureAwait(false);
+                await InstallAsync(r => Reply(command, r), command.User.Username, ct).ConfigureAwait(false);
                 return;
             case "analyze":
-                await AnalyzeAsync(command, ct).ConfigureAwait(false);
+                await AnalyzeAsync(r => Reply(command, r), ct).ConfigureAwait(false);
                 return;
             case "unblock":
-                await UnblockAsync(command, ct).ConfigureAwait(false);
+                await UnblockAsync(r => Reply(command, r), command.User.Username, ct).ConfigureAwait(false);
                 return;
 
             default:
@@ -132,11 +132,11 @@ public sealed class PacketToolsCommand(
         }
     }
 
-    private async Task AnalyzeAsync(SocketSlashCommand command, CancellationToken ct)
+    internal async Task AnalyzeAsync(Func<AntiDdosReply, Task> reply, CancellationToken ct)
     {
         if (LatestPcap(AttackDirectory) is not { } pcap)
         {
-            await Reply(command, Theme.Notice("No captures yet",
+            await reply(Theme.Notice("No captures yet",
                 $"The DDoS monitor has not saved an attack pcap in `{Sanitize.Code(AttackDirectory)}`. One is written for " +
                 "every attack while `ATTACK_CHANNEL` is set.")).ConfigureAwait(false);
             return;
@@ -144,7 +144,7 @@ public sealed class PacketToolsCommand(
 
         if (await TsharkCapture.StatisticsAsync(pcap, logger, ct).ConfigureAwait(false) is not { } statistics)
         {
-            await Reply(command, Theme.Failure("Could not read the capture",
+            await reply(Theme.Failure("Could not read the capture",
                 $"tshark could not analyse `{Sanitize.Code(Path.GetFileName(pcap))}`. Check `/packettools status`.")).ConfigureAwait(false);
             return;
         }
@@ -154,40 +154,34 @@ public sealed class PacketToolsCommand(
             "Protocol hierarchy, top IPv4 endpoints and top conversations, from tshark. The busiest rows of each table " +
             $"are kept ({TsharkCapture.StatisticsRows} per table).");
 
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(statistics));
-        await command.ModifyOriginalResponseAsync(m =>
-        {
-            m.Embed = embed.Build();
-            m.Attachments = new[] { new FileAttachment(stream, name) };
-            m.AllowedMentions = AllowedMentions.None;
-        }).ConfigureAwait(false);
+        await reply(new AntiDdosReply(embed, name, System.Text.Encoding.UTF8.GetBytes(statistics))).ConfigureAwait(false);
     }
 
     // ---- unblock ----
 
-    private async Task UnblockAsync(SocketSlashCommand command, CancellationToken ct)
+    internal async Task UnblockAsync(Func<AntiDdosReply, Task> reply, string actor, CancellationToken ct)
     {
         var before = await shield.StatsAsync(ct).ConfigureAwait(false);
         if (await shield.UnblockAllAsync(ct).ConfigureAwait(false) is { } problem)
         {
-            await Reply(command, Theme.Failure("Could not unblock", problem)).ConfigureAwait(false);
+            await reply(Theme.Failure("Could not unblock", problem)).ConfigureAwait(false);
             return;
         }
 
-        await audit.RecordAsync("ddos-unblock", command.User.Username, "all", $"{before?.BlockedSources ?? 0} address(es)", ct)
+        await audit.RecordAsync("ddos-unblock", actor, "all", $"{before?.BlockedSources ?? 0} address(es)", ct)
             .ConfigureAwait(false);
-        logger.LogWarning("DDoS filter block list emptied by {User} ({Count} addresses)", command.User.Username, before?.BlockedSources ?? 0);
-        await Reply(command, Theme.Success("Unblocked",
+        logger.LogWarning("DDoS filter block list emptied by {User} ({Count} addresses)", actor, before?.BlockedSources ?? 0);
+        await reply(Theme.Success("Unblocked",
             $"{before?.BlockedSources ?? 0} address(es) the DDoS filter had blocked can connect again.")).ConfigureAwait(false);
     }
 
     // ---- install ----
 
-    private async Task InstallAsync(SocketSlashCommand command, CancellationToken ct)
+    internal async Task InstallAsync(Func<AntiDdosReply, Task> reply, string actor, CancellationToken ct)
     {
         if (!Environment.IsPrivilegedProcess)
         {
-            await Reply(command, Theme.Failure("Cannot install",
+            await reply(Theme.Failure("Cannot install",
                 "The bot is not running as root, so it cannot install packages. Run this on the host instead:\n" +
                 $"```\nsudo apt update\nsudo apt install {string.Join(' ', Packages)} -y\n```")).ConfigureAwait(false);
             return;
@@ -195,23 +189,23 @@ public sealed class PacketToolsCommand(
 
         if (!await Installing.WaitAsync(0, ct).ConfigureAwait(false))
         {
-            await Reply(command, Theme.Warning("Already installing", "Another `/packettools install` is still running.")).ConfigureAwait(false);
+            await reply(Theme.Warning("Already installing", "Another `/packettools install` is still running.")).ConfigureAwait(false);
             return;
         }
 
-        await audit.RecordAsync("packettools-install", command.User.Username, string.Join(", ", Packages), "apt-get", ct)
+        await audit.RecordAsync("packettools-install", actor, string.Join(", ", Packages), "apt-get", ct)
             .ConfigureAwait(false);
-        logger.LogWarning("PACKETTOOLS install by {User}: {Packages}", command.User.Username, string.Join(", ", Packages));
+        logger.LogWarning("PACKETTOOLS install by {User}: {Packages}", actor, string.Join(", ", Packages));
 
-        await Reply(command, Theme.Notice("Installing Wireshark and tshark",
+        await reply(Theme.Notice("Installing Wireshark and tshark",
             $"Running `apt update`, then `apt install {string.Join(' ', Packages)} -y`. Wireshark brings a few hundred MB of " +
             "libraries, so this can take several minutes; this message updates when it is done.")).ConfigureAwait(false);
 
         // Detached, under the host's lifetime: see the remarks. The semaphore is released there.
-        _ = Task.Run(() => RunInstallAsync(command), CancellationToken.None);
+        _ = Task.Run(() => RunInstallAsync(reply), CancellationToken.None);
     }
 
-    private async Task RunInstallAsync(SocketSlashCommand command)
+    private async Task RunInstallAsync(Func<AntiDdosReply, Task> reply)
     {
         var stopping = lifetime.ApplicationStopping;
         try
@@ -219,19 +213,19 @@ public sealed class PacketToolsCommand(
             var update = await ProcessRunner.RunAsync("env", UpdateArgv(), UpdateTimeout, logger, stopping).ConfigureAwait(false);
             if (Problem("apt update", update, UpdateTimeout) is { } updateProblem)
             {
-                await Reply(command, Theme.Failure("Install failed", updateProblem)).ConfigureAwait(false);
+                await reply(Theme.Failure("Install failed", updateProblem)).ConfigureAwait(false);
                 return;
             }
 
             var install = await ProcessRunner.RunAsync("env", InstallArgv(), InstallTimeout, logger, stopping).ConfigureAwait(false);
             if (Problem("apt install", install, InstallTimeout) is { } installProblem)
             {
-                await Reply(command, Theme.Failure("Install failed", installProblem)).ConfigureAwait(false);
+                await reply(Theme.Failure("Install failed", installProblem)).ConfigureAwait(false);
                 return;
             }
 
             logger.LogWarning("PACKETTOOLS installed {Packages}", string.Join(", ", Packages));
-            await Reply(command, await StatusAsync("Wireshark and tshark installed", stopping).ConfigureAwait(false)).ConfigureAwait(false);
+            await reply(await StatusAsync("Wireshark and tshark installed", stopping).ConfigureAwait(false)).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
@@ -242,7 +236,7 @@ public sealed class PacketToolsCommand(
             logger.LogError(ex, "/packettools install failed");
             try
             {
-                await Reply(command, Theme.Failure("Install failed", Sanitize.Code(ex.Message))).ConfigureAwait(false);
+                await reply(Theme.Failure("Install failed", Sanitize.Code(ex.Message))).ConfigureAwait(false);
             }
             catch (Exception replyEx) when (replyEx is not OperationCanceledException)
             {
@@ -268,7 +262,7 @@ public sealed class PacketToolsCommand(
 
     // ---- status ----
 
-    private async Task<EmbedBuilder> StatusAsync(string title, CancellationToken ct)
+    internal async Task<EmbedBuilder> StatusAsync(string title, CancellationToken ct)
     {
         var tshark = await FirstLineOfAsync("tshark", ["--version"], ct).ConfigureAwait(false);
         // Wireshark is a desktop program; asking it for --version needs no screen, but the package is the surer answer.
@@ -317,10 +311,17 @@ public sealed class PacketToolsCommand(
     internal static string? FirstLine(string? output) =>
         output?.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
 
-    private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
-        command.ModifyOriginalResponseAsync(m =>
+    private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) => Reply(command, new AntiDdosReply(embed));
+
+    /// <summary>Show a reply on the command's own message; called again to update it (the install does).</summary>
+    private static async Task Reply(SocketSlashCommand command, AntiDdosReply reply)
+    {
+        using var stream = reply.File is { } bytes ? new MemoryStream(bytes) : null;
+        await command.ModifyOriginalResponseAsync(m =>
         {
-            m.Embed = embed.Build();
+            m.Embed = reply.Embed.Build();
+            if (stream is not null) m.Attachments = new[] { new FileAttachment(stream, reply.FileName) };
             m.AllowedMentions = AllowedMentions.None;
-        });
+        }).ConfigureAwait(false);
+    }
 }

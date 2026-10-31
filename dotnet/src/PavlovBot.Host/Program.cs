@@ -620,7 +620,8 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
         builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();
-        builder.Services.AddSingleton<ISlashCommand, PacketToolsCommand>();
+        builder.Services.AddSingleton<PacketToolsCommand>();
+        builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<PacketToolsCommand>());
         /* Standing up a WHOLE NEW server - SteamCMD, a systemd unit, ufw, then a rewrite of the
            bot's own .env and a restart. A far larger privileged surface than restarting a
            configured unit, so it lives behind its own provisioner rather than on ServiceControl,
@@ -798,7 +799,11 @@ public static class Program
                 TimeProvider.System,
                 sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AntiDdosService>>()));
             builder.Services.AddHostedService(sp => sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosService>());
-            builder.Services.AddSingleton<ISlashCommand, AntiDdosCommand>();
+            builder.Services.AddSingleton<AntiDdosCommand>();
+            builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<AntiDdosCommand>());
+            // The same actions as an Anti-DDoS menu in /configure.
+            builder.Services.AddSingleton<AntiDdosPanel>();
+            builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<AntiDdosPanel>());
 
             builder.Services.AddHostedService(sp =>
             {
