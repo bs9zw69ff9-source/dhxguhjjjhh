@@ -242,6 +242,17 @@ Events:
 
 ### From Discord
 
+**`/configure` → the second menu, "Anti-DDoS"** is the owner's control panel for all of it:
+- views: status, last hour's traffic, busiest sources in 24h, look up an IP, detections,
+  everything blocked, CrowdSec, storage, the trusted list and thresholds;
+- changes: ban, unban, trust, untrust, change a threshold, incident/elevated/normal logging,
+  export, and unblock everything (which asks you to type UNBLOCK);
+- packet tools: status, install, and analyze the latest capture.
+
+Each entry runs exactly what the slash command below runs, with the same checks and the same audit
+record. Entries that need a value open a short form. The slash commands stay, for Admin-level viewing
+and for the options the menu fixes (custom time ranges, filters, pages).
+
 | Command | Shows |
 |---|---|
 | `/antiddos status` | firewall, mode, last minute's rates, drops, CrowdSec, storage, capture |

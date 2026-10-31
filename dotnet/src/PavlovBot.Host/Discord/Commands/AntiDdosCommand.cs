@@ -130,16 +130,41 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             : (top?.Name ?? "", top?.Options ?? []);
         var args = options.ToDictionary(o => o.Name, o => o.Value, StringComparer.Ordinal);
 
-        var required = name is "export" or "block" or "unban" or "logging" or "allow add" or "allow remove" or "threshold set"
-            ? RequiredAccess.Owner
-            : RequiredAccess.Admin;
+        var required = RequiredFor(name);
         if (!access.Allows(required, command))
         {
-            await Reply(command, Theme.Denied("Not allowed", access.Refusal(required, command))).ConfigureAwait(false);
+            await command.ModifyOriginalResponseAsync(m =>
+            {
+                m.Embed = Theme.Denied("Not allowed", access.Refusal(required, command)).Build();
+                m.AllowedMentions = AllowedMentions.None;
+            }).ConfigureAwait(false);
             return;
         }
 
-        var actor = command.User.Username;
+        var reply = await RunAsync(name, args, command.User.Username, ct).ConfigureAwait(false);
+        using var stream = reply.File is { } bytes ? new MemoryStream(bytes) : null;
+        await command.ModifyOriginalResponseAsync(m =>
+        {
+            m.Embed = reply.Embed.Build();
+            if (stream is not null) m.Attachments = new[] { new FileAttachment(stream, reply.FileName) };
+            m.AllowedMentions = AllowedMentions.None;
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>Whether a subcommand changes something, and so is the owner's.</summary>
+    internal static RequiredAccess RequiredFor(string name) =>
+        name is "export" or "block" or "unban" or "logging" or "allow add" or "allow remove" or "threshold set"
+            ? RequiredAccess.Owner
+            : RequiredAccess.Admin;
+
+    /// <summary>
+    /// Run one action and return what to show. The caller has checked access. Shared by the slash
+    /// command and the <c>/configure</c> panel, so the two can never do different things.
+    /// </summary>
+    /// <param name="args">Option values as Discord gives them: strings, and integers as <see cref="long"/>.</param>
+    internal async Task<AntiDdosReply> RunAsync(string name, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    {
+        var command = new ReplySink(actor);
         try
         {
             switch (name)
@@ -168,9 +193,9 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
         {
             // The details go to the bot's log; the reply never carries a stack trace or a path it should not.
             logger.LogError(ex, "/antiddos {Subcommand} failed", name);
-            await Reply(command, Theme.Failure("That failed", "The error is in the bot's log. Nothing was half-applied: firewall changes are atomic."))
-                .ConfigureAwait(false);
+            command.Set(Theme.Failure("That failed", "The error is in the bot's log. Nothing was half-applied: firewall changes are atomic."));
         }
+        return command.Result ?? Theme.Failure("Nothing to show");
     }
 
     // ---- views ----
@@ -208,7 +233,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
         return embed;
     }
 
-    private async Task TrafficAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, CancellationToken ct)
+    private async Task TrafficAsync(ReplySink command, IReadOnlyDictionary<string, object> args, CancellationToken ct)
     {
         if (Window(args, MaxExport) is not { } range) { await BadWindow(command).ConfigureAwait(false); return; }
 
@@ -240,7 +265,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
         await Reply(command, embed).ConfigureAwait(false);
     }
 
-    private async Task TopAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, CancellationToken ct)
+    private async Task TopAsync(ReplySink command, IReadOnlyDictionary<string, object> args, CancellationToken ct)
     {
         if (Window(args, MaxExport) is not { } range) { await BadWindow(command).ConfigureAwait(false); return; }
         var filter = new QueryFilter(range.From, range.To, Port: Int(args, "port"));
@@ -254,7 +279,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             .WithFooter("From the per-minute source records: the 100 busiest sources each minute. `/antiddos history ip:` for one address")).ConfigureAwait(false);
     }
 
-    private async Task HistoryAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, CancellationToken ct)
+    private async Task HistoryAsync(ReplySink command, IReadOnlyDictionary<string, object> args, CancellationToken ct)
     {
         if (Window(args, MaxHistory) is not { } range) { await BadWindow(command, MaxHistory).ConfigureAwait(false); return; }
         if (Network(args, "ip", out var network) is { } bad) { await Reply(command, bad).ConfigureAwait(false); return; }
@@ -288,14 +313,8 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             .WithFooter((truncated ? $"Cut at {MaxAttachedRecords} - narrow it, or /antiddos export. " : "") + "Every match is attached as JSON Lines.");
 
         var body = Encoding.UTF8.GetBytes(string.Join('\n', found.Select(r => r.Line)) + "\n");
-        using var stream = new MemoryStream(body);
-        await command.ModifyOriginalResponseAsync(m =>
-        {
-            m.Embed = embed.Build();
-            m.Attachments = new[] { new FileAttachment(stream, $"antiddos-history-{AntiDdosLog.FileStamp(range.From)}.jsonl") };
-            m.AllowedMentions = AllowedMentions.None;
-        }).ConfigureAwait(false);
-        await service.RecordAsync("query", "history", network?.Text, $"{RangeText(range)}{Describe(filter)}", command.User.Username, ct).ConfigureAwait(false);
+        command.Set(new AntiDdosReply(embed, $"antiddos-history-{AntiDdosLog.FileStamp(range.From)}.jsonl", body));
+        await service.RecordAsync("query", "history", network?.Text, $"{RangeText(range)}{Describe(filter)}", command.Actor, ct).ConfigureAwait(false);
     }
 
     private EmbedBuilder Detections(int page)
@@ -422,7 +441,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
 
     // ---- changes ----
 
-    private async Task ExportAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task ExportAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         if (Window(args, MaxExport) is not { } range) { await BadWindow(command, MaxExport).ConfigureAwait(false); return; }
         if (Network(args, "ip", out var network) is { } bad) { await Reply(command, bad).ConfigureAwait(false); return; }
@@ -461,13 +480,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             return;
         }
 
-        await using var stream = File.OpenRead(path);
-        await command.ModifyOriginalResponseAsync(m =>
-        {
-            m.Embed = embed.Build();
-            m.Attachments = new[] { new FileAttachment(stream, Path.GetFileName(path)) };
-            m.AllowedMentions = AllowedMentions.None;
-        }).ConfigureAwait(false);
+        command.Set(new AntiDdosReply(embed, Path.GetFileName(path), await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false)));
     }
 
     private void PruneExports()
@@ -484,7 +497,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
         }
     }
 
-    private async Task BlockAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task BlockAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         var bad = Network(args, "ip", out var network);
         if (bad is not null || network is null)
@@ -513,7 +526,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             : Theme.Failure("Not banned", Sanitize.Code(problem))).ConfigureAwait(false);
     }
 
-    private async Task UnbanAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task UnbanAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         var bad = Network(args, "ip", out var network);
         if (bad is not null || network is null)
@@ -529,7 +542,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             : Theme.Warning($"Partly unbanned {network.Text}", Sanitize.Code(problem))).ConfigureAwait(false);
     }
 
-    private async Task LoggingAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task LoggingAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         var mode = Text(args, "mode") switch { "elevated" => LogMode.Elevated, "incident" => LogMode.Incident, _ => (LogMode?)null };
         var minutes = Int(args, "minutes") ?? 30;
@@ -547,7 +560,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
                         $"Loaded: {service.Firewall.Mode.ToString().ToLowerInvariant()} - at most {rates.DropsPerSecond} dropped and {rates.SuspectPerSecond} suspicious packet records/s, {rates.SamplesPerMinute} samples/min. It returns to normal by itself; run this again to extend it. Filtering is not affected by the mode."))).ConfigureAwait(false);
     }
 
-    private async Task TrustAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task TrustAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         var bad = Network(args, "ip", out var network);
         if (bad is not null || network is null)
@@ -570,7 +583,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             : Theme.Warning($"Trusting {network.Text}", Sanitize.Code(problem))).ConfigureAwait(false);
     }
 
-    private async Task UntrustAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task UntrustAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         var bad = Network(args, "ip", out var network);
         if (bad is not null || network is null)
@@ -585,7 +598,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             .ConfigureAwait(false);
     }
 
-    private async Task ThresholdAsync(SocketSlashCommand command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    private async Task ThresholdAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         if (Thresholds.Find(Text(args, "name")) is not { } threshold || Int(args, "value") is not { } value)
         {
@@ -677,7 +690,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
     private static (DateTimeOffset From, DateTimeOffset To)? Window(IReadOnlyDictionary<string, object> args, TimeSpan longest) =>
         ParseWindow(Text(args, "from"), Text(args, "to"), args.TryGetValue("minutes", out var m) && m is long l ? l : null, DateTimeOffset.UtcNow, longest);
 
-    private static Task BadWindow(SocketSlashCommand command, TimeSpan? longest = null) =>
+    private static Task BadWindow(ReplySink command, TimeSpan? longest = null) =>
         Reply(command, Theme.Failure("Not a time range",
             $"Use `minutes`, or `from` (and `to`) in UTC like `2026-10-29 17:30`. At most {(longest ?? MaxExport).TotalDays:0} days, and `from` before `to`."));
 
@@ -713,10 +726,25 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
 
     private static string Clip(string text, int max) => text.Length > max ? text[..max] + "…" : text;
 
-    private static Task Reply(SocketSlashCommand command, EmbedBuilder embed) =>
-        command.ModifyOriginalResponseAsync(m =>
-        {
-            m.Embed = embed.Build();
-            m.AllowedMentions = AllowedMentions.None;
-        });
+    private static Task Reply(ReplySink sink, EmbedBuilder embed)
+    {
+        sink.Set(embed);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>What an anti-DDoS action shows: an embed, and sometimes a file to attach.</summary>
+public sealed record AntiDdosReply(EmbedBuilder Embed, string? FileName = null, byte[]? File = null)
+{
+    public static implicit operator AntiDdosReply(EmbedBuilder embed) => new(embed);
+}
+
+/// <summary>Where an action puts its reply, so it runs the same from a slash command or a panel.</summary>
+internal sealed class ReplySink(string actor)
+{
+    public string Actor { get; } = actor;
+
+    public AntiDdosReply? Result { get; private set; }
+
+    public void Set(AntiDdosReply reply) => Result = reply;
 }

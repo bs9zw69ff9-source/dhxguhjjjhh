@@ -34,8 +34,9 @@ internal sealed record PanelAction(
 /// Destructive actions ask for a typed word. A button is one misclick, and "wipe every
 /// player's money" has no undo.
 /// </remarks>
+/// <param name="ddos">The Anti-DDoS menu, on the bot that runs the DDoS monitor; null elsewhere.</param>
 public sealed class ConfigPanel(
-    OwnerActions actions, Access access, AuditLog audit, Paged paged, ILogger<ConfigPanel> logger)
+    OwnerActions actions, Access access, AuditLog audit, Paged paged, ILogger<ConfigPanel> logger, AntiDdosPanel? ddos = null)
     : ISlashCommand, IComponentHandler
 {
     public const string Id = "cfg";
@@ -126,9 +127,13 @@ public sealed class ConfigPanel(
                     "⛔ **Access** — bar / un-bar Discord users\n" +
                     "👁️ **Tracking** — ignore lists\n" +
                     "💾 **Whitelists** — save / restore\n" +
-                    "🧨 **Data** — wipe money or player records")
+                    "🧨 **Data** — wipe money or player records" +
+                    (ddos is null ? "" : "\n\n🛡️ **Anti-DDoS** (second menu) — status, bans, trusted list, thresholds, logging, history, CrowdSec, packet tools"))
                 .Brand("Owner only").Build();
-            m.Components = new ComponentBuilder().WithSelectMenu(menu).Build();
+            var components = new ComponentBuilder().WithSelectMenu(menu, row: 0);
+            // Discord caps a select menu at 25 entries; the anti-DDoS actions get their own row.
+            if (ddos is not null) components.WithSelectMenu(ddos.Menu(), row: 1);
+            m.Components = components.Build();
         }).ConfigureAwait(false);
     }
 
