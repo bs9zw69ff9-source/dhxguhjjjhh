@@ -102,6 +102,35 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AnAddressTheFirewallKeepsBlockingIsEscalatedToACrowdSecBan()
+    {
+        await Start();
+        // Blocked, the block runs out, back and blocked again - three times in five minutes.
+        foreach (var blocked in new[] { true, false, true, false, true })
+        {
+            _firewall.Blocked = blocked ? ["198.51.100.66"] : [];
+            await Minute();
+        }
+
+        Assert.Equal(3, Lines("events.jsonl").Count(l => l.Contains("\"category\":\"firewall-block\"", StringComparison.Ordinal)));
+        var ban = Assert.Single(_crowdsec.Bans);
+        Assert.Equal("198.51.100.66", ban.Target);
+        Assert.StartsWith("firewall-block repeated", ban.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ABlockTheBotPlacedItselfIsNotMistakenForTheFirewalls()
+    {
+        _crowdsec.IsInstalled = false;
+        await Start();
+        await _service!.BanAsync(IpNetworks.Canonical("203.0.113.5")!, TimeSpan.FromHours(1), "by hand", "owner");
+        _firewall.Blocked = ["203.0.113.5"];
+        await Minute();
+
+        Assert.DoesNotContain(Lines("events.jsonl"), l => l.Contains("\"category\":\"firewall-block\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task WithoutCrowdSecTheBanGoesIntoTheKernelForTheSameTime()
     {
         _crowdsec.IsInstalled = false;
@@ -316,6 +345,9 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
 
         public string? LastProblem => null;
 
+        /// <summary>What the kernel's block list holds now.</summary>
+        public List<string> Blocked { get; set; } = [];
+
         public bool Enabled => true;
 
         public ShieldLimits Limits => Settings.Limits;
@@ -364,7 +396,7 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         public Task<string?> UnblockAsync(string address, CancellationToken ct) => Task.FromResult<string?>(null);
 
         public Task<FirewallSnapshot?> SnapshotAsync(CancellationToken ct) => Task.FromResult<FirewallSnapshot?>(new FirewallSnapshot(
-            new Dictionary<string, Counter>(), [], [],
+            new Dictionary<string, Counter>(), [.. Blocked.Select(b => new BlockedAddress(b, 600))], [],
             new Accounting(new Dictionary<FlowKey, Counter>(_flows), new Dictionary<FlowKey, Counter>(_syn), new Dictionary<FlowKey, Counter>(),
                 new Dictionary<string, Counter>()),
             new Dictionary<string, int>()));

@@ -10,6 +10,7 @@ namespace PavlovBot.Core.Network;
 /// <param name="LongestBan">The cap on a doubled ban.</param>
 /// <param name="MaxBansPerHour">The most bans the planner hands out in an hour, however many sources qualify.</param>
 /// <param name="SpoofSources">Sources in one window above which per-address bans stop: the flood is likely spoofed.</param>
+/// <param name="SevereFactor">A detection this many times over its threshold is banned in its first minute.</param>
 public sealed record ResponsePolicy(
     bool AutoBan = true,
     int EscalateAfter = 3,
@@ -17,7 +18,8 @@ public sealed record ResponsePolicy(
     TimeSpan? BaseBan = null,
     TimeSpan? LongestBan = null,
     int MaxBansPerHour = 30,
-    int SpoofSources = 5000)
+    int SpoofSources = 5000,
+    double SevereFactor = 5)
 {
     public TimeSpan CorrelationWindow => Window ?? TimeSpan.FromMinutes(10);
 
@@ -39,7 +41,10 @@ public sealed record PlannedResponse(string Source, IReadOnlyList<Detection> Det
 /// <remarks>
 /// THE SAFEGUARDS, because a source address on a UDP packet is whatever the sender wrote:
 ///   - A ban needs <see cref="ResponsePolicy.EscalateAfter"/> separate minutes of detections
-///     within the window. One bad minute is an alert.
+///     within the window. One bad minute is an alert - unless it was SEVERE, at least
+///     <see cref="ResponsePolicy.SevereFactor"/> times over its threshold for the whole minute
+///     (a sustained 1,500 UDP packets a second from a non-player, 600 connections a minute),
+///     which no legitimate client does; that is banned at once, under every rule below.
 ///   - Players and trusted addresses are never banned by the planner, whatever they did. An
 ///     attacker spoofing a player's address cannot get that player banned.
 ///   - When a window has more distinct sources than <see cref="ResponsePolicy.SpoofSources"/>, the
@@ -95,7 +100,8 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
                 var minutes = _minutes.TryGetValue(source, out var m) ? m : _minutes[source] = [];
                 minutes.Add(now);
 
-                if (minutes.Count >= Policy.EscalateAfter)
+                var severe = list.Any(d => d.Escalates && d.Threshold > 0 && d.Observed >= d.Threshold * Policy.SevereFactor);
+                if (minutes.Count >= Policy.EscalateAfter || severe)
                 {
                     held = !Policy.AutoBan ? "automatic bans are off"
                         : exempt(source) ? "a player or trusted address is never banned automatically"
@@ -119,6 +125,16 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
             plans.Add(new PlannedResponse(source, list, alert, ban, held, incident.Id));
         }
         return plans;
+    }
+
+    /// <summary>
+    /// Remember a ban placed before a restart, so a repeat offender's next ban still doubles.
+    /// </summary>
+    public void RememberBan(string source, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var previous = _bans.TryGetValue(source, out var b) ? b : _bans[source] = [];
+        previous.Add(at);
     }
 
     /// <summary>The ban for a source banned <paramref name="previous"/> times in the last day.</summary>

@@ -752,6 +752,8 @@ public static class Program
                 SuspectUdpPps = features.AntiDdos.SuspectUdpPps,
                 SuspectSynPerSecond = features.AntiDdos.SuspectSynPerSecond,
                 NflogGroup = features.AntiDdos.NflogGroup,
+                AlwaysPerSource = features.AntiDdos.AlwaysBlock,
+                SynBlockPps = features.AntiDdos.SynBlockPps,
             },
             managed: features.AttackChannel is not null,
             sp.GetRequiredService<ILogger<PavlovBot.Host.Network.FloodShield>>(),

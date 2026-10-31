@@ -23,10 +23,12 @@ public sealed record ShieldLimits(
 /// <param name="BlockedSources">Addresses on the block list now, IPv4 and IPv6.</param>
 /// <param name="IcmpPackets">Pings dropped by the echo-request limit.</param>
 /// <param name="SshPackets">New SSH connections dropped by the per-address connection limit.</param>
+/// <param name="SynFloodPackets">Connection attempts dropped by the per-address SYN limit (each one also blocked its sender).</param>
 public sealed record ShieldStats(
-    long BlockedPackets, long PerSourcePackets, long CappedPackets, int BlockedSources, long IcmpPackets = 0, long SshPackets = 0)
+    long BlockedPackets, long PerSourcePackets, long CappedPackets, int BlockedSources, long IcmpPackets = 0, long SshPackets = 0,
+    long SynFloodPackets = 0)
 {
-    public long Dropped => BlockedPackets + PerSourcePackets + CappedPackets + IcmpPackets + SshPackets;
+    public long Dropped => BlockedPackets + PerSourcePackets + CappedPackets + IcmpPackets + SshPackets + SynFloodPackets;
 }
 
 /// <summary>
@@ -101,6 +103,15 @@ public sealed record FirewallSettings
 
     /// <summary>The NFLOG group the packet logger (ulogd2) listens on.</summary>
     public int NflogGroup { get; init; } = 7;
+
+    /// <summary>
+    /// Whether the per-address limit on the game ports is on all the time, not only during a
+    /// detected flood (<c>ANTIDDOS_ALWAYS_BLOCK</c>). Players are let through before it either way.
+    /// </summary>
+    public bool AlwaysPerSource { get; init; } = true;
+
+    /// <summary>New TCP connections a second from one address, to anything but SSH, before it is blocked.</summary>
+    public int SynBlockPps { get; init; } = 50;
 }
 
 /// <summary>
@@ -127,11 +138,16 @@ public sealed record FirewallSettings
 ///     3. known players are always let through, so the people the servers exist for are never on
 ///        the wrong side of a limit;
 ///     4. addresses on the block list are dropped, and pings are capped;
+///     5. one address opening TCP connections faster than <see cref="FirewallSettings.SynBlockPps"/>
+///        (SSH has its own limit above) is blocked for <see cref="ShieldLimits.BlockMinutes"/>;
+///     6. one address over <see cref="ShieldLimits.PerSourcePps"/> to the game ports is blocked
+///        for <see cref="ShieldLimits.BlockMinutes"/> - always, unless
+///        <see cref="FirewallSettings.AlwaysPerSource"/> is off, then only during an attack. No
+///        Pavlov client comes near it, and players never reach this rule;
 ///     WHILE AN ATTACK IS ON:
-///     5. one address over <see cref="ShieldLimits.PerSourcePps"/> to the game ports is blocked
-///        for <see cref="ShieldLimits.BlockMinutes"/>;
-///     6. everything else to the game ports is capped at <see cref="ShieldLimits.UnknownPps"/>
-///        in total - the answer to a spoofed flood no per-address limit can see.
+///     7. everything else to the game ports is capped at <see cref="ShieldLimits.UnknownPps"/>
+///        in total - the answer to a spoofed flood no per-address limit can see. Only then,
+///        because a new player joining shares that cap.
 ///   OBSERVE, priority -150, after conntrack: counts what got through per source, protocol and
 ///   port in kernel sets, and logs suspicious and sampled packets. It never drops.
 ///
@@ -153,7 +169,7 @@ public static partial class FloodShieldRules
     private const string T = Family + " " + Table;
 
     /// <summary>The chains packets are dropped in, one per reason; each counts and logs its own.</summary>
-    public static readonly IReadOnlyList<string> DropReasons = ["blocked", "per-source", "unknown-cap", "icmp-flood", "ssh-rate"];
+    public static readonly IReadOnlyList<string> DropReasons = ["blocked", "per-source", "syn-flood", "unknown-cap", "icmp-flood", "ssh-rate"];
 
     /// <summary>Sizes of the kernel's per-source sets: bounded memory, whatever a spoofed flood sends.</summary>
     internal const int AccountingSize = 65_535;
@@ -207,7 +223,7 @@ public static partial class FloodShieldRules
                      ("ATTACK_PER_IP_PPS", settings.Limits.PerSourcePps), ("ATTACK_UNKNOWN_PPS", settings.Limits.UnknownPps),
                      ("ATTACK_BLOCK_MINUTES", settings.Limits.BlockMinutes), ("ANTIDDOS_SSH_NEW_PER_MINUTE", settings.SshNewPerMinute),
                      ("ANTIDDOS_ICMP_PPS", settings.IcmpEchoPps), ("ANTIDDOS_SUSPECT_UDP_PPS", settings.SuspectUdpPps),
-                     ("ANTIDDOS_SUSPECT_SYN_PPS", settings.SuspectSynPerSecond),
+                     ("ANTIDDOS_SUSPECT_SYN_PPS", settings.SuspectSynPerSecond), ("ANTIDDOS_SYN_BLOCK_PPS", settings.SynBlockPps),
                  })
         {
             if (value is < 1 or > 10_000_000) return $"{name} {value} is out of range";
@@ -259,6 +275,7 @@ public static partial class FloodShieldRules
             var saddr = Saddr(v);
             Line($"add set {T} rate{v} {{ type {addr}; flags dynamic,timeout; timeout 1m; size {Number(AccountingSize)}; }}");
             Line($"add set {T} ssh{v} {{ type {addr}; flags dynamic,timeout; timeout 2m; size {Number(SmallSetSize)}; }}");
+            Line($"add set {T} synrate{v} {{ type {addr}; flags dynamic,timeout; timeout 1m; size {Number(AccountingSize)}; }}");
             Line($"add set {T} watch{v} {{ type {addr}; flags dynamic,timeout; timeout 1m; size {Number(AccountingSize)}; }}");
             Line($"add set {T} synwatch{v} {{ type {addr}; flags dynamic,timeout; timeout 1m; size {Number(SmallSetSize)}; }}");
             Line($"add set {T} acct{v} {{ typeof {saddr} . meta l4proto . th dport; flags dynamic,timeout; timeout 3m; size {Number(AccountingSize)}; counter; }}");
@@ -323,15 +340,22 @@ public static partial class FloodShieldRules
             Line($"add rule {T} guard icmp type echo-request limit rate over {icmp}/second burst {icmpBurst} packets jump drop_icmp-flood");
             Line($"add rule {T} guard icmpv6 type echo-request limit rate over {icmp}/second burst {icmpBurst} packets jump drop_icmp-flood");
 
-            if (engaged)
+            var minutes = Number(l.BlockMinutes);
+
+            // SSH was accepted above, so this only ever sees connections to everything else.
+            var synBlock = Number(s.SynBlockPps);
+            Line($"add rule {T} guard tcp flags & (syn | ack) == syn update @synrate4 {{ ip saddr limit rate over {synBlock}/second burst {synBlock} packets }} add @blocked4 {{ ip saddr timeout {minutes}m }} jump drop_syn-flood");
+            Line($"add rule {T} guard tcp flags & (syn | ack) == syn update @synrate6 {{ ip6 saddr limit rate over {synBlock}/second burst {synBlock} packets }} add @blocked6 {{ ip6 saddr timeout {minutes}m }} jump drop_syn-flood");
+
+            if (engaged || s.AlwaysPerSource)
             {
                 var perSource = Number(l.PerSourcePps);
                 var perSourceBurst = Number(l.PerSourcePps * 2);
-                var minutes = Number(l.BlockMinutes);
                 Line($"add rule {T} guard udp dport @gameports update @rate4 {{ ip saddr limit rate over {perSource}/second burst {perSourceBurst} packets }} add @blocked4 {{ ip saddr timeout {minutes}m }} jump drop_per-source");
                 Line($"add rule {T} guard udp dport @gameports update @rate6 {{ ip6 saddr limit rate over {perSource}/second burst {perSourceBurst} packets }} add @blocked6 {{ ip6 saddr timeout {minutes}m }} jump drop_per-source");
-                Line($"add rule {T} guard udp dport @gameports limit rate over {Number(l.UnknownPps)}/second burst {Number(l.UnknownPps * 2)} packets jump drop_unknown-cap");
             }
+            if (engaged)
+                Line($"add rule {T} guard udp dport @gameports limit rate over {Number(l.UnknownPps)}/second burst {Number(l.UnknownPps * 2)} packets jump drop_unknown-cap");
         }
 
         // ---- observe: after conntrack, never drops ----
@@ -443,7 +467,8 @@ public static partial class FloodShieldRules
         if (ParseTable(json) is not { } table) return null;
         long Packets(string comment) => table.Counters.TryGetValue(comment, out var c) ? c.Packets : 0;
         return new ShieldStats(
-            Packets("blocked"), Packets("per-source"), Packets("unknown-cap"), table.Blocked.Count, Packets("icmp-flood"), Packets("ssh-rate"));
+            Packets("blocked"), Packets("per-source"), Packets("unknown-cap"), table.Blocked.Count, Packets("icmp-flood"), Packets("ssh-rate"),
+            Packets("syn-flood"));
     }
 
     /// <summary>

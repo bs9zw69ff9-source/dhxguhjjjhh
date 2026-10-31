@@ -26,6 +26,12 @@ public sealed record AntiDdosOptions
     public int SuspectSynPerSecond { get; init; } = 20;
     public int NflogGroup { get; init; } = 7;
 
+    /// <summary>The per-address game-port limit all the time, not only in a flood (<c>ANTIDDOS_ALWAYS_BLOCK</c>, on unless off).</summary>
+    public bool AlwaysBlock { get; init; } = true;
+
+    /// <summary>New TCP connections a second from one address, not to SSH, before it is blocked (<c>ANTIDDOS_SYN_BLOCK_PPS</c>).</summary>
+    public int SynBlockPps { get; init; } = 50;
+
     public int SynPerMinute { get; init; } = 120;
     public int PortSpread { get; init; } = 50;
 

@@ -70,6 +70,13 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     private readonly HashSet<string> _heldRecorded = new(StringComparer.Ordinal);
 
     private Accounting? _lastAccounting;
+    private HashSet<string>? _lastBlocked;
+
+    /// <summary>
+    /// Addresses this service itself put in the kernel's block list (the fallback without
+    /// CrowdSec), so they are not mistaken for the firewall's own blocks and escalated again.
+    /// </summary>
+    private readonly Dictionary<string, DateTimeOffset> _selfBlocked = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<string, Counter>? _lastCounters;
     private (long Packets, long Bytes)? _lastLink;
     private DateTimeOffset _lastWindow;
@@ -175,6 +182,8 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         SuspectUdpPps = Options.SuspectUdpPps,
         SuspectSynPerSecond = Options.SuspectSynPerSecond,
         NflogGroup = Options.NflogGroup,
+        AlwaysPerSource = Options.AlwaysBlock,
+        SynBlockPps = Options.SynBlockPps,
     };
 
     // ---- the attack monitor's callbacks: quick, never throwing, work queued ----
@@ -341,9 +350,38 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         {
             _lastAccounting = snapshot.Accounting;
             _lastCounters = snapshot.Counters;
+            _lastBlocked = snapshot.Blocked.Select(b => b.Address).ToHashSet(StringComparer.Ordinal);
         }
+
+        await RememberRecentBansAsync(ct).ConfigureAwait(false);
         _lastLink = _readCounters(_iface);
         _lastWindow = _time.GetUtcNow();
+    }
+
+    /// <summary>
+    /// Reload the last day's automatic bans from the event log, so a repeat offender's next ban
+    /// still doubles after a restart.
+    /// </summary>
+    private async Task RememberRecentBansAsync(CancellationToken ct)
+    {
+        var now = _time.GetUtcNow();
+        var remembered = 0;
+        try
+        {
+            await foreach (var e in _log.ReadAsync([RecordKind.Event], now.AddDays(-1), now, ct).ConfigureAwait(false))
+            {
+                if (e is { Category: "ban", Action: "banned", Source: { } source } && e.Line.Contains("\"actor\":\"auto\"", StringComparison.Ordinal))
+                {
+                    _planner.RememberBan(source, e.Time);
+                    remembered++;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not read the last day's bans; repeat offenders start from their first ban again");
+        }
+        if (remembered > 0) _logger.LogInformation("Anti-DDoS remembers {Count} automatic ban(s) from the last 24h", remembered);
     }
 
     /// <summary>
@@ -445,7 +483,8 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
             [.. sources.Take(SourcesPerWindow).Select(s => AntiDdosRecords.Source(now, window, s))], ct).ConfigureAwait(false);
 
         if (snapshot is null) return;
-        var detections = TrafficDetector.Judge(sources, window, Options.Detection);
+        var detections = TrafficDetector.Judge(sources, window, Options.Detection).ToList();
+        detections.AddRange(await FirewallBlocksAsync(now, snapshot, ct).ConfigureAwait(false));
         if (detections.Count == 0) return;
 
         // Every known player, online or not: a flood spoofing an offline player's address must not get them banned.
@@ -492,6 +531,35 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         if (alerts.Count > 0) await AlertAsync(AntiDdosEmbeds.Detections(now, alerts, Options), ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The addresses the firewall blocked on its own this minute - the per-address game-port limit
+    /// or the SYN-flood limit - recorded as events and passed on as evidence, so one that keeps
+    /// coming back is escalated to a CrowdSec ban instead of a fresh short block each time.
+    /// </summary>
+    private async Task<IReadOnlyList<Detection>> FirewallBlocksAsync(DateTimeOffset now, FirewallSnapshot snapshot, CancellationToken ct)
+    {
+        var blocked = new Dictionary<string, int?>(StringComparer.Ordinal);
+        foreach (var b in snapshot.Blocked) blocked[b.Address] = b.ExpiresSeconds;
+        var previous = _lastBlocked;
+        _lastBlocked = [.. blocked.Keys];
+        foreach (var gone in _selfBlocked.Where(b => b.Value <= now).Select(b => b.Key).ToList()) _selfBlocked.Remove(gone);
+        if (previous is null) return [];
+
+        var found = new List<Detection>();
+        foreach (var (address, expires) in blocked)
+        {
+            if (previous.Contains(address) || _selfBlocked.ContainsKey(address)) continue;
+            var until = expires is { } seconds ? now.AddSeconds(seconds) : (DateTimeOffset?)null;
+            await _log.EventAsync(new AntiDdosEvent(now, "firewall-block", "warning", address, "blocked",
+                string.Create(CultureInfo.InvariantCulture,
+                    $"over a per-address limit ({Limits.PerSourcePps} pkt/s to the game ports, or {_firewall.Settings.SynBlockPps} connections/s)"),
+                until, "kernel"), ct).ConfigureAwait(false);
+            found.Add(new Detection("firewall-block", address, 1, 1,
+                string.Create(CultureInfo.InvariantCulture, $"blocked by the firewall for {Limits.BlockMinutes} min (over a per-address limit)")));
+        }
+        return found;
+    }
+
     /// <summary>Ban through CrowdSec when it is here; otherwise in the kernel, for the same time.</summary>
     private async Task<string?> AutoBanAsync(DateTimeOffset now, PlannedResponse plan, TimeSpan length, CancellationToken ct)
     {
@@ -509,6 +577,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         {
             via = "nftables";
             problem = await _firewall.BlockAsync(target.Address, (int)Math.Ceiling(length.TotalMinutes), ct).ConfigureAwait(false);
+            if (problem is null) _selfBlocked[target.Address] = now + length;
         }
 
         await _log.EventAsync(new AntiDdosEvent(now, "ban", problem is null ? "warning" : "critical", target.Text,
@@ -718,7 +787,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         var problem = await _firewall.ConfigureAsync(previousSettings with
         {
             Limits = limits, SshNewPerMinute = options.SshNewPerMinute, IcmpEchoPps = options.IcmpEchoPps,
-            SuspectUdpPps = options.SuspectUdpPps, SuspectSynPerSecond = options.SuspectSynPerSecond,
+            SuspectUdpPps = options.SuspectUdpPps, SuspectSynPerSecond = options.SuspectSynPerSecond, SynBlockPps = options.SynBlockPps,
         }, ct).ConfigureAwait(false);
         if (problem is not null) return problem;
 
@@ -796,6 +865,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         {
             via = "nftables";
             problem = await _firewall.BlockAsync(network.Address, (int)Math.Ceiling(temporary.TotalMinutes), ct).ConfigureAwait(false);
+            if (problem is null) _selfBlocked[network.Address] = _time.GetUtcNow() + temporary;
         }
         else
         {
