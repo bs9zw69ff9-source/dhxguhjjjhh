@@ -129,3 +129,71 @@ public sealed class ReadingStoreTests : IDisposable
     [Fact]
     public void NoFileIsNoReading() => Assert.Null(Store().Load());
 }
+
+/// <summary>Telling a broken CrowdSec parser from a log with nothing worth parsing.</summary>
+public sealed class CrowdSecProbeTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "probe-" + Guid.NewGuid().ToString("N"));
+
+    public CrowdSecProbeTests() => Directory.CreateDirectory(_root);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+    }
+
+    [Theory]
+    // Ubuntu 24.04's rsyslog default, and the traditional format with its padded day.
+    [InlineData("2026-10-31T21:40:03.123456+00:00 vps CRON[9]: pam_unix(cron:session): session closed", "2026-10-31T21:40:03.123456+00:00 vps sshd[1]: ")]
+    [InlineData("2026-10-31T21:40:03Z vps CRON[9]: x", "2026-10-31T21:40:03Z vps sshd[1]: ")]
+    [InlineData("Oct  1 21:40:03 vps sudo: root : TTY=pts/0", "Oct  1 21:40:03 vps sshd[1]: ")]
+    public void TheSshProbeCopiesTheFilesOwnTimestampAndHost(string last, string start)
+    {
+        var probe = CrowdSecProbe.For("file:/var/log/auth.log", last)!;
+
+        Assert.StartsWith(start, probe.Line, StringComparison.Ordinal);
+        Assert.EndsWith("Invalid user pavlovbot-probe from 192.0.2.1 port 1", probe.Line, StringComparison.Ordinal);
+        Assert.Null(probe.Problem);
+    }
+
+    [Fact]
+    public void KernelAndUfwLogsAreProbedWithAUfwBlock()
+    {
+        foreach (var source in new[] { "file:/var/log/kern.log", "file:/var/log/ufw.log", "file:/var/log/syslog" })
+            Assert.Contains("[UFW BLOCK]", CrowdSecProbe.For(source, "Oct  1 21:40:03 vps kernel: x")!.Line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFileNotInASyslogFormatIsTheFaultItself()
+    {
+        var probe = CrowdSecProbe.For("file:/var/log/auth.log", "{\"msg\":\"json, not syslog\"}")!;
+
+        Assert.Null(probe.Line);
+        Assert.Contains("not in a syslog format", probe.Problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEmptyFileIsStillProbedInTheDefaultFormat() =>
+        Assert.StartsWith("2026-01-01T00:00:00.000000+00:00 host sshd[1]", CrowdSecProbe.For("file:/var/log/auth.log", null)!.Line, StringComparison.Ordinal);
+
+    [Theory]
+    [InlineData("file:/var/log/nginx/access.log")]
+    [InlineData("journalctl:journalctl-_SYSTEMD_UNIT=ssh.service")]
+    public void SourcesWithNoKnownTestLineAreNotProbed(string source) => Assert.Null(CrowdSecProbe.For(source, "Oct  1 21:40:03 vps x"));
+
+    [Fact]
+    public void TheLastLineIsReadFromTheEndOfAFileLargerThanTheTail()
+    {
+        var path = Path.Combine(_root, "auth.log");
+        File.WriteAllText(path, string.Concat(Enumerable.Repeat("Oct  1 00:00:00 vps old line padding padding padding\n", 1000)) + "Oct 31 21:40:03 vps newest\n\n");
+
+        Assert.Equal("Oct 31 21:40:03 vps newest", LogTail.LastLineOf(path));
+        Assert.Null(LogTail.LastLineOf(Path.Combine(_root, "missing.log")));
+    }
+
+    [Theory]
+    [InlineData("relative/auth.log")]
+    [InlineData("/etc/shadow")]
+    [InlineData("/var/log/../../etc/shadow")]
+    public void OnlyFilesUnderVarLogAreRead(string path) => Assert.Null(LogTail.LastLine(path));
+}

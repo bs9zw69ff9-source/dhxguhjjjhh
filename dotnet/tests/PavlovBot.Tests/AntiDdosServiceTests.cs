@@ -24,6 +24,7 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
     private long _linkPackets = 1_000_000;
     private LinkHealth? _health = new(0, 0, 0, 0, 0, 0, 100, 262_144, "up");
     private ReadingStore? _readings;
+    private string? _authLogLast = "2026-10-31T21:40:03.123456+00:00 vps CRON[999]: pam_unix(cron:session): session closed for user root";
     private AntiDdosService? _service;
     private CancellationTokenSource _stop = new();
 
@@ -45,7 +46,7 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         var state = new AntiDdosStateStore(Path.Combine(_root, "state.json"), NullLogger<AntiDdosStateStore>.Instance);
         _service = new AntiDdosService(options ?? new AntiDdosOptions { AlertChannel = 42 }, new ShieldLimits(), "ens3", _firewall, _crowdsec, log,
             state, _players, null, _posts, _ => (_linkPackets, _linkPackets * 100), _ => _disk, _clock, NullLogger<AntiDdosService>.Instance,
-            _ => _health, _readings);
+            _ => _health, _readings, _ => _authLogLast);
         await _service.StartAsync(_stop.Token);
         await _service.Started;
         return _service;
@@ -430,6 +431,68 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Contains(Lines("events.jsonl"), l => l.Contains("4 older one(s) did not fit", StringComparison.Ordinal));
     }
 
+    // ---- CrowdSec parser health ----
+
+    private bool AttentionAlert() => _posts.Sent.Any(e => e.Title.EndsWith("CrowdSec needs attention", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task AQuietAuthLogWithNothingParsedIsNotAFaultWhenAFailedLoginInItsFormatParses()
+    {
+        // The real case: 13 lines of cron and sudo, which no parser takes.
+        _crowdsec.Sources.Add(new CrowdSecSource("file:/var/log/auth.log", 13, 0, 13));
+        await Start();
+        await Minute();
+
+        var probe = Assert.Single(_crowdsec.Probed);
+        Assert.StartsWith("2026-10-31T21:40:03.123456+00:00 vps sshd[1]: Invalid user pavlovbot-probe from 192.0.2.1", probe, StringComparison.Ordinal);
+        Assert.False(AttentionAlert());
+    }
+
+    [Fact]
+    public async Task AFailedLoginThatDoesNotParseIsAFaultAndSaysWhatIsMissed()
+    {
+        _crowdsec.Sources.Add(new CrowdSecSource("file:/var/log/auth.log", 13, 0, 13));
+        _crowdsec.Parses = _ => false;
+        await Start();
+        await Minute();
+
+        var alert = Assert.Single(_posts.Sent, e => e.Title.EndsWith("CrowdSec needs attention", StringComparison.Ordinal));
+        Assert.Contains("SSH brute force is never banned", alert.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheProbeVerdictStandsForHoursInsteadOfRunningEveryHealthCheck()
+    {
+        _crowdsec.Sources.Add(new CrowdSecSource("file:/var/log/auth.log", 13, 0, 13));
+        await Start();
+        for (var m = 0; m < 60; m++) await Minute();
+
+        Assert.Single(_crowdsec.Probed);
+    }
+
+    [Fact]
+    public async Task CscliNotAnsweringTheProbeIsNotCalledAParserFault()
+    {
+        _crowdsec.Sources.Add(new CrowdSecSource("file:/var/log/auth.log", 13, 0, 13));
+        _crowdsec.Parses = _ => null;
+        await Start();
+        await Minute();
+
+        Assert.False(AttentionAlert());
+    }
+
+    [Fact]
+    public async Task ASourceWithNoKnownLineToTestIsNotProbedOrReported()
+    {
+        _crowdsec.Sources.Add(new CrowdSecSource("file:/var/log/nginx/access.log", 500, 0, 500));
+        _crowdsec.Sources.Add(new CrowdSecSource("file:/var/log/auth.log", 900, 12, 888));
+        await Start();
+        await Minute();
+
+        Assert.Empty(_crowdsec.Probed);
+        Assert.False(AttentionAlert());
+    }
+
     // ---- fakes ----
 
     private sealed class Clock(DateTimeOffset now) : TimeProvider
@@ -494,7 +557,20 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         public Task<IReadOnlyList<CrowdSecBouncer>?> BouncersAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<CrowdSecBouncer>?>([new CrowdSecBouncer("cs-firewall-bouncer", DateTimeOffset.MaxValue, false, "0.0.36")]);
 
-        public Task<IReadOnlyList<CrowdSecSource>?> AcquisitionAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<CrowdSecSource>?>([]);
+        public List<CrowdSecSource> Sources { get; } = [];
+
+        /// <summary>What <c>cscli explain</c> says of a line; every line it was asked about.</summary>
+        public Func<string, bool?> Parses { get; set; } = _ => true;
+
+        public List<string> Probed { get; } = [];
+
+        public Task<IReadOnlyList<CrowdSecSource>?> AcquisitionAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<CrowdSecSource>?>([.. Sources]);
+
+        public Task<bool?> ParsesAsync(string line, CancellationToken ct)
+        {
+            Probed.Add(line);
+            return Task.FromResult(Parses(line));
+        }
 
         public Task<string?> BanAsync(IpNetworks.Network target, TimeSpan duration, string reason, CancellationToken ct)
         {
