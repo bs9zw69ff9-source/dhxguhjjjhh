@@ -793,7 +793,10 @@ public static class Program
                 sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosStateStore>(),
                 sp.GetRequiredService<PavlovBot.Host.Network.IPlayerTraffic>(),
                 sp.GetService<PavlovBot.Host.Network.PacketLog>(),
-                sp.GetRequiredService<IAutoPostTarget>(),
+                // Resolved when an alert is sent, not now: the gateway depends on /antiddos, which
+                // depends on this service, so taking the gateway here closes a cycle the container
+                // never finishes building (it hung --selftest).
+                new LazyAutoPostTarget(sp),
                 iface => PavlovBot.Host.Network.LinkCounters.Read(iface),
                 PavlovBot.Host.Network.DiskSpace.Read,
                 TimeProvider.System,

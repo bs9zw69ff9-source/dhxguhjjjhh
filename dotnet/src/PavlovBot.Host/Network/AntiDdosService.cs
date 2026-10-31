@@ -346,16 +346,24 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         _lastWindow = _time.GetUtcNow();
     }
 
-    /// <summary>Create the log folder if the install script has not: traversable, not listable, by others.</summary>
+    /// <summary>
+    /// Make sure the log folder exists and nobody else can list or write it - traversable only,
+    /// so ulogd (another user) can reach its own subfolder.
+    /// </summary>
+    /// <remarks>
+    /// Tightened even when it already exists: the capture can create it first as a side effect of
+    /// creating its own subfolder, with the default 0755. The install script's 0710 root:ulog is
+    /// already tight and is left exactly as it is.
+    /// </remarks>
     private void PrepareDirectory()
     {
         try
         {
-            if (Directory.Exists(_log.Paths.Root)) return;
             Directory.CreateDirectory(_log.Paths.Root);
-            if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(_log.Paths.Root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                                                      UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            if (OperatingSystem.IsWindows()) return;
+            const UnixFileMode open = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
+            var mode = File.GetUnixFileMode(_log.Paths.Root);
+            if ((mode & open) != 0) File.SetUnixFileMode(_log.Paths.Root, mode & ~open);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
