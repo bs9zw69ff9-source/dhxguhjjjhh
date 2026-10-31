@@ -315,7 +315,8 @@ public class FloodAnalysisTests
 
         Assert.Contains("Big-packet UDP flood on shack-04", verdict, StringComparison.Ordinal);
         Assert.Contains("19s", verdict, StringComparison.Ordinal);
-        Assert.Contains("46,973 pkt/s", verdict, StringComparison.Ordinal);
+        Assert.Contains("0 real-player hit(s)", verdict, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^peak\s+46,973 pkt/s", Report().Head());
     }
 
     [Fact]
@@ -417,13 +418,13 @@ public class FloodAnalysisTests
             .ToList();
         var report = Report() with { Players = new PlayerImpact(40, 0, 20, 40, drops) };
 
-        var embed = AttackEmbeds.Summary(report).Build();
-        var field = Assert.Single(embed.Fields, f => f.Name.StartsWith("Players dropped", StringComparison.Ordinal));
+        var embeds = AttackEmbeds.Report(report).Select(e => e.Build()).ToList();
+        var field = Assert.Single(embeds[0].Fields, f => f.Name.StartsWith("Players hit", StringComparison.Ordinal));
 
         Assert.True(field.Value.Length <= 1024, $"{field.Value.Length} characters");
-        Assert.Contains("and 25 more", field.Value, StringComparison.Ordinal);
-        Assert.Contains("40 player(s) dropped", report.Verdict, StringComparison.Ordinal);
-        Assert.True(embed.Length <= 6000);
+        Assert.Contains("and 28 more", field.Value, StringComparison.Ordinal);
+        Assert.Contains("40 real-player hit(s)", report.Verdict, StringComparison.Ordinal);
+        Assert.True(embeds.Sum(e => e.Length) <= 6000, "Discord's limit is 6,000 characters across a message's embeds");
     }
 
     // ---- the embeds ----
@@ -431,11 +432,14 @@ public class FloodAnalysisTests
     [Fact]
     public void TheSummaryFitsDiscordsLimitsAndCarriesNoAddresses()
     {
-        var embed = AttackEmbeds.Summary(Report(seconds: 4 * 60 * 60)).Build();
+        var embeds = AttackEmbeds.Report(Report(seconds: 4 * 60 * 60)).Select(e => e.Build()).ToList();
 
-        Assert.True(embed.Length <= 6000, $"embed is {embed.Length} characters");
-        Assert.All(embed.Fields, f => Assert.True(f.Value.Length <= 1024, $"{f.Name} is {f.Value.Length}"));
-        Assert.DoesNotContain("203.0.113", embed.Description + string.Concat(embed.Fields.Select(f => f.Value)), StringComparison.Ordinal);
+        Assert.True(embeds.Sum(e => e.Length) <= 6000, $"embeds are {embeds.Sum(e => e.Length)} characters");
+        foreach (var embed in embeds)
+        {
+            Assert.All(embed.Fields, f => Assert.True(f.Value.Length <= 1024, $"{f.Name} is {f.Value.Length}"));
+            Assert.DoesNotContain("203.0.113", embed.Description + string.Concat(embed.Fields.Select(f => f.Value)), StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -443,7 +447,9 @@ public class FloodAnalysisTests
     {
         var embed = AttackEmbeds.Summary(Report(captured: false)).Build();
 
-        Assert.Contains(embed.Fields, f => f.Name == "Breakdown" && f.Value.Contains("not running as root", StringComparison.Ordinal));
+        Assert.Contains(embed.Fields, f => f.Name == "Pattern" && f.Value.Contains("not running as root", StringComparison.Ordinal));
+        Assert.Contains(AttackEmbeds.Traffic(Report(captured: false)).Build().Fields,
+            f => f.Name == "Capture" && f.Value.Contains("not running as root", StringComparison.Ordinal));
     }
 
     // ---- reading the kernel's counters ----
@@ -559,14 +565,18 @@ public class AttackMonitorTests
 
         public int FailedPosts { get; private set; }
 
-        public Task<ulong?> SendWithFileAsync(ulong channelId, Embed embed, string fileName, string content, CancellationToken ct)
+        /// <summary>Each report's message text and its second (traffic) embed, in step with <see cref="Files"/>.</summary>
+        public List<(string? Text, Embed Traffic)> Reports { get; } = [];
+
+        public Task<ulong?> SendWithFileAsync(ulong channelId, string? text, IReadOnlyList<Embed> embeds, string fileName, string content, CancellationToken ct)
         {
             if (!Reachable)
             {
                 FailedPosts++;
                 return Task.FromResult<ulong?>(null);
             }
-            Files.Add((embed, fileName, content));
+            Files.Add((embeds[0], fileName, content));
+            Reports.Add((text, embeds[^1]));
             return Task.FromResult<ulong?>(2);
         }
     }
@@ -587,7 +597,7 @@ public class AttackMonitorTests
         private long _packets;
         private long _bytes;
 
-        public Rig(bool mitigation = false, string? directory = null)
+        public Rig(bool mitigation = false, string? directory = null, IAttackListener? listener = null)
         {
             Shield = new Shield(mitigation);
             Monitor = new AttackMonitor(42, "eth0", new FloodThresholds(Pps: 10_000), pcapDirectory: directory,
@@ -604,7 +614,8 @@ public class AttackMonitorTests
                     return (capture, null);
                 },
                 Shield, Posts, Posts, Clock, NullLogger<AttackMonitor>.Instance, () => Posts.Reachable,
-                (_, _) => Task.FromResult<string?>("iftop snapshot"));
+                (_, _) => Task.FromResult<string?>("iftop snapshot"),
+                listener, new Dictionary<ushort, string> { [7777] = "shack-04" }, banMinPackets: 50);
         }
 
         /// <summary>One second carrying <paramref name="pps"/> packets of 1,200 bytes.</summary>
@@ -615,6 +626,68 @@ public class AttackMonitorTests
             _bytes += pps * 1200;
             await Monitor.TickAsync(CancellationToken.None);
         }
+    }
+
+    /// <summary>A listener that bans what it is given, and says so.</summary>
+    private sealed class Banner : IAttackListener
+    {
+        public List<IReadOnlyList<string>> Asked { get; } = [];
+
+        public void OnSecond(LinkSecond second) { }
+
+        public void OnStarted(DateTimeOffset at, LinkSecond second, ShieldOutcome? shield) { }
+
+        public void OnEnded(AttackReport report) { }
+
+        public Task<FloodBans?> BanFloodSourcesAsync(IReadOnlyList<string> sources, DateTimeOffset start, CancellationToken ct)
+        {
+            Asked.Add(sources);
+            return Task.FromResult<FloodBans?>(new FloodBans(sources.Count, sources.Count - 1, 0, 1, "crowdsec"));
+        }
+    }
+
+    [Fact]
+    public async Task WhenAnAttackEndsItsSourcesAreBannedAndTheReportLooksLikeTheOwnersLayout()
+    {
+        var banner = new Banner();
+        var rig = new Rig(mitigation: true, listener: banner);
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 5; i++)
+        {
+            await rig.SecondAsync(50_000);
+            for (var b = 1; b <= 40; b++)
+                for (var p = 0; p < 20; p++)
+                    rig.Recorder!.Add(new CapturedPacket(CapturedPacket.Number($"198.51.100.{b}")!.Value, 7777, PacketProtocol.Udp, 1200), false);
+        }
+        // A server browser's single query is not an attacker.
+        rig.Recorder!.Add(new CapturedPacket(CapturedPacket.Number("192.0.2.200")!.Value, 8177, PacketProtocol.Udp, 20), false);
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+        var sources = Assert.Single(banner.Asked);
+        Assert.Equal(40, sources.Count);
+        Assert.DoesNotContain("192.0.2.200", sources);
+
+        var (summary, _, _) = Assert.Single(rig.Posts.Files);
+        var (text, traffic) = Assert.Single(rig.Posts.Reports);
+        Assert.StartsWith("```\npavlov bot attack report\nwindow", text, StringComparison.Ordinal);
+        Assert.Contains("attack traffic", text, StringComparison.Ordinal);
+        Assert.Equal(
+            ["Window", "Attack traffic that reached the server", "Peak (1 second)", "Pattern", "Dropped by the filter",
+             "Got through to the game", "Server link (eth0)", "Real players", "Recorded / banned"],
+            summary.Fields.Select(f => f.Name));
+        Assert.Equal([true, true, true], summary.Fields.Skip(2).Take(3).Select(f => f.Inline));
+        var banned = summary.Fields.Single(f => f.Name == "Recorded / banned").Value;
+        Assert.Contains("41 IPs recorded · **39 banned permanently**", banned, StringComparison.Ordinal);
+        // The attack's own peak, from the capture, not the link's 50,000: the last flood second's 800 and the
+        // browser's one, both counted at the tick after they arrived.
+        Assert.StartsWith("801 pkt/s", summary.Fields.Single(f => f.Name == "Peak (1 second)").Value, StringComparison.Ordinal);
+        Assert.StartsWith("peak 50,000 pkt/s", summary.Fields.Single(f => f.Name == "Server link (eth0)").Value, StringComparison.Ordinal);
+
+        Assert.Equal("Traffic", traffic.Title);
+        Assert.Equal(["Dropped by rule", "Targets", "Packet sizes (payload)", "Protocols", "Timeline (attack packets/s)", "Capture"],
+            traffic.Fields.Select(f => f.Name));
+        Assert.StartsWith("shack-04: 4,000 pkts · 4.8 MB", traffic.Fields.Single(f => f.Name == "Targets").Value, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -644,8 +717,8 @@ public class AttackMonitorTests
         Assert.Contains("203.0.113.5", content, StringComparison.Ordinal);
         Assert.Contains("online 28 before · 26 lowest · 27 after", content, StringComparison.Ordinal);
         Assert.Contains("2 disconnected, 1 rejoined", content, StringComparison.Ordinal);
-        Assert.Contains("2 player(s) dropped", summary.Description, StringComparison.Ordinal);
-        var dropped = Assert.Single(summary.Fields, f => f.Name.StartsWith("Players dropped", StringComparison.Ordinal));
+        Assert.Contains("**2 real-player hit(s)**", summary.Description, StringComparison.Ordinal);
+        var dropped = Assert.Single(summary.Fields, f => f.Name.StartsWith("Players hit", StringComparison.Ordinal));
         Assert.Contains("Player3", dropped.Value, StringComparison.Ordinal);
         Assert.Contains("Player7", dropped.Value, StringComparison.Ordinal);
         Assert.Contains("not back", dropped.Value, StringComparison.Ordinal);
@@ -691,10 +764,11 @@ public class AttackMonitorTests
 
         Assert.Equal("standby", rig.Shield.Calls[^1]);
         var (summary, _, content) = Assert.Single(rig.Posts.Files);
-        Assert.Contains("dropped by the filter", summary.Description, StringComparison.Ordinal);
+        Assert.Contains("of attack packets dropped", summary.Description, StringComparison.Ordinal);
         var filter = Assert.Single(summary.Fields, f => f.Name == "Dropped by the filter");
         Assert.Contains("250,000 packets", filter.Value, StringComparison.Ordinal);
-        Assert.Contains("34 address(es) blocked", filter.Value, StringComparison.Ordinal);
+        var (_, traffic) = Assert.Single(rig.Posts.Reports);
+        Assert.Contains(traffic.Fields, f => f.Name == "Dropped by rule" && f.Value.Contains("34 address(es) on the block list", StringComparison.Ordinal));
         Assert.Contains("34 address(es) on the block list now", content, StringComparison.Ordinal);
     }
 
@@ -819,7 +893,7 @@ public class AttackMonitorTests
         for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
 
         var (summary, _, content) = Assert.Single(rig.Posts.Files);
-        Assert.Contains(summary.Fields, f => f.Name == "Breakdown" && f.Value.Contains("/packettools install", StringComparison.Ordinal));
+        Assert.Contains(summary.Fields, f => f.Name == "Pattern" && f.Value.Contains("/packettools install", StringComparison.Ordinal));
         Assert.Contains("257,500 packets", content, StringComparison.Ordinal);   // 5 s of flood + the 15 s quiet tail
     }
 

@@ -401,7 +401,8 @@ changes ("CrowdSec needs attention", then "CrowdSec healthy again"):
    - **Limits:**
      - The hourly cap rises to `ANTIDDOS_ATTACK_BANS_PER_HOUR` (300), because a botnet is hundreds
        of addresses.
-     - Every safeguard below still holds.
+     - Players and trusted addresses are still never banned. The spoofing guard does **not** apply
+       during a flood: a spoofed flood's addresses are banned too.
      - An address CrowdSec already holds for a year or more is not banned again.
      - `/antiddos unban` lifts a ban, and the address can then be banned by a later flood.
    - **Without CrowdSec:** the kernel's block list is lost at a reboot, so the address gets the
@@ -411,6 +412,35 @@ changes ("CrowdSec needs attention", then "CrowdSec healthy again"):
    - **The cost:** botnet addresses are mostly home connections that get reassigned, so a permanent
      ban can outlive its attacker and land on a future player. A ban on a known player shows in
      the CrowdSec alerts for you to lift.
+6. **Every source of a flood, banned when it ends.** A botnet of thousands sends a few packets a
+   second from each address and never trips a per-address rate, so step 5 alone would catch a few
+   dozen. When the attack monitor declares the flood over, the bot bans **every** address in it, in
+   one `cscli decisions import` (about a second for 5,000 addresses), before the summary is
+   posted.
+   - **What counts as a source:** any address that sent at least `ANTIDDOS_FLOOD_BAN_MIN_PACKETS`
+     (50) packets to the game ports during the attack.
+     - The packets come from the attack capture, which sees them before the firewall drops them.
+     - A server browser's query (one or two packets) and a monitoring ping (not a game port) don't
+       count.
+     - Neither do replies to the server's own connections, such as Discord or Steam, because those
+       arrive on other ports.
+   - **Never banned:**
+     - known players, checked at the end, so one who joined mid-flood has had time to appear on
+       the roster;
+     - trusted addresses;
+     - private, carrier-NAT, loopback, link-local and multicast addresses;
+     - addresses CrowdSec already holds for a year or more.
+   - **No spoofing guard, by choice.** A flood with forged source addresses gets those addresses
+     banned. They belong to someone, possibly a future player, and banning them doesn't stop the
+     next spoofed flood, which forges different ones.
+   - **Without CrowdSec:** the addresses are blocked in the kernel for `ANTIDDOS_MAX_BAN_HOURS`
+     instead, since the kernel's list doesn't survive a reboot.
+   - **Where it's recorded:**
+     - one `flood-ban` event with the counts;
+     - a `crowdsec-decision` event per address as the decisions appear;
+     - the summary's "Recorded / banned" line;
+     - every source address in the attached report.
+   - **Off switch:** the same as step 5 (`attack_permaban`).
 
 **Safeguards against spoofing and false positives.** A UDP source address is whatever the sender
 wrote, so:
@@ -418,8 +448,9 @@ wrote, so:
 - Known players (every confirmed address seen in 30 days) and trusted addresses are never banned
   automatically, and are let through the attack limits. Spoofing a player's address cannot get them
   banned.
-- When a minute has more than `ANTIDDOS_SPOOF_SOURCES` sources, the flood is likely spoofed.
-  Per-address bans are held and recorded as held, and the aggregate cap does the work.
+- Outside a flood, when a minute has more than `ANTIDDOS_SPOOF_SOURCES` sources, the traffic is
+  likely spoofed. Per-address bans are held and recorded as held, and the aggregate cap does the
+  work. During a flood this guard is off (steps 5 and 6).
 - At most `ANTIDDOS_MAX_BANS_PER_HOUR` automatic bans an hour.
 - Bans are by single address only. A hand ban is at most a /24 or /48, never a provider's range.
 - Reputation alone never bans a player. A CrowdSec decision on a known player is flagged in the

@@ -42,6 +42,14 @@ public interface IAttackListener
     void OnStarted(DateTimeOffset at, LinkSecond second, ShieldOutcome? shield);
 
     void OnEnded(AttackReport report);
+
+    /// <summary>
+    /// Ban an attack's sources when it ends, before the summary is written, so the summary can say
+    /// what was banned. Null when this listener does not ban.
+    /// </summary>
+    /// <param name="sources">Every address that sent the attack's minimum to the game's ports.</param>
+    Task<FloodBans?> BanFloodSourcesAsync(IReadOnlyList<string> sources, DateTimeOffset start, CancellationToken ct) =>
+        Task.FromResult<FloodBans?>(null);
 }
 
 /// <summary>
@@ -103,6 +111,15 @@ public sealed class AttackMonitor : BackgroundService
 
     private (long Packets, long Bytes)? _last;
     private readonly List<LinkSecond> _timeline = [];
+
+    /// <summary>The attack's own packets each second (the capture's count, players excluded), beside the link's.</summary>
+    private readonly List<LinkSecond> _attackTimeline = [];
+    private (long Packets, long Bytes) _recorded;
+    private readonly IReadOnlyDictionary<ushort, string>? _portNames;
+    private readonly int _banMinPackets;
+
+    /// <summary>How long the end-of-attack bans may hold up the summary.</summary>
+    private static readonly TimeSpan BanTimeout = TimeSpan.FromMinutes(4);
     private IAttackCapture? _capture;
     private string? _captureProblem;
     private FloodRecorder _recorder = new();
@@ -135,8 +152,12 @@ public sealed class AttackMonitor : BackgroundService
         ILogger<AttackMonitor> logger,
         Func<bool>? discordConnected = null,
         Func<string, CancellationToken, Task<string?>>? iftopSnapshot = null,
-        IAttackListener? listener = null)
+        IAttackListener? listener = null,
+        IReadOnlyDictionary<ushort, string>? portNames = null,
+        int banMinPackets = 50)
     {
+        _portNames = portNames;
+        _banMinPackets = Math.Max(1, banMinPackets);
         _listener = listener;
         _discordConnected = discordConnected ?? (() => true);
         _iftopSnapshot = iftopSnapshot ?? ((iface, token) => IftopSnapshot.TakeAsync(iface, logger, token));
@@ -227,13 +248,23 @@ public sealed class AttackMonitor : BackgroundService
 
         if (_detector.InAttack || _detector.RunStartedAt is not null || signal == FloodSignal.Ended)
         {
-            if (_timeline.Count < MaxTimeline) _timeline.Add(second);
+            if (_timeline.Count < MaxTimeline)
+            {
+                _timeline.Add(second);
+                if (_capture is not null)
+                {
+                    var totals = _recorder.Totals;
+                    _attackTimeline.Add(new LinkSecond(now, totals.Packets - _recorded.Packets, totals.Bytes - _recorded.Bytes));
+                    _recorded = totals;
+                }
+            }
             if (_detector.IsOver(second)) _activeSeconds++;
             _drops.Observe(names, now, _players.RosterFresh);
         }
         else if (!wasRunning)
         {
             _timeline.Clear();
+            _attackTimeline.Clear();
             _activeSeconds = 0;
             _playersBefore = online;
             _drops.Baseline(names);
@@ -337,7 +368,9 @@ public sealed class AttackMonitor : BackgroundService
 
     private void StartCapture(DateTimeOffset now)
     {
-        _recorder = new FloodRecorder();
+        // Packets to the game's ports are counted per source: those addresses are what gets banned.
+        _recorder = new FloodRecorder(targeted: FloodShieldRules.PortMatcher(_shield.Limits.GamePorts));
+        _recorded = default;
         var pcap = _pcapDirectory is null ? null : Path.Combine(_pcapDirectory, $"attack-{now.UtcDateTime:yyyyMMdd-HHmmss}.pcap");
         if (pcap is not null) PrepareDirectory(_pcapDirectory!);
 
@@ -371,10 +404,12 @@ public sealed class AttackMonitor : BackgroundService
         }
 
         var iftop = _iftop is null ? null : await _iftop.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+        var start = _timeline.Count > 0 ? _timeline[0].At : now;
+        var bans = _capture is null ? null : await BanSourcesAsync(start, ct).ConfigureAwait(false);
 
         var report = new AttackReport(
             _host, _iface!,
-            Start: _timeline.Count > 0 ? _timeline[0].At : now,
+            Start: start,
             End: now,
             Timeline: [.. _timeline],
             ActiveSeconds: _activeSeconds,
@@ -385,7 +420,10 @@ public sealed class AttackMonitor : BackgroundService
             Statistics: statistics,
             Shield: shield,
             Iftop: iftop,
-            Connection: _offlineFrom is { } from ? new ConnectionLoss(_offlineSeconds, from, _offlineUntil) : null);
+            Connection: _offlineFrom is { } from ? new ConnectionLoss(_offlineSeconds, from, _offlineUntil) : null,
+            AttackTimeline: [.. _attackTimeline],
+            Bans: bans,
+            PortNames: _portNames);
 
         _logger.LogWarning("ATTACK ended on {Interface}: {Verdict}", _iface, report.Verdict);
         Notify(l => l.OnEnded(report));
@@ -411,15 +449,41 @@ public sealed class AttackMonitor : BackgroundService
         _offlineSeconds = 0;
         _offlineFrom = null;
         _timeline.Clear();
+        _attackTimeline.Clear();
         _activeSeconds = 0;
         _playersBefore = online;
         _drops.Baseline(_players.OnlineNames());
     }
 
+    /// <summary>Hand the attack's sources to the listener to ban; bounded, and never fatal to the summary.</summary>
+    private async Task<FloodBans?> BanSourcesAsync(DateTimeOffset start, CancellationToken ct)
+    {
+        if (_listener is null) return null;
+        var sources = _recorder.TargetingSources(_banMinPackets);
+        if (sources.Count == 0) return null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(BanTimeout);
+            return await _listener.BanFloodSourcesAsync(sources, start, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("Banning the attack's {Count} sources took over {Minutes} min; the summary goes without it", sources.Count, BanTimeout.TotalMinutes);
+            return new FloodBans(sources.Count, 0, 0, 0, "none", $"still running after {BanTimeout.TotalMinutes:0} min - see the event log");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not ban the attack's sources");
+            return new FloodBans(sources.Count, 0, 0, 0, "none", ex.Message);
+        }
+    }
+
     private static string ReportName(AttackReport report) => $"attack-{report.Start.UtcDateTime:yyyyMMdd-HHmmss}.txt";
 
     private Task<ulong?> PostAsync(AttackReport report, bool postedLate, CancellationToken ct) =>
-        _files.SendWithFileAsync(_channel, AttackEmbeds.Summary(report, postedLate).Build(), ReportName(report), report.ToText(), ct);
+        _files.SendWithFileAsync(_channel, AttackEmbeds.Head(report), [.. AttackEmbeds.Report(report, postedLate).Select(e => e.Build())],
+            ReportName(report), report.ToText(), ct);
 
     /// <summary>Post the held-back summaries, oldest first, stopping at the first that still fails.</summary>
     private async Task RetryPendingAsync(CancellationToken ct)

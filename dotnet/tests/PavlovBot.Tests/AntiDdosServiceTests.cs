@@ -489,6 +489,68 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Empty(_crowdsec.Bans);
     }
 
+    // ---- every source of a flood, banned when it ends ----
+
+    [Fact]
+    public async Task EveryFloodSourceIsBannedPermanentlyInOneImportAndPlayersTrustedAndPrivateAreSpared()
+    {
+        var service = await Start();
+        _players.Known.Add(CapturedPacket.Number("198.51.100.50")!.Value);
+        Assert.Null(await service.TrustAsync(IpNetworks.Canonical("203.0.113.0/24")!, "office", "owner"));
+        _crowdsec.Decisions.Add(new CrowdSecDecision(9, "198.51.100.60", "Ip", "ban", "cscli", "pavlovbot: earlier", _clock.Now.AddYears(9)));
+        await Minute();   // CrowdSec's list is read once a minute
+
+        var bots = Enumerable.Range(1, 3000).Select(i => $"192.0.{i / 250 + 2}.{i % 250 + 1}").ToList();
+        var bans = await service.BanFloodSourcesAsync(
+            [.. bots, "198.51.100.50", "203.0.113.9", "10.0.0.5", "198.51.100.60"], T0, CancellationToken.None);
+
+        var import = Assert.Single(_crowdsec.Imports);
+        Assert.Equal(3000, import.Addresses.Count);
+        Assert.Equal(ResponsePolicy.Permanent, import.Length);
+        Assert.StartsWith("flood source (", import.Reason, StringComparison.Ordinal);
+        Assert.Equal(new FloodBans(3004, 3000, 1, 3, "crowdsec"), bans);
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("\"category\":\"flood-ban\"", StringComparison.Ordinal)
+                                                    && l.Contains("3,000 of 3,004", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AFloodSourceBannedAtTheEndIsNotBannedAgainByTheMinuteAfter()
+    {
+        var service = await Start();
+        Flood();
+        await service.BanFloodSourcesAsync(["192.0.2.77"], T0, CancellationToken.None);
+        await Minute(("192.0.2.77", "udp", 7777, 60 * 900));
+
+        Assert.Empty(_crowdsec.Bans);
+    }
+
+    [Fact]
+    public async Task WithoutCrowdSecFloodSourcesAreBlockedInTheKernelForTheLongestTimeAndItSaysSo()
+    {
+        _crowdsec.IsInstalled = false;
+        var service = await Start();
+
+        var bans = await service.BanFloodSourcesAsync(["192.0.2.1", "192.0.2.2"], T0, CancellationToken.None);
+
+        Assert.Contains($"block-many 2 {7 * 24 * 60}", _firewall.Calls);
+        Assert.Equal(("nftables", 2), (bans!.Via, bans.Banned));
+        Assert.Contains("permanent bans need CrowdSec", bans.Problem, StringComparison.Ordinal);
+        Assert.Equal(2, Lines("events.jsonl").Count(l => l.Contains("\"action\":\"banned\"", StringComparison.Ordinal)
+                                                         && l.Contains("\"category\":\"ban\"", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task WithFloodBansOffNothingIsBanned()
+    {
+        var service = await Start();
+        Assert.Null(await service.SetThresholdAsync(Thresholds.Find("attack_permaban")!, 0, "owner"));
+
+        var bans = await service.BanFloodSourcesAsync(["192.0.2.1"], T0, CancellationToken.None);
+
+        Assert.Empty(_crowdsec.Imports);
+        Assert.Equal((0, "attack_permaban is off"), (bans!.Banned, bans.Problem));
+    }
+
     // ---- CrowdSec parser health ----
 
     private bool AttentionAlert() => _posts.Sent.Any(e => e.Title.EndsWith("CrowdSec needs attention", StringComparison.Ordinal));
@@ -636,6 +698,14 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
             return Task.FromResult<string?>(null);
         }
 
+        public List<(IReadOnlyCollection<string> Addresses, TimeSpan Length, string Reason)> Imports { get; } = [];
+
+        public Task<string?> BanManyAsync(IReadOnlyCollection<string> addresses, TimeSpan duration, string reason, CancellationToken ct)
+        {
+            Imports.Add(([.. addresses], duration, reason));
+            return Task.FromResult<string?>(null);
+        }
+
         public Task<string?> UnbanAsync(IpNetworks.Network target, CancellationToken ct) => Task.FromResult<string?>(null);
 
         public Task<string?> AllowAsync(IpNetworks.Network target, string comment, CancellationToken ct)
@@ -714,6 +784,12 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         }
 
         public Task<string?> UnblockAsync(string address, CancellationToken ct) => Task.FromResult<string?>(null);
+
+        public Task<string?> BlockManyAsync(IReadOnlyCollection<string> addresses, int minutes, CancellationToken ct)
+        {
+            Calls.Add($"block-many {addresses.Count} {minutes}");
+            return Task.FromResult<string?>(null);
+        }
 
         public Task<FirewallSnapshot?> SnapshotAsync(CancellationToken ct) => Task.FromResult<FirewallSnapshot?>(new FirewallSnapshot(
             new Dictionary<string, Counter>(), [.. Blocked.Select(b => new BlockedAddress(b, 600))], [],

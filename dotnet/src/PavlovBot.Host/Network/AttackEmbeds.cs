@@ -6,7 +6,7 @@ using PavlovBot.Host.Discord;
 namespace PavlovBot.Host.Network;
 
 /// <summary>
-/// The three attack messages: started, live, and the summary.
+/// The attack messages: started, live, and the report (summary and traffic).
 /// </summary>
 /// <remarks>
 /// NO ADDRESSES IN AN EMBED. Source IPs go in the attached report only. An attack channel is
@@ -45,54 +45,61 @@ public static class AttackEmbeds
             .Brand();
     }
 
+    /// <summary>The message the summary embeds and the report file come with: the report's head, as code.</summary>
+    public static string Head(AttackReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        return "```\n" + report.Head().Replace("`", "'", StringComparison.Ordinal) + "\n```";
+    }
+
+    /// <summary>The summary, then the traffic: two embeds in one message, under Discord's 6,000-character total.</summary>
+    /// <param name="postedLate">True when the bot could not post it at the time and is posting it now.</param>
+    public static IReadOnlyList<EmbedBuilder> Report(AttackReport report, bool postedLate = false) =>
+        [Summary(report, postedLate), Traffic(report)];
+
     /// <param name="postedLate">True when the bot could not post it at the time and is posting it now.</param>
     public static EmbedBuilder Summary(AttackReport report, bool postedLate = false)
     {
         ArgumentNullException.ThrowIfNull(report);
         var d = report.Breakdown;
-        var peak = report.Peak;
+        var hits = report.Players.Drops.Count;
+        var stats = report.Shield is { Engaged: true, Stats: { } st } ? st : null;
+        var active = AttackReport.Duration(TimeSpan.FromSeconds(report.ActiveSeconds));
 
         // Plain rather than Theme.Failure: a report is not an error, and its ❌ would say it was.
         var embed = new EmbedBuilder().WithColor(Theme.BanRed).WithTitle("Attack ended · summary")
-            .WithDescription($"**{report.Verdict}** · players {report.Players.Before} → {report.Players.Lowest} lowest → {report.Players.After}" +
-                (postedLate
-                    ? $"\n⚠️ **Posted late** - the bot could not reach Discord when this attack ended at <t:{report.End.ToUnixTimeSeconds()}:T>."
-                    : ""))
+            .WithDescription($"**{report.Pattern}** on {report.Host} · {active}" +
+                             (stats is not null ? $" · {AttackReport.Percent(report.DroppedShare)} of attack packets dropped" : "") +
+                             $" · **{hits} real-player hit(s)**" +
+                             (postedLate
+                                 ? $"\n⚠️ **Posted late** - the bot could not reach Discord when this attack ended at <t:{report.End.ToUnixTimeSeconds()}:T>."
+                                 : ""))
             .AddField("Window",
-                $"{AttackReport.Stamp(report.Start)} → {report.End.UtcDateTime:HH:mm:ss} ({AttackReport.Duration(report.Window)})", false)
-            .AddField("Traffic that reached the server",
-                $"{AttackReport.Count(report.LinkPackets)} packets · {AttackReport.Bytes(report.LinkBytes)}\n" +
-                $"avg {report.AverageActiveMbps:0} Mbit/s over {AttackReport.Duration(TimeSpan.FromSeconds(report.ActiveSeconds))} of active flooding", false)
-            .AddField("Peak (1 second)", $"{AttackReport.Count(peak.Packets)} pkt/s · {peak.Mbps:0} Mbit/s", true);
+                $"{AttackReport.Stamp(report.Start)} → {report.End.UtcDateTime:HH:mm:ss} UTC ({AttackReport.Duration(report.Window)})", false)
+            .AddField("Attack traffic that reached the server",
+                $"{AttackReport.Count(report.AttackPackets)} packets · {AttackReport.Bytes(report.AttackBytes)}\n" +
+                $"avg {report.AverageActiveMbps:0} Mbit/s over {active} of active flooding", false)
+            .AddField("Peak (1 second)", $"{AttackReport.Count(report.AttackPeak.Packets)} pkt/s · {report.AttackPeak.Mbps:0} Mbit/s", true);
 
-        if (report.Capture.Ran)
+        embed.AddField("Pattern", report.Capture.Ran
+            ? $"{(d.DistinctSizes > 50 ? "random sizes" : "sizes")} {d.MinSize}-{d.MaxSize} B\n({AttackReport.Count(d.DistinctSizes)} different)\n" +
+              $"from {AttackReport.Count(d.DistinctSources)}{(d.SourcesCapped ? "+" : "")} IPs"
+            : $"no breakdown - {report.Capture.Problem}", true);
+
+        embed.AddField("Dropped by the filter", report.Shield switch
         {
-            embed.AddField("Pattern",
-                    $"{d.Pattern}\nsizes {d.MinSize}-{d.MaxSize} B ({d.DistinctSizes} different)\n" +
-                    $"from {AttackReport.Count(d.DistinctSources)} IP(s){(d.SourcesCapped ? "+" : "")}", true)
-                .AddField("Protocols",
-                    $"UDP {AttackReport.Share(d.Udp, d.AttackPackets)} · TCP {AttackReport.Share(d.Tcp, d.AttackPackets)}" +
-                    $"{(d.Syn > 0 ? $" (SYN {AttackReport.Count(d.Syn)})" : "")} · ICMP {AttackReport.Share(d.Icmp, d.AttackPackets)}", true);
+            null => "nothing - `ATTACK_MITIGATION` is off, so nothing was blocked",
+            { Engaged: false } s => $"nothing - the filter could not engage: {s.Problem}",
+            { Stats: null } => "engaged, but its counters could not be read",
+            { Stats: { } s } => $"{AttackReport.Count(s.Dropped)} packets · {AttackReport.Bytes(s.DroppedBytes)}\n{AttackReport.Percent(report.DroppedShare)} of the attack",
+        }, true);
 
-            if (d.TopPorts.Count > 0)
-            {
-                embed.AddField("Targets", string.Join("\n", d.TopPorts.Take(5).Select(p =>
-                    $"port {p.Port}: {AttackReport.Count(p.Packets)} pkts ({AttackReport.Share(p.Packets, d.AttackPackets)})")), false);
-            }
+        embed.AddField("Got through to the game", report.GotThrough is { } through
+            ? $"{AttackReport.Count(through)} attack packets ({AttackReport.Share(through, report.AttackPackets)})"
+            : report.Shield is null ? "all of it - nothing was filtered" : "unknown - no capture to compare against", false);
 
-            embed.AddField("Packet sizes (payload)", "```\n" + string.Join("\n", d.Bands.Select(b =>
-                $"{b.Label,10} {AttackReport.Bar(b.Packets, d.AttackPackets),-20} {AttackReport.Share(b.Packets, d.AttackPackets)}")) + "\n```", false);
-
-            embed.AddField("Capture",
-                $"tshark saw {AttackReport.Percent(report.Capture.Completeness)} of the packets" +
-                $"{(report.Capture.DroppedByKernel > 0 ? $" ({AttackReport.Count(report.Capture.DroppedByKernel)} dropped by the kernel - the breakdown is a sample)" : "")}" +
-                $"{(report.Statistics is not null ? "\nWireshark statistics (protocols, top endpoints, conversations) are in the attached report" : "")}" +
-                $"{(report.PcapPath is { } pcap ? $"\npcap kept at `{pcap}` - `/packettools analyze` reads it again" : "")}", false);
-        }
-        else
-        {
-            embed.AddField("Breakdown", $"none - {report.Capture.Problem}", false);
-        }
+        embed.AddField($"Server link ({report.Interface})",
+            $"peak {AttackReport.Count(report.Peak.Packets)} pkt/s · {report.Peak.Mbps:0} Mbit/s", false);
 
         if (report.Connection is { } lost)
         {
@@ -102,35 +109,101 @@ public static class AttackEmbeds
                 "server's connection itself - no firewall on the server can stop that; it needs the host's DDoS protection.", false);
         }
 
-        embed.AddField("Dropped by the filter", report.Shield switch
-        {
-            null => "nothing - `ATTACK_MITIGATION` is off, so nothing was blocked",
-            { Engaged: false } s => $"nothing - the filter could not engage: {s.Problem}",
-            { Stats: null } => "engaged, but its counters could not be read",
-            { Stats: { } st } =>
-                $"{AttackReport.Count(st.Dropped)} packets · {AttackReport.Percent(report.DroppedShare)} of the attack\n" +
-                $"blocked addresses: {AttackReport.Count(st.BlockedPackets)} · over the per-address limit: {AttackReport.Count(st.PerSourcePackets)} · " +
-                $"over the unknown cap: {AttackReport.Count(st.CappedPackets)}\n" +
-                $"{AttackReport.Count(st.BlockedSources)} address(es) blocked for {report.Shield.Limits.BlockMinutes} min · known players were never limited",
-        }, false);
+        embed.AddField("Real players",
+            $"online: {report.Players.Before} before · {report.Players.Lowest} lowest · {report.Players.After} after" +
+            (report.Capture.Ran
+                ? $"\n{AttackReport.Count(d.PlayerPackets)} packets from {report.Players.AddressesKnown} players during the window"
+                : "") +
+            $"\n**{hits} player hit(s)**{(hits > 0 ? $" ({report.Players.Rejoined} rejoined), listed below" : "")}" +
+            (report.Players.StaleSeconds > 0
+                ? $"\nRCON could not be read for {report.Players.StaleSeconds}s, so a disconnect then may be missing"
+                : ""), false);
+        if (hits > 0) embed.AddField($"Players hit: {hits} ({report.Players.Rejoined} rejoined)", Dropped(report.Players.Drops, 12), false);
 
-        embed.AddField("Timeline (packets/s)",
-                $"`{AttackReport.Sparkline([.. report.Timeline.Select(s => s.Packets)])}`\n" +
-                $"{report.Start.UtcDateTime:HH:mm:ss} → {report.End.UtcDateTime:HH:mm:ss} · peak at {peak.At.UtcDateTime:HH:mm:ss}", false)
-            .AddField("Real players",
-                $"online: {report.Players.Before} before · {report.Players.Lowest} lowest · {report.Players.After} after" +
-                (report.Capture.Ran
-                    ? $"\n{AttackReport.Count(d.PlayerPackets)} packets from {report.Players.AddressesKnown} known player address(es), kept out of the attack figures"
-                    : "") +
-                (report.Players.StaleSeconds > 0
-                    ? $"\nRCON could not be read for {report.Players.StaleSeconds}s, so a disconnect then may be missing"
-                    : ""), false)
-            .AddField(report.Players.Drops.Count == 0
-                    ? "Players dropped"
-                    : $"Players dropped: {report.Players.Drops.Count} ({report.Players.Rejoined} rejoined)",
-                Dropped(report.Players.Drops, 15), false);
+        embed.AddField("Recorded / banned", Banned(report), false);
+        return embed.Brand();
+    }
+
+    /// <summary>The traffic: what the filter dropped by rule, the targets, the sizes and the timeline.</summary>
+    public static EmbedBuilder Traffic(AttackReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        var d = report.Breakdown;
+        var embed = new EmbedBuilder().WithColor(Theme.Amber).WithTitle("Traffic");
+
+        if (report.Shield is { Engaged: true, Stats: { } st } shield)
+        {
+            (string Rule, long Packets)[] rules =
+            [
+                ($"banned ({shield.Limits.BlockMinutes}m)", st.BlockedPackets),
+                ("per-address limit", st.PerSourcePackets),
+                ("unknown-traffic cap", st.CappedPackets),
+                ("SYN flood", st.SynFloodPackets),
+                ("ping limit", st.IcmpPackets),
+                ("SSH limit", st.SshPackets),
+            ];
+            var top = rules.Max(r => r.Packets);
+            var lines = rules.Where(r => r.Packets > 0).OrderByDescending(r => r.Packets).Select(r =>
+                $"{r.Rule}: {(r.Packets == top ? $"**{AttackReport.Count(r.Packets)}**" : AttackReport.Count(r.Packets))} pkts " +
+                $"({AttackReport.Share(r.Packets, st.Dropped)})");
+            embed.AddField("Dropped by rule", st.Dropped == 0 ? "nothing" : string.Join("\n", lines) +
+                $"\n{AttackReport.Count(st.BlockedSources)} address(es) on the block list · known players never limited", false);
+        }
+
+        if (report.Capture.Ran)
+        {
+            if (d.TopPorts.Count > 0)
+            {
+                var shown = d.TopPorts.Take(5).ToList();
+                var rest = d.AttackPackets - shown.Sum(p => p.Packets) - d.Icmp;
+                embed.AddField("Targets", string.Join("\n", shown.Select(p =>
+                    $"{Sanitize.Code(report.PortName(p.Port))}: {AttackReport.Count(p.Packets)} pkts" +
+                    (d.PortBytes is not null && d.PortBytes.TryGetValue(p.Port, out var bytes) ? $" · {AttackReport.Bytes(bytes)}" : "") +
+                    $" ({AttackReport.Share(p.Packets, d.AttackPackets)})")) +
+                    (rest > 0 ? $"\nother ports: {AttackReport.Count(rest)} pkts" : ""), false);
+            }
+
+            embed.AddField("Packet sizes (payload)", "```\n" + string.Join("\n", d.Bands.Select(b =>
+                $"{b.Label,10} {AttackReport.Bar(b.Packets, d.AttackPackets),-20} {AttackReport.Share(b.Packets, d.AttackPackets)}")) + "\n```", false);
+
+            embed.AddField("Protocols",
+                $"UDP {AttackReport.Share(d.Udp, d.AttackPackets)} · TCP {AttackReport.Share(d.Tcp, d.AttackPackets)}" +
+                $"{(d.Syn > 0 ? $" (SYN {AttackReport.Count(d.Syn)})" : "")} · ICMP {AttackReport.Share(d.Icmp, d.AttackPackets)}", false);
+        }
+
+        var seconds = report.AttackSeconds;
+        var peak = report.AttackPeak;
+        embed.AddField(report.Capture.Ran ? "Timeline (attack packets/s)" : "Timeline (link packets/s)",
+            $"```\n{AttackReport.Sparkline([.. seconds.Select(s => s.Packets)])}\n```" +
+            $"{report.Start.UtcDateTime:HH:mm:ss} → {report.End.UtcDateTime:HH:mm:ss} · peak {AttackReport.Count(peak.Packets)}/s at {peak.At.UtcDateTime:HH:mm:ss}", false);
+
+        embed.AddField("Capture", report.Capture.Ran
+            ? $"tshark saw {AttackReport.Percent(report.Capture.Completeness)} of the packets" +
+              $"{(report.Capture.DroppedByKernel > 0 ? $" ({AttackReport.Count(report.Capture.DroppedByKernel)} dropped by the kernel - the breakdown is a sample)" : "")}" +
+              $"{(report.PcapPath is { } pcap ? $"\npcap kept at `{pcap}` - `/packettools analyze` reads it again" : "")}" +
+              "\nEvery source address is in the attached report"
+            : $"none - {report.Capture.Problem}", false);
 
         return embed.Brand();
+    }
+
+    /// <summary>What happened to the attack's addresses.</summary>
+    private static string Banned(AttackReport report)
+    {
+        var recorded = report.Capture.Ran ? report.Breakdown.DistinctSources : 0;
+        if (report.Bans is not { } bans)
+        {
+            return report.Capture.Ran
+                ? $"{AttackReport.Count(recorded)} IPs recorded · none banned (no source sent the minimum to the game ports)"
+                : "nothing recorded without a capture";
+        }
+
+        var how = bans.Via switch { "crowdsec" => "banned permanently", "nftables" => "blocked", _ => "banned" };
+        var line = $"{AttackReport.Count(recorded)} IPs recorded · **{AttackReport.Count(bans.Banned)} {how}**";
+        if (bans.Already > 0) line += $" · {AttackReport.Count(bans.Already)} already banned";
+        if (bans.Spared > 0) line += $" · {AttackReport.Count(bans.Spared)} spared (players, trusted, private)";
+        if (bans.Problem is { } problem) line += $"\n{(problem.Length > 300 ? problem[..300] + "…" : problem)}";
+        return line + "\n-# `/antiddos unban ip:<address>` lifts one";
     }
 
     /// <summary>The dropped players, newest last, capped so the field stays inside Discord's 1,024 characters.</summary>

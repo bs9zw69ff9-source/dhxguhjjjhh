@@ -111,7 +111,7 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
         }
     }
 
-    public async Task<ulong?> SendWithFileAsync(ulong channelId, Embed embed, string fileName, string content, CancellationToken ct)
+    public async Task<ulong?> SendWithFileAsync(ulong channelId, string? text, IReadOnlyList<Embed> embeds, string fileName, string content, CancellationToken ct)
     {
         try
         {
@@ -122,7 +122,7 @@ public sealed class GatewayAutoPostTarget(DiscordGateway gateway, ILogger<Gatewa
             }
 
             using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
-            var message = await channel.SendFileAsync(new FileAttachment(stream, fileName), embed: embed,
+            var message = await channel.SendFileAsync(new FileAttachment(stream, fileName), text, embeds: [.. embeds],
                 allowedMentions: AllowedMentions.None).ConfigureAwait(false);
             return message.Id;
         }

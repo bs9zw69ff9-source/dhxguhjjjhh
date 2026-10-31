@@ -665,6 +665,105 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         return found;
     }
 
+    /// <summary>
+    /// Ban every source of a flood that just ended, permanently, in one go.
+    /// </summary>
+    /// <remarks>
+    /// ALL OF THEM, BY THE OWNER'S CHOICE. Per-minute detection only sees sources over a rate; a
+    /// botnet of thousands sends a few packets a second each and never trips it. These are every
+    /// address that sent at least <see cref="AntiDdosOptions.FloodBanMinPackets"/> packets to the
+    /// game's ports during the attack, from the capture, which sees packets before the firewall.
+    ///
+    /// NEVER BANNED, whatever they sent: a known player (every address confirmed in 30 days -
+    /// checked now, at the end, so one who joined during the flood has had time to appear), a
+    /// trusted address, and anything not on the public internet. No spoofing guard: a spoofed
+    /// flood's addresses are banned too, which bans whoever really owns them.
+    ///
+    /// ONE IMPORT. Thousands of <c>cscli decisions add</c> would take minutes; one import takes
+    /// about a second. Each decision then shows in the event log as a crowdsec-decision; one
+    /// flood-ban event sums it up.
+    /// </remarks>
+    public Task<FloodBans?> BanFloodSourcesAsync(IReadOnlyList<string> sources, DateTimeOffset start, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        return RunAsync<FloodBans?>(async token =>
+        {
+            var now = _time.GetUtcNow();
+            if (!Options.AutoBan || !Options.AttackPermaban)
+                return new FloodBans(sources.Count, 0, 0, 0, "none", !Options.AutoBan ? "automatic bans are off" : "attack_permaban is off");
+
+            var players = _players.KnownAddresses().Select(CapturedPacket.Address).ToHashSet(StringComparer.Ordinal);
+            var trusted = _state.Read().Trusted.Select(t => IpNetworks.Canonical(t.Network)).OfType<IpNetworks.Network>().ToList();
+            var bannedForGood = BannedForGood(now);
+
+            var ban = new List<string>();
+            int already = 0, spared = 0;
+            foreach (var source in sources.Distinct(StringComparer.Ordinal))
+            {
+                if (IpNetworks.Canonical(source) is not { IsSingle: true } address || !IpNetworks.IsPublic(address)
+                    || players.Contains(address.Address) || trusted.Any(t => t.Contains(address.Address)))
+                {
+                    spared++;
+                }
+                else if (bannedForGood(address.Address))
+                {
+                    already++;
+                }
+                else
+                {
+                    ban.Add(address.Address);
+                }
+            }
+
+            var reason = $"flood source ({AntiDdosLog.FileStamp(start)})";
+            string via;
+            string? problem = null;
+            string? note = null;
+            if (ban.Count == 0)
+            {
+                via = _crowdsec.Installed ? "crowdsec" : "nftables";
+            }
+            else if (_crowdsec.Installed)
+            {
+                via = "crowdsec";
+                problem = await _crowdsec.BanManyAsync(ban, ResponsePolicy.Permanent, reason, token).ConfigureAwait(false);
+            }
+            else
+            {
+                via = "nftables";
+                var cap = Options.Response.Cap;
+                problem = await _firewall.BlockManyAsync(ban, (int)Math.Ceiling(cap.TotalMinutes), token).ConfigureAwait(false);
+                if (problem is null)
+                {
+                    foreach (var address in ban) _selfBlocked[address] = now + cap;
+                    note = $"kept {ReadingStore.Ago(cap)}, not permanently: permanent bans need CrowdSec";
+                }
+            }
+
+            var banned = problem is null ? ban.Count : 0;
+            problem ??= note;
+            if (banned > 0)
+                foreach (var address in ban) _planner.MarkPermanent(address, now);
+
+            await _log.EventAsync(new AntiDdosEvent(now, "flood-ban", banned > 0 || ban.Count == 0 ? "warning" : "critical",
+                Action: banned > 0 || ban.Count == 0 ? "banned" : "ban-failed",
+                Reason: string.Create(CultureInfo.InvariantCulture,
+                    $"{banned:N0} of {sources.Count:N0} flood source(s) banned via {via}; {already:N0} already banned; {spared:N0} spared (players, trusted, private){(problem is null ? "" : " - " + problem)}"),
+                Actor: "auto", Incident: "flood-" + AntiDdosLog.FileStamp(start),
+                Detail: new Dictionary<string, string> { ["via"] = via, ["permanent"] = via == "crowdsec" ? "true" : "false" }), token).ConfigureAwait(false);
+            // Without CrowdSec there are no decision events to say who: one event each, for /antiddos history.
+            if (via == "nftables" && banned > 0)
+            {
+                foreach (var address in ban)
+                    await _log.EventAsync(new AntiDdosEvent(now, "ban", "warning", address, "banned", reason, now + Options.Response.Cap, "auto",
+                        "flood-" + AntiDdosLog.FileStamp(start), new Dictionary<string, string> { ["via"] = via, ["permanent"] = "false" }), token)
+                        .ConfigureAwait(false);
+            }
+
+            return new FloodBans(sources.Count, banned, already, spared, via, problem);
+        }).WaitAsync(ct);
+    }
+
     /// <summary>The addresses CrowdSec already holds for a year or more, as of its last listing.</summary>
     private Func<string, bool> BannedForGood(DateTimeOffset now)
     {

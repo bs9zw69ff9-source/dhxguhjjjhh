@@ -57,6 +57,9 @@ public interface IAntiDdosFirewall : IFloodShield
     /// <summary>Block one address in the kernel for a while: the fallback when CrowdSec is not installed.</summary>
     Task<string?> BlockAsync(string address, int minutes, CancellationToken ct);
 
+    /// <summary>Block many single addresses, in a few nft runs rather than one each. Null on success.</summary>
+    Task<string?> BlockManyAsync(IReadOnlyCollection<string> addresses, int minutes, CancellationToken ct);
+
     Task<string?> UnblockAsync(string address, CancellationToken ct);
 
     Task<FirewallSnapshot?> SnapshotAsync(CancellationToken ct);
@@ -181,6 +184,21 @@ public sealed class FloodShield : IAntiDdosFirewall
                 return;
             }
         }
+    }
+
+    /// <summary>Addresses per nft run: one script each, so a refused element cannot take thousands with it.</summary>
+    private const int BlockBatch = 2000;
+
+    public async Task<string?> BlockManyAsync(IReadOnlyCollection<string> addresses, int minutes, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(addresses);
+        if (EnforceRefusal() is { } refused) return refused;
+        var scripts = addresses.Select(a => FloodShieldRules.BlockScript(a, minutes)).OfType<string>().ToList();
+        foreach (var batch in scripts.Chunk(BlockBatch))
+        {
+            if (await NftAsync(string.Concat(batch), ct).ConfigureAwait(false) is { } problem) return problem;
+        }
+        return null;
     }
 
     public async Task<string?> BlockAsync(string address, int minutes, CancellationToken ct)

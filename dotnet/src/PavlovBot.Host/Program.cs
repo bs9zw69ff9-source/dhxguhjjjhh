@@ -842,7 +842,9 @@ public static class Program
                     TimeProvider.System,
                     monitorLogger,
                     () => sp.GetRequiredService<DiscordGateway>().IsReady,
-                    listener: sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosService>());
+                    listener: sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosService>(),
+                    portNames: features.AttackPortNames,
+                    banMinPackets: features.AntiDdos.FloodBanMinPackets);
             });
         }
 

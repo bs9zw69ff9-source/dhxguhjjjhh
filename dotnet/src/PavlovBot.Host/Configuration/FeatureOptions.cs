@@ -428,6 +428,9 @@ public sealed record FeatureOptions
     /// <summary>The shield's limits: ATTACK_GAME_PORTS, ATTACK_PER_IP_PPS, ATTACK_UNKNOWN_PPS, ATTACK_BLOCK_MINUTES.</summary>
     public PavlovBot.Core.Network.ShieldLimits AttackLimits { get; init; } = new();
 
+    /// <summary>Game ports by server name for the attack report (<c>ATTACK_PORT_NAMES=7777:shack-04,7779:shack-05</c>).</summary>
+    public IReadOnlyDictionary<ushort, string> AttackPortNames { get; init; } = new Dictionary<ushort, string>();
+
     /// <summary>
     /// Whether every inbound header and every source address is logged all the time (<c>PACKET_LOG</c>).
     /// </summary>
@@ -587,6 +590,7 @@ public sealed record FeatureOptions
                 Int(configuration, "ATTACK_PER_IP_PPS", 1000),
                 Int(configuration, "ATTACK_UNKNOWN_PPS", 5000),
                 Int(configuration, "ATTACK_BLOCK_MINUTES", 10)),
+            AttackPortNames = PavlovBot.Core.Network.AttackReport.ParsePortNames(Text(configuration, "ATTACK_PORT_NAMES")),
             PacketLog = OptionalFlag(configuration, "PACKET_LOG") ?? Snowflake(configuration, "ATTACK_CHANNEL") is not null,
             AntiDdos = new AntiDdosOptions
             {
@@ -610,6 +614,7 @@ public sealed record FeatureOptions
                 SpoofSources = Int(configuration, "ANTIDDOS_SPOOF_SOURCES", 5000),
                 AttackPermaban = OptionalFlag(configuration, "ANTIDDOS_ATTACK_PERMABAN") != false,
                 AttackBansPerHour = Int(configuration, "ANTIDDOS_ATTACK_BANS_PER_HOUR", 300),
+                FloodBanMinPackets = Math.Max(1, Int(configuration, "ANTIDDOS_FLOOD_BAN_MIN_PACKETS", 50)),
                 LogMode = AntiDdosOptions.ModeFrom(Text(configuration, "ANTIDDOS_LOG_MODE")),
                 IncidentMinutes = Int(configuration, "ANTIDDOS_INCIDENT_MINUTES", 30),
                 AutoIncident = OptionalFlag(configuration, "ANTIDDOS_AUTO_INCIDENT") != false,

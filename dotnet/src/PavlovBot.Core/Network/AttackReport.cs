@@ -14,6 +14,15 @@ namespace PavlovBot.Core.Network;
 /// </remarks>
 public sealed record ConnectionLoss(int Seconds, DateTimeOffset From, DateTimeOffset Until);
 
+/// <summary>What was done about the attack's sources when it ended.</summary>
+/// <param name="Recorded">Sources that sent the minimum to the game ports: the attack's addresses.</param>
+/// <param name="Banned">Banned permanently now.</param>
+/// <param name="Already">Already under a permanent ban.</param>
+/// <param name="Spared">Known players, trusted, private or reserved addresses: never banned.</param>
+/// <param name="Via"><c>crowdsec</c>, or <c>nftables</c> (temporary, see <paramref name="Problem"/>).</param>
+/// <param name="Problem">Why fewer were banned than recorded, or why none were.</param>
+public sealed record FloodBans(int Recorded, int Banned, int Already, int Spared, string Via, string? Problem = null);
+
 /// <summary>What the firewall shield did during the attack.</summary>
 /// <param name="Problem">Why it could not engage, or null when it did.</param>
 /// <param name="Stats">Its counters at the end, when they could be read.</param>
@@ -134,8 +143,60 @@ public sealed record AttackReport(
     string? Statistics = null,
     ShieldOutcome? Shield = null,
     string? Iftop = null,
-    ConnectionLoss? Connection = null)
+    ConnectionLoss? Connection = null,
+    IReadOnlyList<LinkSecond>? AttackTimeline = null,
+    FloodBans? Bans = null,
+    IReadOnlyDictionary<ushort, string>? PortNames = null)
 {
+    /// <summary>The attack's own packets each second, from the capture; the link's when there was none.</summary>
+    public IReadOnlyList<LinkSecond> AttackSeconds => AttackTimeline is { Count: > 0 } a && Capture.Ran ? a : Timeline;
+
+    /// <summary>The attack's busiest second.</summary>
+    public LinkSecond AttackPeak => AttackSeconds.Count == 0 ? default : AttackSeconds.MaxBy(s => s.Packets);
+
+    /// <summary>The attack's packets: the capture's count, or the link's when there was no capture.</summary>
+    public long AttackPackets => Capture.Ran && Breakdown.AttackPackets > 0 ? Breakdown.AttackPackets : LinkPackets;
+
+    public long AttackBytes => Capture.Ran && Breakdown.AttackPackets > 0 ? Breakdown.AttackPayloadBytes : LinkBytes;
+
+    /// <summary>Attack packets the filter did not drop, or null when that cannot be told.</summary>
+    public long? GotThrough => Shield?.Stats is { } s && Capture.Ran ? Math.Max(0, Breakdown.AttackPackets - s.Dropped) : null;
+
+    /// <summary>
+    /// <c>7777:shack-04,7779:shack-05</c> as port to name. Entries that are not a port and a name are
+    /// skipped; a name is cut to 40 characters and loses anything that could break a Discord embed.
+    /// </summary>
+    public static IReadOnlyDictionary<ushort, string> ParsePortNames(string? spec)
+    {
+        var names = new Dictionary<ushort, string>();
+        foreach (var item in (spec ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var colon = item.IndexOf(':', StringComparison.Ordinal);
+            if (colon <= 0 || !ushort.TryParse(item.AsSpan(0, colon), NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port == 0) continue;
+            var name = new string([.. item[(colon + 1)..].Where(c => !char.IsControl(c) && c is not ('`' or '*' or '_' or '~' or '|' or '<' or '>' or '@'))]).Trim();
+            if (name.Length == 0) continue;
+            names[port] = name.Length > 40 ? name[..40] : name;
+        }
+        return names;
+    }
+
+    /// <summary>A destination port as the owner knows it: the server's name when configured.</summary>
+    public string PortName(ushort port) =>
+        PortNames is not null && PortNames.TryGetValue(port, out var name) ? name : $"port {port.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>The report's first lines: the message the summary embeds and the file come with.</summary>
+    public string Head()
+    {
+        var b = new StringBuilder();
+        b.AppendLine("pavlov bot attack report");
+        Line(b, "window", $"{Stamp(Start)} -> {Stamp(End)} ({Duration(Window)})");
+        Line(b, "verdict", Verdict);
+        b.AppendLine();
+        Line(b, "attack traffic", $"{Count(AttackPackets)} packets, {Bytes(AttackBytes)}, active {Duration(TimeSpan.FromSeconds(ActiveSeconds))}, avg {AverageActiveMbps:0.0} Mbit/s");
+        Line(b, "peak", $"{Count(AttackPeak.Packets)} pkt/s, {AttackPeak.Mbps:0.0} Mbit/s");
+        return b.ToString().TrimEnd();
+    }
+
     /// <summary>Packets the shield dropped, against the attack's own packets when there is a capture.</summary>
     public double DroppedShare
     {
@@ -162,22 +223,16 @@ public sealed record AttackReport(
     public string Pattern => Capture.Ran ? Breakdown.Pattern : "Flood";
 
     public string Verdict =>
-        $"{Pattern} on {Host} · {Duration(TimeSpan.FromSeconds(ActiveSeconds))} · peak {Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s" +
-        (Shield is { Engaged: true, Stats: not null } ? $" · {Percent(DroppedShare)} dropped by the filter" : "") +
-        (Players.Drops.Count > 0 ? $" · {Players.Drops.Count} player(s) dropped" : "");
+        $"{Pattern} on {Host} · {Duration(TimeSpan.FromSeconds(ActiveSeconds))}" +
+        (Shield is { Engaged: true, Stats: not null } ? $" · {Percent(DroppedShare)} of attack packets dropped" : "") +
+        $" · {Players.Drops.Count} real-player hit(s)";
 
     /// <summary>The attached report: everything, including the addresses the embed leaves out.</summary>
     public string ToText()
     {
-        var b = new StringBuilder();
-        b.AppendLine("pavlov bot attack report");
-        Line(b, "window", $"{Stamp(Start)} -> {Stamp(End)} ({Duration(Window)})");
-        Line(b, "verdict", Verdict);
+        var b = new StringBuilder(Head()).AppendLine();
         Line(b, "interface", $"{Interface} on {Host}");
-        b.AppendLine();
-
-        Line(b, "link traffic", $"{Count(LinkPackets)} packets, {Bytes(LinkBytes)}, active {Duration(TimeSpan.FromSeconds(ActiveSeconds))}, avg {AverageActiveMbps:0.0} Mbit/s");
-        Line(b, "peak", $"{Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s at {Stamp(Peak.At)}");
+        Line(b, "link traffic", $"{Count(LinkPackets)} packets, {Bytes(LinkBytes)}; link peak {Count(Peak.Packets)} pkt/s, {Peak.Mbps:0.0} Mbit/s at {Stamp(Peak.At)}");
         b.AppendLine();
 
         if (!Capture.Ran)
@@ -247,6 +302,13 @@ public sealed record AttackReport(
                 Line(b, "dropped", $"{Count(s.Dropped)} packets ({Percent(DroppedShare)}): {Count(s.BlockedPackets)} from blocked addresses, {Count(s.PerSourcePackets)} over the per-address limit, {Count(s.CappedPackets)} over the unknown-traffic cap");
                 Line(b, "blocked", $"{Count(s.BlockedSources)} address(es) on the block list now");
             }
+        }
+
+        if (Bans is { } bans)
+        {
+            Line(b, "banned", $"{Count(bans.Banned)} of {Count(bans.Recorded)} attacking address(es) banned permanently via {bans.Via}" +
+                              $" · {Count(bans.Already)} already banned · {Count(bans.Spared)} spared (players, trusted, private)" +
+                              (bans.Problem is { } why ? $" · {why}" : ""));
         }
 
         if (!string.IsNullOrWhiteSpace(Iftop))
