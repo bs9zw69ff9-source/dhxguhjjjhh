@@ -19,10 +19,16 @@ public sealed record CrowdSecAlert(long Id, string Scenario, string? Source, Dat
 /// <summary>A registered bouncer, and when it last fetched decisions.</summary>
 public sealed record CrowdSecBouncer(string Name, DateTimeOffset? LastPull, bool Revoked, string Version);
 
-/// <summary>One acquisition source's line counts: zero parsed out of many read is a broken parser.</summary>
+/// <summary>One acquisition source's line counts.</summary>
+/// <remarks>
+/// Unparsed lines are normal: a parser takes only the lines a scenario wants (a failed login, a
+/// blocked packet) and leaves the rest. So even none parsed is not a fault by itself - see
+/// <see cref="CrowdSecProbe"/>, which tells the two apart.
+/// </remarks>
 public sealed record CrowdSecSource(string Name, long Reads, long Parsed, long Unparsed)
 {
-    public bool Failing => Reads > 0 && Parsed == 0;
+    /// <summary>Lines read and none parsed: either nothing worth parsing arrived, or a parser is broken.</summary>
+    public bool NoneParsed => Reads > 0 && Parsed == 0;
 }
 
 /// <summary>

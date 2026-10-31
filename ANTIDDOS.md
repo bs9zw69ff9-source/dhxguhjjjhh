@@ -346,6 +346,21 @@ nft list table inet pavlovbot_ddos | grep -E 'counter packets [1-9]'
 cscli decisions list; cscli alerts list --since 24h; cscli metrics
 ```
 
+## CrowdSec health alerts
+
+Every 10 minutes the bot checks that CrowdSec is actually working, and alerts once when that
+changes ("CrowdSec needs attention", then "CrowdSec healthy again"):
+
+- **Bouncers:** none registered, one revoked, or one that hasn't pulled decisions for 5 minutes.
+  CrowdSec's bans are then not enforced.
+- **Parsers:** "lines read, none parsed" is *not* a fault by itself. A parser takes only the lines
+  a scenario wants, such as a failed SSH login or a ufw block. A quiet auth.log is all cron and sudo
+  sessions, and those are normal unparsed lines. So when a source shows none parsed, the bot asks
+  `cscli explain` whether a fake failed login (auth.log) or ufw block (kern.log, ufw.log, syslog)
+  parses. The fake line is written in the file's own timestamp format and comes from 192.0.2.1, a
+  documentation address; `explain` raises no alerts and makes no bans. The bot alerts only if that
+  line fails to parse, and it re-tests each source at most every 6 hours.
+
 ## Detection and response
 
 1. **Monitor.** Every minute each source is judged:

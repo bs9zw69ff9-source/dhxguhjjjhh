@@ -379,7 +379,8 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
                 : string.Join('\n', bouncers.Select(b => $"{Sanitize.Code(b.Name)} · {(b.Revoked ? "revoked" : b.LastPull is { } t ? $"last pull {AntiDdosEmbeds.Discord(t)}" : "never pulled")}")), false)
             .AddField("Log sources", sources.Count == 0 ? "none reported"
                 : string.Join('\n', sources.Select(s => string.Create(CultureInfo.InvariantCulture,
-                    $"{(s.Failing ? "⚠️ " : "")}{Sanitize.Code(s.Name)}: {s.Reads:N0} read, {s.Parsed:N0} parsed"))), false)
+                    $"{Sanitize.Code(s.Name)}: {s.Reads:N0} read, {s.Parsed:N0} parsed"))) +
+                  "\n-# Only lines a scenario wants (failed logins, blocked packets) are parsed; the rest being unparsed is normal.", false)
             .WithFooter("CrowdSec reads logs (SSH, ufw). It does not see UDP floods - the firewall's own limits handle those.");
     }
 

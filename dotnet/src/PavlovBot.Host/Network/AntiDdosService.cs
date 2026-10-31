@@ -80,6 +80,13 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     private IReadOnlyDictionary<string, Counter>? _lastCounters;
     private (long Packets, long Bytes)? _lastLink;
     private readonly Func<string, LinkHealth?> _readHealth;
+    private readonly Func<string, string?> _lastLine;
+
+    /// <summary>Each log source's parser probe: when it ran, and the fault it found (null: parsing works).</summary>
+    private readonly Dictionary<string, (DateTimeOffset At, string? Problem)> _probes = new(StringComparer.Ordinal);
+
+    /// <summary>How long a probe's verdict stands. It spawns a short crowdsec run, so not every health check.</summary>
+    private static readonly TimeSpan ProbeEvery = TimeSpan.FromHours(6);
     private readonly ReadingStore? _readings;
     private LinkHealth? _lastLinkHealth;
     private bool? _linkUp;
@@ -117,8 +124,10 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         TimeProvider time,
         ILogger<AntiDdosService> logger,
         Func<string, LinkHealth?>? readHealth = null,
-        ReadingStore? readings = null)
+        ReadingStore? readings = null,
+        Func<string, string?>? lastLine = null)
     {
+        _lastLine = lastLine ?? LogTail.LastLine;
         _readHealth = readHealth ?? (_ => null);
         _readings = readings;
         _configured = options;
@@ -745,7 +754,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         }
         foreach (var source in await _crowdsec.AcquisitionAsync(ct).ConfigureAwait(false) ?? [])
         {
-            if (source.Failing) problems.Add($"{source.Name}: {source.Reads} lines read, none parsed - a parser is failing");
+            if (await ParserProblemAsync(source, now, ct).ConfigureAwait(false) is { } fault) problems.Add($"{source.Name}: {fault}");
         }
 
         var problem = problems.Count == 0 ? null : string.Join("; ", problems);
@@ -755,6 +764,34 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
             Action: problem is null ? "healthy" : "degraded", Reason: problem, Actor: "bot"), ct).ConfigureAwait(false);
         await AlertAsync(problem is null ? Theme.Success("CrowdSec healthy again") : Theme.Warning("CrowdSec needs attention", Clip(problem)), ct)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Whether a source's parser is really broken. "None parsed" alone is not it - a quiet auth.log
+    /// is all cron and sudo, which no parser takes - so a line that must parse is tried, in the
+    /// file's own format.
+    /// </summary>
+    private async Task<string?> ParserProblemAsync(CrowdSecSource source, DateTimeOffset now, CancellationToken ct)
+    {
+        if (!source.NoneParsed)
+        {
+            _probes.Remove(source.Name);
+            return null;
+        }
+        if (_probes.TryGetValue(source.Name, out var known) && now - known.At < ProbeEvery) return known.Problem;
+
+        string? problem = null;
+        var path = source.Name.StartsWith("file:", StringComparison.Ordinal) ? source.Name["file:".Length..] : null;
+        if (CrowdSecProbe.For(source.Name, path is null ? null : _lastLine(path)) is { } probe)
+        {
+            if (probe.Problem is not null) problem = probe.Problem;
+            else if (await _crowdsec.ParsesAsync(probe.Line!, ct).ConfigureAwait(false) is false)
+                problem = $"a test line in this file's own format does not parse, so {probe.Meaning} - check `cscli parsers list` and `sudo cscli explain --file {path} --type syslog --failures`";
+            // Null (cscli could not tell) is not reported as a fault: the next probe tries again.
+        }
+        _probes[source.Name] = (now, problem);
+        _logger.LogDebug("CrowdSec parser probe for {Source}: {Verdict}", source.Name, problem ?? "parses, or nothing to test");
+        return problem;
     }
 
     // ---- storage ----

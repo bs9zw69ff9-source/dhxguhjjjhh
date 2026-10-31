@@ -18,6 +18,12 @@ public interface ICrowdSec
 
     Task<IReadOnlyList<CrowdSecSource>?> AcquisitionAsync(CancellationToken ct);
 
+    /// <summary>
+    /// Whether a syslog line gets through CrowdSec's parsers (<c>cscli explain</c>, which runs them
+    /// in isolation and raises nothing); null when that cannot be told.
+    /// </summary>
+    Task<bool?> ParsesAsync(string line, CancellationToken ct);
+
     /// <summary>Ban an address or range. Null on success, else why not.</summary>
     Task<string?> BanAsync(IpNetworks.Network target, TimeSpan duration, string reason, CancellationToken ct);
 
@@ -65,6 +71,16 @@ public sealed class CrowdSecClient(bool enabled, ILogger<CrowdSecClient> logger,
         if (address is not null) argv.AddRange(["--ip", address]);
         var run = await RunAsync(argv, ct).ConfigureAwait(false);
         return run.Problem is null ? CrowdSecOutput.Alerts(run.Output) : null;
+    }
+
+    public async Task<bool?> ParsesAsync(string line, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        var run = await RunAsync(["explain", "--log", line, "--type", "syslog"], ct).ConfigureAwait(false);
+        if (run.Problem is not null || run.Output is not { } output) return null;
+        if (output.Contains("parser success", StringComparison.Ordinal)) return true;
+        if (output.Contains("parser failure", StringComparison.Ordinal)) return false;
+        return null;
     }
 
     public async Task<IReadOnlyList<CrowdSecBouncer>?> BouncersAsync(CancellationToken ct)

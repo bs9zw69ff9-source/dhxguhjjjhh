@@ -740,8 +740,8 @@ public class CrowdSecOutputTests
         Assert.False(bouncer.Revoked);
 
         var source = Assert.Single(CrowdSecOutput.Acquisition(AntiDdosFixtures.Read("cscli-metrics.json")));
-        Assert.Equal(("file:/var/log/auth.log", 8L, 8L, false), (source.Name, source.Reads, source.Parsed, source.Failing));
-        Assert.True(new CrowdSecSource("file:/var/log/x", 100, 0, 100).Failing);
+        Assert.Equal(("file:/var/log/auth.log", 8L, 8L, false), (source.Name, source.Reads, source.Parsed, source.NoneParsed));
+        Assert.True(new CrowdSecSource("file:/var/log/x", 100, 0, 100).NoneParsed);
     }
 
     [Theory]
