@@ -1,0 +1,26 @@
+# Loads the bot's last good anti-DDoS table at boot, before the network is up, so the box
+# is protected before the bot (which needs Discord) has started. It touches ONLY the table
+# inet pavlovbot_ddos: the file never flushes the ruleset, so ufw's, Docker's and
+# CrowdSec's rules are left alone. No file yet (the bot has never run) = nothing to do.
+#
+# NO CIRCULAR DEPENDENCY: it needs only the local filesystem - not the bot, not the
+# network, not CrowdSec - and nothing waits on it.
+[Unit]
+Description=Pavlov bot anti-DDoS firewall table (boot copy)
+Documentation=file:///root/pavlov-bot/ANTIDDOS.md
+DefaultDependencies=no
+After=local-fs.target nftables.service ufw.service
+Before=network-pre.target
+Wants=network-pre.target
+ConditionPathExists=/var/lib/anti-ddos/firewall.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Checked first: a file nft would refuse is not loaded at all.
+ExecStartPre=/usr/sbin/nft -c -f /var/lib/anti-ddos/firewall.nft
+ExecStart=/usr/sbin/nft -f /var/lib/anti-ddos/firewall.nft
+ExecStop=-/usr/sbin/nft delete table inet pavlovbot_ddos
+
+[Install]
+WantedBy=multi-user.target

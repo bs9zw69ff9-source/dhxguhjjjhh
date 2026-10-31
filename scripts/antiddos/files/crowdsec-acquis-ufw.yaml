@@ -1,0 +1,6 @@
+# /etc/crowdsec/acquis.d/ufw.yaml - ufw's blocked-packet log, for CrowdSec's port-scan
+# scenario (crowdsecurity/iptables-scan-multi_ports). Needs `ufw logging low` or higher.
+filenames:
+  - /var/log/ufw.log
+labels:
+  type: syslog

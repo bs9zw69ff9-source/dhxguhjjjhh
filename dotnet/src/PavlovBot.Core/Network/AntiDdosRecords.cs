@@ -195,7 +195,9 @@ public static class AntiDdosRecords
     private static string Write(Action<Utf8JsonWriter> body)
     {
         var buffer = new ArrayBufferWriter<byte>(512);
-        using (var w = new Utf8JsonWriter(buffer))
+        // Relaxed escaping: these are log lines read with grep and jq, never embedded in HTML,
+        // and "udp-rate+syn-burst" should read as that, not as "udp-rate\u002Bsyn-burst".
+        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
         {
             w.WriteStartObject();
             body(w);

@@ -1,0 +1,9 @@
+[Unit]
+Description=Rotate the anti-DDoS logs (size and age)
+Documentation=file:///root/pavlov-bot/ANTIDDOS.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/logrotate/anti-ddos.status /etc/anti-ddos/logrotate.conf
+Nice=10
+IOSchedulingClass=idle

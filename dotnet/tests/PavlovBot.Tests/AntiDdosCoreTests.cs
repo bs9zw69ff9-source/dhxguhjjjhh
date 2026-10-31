@@ -498,12 +498,12 @@ public class AntiDdosRecordsTests
     [Fact]
     public void AnEventRecordCarriesOnlyWhatItHas()
     {
-        var line = AntiDdosRecords.Event(new AntiDdosEvent(T, "ban", "warning", "203.0.113.5", "banned", "udp-rate x3",
+        var line = AntiDdosRecords.Event(new AntiDdosEvent(T, "ban", "warning", "203.0.113.5", "banned", "udp-rate+syn-burst <x3>",
             T.AddHours(1), "auto", "src-202610291731-203.0.113.5", new Dictionary<string, string> { ["via"] = "crowdsec" }));
 
         Assert.Equal(
             "{\"v\":1,\"type\":\"event\",\"ts\":\"2026-10-29T17:31:00Z\",\"category\":\"ban\",\"severity\":\"warning\",\"src\":\"203.0.113.5\"," +
-            "\"action\":\"banned\",\"reason\":\"udp-rate x3\",\"expires\":\"2026-10-29T18:31:00Z\",\"actor\":\"auto\"," +
+            "\"action\":\"banned\",\"reason\":\"udp-rate+syn-burst <x3>\",\"expires\":\"2026-10-29T18:31:00Z\",\"actor\":\"auto\"," +
             "\"incident\":\"src-202610291731-203.0.113.5\",\"detail\":{\"via\":\"crowdsec\"}}",
             line);
         Assert.Equal("{\"v\":1,\"type\":\"event\",\"ts\":\"2026-10-29T17:31:00Z\",\"category\":\"mode\",\"severity\":\"info\"}",

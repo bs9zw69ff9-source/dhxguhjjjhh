@@ -57,7 +57,7 @@ public sealed record LogRates(int DropsPerSecond, int SuspectPerSecond, int Samp
     {
         LogMode.Off => new LogRates(0, 0, 0),
         LogMode.Minimal => new LogRates(1, 1, 0),
-        LogMode.Normal => new LogRates(5, 5, 6),
+        LogMode.Normal => new LogRates(2, 2, 6),
         LogMode.Elevated => new LogRates(20, 20, 60),
         LogMode.Incident => new LogRates(50, 50, 300),
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
