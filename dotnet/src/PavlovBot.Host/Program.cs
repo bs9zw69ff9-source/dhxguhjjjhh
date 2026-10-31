@@ -802,7 +802,12 @@ public static class Program
                 iface => PavlovBot.Host.Network.LinkCounters.Read(iface),
                 PavlovBot.Host.Network.DiskSpace.Read,
                 TimeProvider.System,
-                sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AntiDdosService>>()));
+                sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AntiDdosService>>(),
+                iface => PavlovBot.Host.Network.LinkHealthReader.Read(iface),
+                // Beside the firewall's boot copy: survives the bot, its deploys and reboots.
+                new PavlovBot.Host.Network.ReadingStore(
+                    Path.Combine(Path.GetDirectoryName(PavlovBot.Host.Network.FloodShield.BootScript)!, "last-reading.json"),
+                    sp.GetRequiredService<ILogger<PavlovBot.Host.Network.ReadingStore>>())));
             builder.Services.AddHostedService(sp => sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosService>());
             builder.Services.AddSingleton<AntiDdosCommand>();
             builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<AntiDdosCommand>());

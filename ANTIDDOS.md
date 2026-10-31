@@ -90,6 +90,9 @@ The install backs up what it touches to `/root/anti-ddos-backup-<time>/` and ins
 
 - `ulogd2` and `ulogd2-json`, writing the packet log;
 - the rotation timer and the boot unit;
+- `anti-ddos-capture.service` (dumpcap), the packet header ring, which keeps recording while the
+  bot is down. Its settings are in `/etc/anti-ddos/capture.env`: the interface from the default
+  route (override with `CAPTURE_IFACE=`) and the budget from the bot's `PACKET_RING_MB`;
 - CrowdSec 1.8.x and `crowdsec-firewall-bouncer-nftables` from CrowdSec's signed repository;
 - the `sshd` and `iptables` collections, the latter for ufw port scans;
 - 30 days of CrowdSec history (`/etc/crowdsec/config.yaml.local`).
@@ -217,6 +220,41 @@ Rules for modes:
   Each change of level is one alert and one event, not one a minute.
 - **Nothing loops.** Packets go kernel → NFLOG → ulogd2 → file, never through printk, journald or
   rsyslog. CrowdSec's bouncer logs to its own file, and `deny_log` is left off.
+
+### When the connection is lost, or the bot is
+
+What happens to the record when something breaks:
+
+- **The link itself goes down.** Nothing arrives, so there is nothing to record. The bot writes a
+  `link` event when the interface goes down and another when it comes back up, and sends an alert
+  for each.
+- **A flood outruns the server.** A flood that fills the network card or the kernel's input queue
+  is dropped before nftables, tshark or any per-source counter sees it. Every traffic record now
+  carries what was lost that minute:
+  `"link":"up","loss":{"lost":…,"nic_dropped":…,"nic_missed":…,"nic_fifo":…,"nic_over":…,"softnet_dropped":…,"conntrack_drops":…,"conntrack_count":…,"conntrack_max":…}`.
+  A minute with any loss also gets a `kernel-loss` event. When the connection table reaches 90%
+  full, the bot writes a `conntrack` event and sends an alert, then writes a second event when it
+  drops back under 80%.
+- **The bot is down** (crashed, restarted, being deployed, or the server rebooted). The kernel
+  keeps counting. The bot saves its last reading to `/var/lib/anti-ddos/last-reading.json` every
+  minute and when it stops. On the next start it writes one traffic record covering the whole gap,
+  with `"gap":"<why>"`, plus source records marked `"gap":true` and a `gap` event:
+  - The packet total is exact.
+  - Per-source totals are a lower bound: the kernel forgets a source three minutes after its last
+    packet, so a source that went quiet earlier than that is missing.
+  - After a reboot, the record covers only the time since boot.
+  - Gaps under 90 seconds or over 7 days are not written.
+- **The packet headers.** `anti-ddos-capture.service` writes the first 128 bytes of every inbound
+  IPv4 packet to the ring in `capture/`, with or without the bot.
+  - While the service runs, the bot does not start its own tshark. It only keeps the ring to
+    budget, cuts attack pcaps from it, and stops the service under storage pressure. It starts the
+    service again once the disk recovers.
+  - The ring is finite: at the default 2 GB, a heavy flood fills it in minutes, and then the oldest
+    files go.
+  - If the ring loses packets, dumpcap records how many in the pcap itself.
+- **Discord is unreachable.** Alerts are held, oldest first, at most 50, and posted when Discord
+  answers again. Each one is marked "Posted late" with the time it was raised. Every alert is also
+  an event on disk, and each event is flushed to disk as it is written.
 
 ### Sample records (real, from the test run)
 
@@ -430,4 +468,7 @@ If CrowdSec banned you, the allowlist is the fix:
 - **The bot's in-memory history.** Detection counts and repeat-offender doubling reset when the
   bot restarts, which can only make a ban later, never sooner. Bans themselves live in CrowdSec
   and survive.
+- **Packets that never reach the server cannot be logged.** If your host's upstream drops a flood,
+  or the link is saturated before your network card, this server sees nothing, and the `loss`
+  counters cannot count it either. Only your provider's own graphs show that traffic.
 - **Peak packets/s** in `traffic.jsonl` comes from the attack monitor's one-second readings.

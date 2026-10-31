@@ -56,6 +56,13 @@ public sealed partial class PacketLog : BackgroundService
 
     private volatile Attached[] _attached = [];
     private volatile bool _running;
+    private volatile bool _external;
+    private bool _stoppedExternal;
+    private readonly Func<CancellationToken, Task<bool>> _externalActive;
+    private readonly Func<bool, CancellationToken, Task<bool>> _controlExternal;
+
+    /// <summary>The systemd unit that captures independently of the bot (scripts/antiddos/install.sh).</summary>
+    public const string CaptureUnit = "anti-ddos-capture.service";
     private volatile bool _paused;
     private volatile string? _problem;
 
@@ -63,8 +70,12 @@ public sealed partial class PacketLog : BackgroundService
     public PacketLog(
         string iface, string directory, string attacksDirectory, int ringMegabytes, int keepDays,
         TimeProvider time, ILogger<PacketLog> logger,
-        Func<IReadOnlyList<string>, CancellationToken, Task<ProcessOutcome>>? mergecap = null)
+        Func<IReadOnlyList<string>, CancellationToken, Task<ProcessOutcome>>? mergecap = null,
+        Func<CancellationToken, Task<bool>>? externalActive = null,
+        Func<bool, CancellationToken, Task<bool>>? controlExternal = null)
     {
+        _externalActive = externalActive ?? (ct => UnitActiveAsync(logger, ct));
+        _controlExternal = controlExternal ?? ((start, ct) => ControlUnitAsync(start, logger, ct));
         _iface = iface;
         _directory = directory;
         _attacks = attacksDirectory;
@@ -76,8 +87,11 @@ public sealed partial class PacketLog : BackgroundService
         _mergecap = mergecap ?? ((argv, ct) => ProcessRunner.RunAsync("mergecap", argv, MergeTimeout, logger, ct));
     }
 
-    /// <summary>Whether the ring is being written now.</summary>
-    public bool Running => _running;
+    /// <summary>Whether the ring is being written now, by the bot or by the capture service.</summary>
+    public bool Running => _running || (_external && !_paused);
+
+    /// <summary>Whether the capture service, not the bot, is writing the ring.</summary>
+    public bool External => _external;
 
     /// <summary>Whether the storage guard has stopped it.</summary>
     public bool Paused => _paused;
@@ -148,6 +162,33 @@ public sealed partial class PacketLog : BackgroundService
         string? reported = null;
         while (!stoppingToken.IsCancellationRequested)
         {
+            // The capture service, when installed, records whether or not the bot is up; the bot
+            // then only keeps the ring to budget, cuts attack pcaps from it, and pauses it under
+            // storage pressure.
+            if (await _externalActive(stoppingToken).ConfigureAwait(false))
+            {
+                _external = true;
+                if (_paused && !_stoppedExternal)
+                {
+                    _stoppedExternal = await _controlExternal(false, stoppingToken).ConfigureAwait(false);
+                    if (_stoppedExternal) _logger.LogWarning("Packet capture service STOPPED: the disk is short of space. The ring on disk is kept");
+                }
+                if (!await DelayAsync(CheckEvery * 15, stoppingToken).ConfigureAwait(false)) break;
+                continue;
+            }
+            if (_stoppedExternal)
+            {
+                // Stopped by this class for pressure: started again by it, and only by it.
+                if (!_paused && await _controlExternal(true, stoppingToken).ConfigureAwait(false))
+                {
+                    _stoppedExternal = false;
+                    _logger.LogInformation("Packet capture service started again: storage is back to normal");
+                }
+                if (!await DelayAsync(CheckEvery * 15, stoppingToken).ConfigureAwait(false)) break;
+                continue;
+            }
+            _external = false;
+
             if (_paused)
             {
                 if (!await DelayAsync(CheckEvery * 15, stoppingToken).ConfigureAwait(false)) break;
@@ -161,9 +202,18 @@ public sealed partial class PacketLog : BackgroundService
                 _running = true;
                 _problem = null;
                 reported = null;
+                var checkedExternal = _time.GetUtcNow();
                 while (!ring.HasExited && !_paused && !stoppingToken.IsCancellationRequested)
                 {
                     if (!await DelayAsync(CheckEvery, stoppingToken).ConfigureAwait(false)) break;
+                    // The service was started under the bot: two writers in one ring would break it.
+                    if (_time.GetUtcNow() - checkedExternal < CheckEvery * 15) continue;
+                    checkedExternal = _time.GetUtcNow();
+                    if (await _externalActive(stoppingToken).ConfigureAwait(false))
+                    {
+                        _logger.LogInformation("The packet capture service is running; the bot's own capture steps aside");
+                        break;
+                    }
                 }
                 if (ring.HasExited && !stoppingToken.IsCancellationRequested) _problem = "tshark stopped";
             }
@@ -192,6 +242,23 @@ public sealed partial class PacketLog : BackgroundService
         }
 
         await housekeeping.ConfigureAwait(false);
+    }
+
+    /// <summary>Whether the capture service is installed and running. No unit file: no subprocess.</summary>
+    private static async Task<bool> UnitActiveAsync(ILogger logger, CancellationToken ct)
+    {
+        if (!File.Exists(Path.Combine("/etc/systemd/system", CaptureUnit))) return false;
+        var run = await ProcessRunner.RunAsync("systemctl", ["is-active", "--quiet", CaptureUnit], TimeSpan.FromSeconds(10), logger, ct)
+            .ConfigureAwait(false);
+        return run.Started && !run.TimedOut && run.ExitCode == 0;
+    }
+
+    private static async Task<bool> ControlUnitAsync(bool start, ILogger logger, CancellationToken ct)
+    {
+        var run = await ProcessRunner.RunAsync("systemctl", [start ? "start" : "stop", CaptureUnit], TimeSpan.FromSeconds(30), logger, ct)
+            .ConfigureAwait(false);
+        if (!run.Ok) logger.LogWarning("systemctl {Verb} {Unit} failed: {Output}", start ? "start" : "stop", CaptureUnit, run.Combined);
+        return run.Ok;
     }
 
     private async Task<bool> DelayAsync(TimeSpan span, CancellationToken ct)

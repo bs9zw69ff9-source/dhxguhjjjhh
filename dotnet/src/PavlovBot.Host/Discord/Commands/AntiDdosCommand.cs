@@ -227,7 +227,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
                 : string.Create(CultureInfo.InvariantCulture, $"{service.Decisions.Count} active decision(s){(service.HealthProblem is { } h ? $" · ⚠️ {Sanitize.Code(Clip(h, 200))}" : " · healthy")}"), true)
             .AddField("Storage", service.Storage is { } s ? $"{s.Level.ToString().ToLowerInvariant()} · {Sanitize.Code(s.Reason)}" : "not checked yet", false)
             .AddField("Capture ring", service.Capture is not { } cap ? "off"
-                : cap.Running ? $"recording · {AttackReport.Bytes(cap.RingBytes())} of {AttackReport.Bytes(cap.RingBudgetBytes)}"
+                : cap.Running ? $"recording{(cap.External ? " (capture service - keeps going when the bot is down)" : " (by the bot)")} · {AttackReport.Bytes(cap.RingBytes())} of {AttackReport.Bytes(cap.RingBudgetBytes)}"
                 : $"not recording: {Sanitize.Code(cap.Problem ?? "starting")}", false);
         if (service.CurrentIncident is { } incident) embed.AddField("Incident", $"`{incident}` in progress", false);
         return embed;

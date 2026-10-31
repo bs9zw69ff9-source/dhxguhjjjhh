@@ -40,6 +40,15 @@ public sealed record TrafficWindow(
     bool Engaged,
     string Storage)
 {
+    /// <summary>What the kernel lost before the firewall in this window, and the link's state. Null when unreadable.</summary>
+    public LinkHealth? Loss { get; init; }
+
+    /// <summary>
+    /// Set when this record covers time the bot was not recording minute by minute - it was down,
+    /// or the server rebooted - and says which. Its totals are real; its rates are averages over the gap.
+    /// </summary>
+    public string? Gap { get; init; }
+
     public double Pps => RxPackets / Math.Max(1, Window.TotalSeconds);
 
     public double Mbps => RxBytes * 8 / 1_000_000.0 / Math.Max(1, Window.TotalSeconds);
@@ -99,13 +108,15 @@ public static class AntiDdosRecords
     /// <summary>The time format of every bot-written line: UTC, to the second.</summary>
     public static string Stamp(DateTimeOffset t) => t.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
 
-    public static string Source(DateTimeOffset time, TimeSpan window, SourceWindow s)
+    /// <param name="gap">Set when the window is a gap the bot was not recording, as on the traffic record.</param>
+    public static string Source(DateTimeOffset time, TimeSpan window, SourceWindow s, bool gap = false)
     {
         ArgumentNullException.ThrowIfNull(s);
         return Write(w =>
         {
             Head(w, "source", time);
             w.WriteNumber("window_s", (int)window.TotalSeconds);
+            if (gap) w.WriteBoolean("gap", true);
             w.WriteString("src", s.Source);
             w.WriteNumber("packets", s.Packets);
             w.WriteNumber("bytes", s.Bytes);
@@ -159,6 +170,22 @@ public static class AntiDdosRecords
             w.WriteString("mode", t.Mode.ToString().ToLowerInvariant());
             w.WriteBoolean("engaged", t.Engaged);
             w.WriteString("storage", t.Storage);
+            if (t.Loss is { } loss)
+            {
+                w.WriteString("link", loss.OperState);
+                w.WriteStartObject("loss");
+                w.WriteNumber("lost", loss.Lost);
+                w.WriteNumber("nic_dropped", loss.NicDropped);
+                w.WriteNumber("nic_missed", loss.NicMissed);
+                w.WriteNumber("nic_fifo", loss.NicFifo);
+                w.WriteNumber("nic_over", loss.NicOver);
+                w.WriteNumber("softnet_dropped", loss.SoftnetDropped);
+                w.WriteNumber("conntrack_drops", loss.ConntrackDrops);
+                w.WriteNumber("conntrack_count", loss.ConntrackCount);
+                w.WriteNumber("conntrack_max", loss.ConntrackMax);
+                w.WriteEndObject();
+            }
+            if (t.Gap is { } gap) w.WriteString("gap", gap);
         });
     }
 

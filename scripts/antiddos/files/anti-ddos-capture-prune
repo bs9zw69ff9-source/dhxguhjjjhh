@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Hold the capture ring to RING_MB before each start of anti-ddos-capture.service.
+# dumpcap's own "-b files:" only bounds the run in progress, so every restart would
+# otherwise leave the previous run's files behind. Oldest first, by the run time in the
+# file name. Never touches anything but ring_*.pcap in the capture folder.
+set -euo pipefail
+DIR=/var/log/anti-ddos/capture
+BUDGET_MB="${RING_MB:-2048}"
+[ -d "$DIR" ] || install -d -m 0700 "$DIR"
+case "$BUDGET_MB" in ''|*[!0-9]*) echo "RING_MB '$BUDGET_MB' is not a number" >&2; exit 1;; esac
+budget=$(( BUDGET_MB * 1024 * 1024 ))
+total=0
+# Newest first: ring_<seq>_<YYYYMMDDHHMMSS>.pcap sorts by run time, then sequence.
+while IFS= read -r file; do
+  size=$(stat -c %s "$file")
+  total=$(( total + size ))
+  if [ "$total" -gt "$budget" ]; then rm -f -- "$file"; fi
+done < <(find "$DIR" -maxdepth 1 -name 'ring_*_*.pcap' -printf '%f\n' \
+          | awk -F'[_.]' '{print $3 "\t" $2 "\t" $0}' | sort -r | cut -f3 | sed "s#^#$DIR/#")
+exit 0

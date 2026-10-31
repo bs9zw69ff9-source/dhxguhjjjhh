@@ -9,6 +9,8 @@
 #   3. creates /var/log/anti-ddos with owner-only permissions
 #   4. points ulogd2 at the bot's NFLOG group, writing JSON Lines there
 #   5. installs the 10-minute log rotation timer and the boot unit for the bot's table
+#   5b. starts the packet capture as its own service (dumpcap), so the header of every
+#      inbound packet is recorded even while the bot is down
 #   6. installs CrowdSec and its nftables bouncer from CrowdSec's signed repository,
 #      allowlists OWNER_IP first, adds the ufw port-scan source, keeps 30 days of history
 #   7. checks every service and prints what to do next
@@ -98,6 +100,25 @@ systemctl daemon-reload
 systemctl enable --now --quiet anti-ddos-logrotate.timer
 systemctl enable --quiet anti-ddos-firewall.service
 ok "anti-ddos-logrotate.timer every 10 min; anti-ddos-firewall.service loads the bot's table at boot (once the bot has saved one)"
+
+step "5b. packet capture service (every inbound header, independent of the bot)"
+IFACE="${CAPTURE_IFACE:-$(ip route show default 2>/dev/null | awk '{print $5; exit}')}"
+case "$IFACE" in ''|lo|*[!A-Za-z0-9_.@-]*) echo "Cannot tell the public interface (got '$IFACE'). Set CAPTURE_IFACE=ens3 and re-run."; exit 1;; esac
+# The same budget the bot holds the folder to (PACKET_RING_MB in the bot's .env).
+RING_MB="${RING_MB:-$(sed -n 's/^PACKET_RING_MB=\([0-9][0-9]*\).*/\1/p' "$HERE/../../.env" 2>/dev/null | tail -1)}"
+RING_MB="${RING_MB:-2048}"
+case "$RING_MB" in ''|*[!0-9]*) echo "RING_MB must be a number of megabytes."; exit 1;; esac
+command -v dumpcap >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tshark >/dev/null
+install -m 0755 "$FILES/anti-ddos-capture-prune" /usr/local/sbin/anti-ddos-capture-prune
+printf 'IFACE=%s\nRING_MB=%s\nRING_FILES=%s\n' "$IFACE" "$RING_MB" "$(( RING_MB / 50 > 2 ? RING_MB / 50 : 2 ))" > /etc/anti-ddos/capture.env
+chmod 0600 /etc/anti-ddos/capture.env
+install -m 0644 "$FILES/anti-ddos-capture.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now --quiet anti-ddos-capture.service
+sleep 3
+systemctl is-active --quiet anti-ddos-capture.service \
+  && ok "capturing on $IFACE into $LOGDIR/capture, at most $RING_MB MB (the bot steps aside within 15s)" \
+  || warn "the capture service did not start: journalctl -u anti-ddos-capture -n 30"
 
 if [ "${SKIP_CROWDSEC:-0}" = 1 ]; then
   echo; echo "SKIP_CROWDSEC=1: CrowdSec not installed."
