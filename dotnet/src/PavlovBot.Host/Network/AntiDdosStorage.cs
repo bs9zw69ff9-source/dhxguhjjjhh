@@ -279,9 +279,13 @@ public sealed class AntiDdosLog(AntiDdosPaths paths, ILogger<AntiDdosLog> logger
     }
 
     /// <summary>
-    /// The records of these kinds between two times, oldest first.
+    /// The records of these kinds between two times, oldest first across all of them.
     /// </summary>
     /// <remarks>
+    /// ONE TIMELINE. Each kind is its own file, read in order; with more than one kind they are
+    /// merged by time as they are read (one record per kind held at once), so events, packets and
+    /// minutes interleave as they happened. A tie keeps the order the kinds were asked in.
+    ///
     /// ONLY THE FILES THAT CAN HOLD THE RANGE ARE OPENED. A rotated file last written before
     /// <paramref name="from"/> holds nothing after it, and records are appended in time order, so
     /// reading a file stops at the first record past <paramref name="to"/> - with a minute's slack,
@@ -291,45 +295,73 @@ public sealed class AntiDdosLog(AntiDdosPaths paths, ILogger<AntiDdosLog> logger
         IEnumerable<RecordKind> kinds, DateTimeOffset from, DateTimeOffset to, [EnumeratorCancellation] CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(kinds);
-        var slack = TimeSpan.FromMinutes(1);
-        foreach (var kind in kinds)
+        var streams = kinds.Distinct().Select(kind => ReadKindAsync(kind, from, to, ct).GetAsyncEnumerator(ct)).ToList();
+        try
         {
-            foreach (var file in paths.Files(kind))
-            {
-                if (file.LastWriteTimeUtc < from.UtcDateTime - slack) continue;
+            // The head of each stream; a stream with nothing left drops out.
+            var heads = new List<(int Order, IAsyncEnumerator<LogRecord> Stream)>();
+            for (var i = 0; i < streams.Count; i++)
+                if (await streams[i].MoveNextAsync().ConfigureAwait(false)) heads.Add((i, streams[i]));
 
-                Stream? stream = null;
+            while (heads.Count > 0)
+            {
+                var next = 0;
+                for (var i = 1; i < heads.Count; i++)
+                {
+                    var (a, b) = (heads[i].Stream.Current.Time, heads[next].Stream.Current.Time);
+                    if (a < b || (a == b && heads[i].Order < heads[next].Order)) next = i;
+                }
+                var stream = heads[next].Stream;
+                yield return stream.Current;
+                if (!await stream.MoveNextAsync().ConfigureAwait(false)) heads.RemoveAt(next);
+            }
+        }
+        finally
+        {
+            foreach (var stream in streams) await stream.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>One kind's records between two times, in the order its files hold them.</summary>
+    private async IAsyncEnumerable<LogRecord> ReadKindAsync(
+        RecordKind kind, DateTimeOffset from, DateTimeOffset to, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var slack = TimeSpan.FromMinutes(1);
+        foreach (var file in paths.Files(kind))
+        {
+            if (file.LastWriteTimeUtc < from.UtcDateTime - slack) continue;
+
+            Stream? stream = null;
+            try
+            {
+                stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                if (file.Name.EndsWith(".gz", StringComparison.Ordinal)) stream = new GZipStream(stream, CompressionMode.Decompress);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(ex, "Could not open {File}", file.FullName);
+                if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false);
+                continue;
+            }
+
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            while (true)
+            {
+                string? line;
                 try
                 {
-                    stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                    if (file.Name.EndsWith(".gz", StringComparison.Ordinal)) stream = new GZipStream(stream, CompressionMode.Decompress);
+                    line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is IOException or InvalidDataException)
                 {
-                    logger.LogWarning(ex, "Could not open {File}", file.FullName);
-                    if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false);
-                    continue;
+                    // A gzip cut short by a full disk, or a file rotated away mid-read: keep what was read.
+                    logger.LogWarning(ex, "Stopped reading {File} early", file.FullName);
+                    break;
                 }
-
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                while (true)
-                {
-                    string? line;
-                    try
-                    {
-                        line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (ex is IOException or InvalidDataException)
-                    {
-                        // A gzip cut short by a full disk, or a file rotated away mid-read: keep what was read.
-                        logger.LogWarning(ex, "Stopped reading {File} early", file.FullName);
-                        break;
-                    }
-                    if (line is null) break;
-                    if (AntiDdosRecords.Parse(line) is not { } record) continue;
-                    if (record.Time > to + slack) break;
-                    if (record.Time >= from && record.Time <= to) yield return record;
-                }
+                if (line is null) break;
+                if (AntiDdosRecords.Parse(line) is not { } record) continue;
+                if (record.Time > to + slack) break;
+                if (record.Time >= from && record.Time <= to) yield return record;
             }
         }
     }

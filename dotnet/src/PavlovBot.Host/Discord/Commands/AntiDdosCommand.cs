@@ -310,10 +310,12 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
         var lines = found.Skip((page - 1) * PageSize).Take(PageSize).Select(Row);
         var embed = Theme.Notice($"History · {found.Count}{(truncated ? "+" : "")} record(s) · page {page}/{pages}")
             .WithDescription($"{RangeText(range)}{Describe(filter)}\n```\n{string.Join('\n', lines)}\n```")
-            .WithFooter((truncated ? $"Cut at {MaxAttachedRecords} - narrow it, or /antiddos export. " : "") + "Every match is attached as JSON Lines.");
+            .WithFooter((truncated ? $"Cut at {MaxAttachedRecords} - narrow it, or /antiddos export. " : "") +
+                        "Every match is in the attached file, oldest first, one JSON record per line.");
 
         var body = Encoding.UTF8.GetBytes(string.Join('\n', found.Select(r => r.Line)) + "\n");
-        command.Set(new AntiDdosReply(embed, $"antiddos-history-{AntiDdosLog.FileStamp(range.From)}.jsonl", body));
+        // .txt, not .jsonl: Discord's apps preview a text file, and show a .jsonl as an empty box.
+        command.Set(new AntiDdosReply(embed, $"antiddos-history-{AntiDdosLog.FileStamp(range.From)}.txt", body));
         await service.RecordAsync("query", "history", network?.Text, $"{RangeText(range)}{Describe(filter)}", command.Actor, ct).ConfigureAwait(false);
     }
 
