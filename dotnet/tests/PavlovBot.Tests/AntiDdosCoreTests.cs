@@ -43,7 +43,8 @@ public class FirewallPolicyTests
         Assert.True(Index("drop_ssh-rate") < Index("comment \"ssh\""));
         Assert.True(Index("comment \"ssh\"") < Index("comment \"players\""));
         Assert.True(Index("comment \"players\"") < Index("jump drop_blocked"));
-        Assert.True(Index("jump drop_blocked") < Index("jump drop_per-source"));
+        Assert.True(Index("jump drop_blocked") < Index("jump drop_syn-flood"));
+        Assert.True(Index("jump drop_syn-flood") < Index("jump drop_per-source"));
         Assert.True(Index("jump drop_per-source") < Index("jump drop_unknown-cap"));
         Assert.All(guard, l => Assert.Contains("inet pavlovbot_ddos guard", l, StringComparison.Ordinal));
     }
@@ -60,13 +61,39 @@ public class FirewallPolicyTests
     }
 
     [Fact]
-    public void StandingByKeepsBlocksButSetsNoAttackLimits()
+    public void ThePerAddressLimitsAreOnAllTheTimeButTheTotalCapOnlyInAnAttack()
     {
         var guard = string.Join('\n', Lines(FloodShieldRules.Script(Settings, engaged: false, LogMode.Normal), "guard"));
 
         Assert.Contains("jump drop_blocked", guard, StringComparison.Ordinal);
-        Assert.DoesNotContain("drop_per-source", guard, StringComparison.Ordinal);
+        Assert.Contains("jump drop_per-source", guard, StringComparison.Ordinal);
+        Assert.Contains("jump drop_syn-flood", guard, StringComparison.Ordinal);
+        // The total cap is shared with a new player joining, so it waits for a real attack.
         Assert.DoesNotContain("drop_unknown-cap", guard, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithAlwaysBlockOffThePerAddressGameLimitWaitsForAnAttack()
+    {
+        var standing = string.Join('\n', Lines(FloodShieldRules.Script(Settings with { AlwaysPerSource = false }, engaged: false, LogMode.Normal), "guard"));
+        var engaged = string.Join('\n', Lines(FloodShieldRules.Script(Settings with { AlwaysPerSource = false }, engaged: true, LogMode.Normal), "guard"));
+
+        Assert.DoesNotContain("drop_per-source", standing, StringComparison.Ordinal);
+        Assert.Contains("drop_per-source", engaged, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSynFloodLimitBlocksTheSenderButNeverTouchesSsh()
+    {
+        var guard = Lines(FloodShieldRules.Script(Settings with { SynBlockPps = 40 }, engaged: false, LogMode.Normal), "guard");
+        int Index(string marker) => Array.FindIndex(guard, l => l.Contains(marker, StringComparison.Ordinal));
+
+        var syn = guard[Index("drop_syn-flood")];
+        Assert.Contains("tcp flags & (syn | ack) == syn update @synrate4 { ip saddr limit rate over 40/second burst 40 packets } add @blocked4 { ip saddr timeout 10m }", syn, StringComparison.Ordinal);
+        // SSH and players are accepted above it, so neither ever meets this limit.
+        Assert.True(Index("comment \"ssh\"") < Index("drop_syn-flood"));
+        Assert.True(Index("comment \"players\"") < Index("drop_syn-flood"));
+        Assert.True(Index("jump drop_blocked") < Index("drop_syn-flood"));
     }
 
     [Fact]
@@ -463,6 +490,38 @@ public class ResponsePlannerTests
 
         Assert.Null(last.Ban);
         Assert.Equal("automatic bans are off", last.Held);
+    }
+
+    [Fact]
+    public void SevereAbuseIsBannedInItsFirstMinute()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+
+        var plan = Assert.Single(planner.Plan(T0, [new Detection("udp-rate", "203.0.113.5", 1600, 300, "1600/s")], 10, _ => false));
+
+        Assert.True(plan.Alert);
+        Assert.Equal(TimeSpan.FromHours(1), plan.Ban);
+    }
+
+    [Fact]
+    public void SevereAbuseFromAPlayerOrInASpoofedFloodIsStillNeverBanned()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+        var severe = new Detection("syn-burst", "10.1.1.1", 5000, 120, "5000/min");
+
+        Assert.Null(Assert.Single(planner.Plan(T0, [severe], 10, _ => true)).Ban);
+        Assert.Null(Assert.Single(planner.Plan(T0.AddMinutes(30), [severe with { Source = "203.0.113.9" }], 40_000, _ => false)).Ban);
+    }
+
+    [Fact]
+    public void ABanRememberedFromBeforeARestartStillDoubles()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+        planner.RememberBan("203.0.113.5", T0.AddHours(-3));
+
+        var plan = Assert.Single(planner.Plan(T0, [new Detection("udp-rate", "203.0.113.5", 1600, 300, "x")], 10, _ => false));
+
+        Assert.Equal(TimeSpan.FromHours(2), plan.Ban);
     }
 
     [Fact]

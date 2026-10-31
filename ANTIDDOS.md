@@ -18,8 +18,9 @@ reports are the evidence to send them.
 **What it does, for traffic that reaches the server:**
 
 - Filters in the kernel, before connection tracking, so a flood that gets through costs as little
-  as possible: blocklisted sources, per-address limits during an attack, a cap on non-player game
-  traffic, an SSH new-connection limit, a ping limit.
+  as possible: blocklisted sources, always-on per-address limits (game-port packet rate and TCP
+  connection rate, instant kernel blocks), a cap on non-player game traffic during an attack, an
+  SSH new-connection limit, a ping limit.
 - Counts every source address in the kernel, per protocol and port, and writes one record per
   source per minute. No packet is copied to the bot to be counted.
 - Logs selected packets (drops, suspicious sources, a small sample of game traffic) as JSON Lines,
@@ -42,7 +43,7 @@ for what the firewall chose to log at that moment.
                          trusted ─────────────> skip the limits below
                          SSH (after new-conn limit) ─> through
                          known players ───────> through
-                         blocked / pings / attack limits ─> drop + count + log (NFLOG 7)
+                         blocked / pings / per-address limits / attack cap ─> drop + count + log (NFLOG 7)
                   ──> [conntrack -200]
                   ──> [prerouting -150: OBSERVE] inet pavlovbot_ddos   (never drops)
                          per-source counters (kernel sets), suspicious + sample logs (NFLOG 7)
@@ -133,7 +134,10 @@ All are optional. The defaults are chosen so normal play never trips anything.
 | `ATTACK_MITIGATION` | off | `on`: the table has drop rules. Off, it only counts and logs |
 | `ATTACK_INTERFACE` | default route | The public interface (never `lo`) |
 | `ATTACK_GAME_PORTS` | `7777-7799,8177-8199` | Pavlov UDP ports |
-| `ATTACK_PER_IP_PPS` / `ATTACK_UNKNOWN_PPS` / `ATTACK_BLOCK_MINUTES` | 1000 / 5000 / 10 | Attack-time limits |
+| `ATTACK_PER_IP_PPS` / `ATTACK_BLOCK_MINUTES` | 1000 / 10 | One non-player over this to the game ports is blocked in the kernel, at once, for this long |
+| `ANTIDDOS_ALWAYS_BLOCK` | on | That per-address limit all the time (`off`: only during a detected flood) |
+| `ANTIDDOS_SYN_BLOCK_PPS` | 50 | New TCP connections a second from one address (not SSH) before it is blocked |
+| `ATTACK_UNKNOWN_PPS` | 5000 | During a flood only: the cap on all non-player game traffic together |
 | `ANTIDDOS_SSH_PORTS` | `22` | Every port sshd listens on: always let through |
 | `ANTIDDOS_SSH_NEW_PER_MINUTE` | 30 | New SSH connections a minute per address |
 | `ANTIDDOS_ICMP_PPS` | 50 | Pings a second, everybody together |
@@ -315,14 +319,25 @@ cscli decisions list; cscli alerts list --since 24h; cscli metrics
 
    The first detection of an address opens an incident and posts one alert. Further minutes of the
    same incident do not post again.
-2. **Rate-limit.** Always on with mitigation: the SSH new-connection limit and the ping limit.
-   During a detected flood the attack limits engage: per-address block at `ATTACK_PER_IP_PPS`, and
-   a cap on all non-player game traffic at `ATTACK_UNKNOWN_PPS`.
-3. **Temporary ban.** After `ANTIDDOS_ESCALATE_AFTER` detection minutes within the window, the
-   address is banned through CrowdSec for `ANTIDDOS_BAN_MINUTES`. Without CrowdSec it goes in the
-   kernel block list for the same time.
-4. **Escalate.** A repeat within a day doubles the ban, up to `ANTIDDOS_MAX_BAN_HOURS`. Bans
-   always expire. Permanent bans are only ever placed by hand (`/antiddos block duration:permanent`).
+2. **Block in the kernel, at once.** Always on with mitigation, in the same second:
+   - a non-player over `ATTACK_PER_IP_PPS` to the game ports, blocked for
+     `ATTACK_BLOCK_MINUTES` (Pavlov clients send roughly 30-130 packets/s; players never reach
+     this rule);
+   - an address opening TCP connections faster than `ANTIDDOS_SYN_BLOCK_PPS`, for the same time
+     (SSH has its own limit and is never blocked);
+   - the SSH new-connection limit and the ping limit.
+
+   Each block is an event (`firewall-block`) and counts as evidence below. During a detected
+   flood, the cap on all non-player game traffic (`ATTACK_UNKNOWN_PPS`) also engages.
+3. **Temporary ban.** Banned through CrowdSec for `ANTIDDOS_BAN_MINUTES`, or in the kernel block
+   list without CrowdSec, when either:
+   - it collects `ANTIDDOS_ESCALATE_AFTER` detection minutes within the window, firewall blocks
+     included, so an address the firewall keeps having to block gets a real ban;
+   - or a single minute is severe: five times over a threshold for the whole minute, such as a
+     sustained 1,500 UDP packets/s from a non-player, or 250 ports scanned.
+4. **Escalate.** A repeat within a day doubles the ban, up to `ANTIDDOS_MAX_BAN_HOURS`. The last
+   day's bans are reloaded from the event log at startup, so a restart doesn't reset the doubling.
+   Bans always expire. Permanent bans are only ever placed by hand (`/antiddos block duration:permanent`).
 
 **Safeguards against spoofing and false positives.** A UDP source address is whatever the sender
 wrote, so:

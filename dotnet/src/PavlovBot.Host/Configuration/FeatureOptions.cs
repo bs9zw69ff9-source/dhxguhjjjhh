@@ -597,6 +597,8 @@ public sealed record FeatureOptions
                 SuspectUdpPps = Int(configuration, "ANTIDDOS_SUSPECT_UDP_PPS", 300),
                 SuspectSynPerSecond = Int(configuration, "ANTIDDOS_SUSPECT_SYN_PPS", 20),
                 NflogGroup = Int(configuration, "ANTIDDOS_NFLOG_GROUP", 7),
+                AlwaysBlock = OptionalFlag(configuration, "ANTIDDOS_ALWAYS_BLOCK") != false,
+                SynBlockPps = Int(configuration, "ANTIDDOS_SYN_BLOCK_PPS", 50),
                 SynPerMinute = Int(configuration, "ANTIDDOS_SYN_PER_MINUTE", 120),
                 PortSpread = Int(configuration, "ANTIDDOS_PORT_SPREAD", 50),
                 AutoBan = OptionalFlag(configuration, "ANTIDDOS_AUTOBAN") != false,
