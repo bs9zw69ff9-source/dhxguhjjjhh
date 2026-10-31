@@ -46,6 +46,12 @@ public sealed record AntiDdosOptions
     /// <summary>Ban a source detected during a flood at once and permanently (<c>ANTIDDOS_ATTACK_PERMABAN</c>, on unless off).</summary>
     public bool AttackPermaban { get; init; } = true;
 
+    /// <summary>
+    /// Packets to the game ports during a flood that make an address one of its sources, banned
+    /// when it ends (<c>ANTIDDOS_FLOOD_BAN_MIN_PACKETS</c>). A server browser's query is one or two.
+    /// </summary>
+    public int FloodBanMinPackets { get; init; } = 50;
+
     /// <summary>The hourly cap on automatic bans while a flood is on (<c>ANTIDDOS_ATTACK_BANS_PER_HOUR</c>).</summary>
     public int AttackBansPerHour { get; init; } = 300;
 

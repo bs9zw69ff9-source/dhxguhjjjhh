@@ -26,7 +26,8 @@ public sealed record ShieldLimits(
 /// <param name="SynFloodPackets">Connection attempts dropped by the per-address SYN limit (each one also blocked its sender).</param>
 public sealed record ShieldStats(
     long BlockedPackets, long PerSourcePackets, long CappedPackets, int BlockedSources, long IcmpPackets = 0, long SshPackets = 0,
-    long SynFloodPackets = 0)
+    long SynFloodPackets = 0,
+    long DroppedBytes = 0)
 {
     public long Dropped => BlockedPackets + PerSourcePackets + CappedPackets + IcmpPackets + SshPackets + SynFloodPackets;
 }
@@ -204,6 +205,17 @@ public static partial class FloodShieldRules
             parts.Add(from == to ? Number(from) : $"{Number(from)}-{Number(to)}");
         }
         return parts.Count == 0 ? null : string.Join(", ", parts);
+    }
+
+    /// <summary>Whether a port is in a ports list such as <c>7777-7799,8177-8199</c>; null when it is not a ports list.</summary>
+    public static Func<ushort, bool>? PortMatcher(string? spec)
+    {
+        if (Ports(spec) is null) return null;
+        var ranges = spec!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(item => item.Split('-', StringSplitOptions.TrimEntries))
+            .Select(r => (From: int.Parse(r[0], CultureInfo.InvariantCulture), To: int.Parse(r[^1], CultureInfo.InvariantCulture)))
+            .ToArray();
+        return port => ranges.Any(r => port >= r.From && port <= r.To);
     }
 
     /// <summary>Why these settings cannot become rules, or null when they can.</summary>
@@ -468,7 +480,8 @@ public static partial class FloodShieldRules
         long Packets(string comment) => table.Counters.TryGetValue(comment, out var c) ? c.Packets : 0;
         return new ShieldStats(
             Packets("blocked"), Packets("per-source"), Packets("unknown-cap"), table.Blocked.Count, Packets("icmp-flood"), Packets("ssh-rate"),
-            Packets("syn-flood"));
+            Packets("syn-flood"),
+            DroppedBytes: DropReasons.Sum(reason => table.Counters.TryGetValue(reason, out var c) ? c.Bytes : 0));
     }
 
     /// <summary>

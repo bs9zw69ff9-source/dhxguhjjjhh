@@ -27,6 +27,9 @@ public interface ICrowdSec
     /// <summary>Ban an address or range. Null on success, else why not.</summary>
     Task<string?> BanAsync(IpNetworks.Network target, TimeSpan duration, string reason, CancellationToken ct);
 
+    /// <summary>Ban many single addresses in one go (<c>cscli decisions import</c>). Null on success, else why not.</summary>
+    Task<string?> BanManyAsync(IReadOnlyCollection<string> addresses, TimeSpan duration, string reason, CancellationToken ct);
+
     /// <summary>Lift every decision on an address or range. Null on success, else why not.</summary>
     Task<string?> UnbanAsync(IpNetworks.Network target, CancellationToken ct);
 
@@ -61,7 +64,8 @@ public sealed class CrowdSecClient(bool enabled, ILogger<CrowdSecClient> logger,
 
     public async Task<(IReadOnlyList<CrowdSecDecision>? Decisions, string? Problem)> DecisionsAsync(CancellationToken ct)
     {
-        var run = await RunAsync(["decisions", "list", "-o", "json"], ct).ConfigureAwait(false);
+        // -l 0: every alert. The default is the newest 100, and each ban by hand is its own alert.
+        var run = await RunAsync(["decisions", "list", "-l", "0", "-o", "json"], ct).ConfigureAwait(false);
         return run.Problem is { } problem ? (null, problem) : (CrowdSecOutput.Decisions(run.Output, time.GetUtcNow()), null);
     }
 
@@ -72,6 +76,27 @@ public sealed class CrowdSecClient(bool enabled, ILogger<CrowdSecClient> logger,
         var run = await RunAsync(argv, ct).ConfigureAwait(false);
         return run.Problem is null ? CrowdSecOutput.Alerts(run.Output) : null;
     }
+
+    /// <summary>
+    /// One import for thousands of addresses: about 0.7 s for 5,000 on CrowdSec 1.8.2, where one
+    /// <c>decisions add</c> each would take minutes in the middle of an attack. Values on stdin, so
+    /// nothing is written to disk and no address reaches a command line.
+    /// </summary>
+    public async Task<string?> BanManyAsync(IReadOnlyCollection<string> addresses, TimeSpan duration, string reason, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(addresses);
+        if (addresses.Count == 0) return null;
+        var values = string.Join('\n', addresses.Select(a => IpNetworks.Canonical(a)).OfType<IpNetworks.Network>()
+            .Where(n => n.IsSingle).Select(n => n.Address)) + "\n";
+        var run = await RunAsync(
+            ["decisions", "import", "-i", "-", "--format", "values", "--type", "ban", "--scope", "ip",
+             "--duration", CrowdSecOutput.DurationArgument(duration), "--reason", CrowdSecOutput.BotReason + " " + Clean(reason)],
+            ct, values, ImportTimeout).ConfigureAwait(false);
+        return run.Problem;
+    }
+
+    /// <summary>A large import can take a while; it is still bounded.</summary>
+    private static readonly TimeSpan ImportTimeout = TimeSpan.FromMinutes(3);
 
     public async Task<bool?> ParsesAsync(string line, CancellationToken ct)
     {
@@ -145,17 +170,19 @@ public sealed class CrowdSecClient(bool enabled, ILogger<CrowdSecClient> logger,
         return create.Problem;
     }
 
-    private async Task<(string? Output, string? Problem)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct)
+    private async Task<(string? Output, string? Problem)> RunAsync(IReadOnlyList<string> argv, CancellationToken ct,
+        string? stdin = null, TimeSpan? timeout = null)
     {
         if (!Installed) return (null, enabled ? "CrowdSec is not installed - see ANTIDDOS.md" : "ANTIDDOS_CROWDSEC is off");
 
-        var run = await ProcessRunner.RunAsync("cscli", [.. argv, "--color", "no"], Timeout, logger, ct).ConfigureAwait(false);
+        var run = await ProcessRunner.RunAsync("cscli", [.. argv, "--color", "no"], timeout ?? Timeout, logger, ct, stdin).ConfigureAwait(false);
         if (!run.Started)
         {
             _installed = false;
             return (null, "cscli is not installed");
         }
-        if (run.TimedOut) return (null, "cscli did not answer within 20 seconds - is crowdsec running? `systemctl status crowdsec`");
+        if (run.TimedOut)
+            return (null, $"cscli did not answer within {(timeout ?? Timeout).TotalSeconds:0} seconds - is crowdsec running? `systemctl status crowdsec`");
         if (run.ExitCode != 0)
         {
             var message = run.Stderr.Trim() is { Length: > 0 } e ? e : run.Stdout.Trim();

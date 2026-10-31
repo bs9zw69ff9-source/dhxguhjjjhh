@@ -66,9 +66,9 @@ public sealed record PlannedResponse(string Source, IReadOnlyList<Detection> Det
 ///
 /// DURING A FLOOD (<see cref="ResponsePolicy.PermanentInAttack"/>) a source detected in it - over
 /// the UDP rate, a SYN burst, a port scan, or blocked by the firewall's per-address limit - is
-/// banned in that first minute, permanently. Every guard above still holds: never a player or a
-/// trusted address, nothing when the flood looks spoofed, never a range. Only the hourly cap is
-/// raised, to <see cref="ResponsePolicy.AttackBansPerHour"/>, because a botnet is hundreds of
+/// banned in that first minute, permanently. The guards above still hold - never a player or a
+/// trusted address, never a range - except the spoofing one, by the owner's choice: a spoofed
+/// flood's addresses are banned too. The hourly cap is raised, to <see cref="ResponsePolicy.AttackBansPerHour"/>, because a botnet is hundreds of
 /// sources. The risk this accepts: a botnet's addresses are mostly home connections, reassigned
 /// to someone else in days or weeks, so a permanent ban can outlive its attacker. /antiddos unban
 /// lifts one.
@@ -140,7 +140,7 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
                 {
                     held = !Policy.AutoBan ? "automatic bans are off"
                         : exempt(source) ? "a player or trusted address is never banned automatically"
-                        : sourcesInWindow > Policy.SpoofSources
+                        : !permanent && sourcesInWindow > Policy.SpoofSources
                             ? string.Create(CultureInfo.InvariantCulture, $"{sourcesInWindow} sources this minute - likely spoofed, so no per-address bans")
                         : _recentBans.Count >= hourlyCap
                             ? string.Create(CultureInfo.InvariantCulture, $"{hourlyCap} automatic bans in the last hour already")
@@ -171,6 +171,13 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
         ArgumentNullException.ThrowIfNull(source);
         var previous = _bans.TryGetValue(source, out var b) ? b : _bans[source] = [];
         previous.Add(at);
+    }
+
+    /// <summary>Record a permanent ban placed outside <see cref="Plan"/> (a flood's sources, banned when it ended).</summary>
+    public void MarkPermanent(string source, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        _placedPermanent[source] = at;
     }
 
     /// <summary>Forget a source's bans, after it was unbanned by hand, so a later flood can ban it again.</summary>

@@ -58,8 +58,8 @@ public interface IAutoPostTarget
 /// </remarks>
 public interface IFilePostTarget
 {
-    /// <summary>Post <paramref name="embed"/> with <paramref name="content"/> attached as <paramref name="fileName"/>.</summary>
-    Task<ulong?> SendWithFileAsync(ulong channelId, Embed embed, string fileName, string content, CancellationToken ct);
+    /// <summary>Post <paramref name="text"/> and <paramref name="embeds"/> with <paramref name="content"/> attached as <paramref name="fileName"/>.</summary>
+    Task<ulong?> SendWithFileAsync(ulong channelId, string? text, IReadOnlyList<Embed> embeds, string fileName, string content, CancellationToken ct);
 }
 
 /// <summary>

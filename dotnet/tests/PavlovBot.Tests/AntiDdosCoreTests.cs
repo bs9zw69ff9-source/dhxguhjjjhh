@@ -454,15 +454,21 @@ public class ResponsePlannerTests
     }
 
     [Fact]
-    public void DuringAFloodPlayersTrustedAndSpoofedSourcesAreStillNeverBanned()
+    public void DuringAFloodPlayersAndTrustedAreNeverBannedButASpoofedFloodsSourcesAre()
     {
         var player = Assert.Single(AttackMinute(new ResponsePlanner(new ResponsePolicy()), 0, [Udp("10.1.1.1")], exempt: true));
         var spoofed = Assert.Single(AttackMinute(new ResponsePlanner(new ResponsePolicy()), 0, [Udp("203.0.113.5")], sources: 40_000));
+        var outside = new ResponsePlanner(new ResponsePolicy());
+        PlannedResponse calm = null!;
+        for (var m = 0; m < 3; m++) calm = Assert.Single(Minute(outside, m, "203.0.113.5", sources: 40_000));
 
         Assert.Null(player.Ban);
         Assert.Contains("never banned automatically", player.Held, StringComparison.Ordinal);
-        Assert.Null(spoofed.Ban);
-        Assert.Contains("likely spoofed", spoofed.Held, StringComparison.Ordinal);
+        // The owner's choice: in a flood, every source is banned, spoofed or not.
+        Assert.True(spoofed.Permanent);
+        // Outside a flood, the spoofing guard still holds.
+        Assert.Null(calm.Ban);
+        Assert.Contains("likely spoofed", calm.Held, StringComparison.Ordinal);
     }
 
     [Fact]

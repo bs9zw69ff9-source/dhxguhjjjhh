@@ -58,6 +58,7 @@ public class FloodShieldRulesTests
         Assert.Equal(4_000, stats.CappedPackets);
         Assert.Equal(2, stats.BlockedSources);
         Assert.Equal(31_992, stats.Dropped);
+        Assert.Equal(34_372_948 + 1_228 + 1, stats.DroppedBytes);
     }
 
     [Theory]

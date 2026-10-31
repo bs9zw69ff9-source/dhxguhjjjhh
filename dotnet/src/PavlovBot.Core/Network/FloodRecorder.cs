@@ -118,7 +118,8 @@ public readonly record struct CapturedPacket(
 /// entry per address would be the attack taking the bot's memory instead of the game's. Past
 /// <see cref="MaxSources"/> distinct senders, new ones are counted together rather than tracked.
 /// </remarks>
-public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources)
+/// <param name="targeted">Whether a destination port is one of the game's: a source's packets to those are counted apart, for banning.</param>
+public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources, Func<ushort, bool>? targeted = null)
 {
     public const int MaxSources = 100_000;
 
@@ -133,8 +134,8 @@ public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources)
     ];
 
     private readonly object _gate = new();
-    private readonly Dictionary<uint, (long Packets, long Bytes)> _sources = [];
-    private readonly Dictionary<ushort, long> _ports = [];
+    private readonly Dictionary<uint, (long Packets, long Bytes, long Targeted)> _sources = [];
+    private readonly Dictionary<ushort, (long Packets, long Bytes)> _ports = [];
     private readonly long[] _bands = new long[SizeBands.Length];
     private readonly long[] _protocols = new long[4];
     private readonly System.Collections.BitArray _sizesSeen = new(65536);
@@ -163,15 +164,20 @@ public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources)
             _protocols[(int)packet.Protocol]++;
             if (packet.Syn) _syn++;
 
+            var hit = packet.DestinationPort != 0 && packet.Protocol is PacketProtocol.Udp or PacketProtocol.Tcp
+                                                   && targeted?.Invoke(packet.DestinationPort) == true ? 1 : 0;
             if (_sources.TryGetValue(packet.Source, out var seen))
-                _sources[packet.Source] = (seen.Packets + 1, seen.Bytes + packet.Payload);
+                _sources[packet.Source] = (seen.Packets + 1, seen.Bytes + packet.Payload, seen.Targeted + hit);
             else if (_sources.Count < maxSources)
-                _sources[packet.Source] = (1, packet.Payload);
+                _sources[packet.Source] = (1, packet.Payload, hit);
             else
                 _untrackedPackets++;
 
             if (packet.DestinationPort != 0)
-                _ports[packet.DestinationPort] = _ports.GetValueOrDefault(packet.DestinationPort) + 1;
+            {
+                var port = _ports.GetValueOrDefault(packet.DestinationPort);
+                _ports[packet.DestinationPort] = (port.Packets + 1, port.Bytes + packet.Payload);
+            }
 
             var size = Math.Clamp(packet.Payload, 0, 65535);
             for (var i = 0; i < SizeBands.Length; i++)
@@ -192,6 +198,30 @@ public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources)
     }
 
     /// <summary>Everything counted so far, as an immutable copy.</summary>
+    /// <summary>Attack packets and payload bytes so far, for a per-second series.</summary>
+    public (long Packets, long Bytes) Totals
+    {
+        get
+        {
+            lock (_gate) return (_attackPackets, _attackBytes);
+        }
+    }
+
+    /// <summary>
+    /// Every recorded source that sent at least <paramref name="minPackets"/> packets to the game's
+    /// ports, busiest first. These are what the attack was made of; a server browser's query or a
+    /// monitoring ping sends a handful, and replies to the server's own connections go to other ports.
+    /// </summary>
+    public IReadOnlyList<string> TargetingSources(long minPackets)
+    {
+        lock (_gate)
+        {
+            return [.. _sources.Where(s => s.Value.Targeted >= Math.Max(1, minPackets))
+                .OrderByDescending(s => s.Value.Targeted)
+                .Select(s => CapturedPacket.Address(s.Key))];
+        }
+    }
+
     public FloodBreakdown Snapshot(int topSources = 50, int topPorts = 10)
     {
         lock (_gate)
@@ -204,7 +234,7 @@ public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources)
                 SourcesCapped: _untrackedPackets > 0,
                 TopSources: [.. _sources.OrderByDescending(s => s.Value.Packets).Take(topSources)
                     .Select(s => new SourceCount(CapturedPacket.Address(s.Key), s.Value.Packets, s.Value.Bytes))],
-                TopPorts: [.. _ports.OrderByDescending(p => p.Value).Take(topPorts).Select(p => (p.Key, p.Value))],
+                TopPorts: [.. _ports.OrderByDescending(p => p.Value.Packets).Take(topPorts).Select(p => (p.Key, p.Value.Packets))],
                 Bands: [.. SizeBands.Select((b, i) => (b.Label, _bands[i]))],
                 Udp: _protocols[(int)PacketProtocol.Udp],
                 Tcp: _protocols[(int)PacketProtocol.Tcp],
@@ -213,7 +243,8 @@ public sealed class FloodRecorder(int maxSources = FloodRecorder.MaxSources)
                 Syn: _syn,
                 DistinctSizes: _distinctSizes,
                 MinSize: _attackPackets == 0 ? 0 : _minSize,
-                MaxSize: _maxSize);
+                MaxSize: _maxSize,
+                PortBytes: _ports.OrderByDescending(p => p.Value.Packets).Take(topPorts).ToDictionary(p => p.Key, p => p.Value.Bytes));
         }
     }
 }
@@ -237,7 +268,8 @@ public sealed record FloodBreakdown(
     long Syn,
     int DistinctSizes,
     int MinSize,
-    int MaxSize)
+    int MaxSize,
+    IReadOnlyDictionary<ushort, long>? PortBytes = null)
 {
     public static FloodBreakdown Empty { get; } = new FloodRecorder().Snapshot();
 

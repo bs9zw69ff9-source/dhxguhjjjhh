@@ -101,5 +101,24 @@ public static class IpNetworks
             : network.PrefixLength == 0 || IPAddress.IsLoopback(address);
     }
 
+    private static readonly IPNetwork[] NotPublic4 =
+    [
+        IPNetwork.Parse("0.0.0.0/8"), IPNetwork.Parse("10.0.0.0/8"), IPNetwork.Parse("100.64.0.0/10"), IPNetwork.Parse("127.0.0.0/8"),
+        IPNetwork.Parse("169.254.0.0/16"), IPNetwork.Parse("172.16.0.0/12"), IPNetwork.Parse("192.168.0.0/16"), IPNetwork.Parse("224.0.0.0/3"),
+    ];
+
+    /// <summary>
+    /// Whether a single address can be a host on the internet: not private, carrier NAT, loopback,
+    /// link-local, multicast or reserved. Those are the server's own network, never an attacker to ban.
+    /// </summary>
+    public static bool IsPublic(Network network)
+    {
+        ArgumentNullException.ThrowIfNull(network);
+        var address = IPAddress.Parse(network.Address);
+        if (network.Family == 4) return !NotPublic4.Any(n => n.Contains(address));
+        return !(IPAddress.IsLoopback(address) || address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || address.IsIPv6UniqueLocal ||
+                 address.IsIPv6Multicast || address.Equals(IPAddress.IPv6Any));
+    }
+
     private static IPAddress Unmap(IPAddress address) => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
 }
