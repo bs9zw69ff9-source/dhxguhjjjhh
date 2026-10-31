@@ -22,8 +22,10 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
     private readonly Players _players = new();
     private (long Free, long Total)? _disk = (50L << 30, 100L << 30);
     private long _linkPackets = 1_000_000;
+    private LinkHealth? _health = new(0, 0, 0, 0, 0, 0, 100, 262_144, "up");
+    private ReadingStore? _readings;
     private AntiDdosService? _service;
-    private readonly CancellationTokenSource _stop = new();
+    private CancellationTokenSource _stop = new();
 
     public async ValueTask DisposeAsync()
     {
@@ -42,7 +44,8 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         var log = new AntiDdosLog(new AntiDdosPaths(Path.Combine(_root, "log")), NullLogger<AntiDdosLog>.Instance);
         var state = new AntiDdosStateStore(Path.Combine(_root, "state.json"), NullLogger<AntiDdosStateStore>.Instance);
         _service = new AntiDdosService(options ?? new AntiDdosOptions { AlertChannel = 42 }, new ShieldLimits(), "ens3", _firewall, _crowdsec, log,
-            state, _players, null, _posts, _ => (_linkPackets, _linkPackets * 100), _ => _disk, _clock, NullLogger<AntiDdosService>.Instance);
+            state, _players, null, _posts, _ => (_linkPackets, _linkPackets * 100), _ => _disk, _clock, NullLogger<AntiDdosService>.Instance,
+            _ => _health, _readings);
         await _service.StartAsync(_stop.Token);
         await _service.Started;
         return _service;
@@ -254,6 +257,179 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Contains("already banned", await service.BanAsync(target, TimeSpan.FromHours(1), "again", "owner"), StringComparison.Ordinal);
     }
 
+    // ---- connection loss ----
+
+    private ReadingStore Readings() =>
+        _readings = new ReadingStore(Path.Combine(_root, "state", "last-reading.json"), NullLogger<ReadingStore>.Instance);
+
+    private async Task Restart(TimeSpan down)
+    {
+        await _stop.CancelAsync();
+        await _service!.StopAsync(CancellationToken.None);
+        _service.Dispose();
+        _service = null;
+        _clock.Now += down;
+        _stop.Dispose();
+        _stop = new CancellationTokenSource();
+    }
+
+    [Fact]
+    public async Task KernelLossIsInTheTrafficRecordAsWhatHappenedThatMinute()
+    {
+        _health = new LinkHealth(10, 0, 0, 0, 500, 7, 100, 262_144, "up");
+        await Start();
+        _health = new LinkHealth(1_010, 0, 0, 0, 800, 7, 120, 262_144, "up");
+        await Minute();
+
+        var traffic = Assert.Single(Lines("traffic.jsonl"));
+        Assert.Contains("\"lost\":1300", traffic, StringComparison.Ordinal);
+        Assert.Contains("\"nic_dropped\":1000", traffic, StringComparison.Ordinal);
+        Assert.Contains("\"softnet_dropped\":300", traffic, StringComparison.Ordinal);
+        Assert.Contains("\"link\":\"up\"", traffic, StringComparison.Ordinal);
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("\"category\":\"kernel-loss\"", StringComparison.Ordinal));
+        Assert.Equal(1300, LogQuery.Rates([AntiDdosRecords.Parse(traffic)!], new QueryFilter(T0, T0.AddHours(1)))[0].Lost);
+    }
+
+    [Fact]
+    public async Task TheLinkGoingDownAndUpIsRecordedAndAlertedOnceEach()
+    {
+        await Start();
+        _health = _health! with { OperState = "down" };
+        await Minute();
+        await Minute();
+        _health = _health with { OperState = "up" };
+        await Minute();
+
+        var link = Lines("events.jsonl").Where(l => l.Contains("\"category\":\"link\"", StringComparison.Ordinal)).ToList();
+        Assert.Equal(2, link.Count);
+        Assert.Contains("\"action\":\"down\"", link[0], StringComparison.Ordinal);
+        Assert.Contains("\"action\":\"up\"", link[1], StringComparison.Ordinal);
+        Assert.Equal(["ens3 went down", "ens3 is back up"], _posts.Sent.Select(e => e.Title[(e.Title.IndexOf(' ', StringComparison.Ordinal) + 1)..]));
+    }
+
+    [Fact]
+    public async Task AFillingConnectionTableIsAlertedOnceAndRecoversBelowEightyPercent()
+    {
+        await Start();
+        foreach (var count in new[] { 240_000, 250_000, 220_000, 200_000, 245_000 })
+        {
+            _health = _health! with { ConntrackCount = count };
+            await Minute();
+        }
+
+        var actions = Lines("events.jsonl").Where(l => l.Contains("\"category\":\"conntrack\"", StringComparison.Ordinal))
+            .Select(l => l.Contains("\"action\":\"full\"", StringComparison.Ordinal) ? "full" : "recovered").ToList();
+        // 91.6% full; still full; 84% is not yet recovered; 76% is; full again.
+        Assert.Equal(["full", "recovered", "full"], actions);
+        Assert.Equal(2, _posts.Sent.Count(e => e.Title.EndsWith("Connection table nearly full", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task TheTimeTheBotWasDownIsRecordedAsOneGapRecordWithEverySourceItCounted()
+    {
+        Readings();
+        await Start();
+        await Minute(("203.0.113.5", "udp", 7777, 100));
+        await Restart(TimeSpan.FromMinutes(30));
+
+        // While the bot was down: the kernel kept counting.
+        _linkPackets += 5_000_000;
+        _firewall.Add([("203.0.113.5", "udp", 7777, 4_000_000), ("198.51.100.9", "udp", 7777, 900_000)]);
+        _health = _health! with { NicMissed = 70_000 };
+        await Start();
+
+        var gap = Assert.Single(Lines("traffic.jsonl"), l => l.Contains("\"gap\":\"", StringComparison.Ordinal));
+        Assert.Contains("\"rx_packets\":5000000", gap, StringComparison.Ordinal);
+        Assert.Contains("\"lost\":70000", gap, StringComparison.Ordinal);
+        Assert.Contains("the bot was not running from", gap, StringComparison.Ordinal);
+        var sources = Lines("sources.jsonl").Where(l => l.Contains("\"gap\":true", StringComparison.Ordinal)).ToList();
+        Assert.Equal(2, sources.Count);
+        Assert.Contains("\"packets\":4000000", sources.Single(l => l.Contains("203.0.113.5", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("\"category\":\"gap\"", StringComparison.Ordinal));
+        Assert.True(LogQuery.Rates([AntiDdosRecords.Parse(gap)!], new QueryFilter(T0, T0.AddDays(1)))[0].Gap);
+    }
+
+    [Fact]
+    public async Task AfterARebootTheGapRecordCoversOnlyTheTimeSinceBoot()
+    {
+        Readings();
+        await Start();
+        await Minute();
+        await Restart(TimeSpan.FromMinutes(10));
+
+        _linkPackets = 3_000;   // the counters started again from zero
+        await Start();
+
+        var gap = Assert.Single(Lines("traffic.jsonl"), l => l.Contains("\"gap\":\"", StringComparison.Ordinal));
+        Assert.Contains("\"rx_packets\":3000", gap, StringComparison.Ordinal);
+        Assert.Contains("rebooted", gap, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartingMovesTheSavedReadingOnSoACrashBeforeTheFirstMinuteCannotRecordTheGapTwice()
+    {
+        Readings();
+        await Start();
+        await Minute();
+        await Restart(TimeSpan.FromMinutes(10));
+        await Start();
+
+        // Saved by the start itself, before any tick or stop.
+        Assert.Equal(_clock.Now, _readings!.Load()!.Time);
+        var gap = Assert.Single(Lines("traffic.jsonl"), l => l.Contains("\"gap\":\"", StringComparison.Ordinal));
+        Assert.Contains("\"window_s\":600", gap, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AQuickRestartIsNotAGap()
+    {
+        Readings();
+        await Start();
+        await Minute();
+        await Restart(TimeSpan.FromSeconds(30));
+        await Start();
+
+        Assert.DoesNotContain(Lines("traffic.jsonl"), l => l.Contains("\"gap\":\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AlertsDiscordDidNotTakeAreHeldInOrderAndPostedLateWhenItAnswers()
+    {
+        await Start();
+        _posts.Down = true;
+        _health = _health! with { OperState = "down" };
+        await Minute();
+        _health = _health with { OperState = "up" };
+        await Minute();
+        Assert.Empty(_posts.Sent);
+
+        _posts.Down = false;
+        await Minute();
+        await Minute();
+
+        Assert.Equal(["ens3 went down", "ens3 is back up"], _posts.Sent.Select(e => e.Title[(e.Title.IndexOf(' ', StringComparison.Ordinal) + 1)..]));
+        // Marked late exactly once, though the first flush attempt also failed.
+        Assert.All(_posts.Sent, e => Assert.Single(System.Text.RegularExpressions.Regex.Matches(e.Footer!.Value.Text, "Posted late")));
+        Assert.Single(Lines("events.jsonl"), l => l.Contains("\"action\":\"delivered-late\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OnlyTheNewestAlertsAreHeldAndTheRestAreCounted()
+    {
+        await Start();
+        _posts.Down = true;
+        for (var m = 0; m < AntiDdosService.OutboxSize + 4; m++)
+        {
+            _health = _health! with { OperState = m % 2 == 0 ? "down" : "up" };
+            await Minute();
+        }
+        _posts.Down = false;
+        await Minute();
+
+        Assert.Equal(AntiDdosService.OutboxSize, _posts.Sent.Count);
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("4 older one(s) did not fit", StringComparison.Ordinal));
+    }
+
     // ---- fakes ----
 
     private sealed class Clock(DateTimeOffset now) : TimeProvider
@@ -280,11 +456,21 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
     {
         public List<Embed> Sent { get; } = [];
 
+        /// <summary>Discord unreachable: every post fails, half by throwing and half by returning nothing.</summary>
+        public bool Down { get; set; }
+
+        private int _attempts;
+
         public Task<AutoPostEdit> EditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct) =>
             Task.FromResult(AutoPostEdit.Edited);
 
         public Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct)
         {
+            if (Down)
+            {
+                if (_attempts++ % 2 == 0) throw new HttpRequestException("unreachable");
+                return Task.FromResult<ulong?>(null);
+            }
             lock (Sent) Sent.Add(embed);
             return Task.FromResult<ulong?>(1);
         }

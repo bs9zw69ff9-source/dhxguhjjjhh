@@ -28,6 +28,7 @@ nft delete table ip6 crowdsec6 2>/dev/null || true
 
 echo "==> logging"
 systemctl disable --now anti-ddos-logrotate.timer 2>/dev/null || true
+systemctl disable --now anti-ddos-capture.service 2>/dev/null && echo "    capture service stopped (the ring in /var/log/anti-ddos/capture is kept)" || true
 if [ -f /etc/ulogd.conf.pre-antiddos ]; then
   cp -a /etc/ulogd.conf.pre-antiddos /etc/ulogd.conf
   rm -f /etc/systemd/system/ulogd2.service.d/anti-ddos.conf

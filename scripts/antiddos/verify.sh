@@ -52,6 +52,24 @@ done
 case "$(stat -f -c %T "$LOGDIR" 2>/dev/null)" in tmpfs|ramfs) fail "$LOGDIR is on $(stat -f -c %T "$LOGDIR") - it would not survive a reboot";; *) pass "$LOGDIR is on persistent storage";; esac
 
 echo
+echo "packet capture (every inbound header)"
+if systemctl is-active --quiet anti-ddos-capture.service 2>/dev/null; then
+  pass "anti-ddos-capture.service running - records even while the bot is down"
+elif systemctl is-enabled --quiet anti-ddos-capture.service 2>/dev/null; then
+  warn "anti-ddos-capture.service enabled but not running (the bot stops it under disk pressure): systemctl status anti-ddos-capture"
+else
+  warn "no capture service - only the bot captures, so nothing is recorded while it is down (install.sh step 5b)"
+fi
+NEWEST="$(ls -t "$LOGDIR"/capture/ring_*.pcap 2>/dev/null | head -1)"
+if [ -n "$NEWEST" ] && [ $(( $(date +%s) - $(stat -c %Y "$NEWEST") )) -lt 300 ]; then
+  pass "ring written in the last 5 min ($(du -sh "$LOGDIR/capture" | cut -f1) on disk)"
+else
+  warn "no ring file written in the last 5 min"
+fi
+[ -f /var/lib/anti-ddos/last-reading.json ] && pass "last reading saved ($(date -u -r /var/lib/anti-ddos/last-reading.json '+%H:%M UTC')): time the bot is down will be recorded" \
+  || warn "no saved reading yet - the bot writes one every minute"
+
+echo
 echo "rotation and storage"
 systemctl is-active --quiet anti-ddos-logrotate.timer && pass "rotation timer active (next: $(systemctl show anti-ddos-logrotate.timer -p NextElapseUSecRealtime --value))" || fail "anti-ddos-logrotate.timer not active"
 /usr/sbin/logrotate --debug --state /tmp/anti-ddos-verify.status /etc/anti-ddos/logrotate.conf >/dev/null 2>&1 && pass "logrotate config valid" || fail "logrotate config invalid"

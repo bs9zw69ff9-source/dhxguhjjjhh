@@ -84,7 +84,9 @@ public static class LogQuery
     }
 
     /// <summary>One point of the traffic rate: the interface's packets and megabits a second, and what UDP got through.</summary>
-    public sealed record RatePoint(DateTimeOffset Time, double Pps, double Mbps, long PeakPps, long UdpPackets, long Dropped);
+    /// <param name="Lost">Packets the kernel lost before the firewall (NIC, input queue, conntrack).</param>
+    /// <param name="Gap">True for a record covering time the bot was not recording minute by minute.</param>
+    public sealed record RatePoint(DateTimeOffset Time, double Pps, double Mbps, long PeakPps, long UdpPackets, long Dropped, long Lost = 0, bool Gap = false);
 
     /// <summary>The traffic rate across traffic records, oldest first.</summary>
     public static IReadOnlyList<RatePoint> Rates(IEnumerable<LogRecord> records, QueryFilter filter)
@@ -97,7 +99,7 @@ public static class LogQuery
             if (r.Kind != RecordKind.Traffic || r.Time < filter.From || r.Time > filter.To) continue;
             var dropped = FloodShieldRules.DropReasons.Sum(reason => CounterPackets(r.Line, reason));
             points.Add(new RatePoint(r.Time, FieldDouble(r.Line, "pps"), FieldDouble(r.Line, "mbps"), Field(r.Line, "peak_pps"),
-                CounterPackets(r.Line, "udp"), dropped));
+                CounterPackets(r.Line, "udp"), dropped, Field(r.Line, "lost"), r.Line.Contains("\"gap\":\"", StringComparison.Ordinal)));
         }
         return points;
     }

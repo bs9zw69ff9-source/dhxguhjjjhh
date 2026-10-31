@@ -1,0 +1,30 @@
+# Records the header (first 128 bytes) of EVERY inbound IPv4 packet on the public
+# interface into a rolling ring of pcap files, independently of the bot: it keeps
+# recording while the bot is down, being deployed, or cut off from Discord.
+#
+# BOUNDED: 50 MB files, at most RING_FILES of them (dumpcap deletes the oldest of its
+# own run); anti-ddos-capture-prune holds the folder to RING_MB across restarts. The bot
+# keeps it to budget too, cuts each attack's pcap out of it, and stops this unit under
+# storage pressure (starting it again when the disk recovers).
+#
+# dumpcap is Wireshark's capture engine: it writes, it does not dissect, so a flood costs
+# it a copy, not a parse. Settings in /etc/anti-ddos/capture.env (install.sh writes it).
+[Unit]
+Description=Anti-DDoS packet header capture (rolling ring)
+Documentation=file:///root/pavlov-bot/ANTIDDOS.md
+After=network.target local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/anti-ddos/capture.env
+UMask=0077
+ExecStartPre=/usr/local/sbin/anti-ddos-capture-prune
+ExecStart=/usr/bin/dumpcap -q -i ${IFACE} -s 128 -B 64 -f "inbound and ip" -b filesize:51200 -b files:${RING_FILES} -w /var/log/anti-ddos/capture/ring.pcap
+Restart=always
+RestartSec=10
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

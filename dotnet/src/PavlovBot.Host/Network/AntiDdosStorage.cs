@@ -250,6 +250,9 @@ public sealed class AntiDdosLog(AntiDdosPaths paths, ILogger<AntiDdosLog> logger
             await using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read))
             {
                 await stream.WriteAsync(Encoding.UTF8.GetBytes(text.ToString()), ct).ConfigureAwait(false);
+                // Events are few and they are the record: on disk before the next one, so a power
+                // cut or a kernel panic mid-attack cannot take the last minutes with it.
+                if (kind == RecordKind.Event) stream.Flush(flushToDisk: true);
             }
             if (fresh && !OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }

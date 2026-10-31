@@ -79,6 +79,18 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     private readonly Dictionary<string, DateTimeOffset> _selfBlocked = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<string, Counter>? _lastCounters;
     private (long Packets, long Bytes)? _lastLink;
+    private readonly Func<string, LinkHealth?> _readHealth;
+    private readonly ReadingStore? _readings;
+    private LinkHealth? _lastLinkHealth;
+    private bool? _linkUp;
+    private bool _conntrackFull;
+
+    /// <summary>Alerts Discord did not take, oldest first, with when they were raised. Posted when it answers again.</summary>
+    private readonly Queue<(EmbedBuilder Embed, DateTimeOffset At, string? Footer)> _outbox = new();
+    private int _outboxDropped;
+
+    /// <summary>The most alerts held back while Discord is unreachable; past it the oldest go (they are all in the event log).</summary>
+    internal const int OutboxSize = 50;
     private DateTimeOffset _lastWindow;
     private long _peakPps;
     private Dictionary<long, CrowdSecDecision>? _lastDecisions;
@@ -103,8 +115,12 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         Func<string, (long Packets, long Bytes)?> readCounters,
         Func<string, (long Free, long Total)?> disk,
         TimeProvider time,
-        ILogger<AntiDdosService> logger)
+        ILogger<AntiDdosService> logger,
+        Func<string, LinkHealth?>? readHealth = null,
+        ReadingStore? readings = null)
     {
+        _readHealth = readHealth ?? (_ => null);
+        _readings = readings;
         _configured = options;
         _configuredLimits = limits;
         _iface = iface;
@@ -303,6 +319,8 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         {
             _work.Writer.TryComplete();
             await worker.ConfigureAwait(false);
+            // The last reading, so the gap until the next start is recorded from it.
+            SaveReading();
             // The rules stay: a stopped bot leaves its blocks and filters in the kernel.
             await _log.EventAsync(new AntiDdosEvent(_time.GetUtcNow(), "service", "info", Action: "stopped",
                 Reason: "the firewall rules stay loaded", Actor: "bot"), CancellationToken.None).ConfigureAwait(false);
@@ -346,7 +364,8 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         if (problem is not null) await AlertAsync(Theme.Failure("Anti-DDoS firewall could not load", Clip(problem)), ct).ConfigureAwait(false);
 
         // The first reading only sets the baseline.
-        if (await _firewall.SnapshotAsync(ct).ConfigureAwait(false) is { } snapshot)
+        var snapshot = await _firewall.SnapshotAsync(ct).ConfigureAwait(false);
+        if (snapshot is not null)
         {
             _lastAccounting = snapshot.Accounting;
             _lastCounters = snapshot.Counters;
@@ -355,7 +374,66 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
 
         await RememberRecentBansAsync(ct).ConfigureAwait(false);
         _lastLink = _readCounters(_iface);
+        _lastLinkHealth = _readHealth(_iface);
+        _linkUp = _lastLinkHealth?.Up;
         _lastWindow = _time.GetUtcNow();
+
+        await RecordGapAsync(snapshot, ct).ConfigureAwait(false);
+        // At once: a crash before the first minute must not record the same gap twice.
+        SaveReading();
+    }
+
+    /// <summary>The longest gap a saved reading is still trusted to cover.</summary>
+    private static readonly TimeSpan LongestGap = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// If the bot was not recording - down, restarted, the server rebooted - write one traffic
+    /// record and its source records covering the whole gap, from the saved reading to now.
+    /// </summary>
+    /// <remarks>
+    /// The kernel counted throughout, so the totals are exact. A reboot zeroes every counter, and
+    /// then the record says so: it covers only the time since boot.
+    /// </remarks>
+    private async Task RecordGapAsync(FirewallSnapshot? snapshot, CancellationToken ct)
+    {
+        if (_readings?.Load() is not { } saved || snapshot is null) return;
+        var now = _time.GetUtcNow();
+        var gap = now - saved.Time;
+        if (saved.Interface != _iface || gap < TimeSpan.FromSeconds(90) || gap > LongestGap) return;
+
+        var rebooted = _lastLink is { } link && saved.Link is { } before && (link.Packets < before.Packets || link.Bytes < before.Bytes);
+        var (rxPackets, rxBytes) = _lastLink is { } l
+            ? rebooted || saved.Link is not { } s0 ? l : (l.Packets - s0.Packets, l.Bytes - s0.Bytes)
+            : (0L, 0L);
+        var reason = rebooted
+            ? $"the server rebooted while the bot was down; totals cover only the time since boot"
+            : $"the bot was not running from {AntiDdosRecords.Stamp(saved.Time)}";
+
+        var sources = TrafficAccounting.Between(saved.Accounting, snapshot.Accounting);
+        var traffic = new TrafficWindow(now, gap, _iface, rxPackets, rxBytes, 0, new Dictionary<string, Counter>(), sources.Count,
+            Math.Min(sources.Count, SourcesPerWindow), snapshot.AccountingSaturated, _firewall.Mode, _firewall.Engaged,
+            (Storage?.Level ?? StorageLevel.Ok).ToString().ToLowerInvariant())
+        {
+            Loss = _lastLinkHealth?.Since(rebooted ? null : saved.Health),
+            Gap = reason,
+        };
+        await _log.WriteAsync(RecordKind.Traffic, [AntiDdosRecords.Traffic(traffic)], ct).ConfigureAwait(false);
+        await _log.WriteAsync(RecordKind.Source,
+            [.. sources.Take(SourcesPerWindow).Select(s => AntiDdosRecords.Source(now, gap, s, gap: true))], ct).ConfigureAwait(false);
+        await _log.EventAsync(new AntiDdosEvent(now, "gap", "warning", Action: "recorded",
+            Reason: string.Create(CultureInfo.InvariantCulture,
+                $"{reason}: {ReadingStore.Ago(gap)} not recorded minute by minute, kept as one record - {rxPackets:N0} packets in, {sources.Count} sources, {traffic.Loss?.Lost ?? 0:N0} lost before the firewall. The packet total is exact; per-source totals miss any source quiet for 3 min before the bot returned (the capture ring has those)"),
+            Actor: "bot", Detail: new Dictionary<string, string> { ["from"] = AntiDdosRecords.Stamp(saved.Time) }), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Save the counters as of the last record written, all from that one moment, so the next gap
+    /// starts exactly where the records stop.
+    /// </summary>
+    private void SaveReading()
+    {
+        if (_readings is null || _lastAccounting is null) return;
+        _readings.Save(new Reading(_lastWindow, _iface, _lastLink, _lastLinkHealth, _lastAccounting));
     }
 
     /// <summary>
@@ -426,6 +504,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     internal async Task TickAsync(CancellationToken ct)
     {
         var now = _time.GetUtcNow();
+        await Step("alerts", () => FlushOutboxAsync(now, ct)).ConfigureAwait(false);
         await Step("traffic", () => TrafficAsync(now, ct)).ConfigureAwait(false);
         await Step("crowdsec", () => CrowdSecAsync(now, ct)).ConfigureAwait(false);
         await Step("storage", () => StorageAsync(now, ct)).ConfigureAwait(false);
@@ -473,10 +552,19 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
             _lastCounters = snapshot.Counters;
         }
 
+        var health = _readHealth(_iface);
+        var loss = health?.Since(_lastLinkHealth);
+        _lastLinkHealth = health ?? _lastLinkHealth;
+
         var traffic = new TrafficWindow(now, window, _iface, rxPackets, rxBytes, peak, counters, sources.Count,
             Math.Min(sources.Count, SourcesPerWindow), snapshot?.AccountingSaturated ?? false, _firewall.Mode, _firewall.Engaged,
-            (Storage?.Level ?? StorageLevel.Ok).ToString().ToLowerInvariant());
+            (Storage?.Level ?? StorageLevel.Ok).ToString().ToLowerInvariant())
+        {
+            Loss = loss,
+        };
         LastWindow = traffic;
+        if (snapshot is not null) SaveReading();
+        if (loss is not null) await LinkEventsAsync(now, loss, ct).ConfigureAwait(false);
 
         await _log.WriteAsync(RecordKind.Traffic, [AntiDdosRecords.Traffic(traffic)], ct).ConfigureAwait(false);
         await _log.WriteAsync(RecordKind.Source,
@@ -897,19 +985,110 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     public Task RecordAsync(string category, string action, string? source, string? reason, string actor, CancellationToken ct) =>
         _log.EventAsync(new AntiDdosEvent(_time.GetUtcNow(), category, "info", source, action, reason, Actor: actor), ct);
 
+    /// <summary>The link going down or up, the kernel losing packets, the connection table filling: each recorded once per change.</summary>
+    private async Task LinkEventsAsync(DateTimeOffset now, LinkHealth loss, CancellationToken ct)
+    {
+        if (_linkUp != loss.Up)
+        {
+            var was = _linkUp;
+            _linkUp = loss.Up;
+            if (was is not null)
+            {
+                await _log.EventAsync(new AntiDdosEvent(now, "link", loss.Up ? "warning" : "critical", Action: loss.Up ? "up" : "down",
+                    Reason: $"{_iface} is {loss.OperState}", Actor: "kernel"), ct).ConfigureAwait(false);
+                await AlertAsync(loss.Up
+                    ? Theme.Success($"{_iface} is back up")
+                    : Theme.Failure($"{_iface} went down", "The server lost its network link. Everything that still arrives is counted and logged on disk."), ct)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        if (loss.Lost > 0)
+        {
+            await _log.EventAsync(new AntiDdosEvent(now, "kernel-loss", loss.Lost >= 1000 ? "warning" : "info", Action: "lost",
+                Reason: string.Create(CultureInfo.InvariantCulture,
+                    $"{loss.Lost:N0} packets lost before the firewall in the last minute - NIC {loss.NicDropped + loss.NicMissed + loss.NicFifo + loss.NicOver:N0}, input queue {loss.SoftnetDropped:N0}, connection table {loss.ConntrackDrops:N0}"),
+                Actor: "kernel"), ct).ConfigureAwait(false);
+        }
+
+        var full = loss.ConntrackFill >= 0.9;
+        if (full != _conntrackFull && (full || loss.ConntrackFill < 0.8))
+        {
+            _conntrackFull = full;
+            var text = string.Create(CultureInfo.InvariantCulture, $"{loss.ConntrackCount:N0} of {loss.ConntrackMax:N0} tracked connections ({loss.ConntrackFill:P0})");
+            await _log.EventAsync(new AntiDdosEvent(now, "conntrack", full ? "critical" : "info", Action: full ? "full" : "recovered", Reason: text, Actor: "kernel"), ct)
+                .ConfigureAwait(false);
+            if (full)
+                await AlertAsync(Theme.Failure("Connection table nearly full", $"{text}. New connections are being dropped - a flood is getting past the firewall's limits."), ct)
+                    .ConfigureAwait(false);
+        }
+    }
+
     // ---- alerts ----
 
+    /// <summary>
+    /// Post an alert, or hold it until Discord answers again.
+    /// </summary>
+    /// <remarks>
+    /// HELD, NOT LOST. Discord being unreachable is often the attack itself, and the alerts raised
+    /// then are the ones that matter most. They wait in order, at most <see cref="OutboxSize"/>, and
+    /// are posted marked late with the time they were raised. Every one is in the event log anyway.
+    /// </remarks>
     private async Task AlertAsync(EmbedBuilder embed, CancellationToken ct)
     {
-        if (_configured.AlertChannel is not { } channel) return;
+        if (_configured.AlertChannel is null) return;
+        var now = _time.GetUtcNow();
+        if (_outbox.Count == 0 && await TrySendAsync(embed, ct).ConfigureAwait(false)) return;
+        Hold(embed, now);
+    }
+
+    private void Hold(EmbedBuilder embed, DateTimeOffset at)
+    {
+        if (_outbox.Count == 0)
+            _logger.LogWarning("Discord did not take an anti-DDoS alert; holding alerts until it answers (they are in the event log)");
+        if (_outbox.Count >= OutboxSize)
+        {
+            _outbox.Dequeue();
+            _outboxDropped++;
+        }
+        _outbox.Enqueue((embed, at, embed.Footer?.Text));
+    }
+
+    /// <summary>Post what was held, oldest first, stopping at the first that still fails.</summary>
+    private async Task FlushOutboxAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        if (_outbox.Count == 0) return;
+        var held = _outbox.Count;
+        var since = _outbox.Peek().At;
+        while (_outbox.Count > 0)
+        {
+            // From the footer it had when held, so a retry does not stack the note twice.
+            var (embed, at, footer) = _outbox.Peek();
+            var before = footer is { Length: > 0 } ? footer + " · " : "";
+            embed.WithFooter($"{before}Posted late: raised {AntiDdosRecords.Stamp(at)}, held while Discord was unreachable");
+            if (!await TrySendAsync(embed, ct).ConfigureAwait(false)) return;
+            _outbox.Dequeue();
+        }
+
+        var dropped = _outboxDropped;
+        _outboxDropped = 0;
+        await _log.EventAsync(new AntiDdosEvent(now, "alerts", "warning", Action: "delivered-late",
+            Reason: string.Create(CultureInfo.InvariantCulture,
+                $"{held} alert(s) held since {AntiDdosRecords.Stamp(since)} while Discord was unreachable were posted{(dropped > 0 ? $"; {dropped} older one(s) did not fit and are only in the event log" : "")}"),
+            Actor: "bot"), ct).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TrySendAsync(EmbedBuilder embed, CancellationToken ct)
+    {
+        if (_configured.AlertChannel is not { } channel) return true;
         try
         {
-            await _post.SendAsync(channel, embed.Build(), null, ct).ConfigureAwait(false);
+            return await _post.SendAsync(channel, embed.Build(), null, ct).ConfigureAwait(false) is not null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Discord being unreachable is exactly when the event log matters; the event is already on disk.
-            _logger.LogWarning(ex, "Could not post an anti-DDoS alert");
+            _logger.LogDebug(ex, "Could not post an anti-DDoS alert");
+            return false;
         }
     }
 
