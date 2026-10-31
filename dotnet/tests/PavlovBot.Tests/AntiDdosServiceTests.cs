@@ -551,6 +551,30 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Equal((0, "attack_permaban is off"), (bans!.Banned, bans.Problem));
     }
 
+    // ---- /antiddos history ----
+
+    [Fact]
+    public async Task HistoryIsInTimeOrderAcrossKindsAndAttachedAsTextAPhoneCanPreview()
+    {
+        // The command's window is measured from the real clock, so these records are written just before it.
+        _clock.Now = DateTimeOffset.UtcNow.AddMinutes(-30);
+        var service = await Start();
+        for (var m = 0; m < 3; m++) await Minute(("203.0.113.5", "udp", 7777, 100));
+        await service.RecordAsync("query", "test", null, null, "owner", CancellationToken.None);
+
+        var reply = await new AntiDdosCommand(null!, null!, service, NullLogger<AntiDdosCommand>.Instance)
+            .RunAsync("history", new Dictionary<string, object> { ["minutes"] = 60L }, "owner", CancellationToken.None);
+
+        Assert.EndsWith(".txt", reply.FileName, StringComparison.Ordinal);
+        var times = System.Text.Encoding.UTF8.GetString(reply.File!).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => AntiDdosRecords.Parse(l)!).ToList();
+        Assert.Contains(times, r => r.Kind == RecordKind.Event);
+        Assert.Contains(times, r => r.Kind == RecordKind.Source);
+        // Events and per-minute sources interleave as they happened, not all events then all sources.
+        Assert.Equal(times.Select(r => r.Time).Order(), times.Select(r => r.Time));
+        Assert.Contains(times.Skip(times.FindIndex(r => r.Kind == RecordKind.Source)), r => r.Kind == RecordKind.Event);
+    }
+
     // ---- CrowdSec parser health ----
 
     private bool AttentionAlert() => _posts.Sent.Any(e => e.Title.EndsWith("CrowdSec needs attention", StringComparison.Ordinal));
@@ -897,6 +921,26 @@ public sealed class AntiDdosLogTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+    }
+
+    [Fact]
+    public async Task SeveralKindsComeBackAsOneTimelineNotOneKindAfterAnother()
+    {
+        var log = new AntiDdosLog(new AntiDdosPaths(_root), NullLogger<AntiDdosLog>.Instance);
+        var t = new DateTimeOffset(2026, 10, 31, 22, 0, 0, TimeSpan.Zero);
+        string Event(int minute) => AntiDdosRecords.Event(new AntiDdosEvent(t.AddMinutes(minute), "service", "info", Action: "x"));
+        string Traffic(int minute) => AntiDdosRecords.Traffic(new TrafficWindow(t.AddMinutes(minute), TimeSpan.FromMinutes(1), "ens3", 1, 1, 1,
+            new Dictionary<string, Counter>(), 0, 0, false, LogMode.Normal, false, "ok"));
+
+        await log.WriteAsync(RecordKind.Event, [Event(1), Event(5), Event(5)], CancellationToken.None);
+        await log.WriteAsync(RecordKind.Traffic, [Traffic(0), Traffic(2), Traffic(5), Traffic(9)], CancellationToken.None);
+
+        var all = new List<LogRecord>();
+        await foreach (var r in log.ReadAsync([RecordKind.Event, RecordKind.Traffic], t, t.AddHours(1), CancellationToken.None)) all.Add(r);
+
+        Assert.Equal([0, 1, 2, 5, 5, 5, 9], all.Select(r => (int)(r.Time - t).TotalMinutes));
+        // A tie keeps the order the kinds were asked in.
+        Assert.Equal([RecordKind.Event, RecordKind.Event, RecordKind.Traffic], all.Where(r => r.Time == t.AddMinutes(5)).Select(r => r.Kind));
     }
 
     [Fact]
