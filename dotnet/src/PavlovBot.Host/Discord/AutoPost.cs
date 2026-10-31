@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Discord;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PavlovBot.Core.Data;
 using PavlovBot.Host.Storage;
@@ -176,4 +177,24 @@ public sealed class AutoPost
         _store.UpdateAsync(Datasets.AutopostState,
             new Dictionary<string, ulong>(StringComparer.Ordinal),
             state => { state.Remove(key); return state; }, ct);
+}
+
+/// <summary>
+/// An <see cref="IAutoPostTarget"/> that finds the real one only when it is first used.
+/// </summary>
+/// <remarks>
+/// FOR A SERVICE A COMMAND DEPENDS ON. The gateway is built from every command; a service a
+/// command needs that also takes the gateway's post target closes the cycle
+/// gateway → command → service → post target → gateway, and the container blocks building it.
+/// Resolving at send time breaks it, as <c>DiscordMonitorAlertSink</c> does for the monitor.
+/// </remarks>
+public sealed class LazyAutoPostTarget(IServiceProvider services) : IAutoPostTarget
+{
+    private IAutoPostTarget Target => services.GetRequiredService<IAutoPostTarget>();
+
+    public Task<AutoPostEdit> EditAsync(ulong channelId, ulong messageId, Embed embed, MessageComponent? components, CancellationToken ct) =>
+        Target.EditAsync(channelId, messageId, embed, components, ct);
+
+    public Task<ulong?> SendAsync(ulong channelId, Embed embed, MessageComponent? components, CancellationToken ct) =>
+        Target.SendAsync(channelId, embed, components, ct);
 }
