@@ -11,6 +11,8 @@ namespace PavlovBot.Core.Network;
 /// <param name="MaxBansPerHour">The most bans the planner hands out in an hour, however many sources qualify.</param>
 /// <param name="SpoofSources">Sources in one window above which per-address bans stop: the flood is likely spoofed.</param>
 /// <param name="SevereFactor">A detection this many times over its threshold is banned in its first minute.</param>
+/// <param name="PermanentInAttack">During a flood, a source detected in it is banned at once and permanently.</param>
+/// <param name="AttackBansPerHour">The hourly cap while a flood is on, when a botnet's worth of sources may qualify.</param>
 public sealed record ResponsePolicy(
     bool AutoBan = true,
     int EscalateAfter = 3,
@@ -19,8 +21,13 @@ public sealed record ResponsePolicy(
     TimeSpan? LongestBan = null,
     int MaxBansPerHour = 30,
     int SpoofSources = 5000,
-    double SevereFactor = 5)
+    double SevereFactor = 5,
+    bool PermanentInAttack = true,
+    int AttackBansPerHour = 300)
 {
+    /// <summary>A permanent ban's length: ten years, as CrowdSec has no "forever".</summary>
+    public static readonly TimeSpan Permanent = TimeSpan.FromDays(3650);
+
     public TimeSpan CorrelationWindow => Window ?? TimeSpan.FromMinutes(10);
 
     public TimeSpan FirstBan => BaseBan ?? TimeSpan.FromHours(1);
@@ -32,7 +39,9 @@ public sealed record ResponsePolicy(
 /// <param name="Alert">True when this starts an incident: the source had been quiet for a whole correlation window. One alert per incident, not per minute.</param>
 /// <param name="Ban">A ban to place, or null.</param>
 /// <param name="Held">Why a ban that would otherwise be placed was not, for the record.</param>
-public sealed record PlannedResponse(string Source, IReadOnlyList<Detection> Detections, bool Alert, TimeSpan? Ban, string? Held, string Incident);
+/// <param name="Permanent">The ban is permanent: the source was detected during a flood.</param>
+public sealed record PlannedResponse(string Source, IReadOnlyList<Detection> Detections, bool Alert, TimeSpan? Ban, string? Held, string Incident,
+    bool Permanent = false);
 
 /// <summary>
 /// Graduated response: record every detection, alert once per incident, and ban only on
@@ -54,6 +63,15 @@ public sealed record PlannedResponse(string Source, IReadOnlyList<Detection> Det
 ///   - Single addresses only: the planner never bans a range.
 ///   - Bans expire: the first is <see cref="ResponsePolicy.FirstBan"/>, each repeat within a day
 ///     doubles it up to <see cref="ResponsePolicy.Cap"/>.
+///
+/// DURING A FLOOD (<see cref="ResponsePolicy.PermanentInAttack"/>) a source detected in it - over
+/// the UDP rate, a SYN burst, a port scan, or blocked by the firewall's per-address limit - is
+/// banned in that first minute, permanently. Every guard above still holds: never a player or a
+/// trusted address, nothing when the flood looks spoofed, never a range. Only the hourly cap is
+/// raised, to <see cref="ResponsePolicy.AttackBansPerHour"/>, because a botnet is hundreds of
+/// sources. The risk this accepts: a botnet's addresses are mostly home connections, reassigned
+/// to someone else in days or weeks, so a permanent ban can outlive its attacker. /antiddos unban
+/// lifts one.
 /// The firewall's own per-address block during an attack is separate and immediate; this is
 /// the slower path for sources that keep coming back.
 ///
@@ -66,14 +84,22 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
     private readonly Dictionary<string, List<DateTimeOffset>> _bans = new(StringComparer.Ordinal);
     private readonly Queue<DateTimeOffset> _recentBans = new();
 
+    /// <summary>Permanent bans this planner placed, until CrowdSec's own list shows them (one correlation window).</summary>
+    private readonly Dictionary<string, DateTimeOffset> _placedPermanent = new(StringComparer.Ordinal);
+
     public ResponsePolicy Policy { get; set; } = policy;
 
     /// <summary>Plan the responses to one window's detections.</summary>
     /// <param name="sourcesInWindow">Distinct sources seen this window, for the spoofing guard.</param>
     /// <param name="exempt">Whether an address is a player or trusted, and so never banned.</param>
+    /// <param name="inAttack">Whether a flood is on (or just ended): detections then are part of it.</param>
+    /// <param name="bannedForGood">Whether an address is already under a permanent ban, so is not banned again.</param>
     public IReadOnlyList<PlannedResponse> Plan(
-        DateTimeOffset now, IReadOnlyList<Detection> detections, int sourcesInWindow, Func<string, bool> exempt)
+        DateTimeOffset now, IReadOnlyList<Detection> detections, int sourcesInWindow, Func<string, bool> exempt, bool inAttack = false,
+        Func<string, bool>? bannedForGood = null)
     {
+        var permanent = inAttack && Policy.PermanentInAttack;
+        var hourlyCap = permanent ? Math.Max(Policy.MaxBansPerHour, Policy.AttackBansPerHour) : Policy.MaxBansPerHour;
         ArgumentNullException.ThrowIfNull(detections);
         ArgumentNullException.ThrowIfNull(exempt);
         Expire(now);
@@ -83,6 +109,15 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
         {
             var source = group.Key;
             var list = group.ToList();
+
+            // Still counted while the bouncer drops it (the bot's accounting runs first): already
+            // banned for good is neither a new ban every minute nor a new alert.
+            if (_placedPermanent.ContainsKey(source) || bannedForGood?.Invoke(source) == true)
+            {
+                _incidents[source] = (now, _incidents.TryGetValue(source, out var open) ? open.Id
+                    : string.Create(CultureInfo.InvariantCulture, $"src-{now.UtcDateTime:yyyyMMddHHmm}-{source}"));
+                continue;
+            }
 
             var alert = false;
             if (!_incidents.TryGetValue(source, out var incident))
@@ -101,20 +136,21 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
                 minutes.Add(now);
 
                 var severe = list.Any(d => d.Escalates && d.Threshold > 0 && d.Observed >= d.Threshold * Policy.SevereFactor);
-                if (minutes.Count >= Policy.EscalateAfter || severe)
+                if (minutes.Count >= Policy.EscalateAfter || severe || permanent)
                 {
                     held = !Policy.AutoBan ? "automatic bans are off"
                         : exempt(source) ? "a player or trusted address is never banned automatically"
                         : sourcesInWindow > Policy.SpoofSources
                             ? string.Create(CultureInfo.InvariantCulture, $"{sourcesInWindow} sources this minute - likely spoofed, so no per-address bans")
-                        : _recentBans.Count >= Policy.MaxBansPerHour
-                            ? string.Create(CultureInfo.InvariantCulture, $"{Policy.MaxBansPerHour} automatic bans in the last hour already")
+                        : _recentBans.Count >= hourlyCap
+                            ? string.Create(CultureInfo.InvariantCulture, $"{hourlyCap} automatic bans in the last hour already")
                         : null;
 
                     if (held is null)
                     {
                         var previous = _bans.TryGetValue(source, out var b) ? b : _bans[source] = [];
-                        ban = Length(previous.Count);
+                        ban = permanent ? ResponsePolicy.Permanent : Length(previous.Count);
+                        if (permanent) _placedPermanent[source] = now;
                         previous.Add(now);
                         _recentBans.Enqueue(now);
                         minutes.Clear();
@@ -122,7 +158,7 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
                 }
             }
 
-            plans.Add(new PlannedResponse(source, list, alert, ban, held, incident.Id));
+            plans.Add(new PlannedResponse(source, list, alert, ban, held, incident.Id, ban is not null && permanent));
         }
         return plans;
     }
@@ -135,6 +171,15 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
         ArgumentNullException.ThrowIfNull(source);
         var previous = _bans.TryGetValue(source, out var b) ? b : _bans[source] = [];
         previous.Add(at);
+    }
+
+    /// <summary>Forget a source's bans, after it was unbanned by hand, so a later flood can ban it again.</summary>
+    public void Forget(string source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        _placedPermanent.Remove(source);
+        _bans.Remove(source);
+        _minutes.Remove(source);
     }
 
     /// <summary>The ban for a source banned <paramref name="previous"/> times in the last day.</summary>
@@ -160,5 +205,7 @@ public sealed class ResponsePlanner(ResponsePolicy policy)
             if (_bans[source].Count == 0) _bans.Remove(source);
         }
         while (_recentBans.Count > 0 && now - _recentBans.Peek() > TimeSpan.FromHours(1)) _recentBans.Dequeue();
+        foreach (var source in _placedPermanent.Where(p => now - p.Value > window).Select(p => p.Key).ToList())
+            _placedPermanent.Remove(source);
     }
 }

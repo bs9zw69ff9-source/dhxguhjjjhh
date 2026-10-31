@@ -58,6 +58,7 @@ public static class Thresholds
         new("escalate_after", 2, 60, "Detection minutes within the correlation window before an automatic ban"),
         new("ban_minutes", 5, 10_080, "The first automatic ban's length; repeats double it"),
         new("autoban", 0, 1, "1 lets the bot ban repeat offenders automatically, 0 only alerts"),
+        new("attack_permaban", 0, 1, "1 bans an address detected during a flood at once and permanently, 0 treats it like any other"),
     ];
 
     public static Threshold? Find(string? name) => All.FirstOrDefault(t => t.Name == name?.Trim().ToLowerInvariant());
@@ -91,6 +92,7 @@ public static class Thresholds
             EscalateAfter = Get("escalate_after", options.EscalateAfter),
             BanMinutes = Get("ban_minutes", options.BanMinutes),
             AutoBan = Get("autoban", options.AutoBan ? 1 : 0) == 1,
+            AttackPermaban = Get("attack_permaban", options.AttackPermaban ? 1 : 0) == 1,
         };
     }
 }

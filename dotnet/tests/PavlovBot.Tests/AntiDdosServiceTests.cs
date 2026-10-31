@@ -431,6 +431,64 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Contains(Lines("events.jsonl"), l => l.Contains("4 older one(s) did not fit", StringComparison.Ordinal));
     }
 
+    // ---- permanent bans during a flood ----
+
+    private void Flood() => _service!.OnStarted(_clock.Now, new LinkSecond(_clock.Now, 90_000, 90_000_000), null);
+
+    [Fact]
+    public async Task ASourceDetectedDuringAFloodIsBannedPermanentlyThroughCrowdSecAtOnce()
+    {
+        await Start();
+        Flood();
+        await Minute(("203.0.113.5", "udp", 7777, 60 * 900));
+
+        var ban = Assert.Single(_crowdsec.Bans);
+        Assert.Equal(("203.0.113.5", ResponsePolicy.Permanent), (ban.Target, ban.Length));
+        Assert.Contains("during a flood (flood-", ban.Reason, StringComparison.Ordinal);
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("\"action\":\"banned\"", StringComparison.Ordinal)
+                                                    && l.Contains("\"permanent\":\"true\"", StringComparison.Ordinal));
+        var alert = Assert.Single(_posts.Sent);
+        Assert.Contains("permanently banned", alert.Title, StringComparison.Ordinal);
+        Assert.Contains("banned permanently", alert.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OnceCrowdSecListsTheBanTheFloodSourceIsNotBannedAgain()
+    {
+        await Start();
+        Flood();
+        await Minute(("203.0.113.5", "udp", 7777, 60 * 900));
+        _crowdsec.Decisions.Add(new CrowdSecDecision(1, "203.0.113.5", "Ip", "ban", "cscli", "pavlovbot: x", _clock.Now.AddYears(10)));
+        for (var m = 0; m < 15; m++) await Minute(("203.0.113.5", "udp", 7777, 60 * 900));
+
+        Assert.Single(_crowdsec.Bans);
+    }
+
+    [Fact]
+    public async Task WithoutCrowdSecAFloodSourceGetsTheLongestKernelBlockAndTheRecordSaysWhy()
+    {
+        _crowdsec.IsInstalled = false;
+        await Start();
+        Flood();
+        await Minute(("203.0.113.5", "udp", 7777, 60 * 900));
+
+        Assert.Contains($"block 203.0.113.5 {7 * 24 * 60}", _firewall.Calls);
+        var ban = Assert.Single(Lines("events.jsonl"), l => l.Contains("\"action\":\"banned\"", StringComparison.Ordinal));
+        Assert.Contains("permanent bans need CrowdSec", ban, StringComparison.Ordinal);
+        Assert.Contains("\"permanent\":\"false\"", ban, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WithTheToggleOffAFloodSourceWaitsForRepeatsLikeAnyOther()
+    {
+        await Start();
+        Assert.Null(await _service!.SetThresholdAsync(Thresholds.Find("attack_permaban")!, 0, "owner"));
+        Flood();
+        await Minute(("203.0.113.5", "udp", 7777, 60 * 400));
+
+        Assert.Empty(_crowdsec.Bans);
+    }
+
     // ---- CrowdSec parser health ----
 
     private bool AttentionAlert() => _posts.Sent.Any(e => e.Title.EndsWith("CrowdSec needs attention", StringComparison.Ordinal));

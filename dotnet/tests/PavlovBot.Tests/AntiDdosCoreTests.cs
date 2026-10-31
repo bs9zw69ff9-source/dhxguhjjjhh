@@ -404,6 +404,100 @@ public class ResponsePlannerTests
     private static IReadOnlyList<PlannedResponse> Minute(ResponsePlanner p, int minute, string src, int sources = 10, bool exempt = false) =>
         p.Plan(T0.AddMinutes(minute), [Udp(src)], sources, _ => exempt);
 
+    private static IReadOnlyList<PlannedResponse> AttackMinute(ResponsePlanner p, int minute, IReadOnlyList<Detection> detections,
+        int sources = 10, bool exempt = false, Func<string, bool>? bannedForGood = null) =>
+        p.Plan(T0.AddMinutes(minute), detections, sources, _ => exempt, inAttack: true, bannedForGood);
+
+    // ---- during a flood ----
+
+    [Theory]
+    [InlineData("udp-rate")]
+    [InlineData("syn-burst")]
+    [InlineData("port-spread")]
+    [InlineData("firewall-block")]
+    public void DuringAFloodASourceDetectedInItIsBannedPermanentlyInItsFirstMinute(string category)
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+
+        var plan = Assert.Single(AttackMinute(planner, 0, [new Detection(category, "203.0.113.5", 1, 1, "x")]));
+
+        Assert.True(plan.Permanent);
+        Assert.Equal(ResponsePolicy.Permanent, plan.Ban);
+        Assert.Null(plan.Held);
+    }
+
+    [Fact]
+    public void OutsideAFloodTheSameDetectionStillNeedsToRepeat()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+
+        var plan = Assert.Single(Minute(planner, 0, "203.0.113.5"));
+
+        Assert.Null(plan.Ban);
+        Assert.False(plan.Permanent);
+    }
+
+    [Fact]
+    public void WithPermanentBansOffAFloodIsHandledLikeAnyOtherTime()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy(PermanentInAttack: false));
+
+        Assert.Null(Assert.Single(AttackMinute(planner, 0, [Udp("203.0.113.5")])).Ban);
+    }
+
+    [Fact]
+    public void ADropAloneIsTheFirewallWorkingNotEvidenceForABan()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+
+        Assert.Null(Assert.Single(AttackMinute(planner, 0, [new Detection("dropped", "203.0.113.5", 50_000, 10_000, "x")])).Ban);
+    }
+
+    [Fact]
+    public void DuringAFloodPlayersTrustedAndSpoofedSourcesAreStillNeverBanned()
+    {
+        var player = Assert.Single(AttackMinute(new ResponsePlanner(new ResponsePolicy()), 0, [Udp("10.1.1.1")], exempt: true));
+        var spoofed = Assert.Single(AttackMinute(new ResponsePlanner(new ResponsePolicy()), 0, [Udp("203.0.113.5")], sources: 40_000));
+
+        Assert.Null(player.Ban);
+        Assert.Contains("never banned automatically", player.Held, StringComparison.Ordinal);
+        Assert.Null(spoofed.Ban);
+        Assert.Contains("likely spoofed", spoofed.Held, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ABotnetIsBannedUpToTheAttackCapNotTheEverydayOne()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy(MaxBansPerHour: 30, AttackBansPerHour: 100));
+        var bots = Enumerable.Range(0, 120).Select(i => Udp($"198.51.{i / 250}.{i % 250 + 1}")).ToList();
+
+        var plans = AttackMinute(planner, 0, bots, sources: 120);
+
+        Assert.Equal(100, plans.Count(p => p.Permanent));
+        Assert.All(plans.Where(p => p.Ban is null), p => Assert.Contains("100 automatic bans", p.Held, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnAddressAlreadyBannedForGoodIsNotBannedAgainEveryMinute()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+        Assert.True(Assert.Single(AttackMinute(planner, 0, [Udp("203.0.113.5")])).Permanent);
+
+        // Its packets are still counted while the bouncer drops them; before and after CrowdSec lists it.
+        Assert.Empty(AttackMinute(planner, 1, [Udp("203.0.113.5")]));
+        Assert.Empty(AttackMinute(planner, 30, [Udp("203.0.113.5")], bannedForGood: a => a == "203.0.113.5"));
+    }
+
+    [Fact]
+    public void AnAddressUnbannedByHandCanBeBannedByTheNextFlood()
+    {
+        var planner = new ResponsePlanner(new ResponsePolicy());
+        AttackMinute(planner, 0, [Udp("203.0.113.5")]);
+        planner.Forget("203.0.113.5");
+
+        Assert.True(Assert.Single(AttackMinute(planner, 1, [Udp("203.0.113.5")])).Permanent);
+    }
+
     [Fact]
     public void OneIncidentIsOneAlertAndABanNeedsThreeMinutes()
     {

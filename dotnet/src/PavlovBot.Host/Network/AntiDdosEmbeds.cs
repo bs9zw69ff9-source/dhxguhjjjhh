@@ -28,22 +28,30 @@ public static class AntiDdosEmbeds
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(options);
         var bans = items.Count(i => i.Plan.Ban is not null && i.Problem is null);
+        var permanent = items.Count(i => i.Plan.Permanent && i.Problem is null);
         var b = new StringBuilder();
         foreach (var (plan, problem) in items.Take(MaxRows))
         {
             var what = string.Join(", ", plan.Detections.Select(d => d.Reason));
             var action = plan.Ban is { } ban
-                ? problem is null ? $"**banned {Span(ban)}** (until {Discord(at + ban)})" : $"ban FAILED: {Sanitize.Code(problem)}"
+                ? problem is not null ? $"ban FAILED: {Sanitize.Code(problem)}"
+                : plan.Permanent ? "**banned permanently** (part of a flood)"
+                : $"**banned {Span(ban)}** (until {Discord(at + ban)})"
                 : "watching";
             b.AppendLine(CultureInfo.InvariantCulture, $"`{plan.Source}` · {what} · {action}");
         }
         if (items.Count > MaxRows) b.AppendLine(CultureInfo.InvariantCulture, $"… and {items.Count - MaxRows} more - `/antiddos detections`");
 
-        var title = bans > 0 ? $"{bans} address(es) banned for repeated abuse" : $"{items.Count} suspicious source(s)";
+        var title = permanent > 0 ? $"{permanent} flood source(s) permanently banned{(bans > permanent ? $", {bans - permanent} more banned" : "")}"
+            : bans > 0 ? $"{bans} address(es) banned for repeated abuse"
+            : $"{items.Count} suspicious source(s)";
+        var rule = permanent > 0
+            ? "Detected during a flood: banned at once, permanently · /antiddos unban lifts one"
+            : $"Banned after {options.EscalateAfter} detection minutes in {options.CorrelationMinutes} min";
         return (bans > 0 ? Theme.Warning(title) : Theme.Notice(title))
             .WithDescription(b.ToString())
             .WithFooter(string.Create(CultureInfo.InvariantCulture,
-                $"Banned after {options.EscalateAfter} detection minutes in {options.CorrelationMinutes} min · players and trusted are never auto-banned · {AntiDdosRecords.Stamp(at)}"));
+                $"{rule} · players and trusted are never auto-banned · {AntiDdosRecords.Stamp(at)}"));
     }
 
     public static EmbedBuilder CrowdSecDecisions(IReadOnlyList<CrowdSecDecision> decisions, IReadOnlySet<string> players)

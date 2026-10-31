@@ -105,6 +105,9 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     private string? _healthProblem;
     private StorageLevel _storageLevel = StorageLevel.Ok;
     private string? _incident;
+
+    /// <summary>When the last flood ended; the minute's judging lags it, so detections just after still count as part of it.</summary>
+    private DateTimeOffset? _floodEnded;
     private (LogMode Mode, DateTimeOffset At)? _modeFailure;
     private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -251,6 +254,11 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         ArgumentNullException.ThrowIfNull(report);
         var incident = _incident ?? "flood-" + AntiDdosLog.FileStamp(report.Start);
         _incident = null;
+        Enqueue(_ =>
+        {
+            _floodEnded = report.End;
+            return Task.CompletedTask;
+        });
         Enqueue(ct => _log.EventAsync(new AntiDdosEvent(report.End, "flood-end", "warning", Action: "ended", Reason: report.Verdict,
             Actor: "auto", Incident: incident, Detail: new Dictionary<string, string>
             {
@@ -587,7 +595,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         // Every known player, online or not: a flood spoofing an offline player's address must not get them banned.
         var exempt = sources.Where(s => s.Player || s.Trusted).Select(s => s.Source)
             .Concat(_players.KnownAddresses().Select(CapturedPacket.Address)).ToHashSet(StringComparer.Ordinal);
-        var plans = _planner.Plan(now, detections, sources.Count, exempt.Contains);
+        var plans = _planner.Plan(now, detections, sources.Count, exempt.Contains, InAttack(now), BannedForGood(now));
         var alerts = new List<(PlannedResponse Plan, string? Problem)>();
 
         foreach (var plan in plans)
@@ -657,12 +665,35 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         return found;
     }
 
-    /// <summary>Ban through CrowdSec when it is here; otherwise in the kernel, for the same time.</summary>
+    /// <summary>The addresses CrowdSec already holds for a year or more, as of its last listing.</summary>
+    private Func<string, bool> BannedForGood(DateTimeOffset now)
+    {
+        if (_lastDecisions is not { Count: > 0 } decisions) return _ => false;
+        var horizon = now.AddDays(365);
+        var banned = decisions.Values.Where(d => d.Type == "ban" && d.Until is { } until && until >= horizon)
+            .Select(d => d.Value).ToHashSet(StringComparer.Ordinal);
+        return banned.Contains;
+    }
+
+    /// <summary>Whether a flood is on, or ended within the correlation window: this minute's detections are part of it.</summary>
+    private bool InAttack(DateTimeOffset now) =>
+        Volatile.Read(ref _incident) is not null || (_floodEnded is { } ended && now - ended <= Options.Response.CorrelationWindow);
+
+    /// <summary>
+    /// Ban through CrowdSec when it is here; otherwise in the kernel, for the same time - except a
+    /// permanent ban, which the kernel cannot keep (its block list is gone at a reboot), so it gets
+    /// the longest temporary ban and says so.
+    /// </summary>
     private async Task<string?> AutoBanAsync(DateTimeOffset now, PlannedResponse plan, TimeSpan length, CancellationToken ct)
     {
         if (IpNetworks.Canonical(plan.Source) is not { IsSingle: true } target || IpNetworks.IsLoopback(target)) return "not a single address";
 
-        var reason = $"{string.Join("+", plan.Detections.Select(d => d.Category).Distinct())} repeated ({plan.Incident})";
+        var categories = string.Join("+", plan.Detections.Select(d => d.Category).Distinct());
+        var flood = Volatile.Read(ref _incident);
+        var reason = plan.Permanent
+            ? $"{categories} during a flood{(flood is null ? "" : $" ({flood})")} - permanent ({plan.Incident})"
+            : $"{categories} repeated ({plan.Incident})";
+        var permanent = plan.Permanent;
         string via;
         string? problem;
         if (_crowdsec.Installed)
@@ -673,13 +704,19 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         else
         {
             via = "nftables";
+            if (permanent)
+            {
+                length = Options.Response.Cap;
+                permanent = false;
+                reason += $" - kept {ReadingStore.Ago(length)} instead: permanent bans need CrowdSec";
+            }
             problem = await _firewall.BlockAsync(target.Address, (int)Math.Ceiling(length.TotalMinutes), ct).ConfigureAwait(false);
             if (problem is null) _selfBlocked[target.Address] = now + length;
         }
 
         await _log.EventAsync(new AntiDdosEvent(now, "ban", problem is null ? "warning" : "critical", target.Text,
             problem is null ? "banned" : "ban-failed", problem ?? reason, problem is null ? now + length : null, "auto", plan.Incident,
-            new Dictionary<string, string> { ["via"] = via }), ct).ConfigureAwait(false);
+            new Dictionary<string, string> { ["via"] = via, ["permanent"] = permanent ? "true" : "false" }), ct).ConfigureAwait(false);
         return problem;
     }
 
@@ -1013,6 +1050,14 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
             problems.Add("nftables: " + f);
 
         var problem = problems.Count == 0 ? null : string.Join("; ", problems);
+        if (network.IsSingle)
+        {
+            // Lifted by hand: a later flood may ban it again, and the last listing no longer counts it.
+            _planner.Forget(network.Address);
+            _selfBlocked.Remove(network.Address);
+            if (_lastDecisions is { } listed)
+                foreach (var id in listed.Where(d => d.Value.Value == network.Address).Select(d => d.Key).ToList()) listed.Remove(id);
+        }
         await _log.EventAsync(new AntiDdosEvent(_time.GetUtcNow(), "ban", "warning", network.Text, problem is null ? "unbanned" : "unban-partial",
             problem, Actor: actor), ct).ConfigureAwait(false);
         return problem;
