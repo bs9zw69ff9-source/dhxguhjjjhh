@@ -11,8 +11,7 @@ using PavlovBot.Host.Servers;
 namespace PavlovBot.Host.Discord.Commands;
 
 /// <summary>
-/// <c>/packettools</c> - install Wireshark and tshark, check them, read an attack's pcap, and look
-/// an address up in the always-on source log.
+/// <c>/packettools</c> - install Wireshark and tshark, check them, and read an attack's pcap.
 /// </summary>
 /// <remarks>
 /// TSHARK IS WIRESHARK ON A SERVER: the same dissectors and statistics without the window, so
@@ -42,14 +41,6 @@ public sealed class PacketToolsCommand(
 
     private static readonly TimeSpan UpdateTimeout = TimeSpan.FromMinutes(4);
     private static readonly TimeSpan InstallTimeout = TimeSpan.FromMinutes(9);
-
-    /// <summary>The most days <c>sources</c> searches back, matching the default <c>PACKET_LOG_DAYS</c>.</summary>
-    internal const int MaxSearchDays = 30;
-    private const int DefaultSearchDays = 7;
-
-    /// <summary>The most matching lines attached: about a week of an address present every minute.</summary>
-    internal const int MaxAttachedLines = 10_000;
-
     /// <summary>One install at a time: apt holds a lock, and a second run would only fail on it.</summary>
     private static readonly SemaphoreSlim Installing = new(1, 1);
 
@@ -60,8 +51,6 @@ public sealed class PacketToolsCommand(
     /// <summary>Where the DDoS monitor keeps its pcaps.</summary>
     private string AttackDirectory => Path.Combine(options.DataDirectory, "attacks");
 
-    /// <summary>Where the packet log keeps its ring and its daily source logs.</summary>
-    private string PacketDirectory => packetLog?.Directory ?? Path.Combine(options.DataDirectory, "packets");
 
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
@@ -76,13 +65,6 @@ public sealed class PacketToolsCommand(
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("analyze").WithDescription("Owner - Wireshark statistics for the latest attack capture")
                 .WithType(ApplicationCommandOptionType.SubCommand))
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithName("sources").WithDescription("Owner - Every minute an IPv4 address sent traffic, from the packet log")
-                .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption("ip", ApplicationCommandOptionType.String, "The IPv4 address to look up", isRequired: true)
-                .AddOption(new SlashCommandOptionBuilder()
-                    .WithName("days").WithDescription($"How many days back to search (default {DefaultSearchDays})")
-                    .WithType(ApplicationCommandOptionType.Integer).WithMinValue(1).WithMaxValue(MaxSearchDays)))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("unblock").WithDescription("Owner - Let every address the DDoS filter blocked back in now")
                 .WithType(ApplicationCommandOptionType.SubCommand))
@@ -126,9 +108,7 @@ public sealed class PacketToolsCommand(
             case "unblock":
                 await UnblockAsync(command, ct).ConfigureAwait(false);
                 return;
-            case "sources":
-                await SourcesAsync(command, ct).ConfigureAwait(false);
-                return;
+
             default:
                 await Reply(command, Theme.Failure("Unknown subcommand")).ConfigureAwait(false);
                 return;
@@ -179,109 +159,6 @@ public sealed class PacketToolsCommand(
         {
             m.Embed = embed.Build();
             m.Attachments = new[] { new FileAttachment(stream, name) };
-            m.AllowedMentions = AllowedMentions.None;
-        }).ConfigureAwait(false);
-    }
-
-    // ---- sources ----
-
-    /// <summary>
-    /// The address in its one canonical form (<c>203.0.113.5</c>), or null when it is not an IPv4
-    /// address. The log is written that way, so <c>203.000.113.005</c> or an IPv6 address would
-    /// only ever match nothing.
-    /// </summary>
-    internal static string? CanonicalIpv4(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        var trimmed = text.Trim();
-        return System.Net.IPAddress.TryParse(trimmed, out var address) &&
-               address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
-               address.ToString() == trimmed
-            ? trimmed
-            : null;
-    }
-
-    /// <summary>The daily source logs covering the last <paramref name="days"/> days, oldest first.</summary>
-    internal static IReadOnlyList<string> SourceLogs(string directory, DateTimeOffset now, int days)
-    {
-        var logs = new List<string>(days);
-        for (var day = days - 1; day >= 0; day--)
-        {
-            var path = Path.Combine(directory, PavlovBot.Core.Network.SourceLog.FileName(now.AddDays(-day)));
-            if (File.Exists(path)) logs.Add(path);
-        }
-        return logs;
-    }
-
-    private async Task SourcesAsync(SocketSlashCommand command, CancellationToken ct)
-    {
-        var args = command.Data.Options.First().Options;
-        if (CanonicalIpv4(args.FirstOrDefault(o => o.Name == "ip")?.Value as string) is not { } address)
-        {
-            await Reply(command, Theme.Failure("Not an IPv4 address",
-                "Give it as four numbers, like `203.0.113.5`. The packet log records IPv4 only.")).ConfigureAwait(false);
-            return;
-        }
-
-        var days = args.FirstOrDefault(o => o.Name == "days")?.Value is long d ? (int)Math.Clamp(d, 1, MaxSearchDays) : DefaultSearchDays;
-        var logs = SourceLogs(PacketDirectory, DateTimeOffset.UtcNow, days);
-        if (logs.Count == 0)
-        {
-            await Reply(command, Theme.Notice("No source logs yet",
-                $"Nothing in `{Sanitize.Code(PacketDirectory)}` for the last {days} day(s). The packet log writes one file a day " +
-                "while `ATTACK_CHANNEL` is set (or `PACKET_LOG=on`), the bot is root, and tshark is installed. " +
-                "`/packettools status` says which is missing.")).ConfigureAwait(false);
-            return;
-        }
-
-        var matches = new List<string>();
-        var truncated = false;
-        try
-        {
-            foreach (var log in logs)
-            {
-                await foreach (var line in File.ReadLinesAsync(log, ct).ConfigureAwait(false))
-                {
-                    if (!PavlovBot.Core.Network.SourceLog.IsFor(line, address)) continue;
-                    if (matches.Count >= MaxAttachedLines) { truncated = true; break; }
-                    matches.Add(line);
-                }
-                if (truncated) break;
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger.LogWarning(ex, "Could not read the source logs in {Directory}", PacketDirectory);
-            await Reply(command, Theme.Failure("Could not read the source logs", Sanitize.Code(ex.Message))).ConfigureAwait(false);
-            return;
-        }
-
-        await audit.RecordAsync("packettools-sources", command.User.Username, address, $"{days} day(s)", ct).ConfigureAwait(false);
-
-        if (matches.Count == 0)
-        {
-            await Reply(command, Theme.Notice($"Not seen · {address}",
-                $"`{address}` sent nothing in the last {days} day(s), or never ranked in a minute's top " +
-                $"{PavlovBot.Core.Network.SourceLog.TopPerMinute} senders. Searched {logs.Count} daily log(s).")).ConfigureAwait(false);
-            return;
-        }
-
-        var totals = PavlovBot.Core.Network.SourceLog.Summarise(matches);
-        var embed = Theme.Notice($"Source log · {address}",
-                $"Seen in {PavlovBot.Core.Network.AttackReport.Count(totals.Minutes)} minute(s) over the last {days} day(s)" +
-                (truncated ? $" - the first {PavlovBot.Core.Network.AttackReport.Count(MaxAttachedLines)} are attached" : "") + ".")
-            .AddField("Packets", PavlovBot.Core.Network.AttackReport.Count(totals.Packets), true)
-            .AddField("Payload", PavlovBot.Core.Network.AttackReport.Bytes(totals.Bytes), true)
-            .AddField("Player", totals.Player ? "yes - a connected player's address" : "no", true)
-            .AddField("First seen (UTC)", $"`{totals.First}`", true)
-            .AddField("Last seen (UTC)", $"`{totals.Last}`", true);
-
-        var csv = PavlovBot.Core.Network.SourceLog.Header + "\n" + PavlovBot.Core.Network.SourceLog.Join(matches);
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
-        await command.ModifyOriginalResponseAsync(m =>
-        {
-            m.Embed = embed.Build();
-            m.Attachments = new[] { new FileAttachment(stream, $"sources-{address}.csv") };
             m.AllowedMentions = AllowedMentions.None;
         }).ConfigureAwait(false);
     }
@@ -424,9 +301,9 @@ public sealed class PacketToolsCommand(
     private string PacketLogStatus() => packetLog switch
     {
         null => "off - on with `ATTACK_CHANNEL`, or set `PACKET_LOG=on`",
-        { Running: true } => $"recording on `{Sanitize.Code(packetLog.Interface)}` into `{Sanitize.Code(packetLog.Directory)}` - " +
-                             "`/packettools sources` looks an address up",
-        _ => $"NOT recording: {packetLog.Problem ?? "starting"}",
+        { Running: true } => $"capturing headers on `{Sanitize.Code(packetLog.Interface)}` into `{Sanitize.Code(packetLog.Directory)}` - " +
+                             "`/antiddos history` searches the packet and source logs",
+        _ => $"NOT capturing: {packetLog.Problem ?? "starting"}",
     };
 
     /// <summary>The first line a tool prints, or null when it is not installed or fails.</summary>

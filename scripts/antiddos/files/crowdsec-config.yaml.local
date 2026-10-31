@@ -1,0 +1,8 @@
+# /etc/crowdsec/config.yaml.local - merged over config.yaml by CrowdSec itself.
+# Alert and decision history is kept 30 days (CrowdSec's default is 7) so it can be
+# correlated with the packet logs afterwards. The bot's own event log keeps every
+# decision it saw for a year.
+db_config:
+  flush:
+    max_items: 10000
+    max_age: 30d

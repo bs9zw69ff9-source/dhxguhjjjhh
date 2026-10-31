@@ -1,0 +1,57 @@
+{
+ "acquisition": {
+  "file:/var/log/auth.log": {
+   "parsed": 8,
+   "pour": 27,
+   "reads": 8
+  }
+ },
+ "parsers": {
+  "child-crowdsecurity/sshd-logs": {
+   "hits": 80,
+   "parsed": 8,
+   "unparsed": 72
+  },
+  "child-crowdsecurity/syslog-logs": {
+   "hits": 16,
+   "parsed": 8,
+   "unparsed": 8
+  },
+  "crowdsecurity/cdn-whitelist": {
+   "hits": 1,
+   "parsed": 1
+  },
+  "crowdsecurity/dateparse-enrich": {
+   "hits": 8,
+   "parsed": 8
+  },
+  "crowdsecurity/geoip-enrich": {
+   "hits": 8,
+   "parsed": 8
+  },
+  "crowdsecurity/google-special-crawlers-whitelist": {
+   "hits": 1,
+   "parsed": 1
+  },
+  "crowdsecurity/public-dns-allowlist": {
+   "hits": 8,
+   "parsed": 8
+  },
+  "crowdsecurity/rdns": {
+   "hits": 1,
+   "parsed": 1
+  },
+  "crowdsecurity/seo-bots-whitelist": {
+   "hits": 1,
+   "parsed": 1
+  },
+  "crowdsecurity/sshd-logs": {
+   "hits": 8,
+   "parsed": 8
+  },
+  "crowdsecurity/syslog-logs": {
+   "hits": 8,
+   "parsed": 8
+  }
+ }
+}

@@ -19,45 +19,7 @@ public class FloodShieldRulesTests
     [InlineData(null, null)]
     public void PortsAreAllowListed(string? spec, string? nft) => Assert.Equal(nft, FloodShieldRules.Ports(spec));
 
-    [Fact]
-    public void StandingByKeepsBlocksButSetsNoLimits()
-    {
-        var script = FloodShieldRules.Script(new ShieldLimits(), engaged: false);
-
-        Assert.Contains("ip saddr @blocked4 counter drop", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("per-source", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("unknown-cap", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("flush set inet pavlovbot_ddos blocked4", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("flush set inet pavlovbot_ddos players4", script, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void SshAndPlayersComeBeforeAnyDrop()
-    {
-        var lines = FloodShieldRules.Script(new ShieldLimits(), engaged: true).Split('\n');
-        int Index(string marker) => Array.FindIndex(lines, l => l.Contains(marker, StringComparison.Ordinal));
-
-        Assert.True(Index("comment \"ssh\"") < Index("comment \"players\""));
-        Assert.True(Index("comment \"players\"") < Index("comment \"blocked\""));
-        Assert.True(Index("comment \"blocked\"") < Index("comment \"per-source\""));
-        Assert.True(Index("comment \"per-source\"") < Index("comment \"unknown-cap\""));
-    }
-
-    [Fact]
-    public void EngagedSetsBothLimitsFromTheSettings()
-    {
-        var script = FloodShieldRules.Script(new ShieldLimits("7777-7779", PerSourcePps: 800, UnknownPps: 3000, BlockMinutes: 15), engaged: true);
-
-        Assert.Contains("add element inet pavlovbot_ddos gameports { 7777-7779 }", script, StringComparison.Ordinal);
-        Assert.Contains("limit rate over 800/second burst 1600 packets } add @blocked4 { ip saddr } counter drop", script, StringComparison.Ordinal);
-        Assert.Contains("limit rate over 3000/second burst 6000 packets counter drop", script, StringComparison.Ordinal);
-        Assert.Contains("timeout 15m", script, StringComparison.Ordinal);
-        Assert.Contains("priority -10", script, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void ABadPortsSettingIsRefusedBeforeAnythingIsLoaded() =>
-        Assert.Throws<ArgumentException>(() => FloodShieldRules.Script(new ShieldLimits("all of them"), engaged: true));
+    // The policy itself - order, IPv6, modes, limits - is pinned in FirewallPolicyTests.
 
     [Fact]
     public void PlayersGoInInBatches()
@@ -71,9 +33,9 @@ public class FloodShieldRulesTests
     }
 
     [Fact]
-    public void TheCountersAreReadByCommentFromNftsOwnJson()
+    public void TheFirstVersionsCountersStillRead()
     {
-        // The shape `nft -j list table inet pavlovbot_ddos` printed on nftables 1.0.9.
+        // The shape `nft -j list table inet pavlovbot_ddos` printed on nftables 1.0.9 for the v1 table.
         const string json = """
             {"nftables": [{"metainfo": {"version": "1.0.9", "json_schema_version": 1}},
             {"table": {"family": "inet", "name": "pavlovbot_ddos", "handle": 1}},

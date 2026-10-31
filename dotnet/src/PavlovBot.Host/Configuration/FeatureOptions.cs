@@ -437,11 +437,11 @@ public sealed record FeatureOptions
     /// </remarks>
     public bool PacketLog { get; init; }
 
-    /// <summary>Days the per-minute source logs are kept (<c>PACKET_LOG_DAYS</c>).</summary>
-    public int PacketLogDays { get; init; } = 30;
-
     /// <summary>The disk the rolling header capture may use, in megabytes (<c>PACKET_RING_MB</c>).</summary>
     public int PacketRingMegabytes { get; init; } = 2048;
+
+    /// <summary>The anti-DDoS firewall, logging and CrowdSec settings (<c>ANTIDDOS_*</c>).</summary>
+    public AntiDdosOptions AntiDdos { get; init; } = new();
 
     /// <summary>The image a new Docker server runs (<c>PAVLOV_DOCKER_IMAGE</c>).</summary>
     public string DockerImage { get; init; } = PavlovBot.Host.Servers.DockerCli.DefaultImage;
@@ -588,7 +588,34 @@ public sealed record FeatureOptions
                 Int(configuration, "ATTACK_UNKNOWN_PPS", 5000),
                 Int(configuration, "ATTACK_BLOCK_MINUTES", 10)),
             PacketLog = OptionalFlag(configuration, "PACKET_LOG") ?? Snowflake(configuration, "ATTACK_CHANNEL") is not null,
-            PacketLogDays = Int(configuration, "PACKET_LOG_DAYS", 30),
+            AntiDdos = new AntiDdosOptions
+            {
+                LogDirectory = Text(configuration, "ANTIDDOS_LOG_DIR") ?? AntiDdosOptions.DefaultLogDirectory,
+                SshPorts = Text(configuration, "ANTIDDOS_SSH_PORTS") ?? "22",
+                SshNewPerMinute = Int(configuration, "ANTIDDOS_SSH_NEW_PER_MINUTE", 30),
+                IcmpEchoPps = Int(configuration, "ANTIDDOS_ICMP_PPS", 50),
+                SuspectUdpPps = Int(configuration, "ANTIDDOS_SUSPECT_UDP_PPS", 300),
+                SuspectSynPerSecond = Int(configuration, "ANTIDDOS_SUSPECT_SYN_PPS", 20),
+                NflogGroup = Int(configuration, "ANTIDDOS_NFLOG_GROUP", 7),
+                SynPerMinute = Int(configuration, "ANTIDDOS_SYN_PER_MINUTE", 120),
+                PortSpread = Int(configuration, "ANTIDDOS_PORT_SPREAD", 50),
+                AutoBan = OptionalFlag(configuration, "ANTIDDOS_AUTOBAN") != false,
+                EscalateAfter = Int(configuration, "ANTIDDOS_ESCALATE_AFTER", 3),
+                CorrelationMinutes = Int(configuration, "ANTIDDOS_CORRELATION_MINUTES", 10),
+                BanMinutes = Int(configuration, "ANTIDDOS_BAN_MINUTES", 60),
+                MaxBanHours = Int(configuration, "ANTIDDOS_MAX_BAN_HOURS", 168),
+                MaxBansPerHour = Int(configuration, "ANTIDDOS_MAX_BANS_PER_HOUR", 30),
+                SpoofSources = Int(configuration, "ANTIDDOS_SPOOF_SOURCES", 5000),
+                LogMode = AntiDdosOptions.ModeFrom(Text(configuration, "ANTIDDOS_LOG_MODE")),
+                IncidentMinutes = Int(configuration, "ANTIDDOS_INCIDENT_MINUTES", 30),
+                AutoIncident = OptionalFlag(configuration, "ANTIDDOS_AUTO_INCIDENT") != false,
+                MaxLogMegabytes = Int(configuration, "ANTIDDOS_LOG_MAX_MB", 2048),
+                WarnFreePercent = Int(configuration, "ANTIDDOS_WARN_FREE_PERCENT", 20),
+                PressureFreePercent = Int(configuration, "ANTIDDOS_PRESSURE_FREE_PERCENT", 10),
+                ReserveMegabytes = Int(configuration, "ANTIDDOS_RESERVE_MB", 2048),
+                CrowdSec = OptionalFlag(configuration, "ANTIDDOS_CROWDSEC") != false,
+                AlertChannel = Snowflake(configuration, "ANTIDDOS_ALERT_CHANNEL") ?? Snowflake(configuration, "ATTACK_CHANNEL"),
+            },
             PacketRingMegabytes = Int(configuration, "PACKET_RING_MB", 2048),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             CommandLogChannel = Snowflake(configuration, "COMMAND_LOG_CHANNEL"),

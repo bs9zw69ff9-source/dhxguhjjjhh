@@ -1,0 +1,252 @@
+[
+ {
+  "capacity": 15,
+  "created_at": "2026-10-29T17:28:01Z",
+  "decisions": [
+   {
+    "duration": "3h59m27s",
+    "id": 4,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/iptables-scan-multi_ports",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "198.51.100.88"
+   }
+  ],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "ASNNumber",
+      "value": "0"
+     },
+     {
+      "key": "IsInEU",
+      "value": "false"
+     },
+     {
+      "key": "datasource_path",
+      "value": "/var/log/ufw.log"
+     },
+     {
+      "key": "datasource_type",
+      "value": "file"
+     },
+     {
+      "key": "log_type",
+      "value": "iptables_drop"
+     },
+     {
+      "key": "machine",
+      "value": "new-vegas-rp"
+     },
+     {
+      "key": "service",
+      "value": "tcp"
+     },
+     {
+      "key": "source_ip",
+      "value": "198.51.100.88"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-10-29T17:28:01Z"
+     }
+    ],
+    "timestamp": "2026-10-29 17:28:01 +0000 UTC"
+   }
+  ],
+  "events_count": 16,
+  "id": 4,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "5s",
+  "machine_id": "11084ab96e344ab0a10eb80b88f0bc975gscucgE9FDuXiIE",
+  "message": "Ip 198.51.100.88 performed 'crowdsecurity/iptables-scan-multi_ports' (16 events over 43.061675ms) at 2026-10-29 17:28:01.539707477 +0000 UTC",
+  "meta": [
+   {
+    "key": "dst_port",
+    "value": "[\"tcp:1000\",\"tcp:1001\",\"tcp:1002\",\"tcp:1003\",\"tcp:1004\",\"tcp:1005\",\"tcp:1006\",\"tcp:1007\",\"tcp:1008\",\"tcp:1009\",\"tcp:1010\",\"tcp:1011\",\"tcp:1012\",\"tcp:1013\",\"tcp:1014\",\"tcp:1015\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "crowdsecurity/iptables-scan-multi_ports",
+  "scenario_hash": "81fc1dfd47c1b2ee6874af937e6755fbe80930cf4733b8fa2cb5c5cb031ba3b6",
+  "scenario_version": "0.3",
+  "simulated": false,
+  "source": {
+   "as_number": "0",
+   "ip": "198.51.100.88",
+   "scope": "Ip",
+   "value": "198.51.100.88"
+  },
+  "start_at": "2026-10-29T17:28:01Z",
+  "stop_at": "2026-10-29T17:28:01Z",
+  "uuid": "9d038b25-62dc-4409-84da-c2e8e41d03ff"
+ },
+ {
+  "capacity": 5,
+  "created_at": "2026-10-29T17:22:06Z",
+  "decisions": [
+   {
+    "duration": "-6m2s",
+    "id": 3,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/ssh-bf",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "198.51.100.77"
+   }
+  ],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "ASNNumber",
+      "value": "0"
+     },
+     {
+      "key": "IsInEU",
+      "value": "false"
+     },
+     {
+      "key": "datasource_path",
+      "value": "/var/log/auth.log"
+     },
+     {
+      "key": "datasource_type",
+      "value": "file"
+     },
+     {
+      "key": "log_type",
+      "value": "ssh_failed-auth"
+     },
+     {
+      "key": "machine",
+      "value": "new-vegas-rp"
+     },
+     {
+      "key": "service",
+      "value": "ssh"
+     },
+     {
+      "key": "source_ip",
+      "value": "198.51.100.77"
+     },
+     {
+      "key": "target_user",
+      "value": "admin"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-10-29T17:22:06Z"
+     }
+    ],
+    "timestamp": "2026-10-29 17:22:06 +0000 UTC"
+   }
+  ],
+  "events_count": 6,
+  "id": 3,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "10s",
+  "machine_id": "11084ab96e344ab0a10eb80b88f0bc975gscucgE9FDuXiIE",
+  "message": "Ip 198.51.100.77 performed 'crowdsecurity/ssh-bf' (6 events over 7.261617ms) at 2026-10-29 17:22:06.302084129 +0000 UTC",
+  "meta": [
+   {
+    "key": "target_user",
+    "value": "[\"admin\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "crowdsecurity/ssh-bf",
+  "scenario_hash": "242f36684d66bbae3044e576b7cfffef62d5323465f3f74f87923167c6d93356",
+  "scenario_version": "0.3",
+  "simulated": false,
+  "source": {
+   "as_number": "0",
+   "ip": "198.51.100.77",
+   "scope": "Ip",
+   "value": "198.51.100.77"
+  },
+  "start_at": "2026-10-29T17:22:06Z",
+  "stop_at": "2026-10-29T17:22:06Z",
+  "uuid": "835929ba-4ef1-4a74-86f9-86784ef4848c"
+ },
+ {
+  "capacity": 0,
+  "created_at": "2026-10-29T17:21:56Z",
+  "decisions": [
+   {
+    "duration": "53m22s",
+    "id": 2,
+    "origin": "cscli",
+    "scenario": "v6 test",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "2001:db8::5"
+   }
+  ],
+  "events": null,
+  "events_count": 1,
+  "id": 2,
+  "kind": "cscli",
+  "labels": null,
+  "leakspeed": "0",
+  "machine_id": "11084ab96e344ab0a10eb80b88f0bc975gscucgE9FDuXiIE",
+  "message": "v6 test",
+  "remediation": true,
+  "scenario": "v6 test",
+  "scenario_hash": "",
+  "scenario_version": "",
+  "simulated": false,
+  "source": {
+   "ip": "2001:db8::5",
+   "scope": "Ip",
+   "value": "2001:db8::5"
+  },
+  "start_at": "2026-10-29T17:21:56Z",
+  "stop_at": "2026-10-29T17:21:56Z",
+  "uuid": "62b89b4e-5b50-4fb3-8ac4-fa604f4a888a"
+ },
+ {
+  "capacity": 0,
+  "created_at": "2026-10-29T17:21:56Z",
+  "decisions": [
+   {
+    "duration": "3h53m22s",
+    "id": 1,
+    "origin": "cscli",
+    "scenario": "pavlovbot test",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "203.0.113.50"
+   }
+  ],
+  "events": null,
+  "events_count": 1,
+  "id": 1,
+  "kind": "cscli",
+  "labels": null,
+  "leakspeed": "0",
+  "machine_id": "11084ab96e344ab0a10eb80b88f0bc975gscucgE9FDuXiIE",
+  "message": "pavlovbot test",
+  "remediation": true,
+  "scenario": "pavlovbot test",
+  "scenario_hash": "",
+  "scenario_version": "",
+  "simulated": false,
+  "source": {
+   "ip": "203.0.113.50",
+   "scope": "Ip",
+   "value": "203.0.113.50"
+  },
+  "start_at": "2026-10-29T17:21:56Z",
+  "stop_at": "2026-10-29T17:21:56Z",
+  "uuid": "6738c9d4-f1db-4f1c-b719-0b94dcd0fb1f"
+ }
+]

@@ -1,0 +1,7 @@
+# /etc/crowdsec/acquis.d/sshd-journal.yaml - only installed when there is no
+# /var/log/auth.log (rsyslog absent): read sshd straight from journald.
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog
