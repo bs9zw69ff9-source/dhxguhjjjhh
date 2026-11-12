@@ -44,6 +44,15 @@ public interface IAttackListener
     void OnEnded(AttackReport report);
 
     /// <summary>
+    /// The report reached Discord, on time or late: it is now safe to free the space the attack's
+    /// logs took. Never called for a report that could not be posted - then the logs are the only
+    /// copy of the detail.
+    /// </summary>
+    void OnReportPosted(AttackReport report)
+    {
+    }
+
+    /// <summary>
     /// Ban an attack's sources when it ends, before the summary is written, so the summary can say
     /// what was banned. Null when this listener does not ban.
     /// </summary>
@@ -439,6 +448,10 @@ public sealed class AttackMonitor : BackgroundService
             _pending.Add(report);
             _lastRetry = now;
         }
+        else
+        {
+            Notify(l => l.OnReportPosted(report));
+        }
 
         if (_capture is not null) await _capture.DisposeAsync().ConfigureAwait(false);
         _capture = null;
@@ -492,7 +505,9 @@ public sealed class AttackMonitor : BackgroundService
         {
             if (await PostAsync(_pending[0], postedLate: true, ct).ConfigureAwait(false) is null) return;
             _logger.LogInformation("Posted the held-back summary of the attack at {Start}", _pending[0].Start);
+            var posted = _pending[0];
             _pending.RemoveAt(0);
+            Notify(l => l.OnReportPosted(posted));
         }
     }
 

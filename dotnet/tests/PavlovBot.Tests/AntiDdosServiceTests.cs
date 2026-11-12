@@ -489,6 +489,74 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Empty(_crowdsec.Bans);
     }
 
+    // ---- clearing the logs once a report is posted ----
+
+    private static AttackReport AReport(DateTimeOffset start) => new("vm", "eth0", start, start.AddSeconds(30), [], 20, FloodBreakdown.Empty,
+        new PlayerImpact(1, 1, 1, 1), new CaptureHealth("none"), null);
+
+    private long LogBytes() => new[] { "sources.jsonl", "traffic.jsonl" }.Sum(f => File.Exists(Path.Combine(_root, "log", f)) ? new FileInfo(Path.Combine(_root, "log", f)).Length : 0);
+
+    [Fact]
+    public async Task OncetheReportIsPostedTheLogsAreEmptiedAndTheEventsSaySoAndStay()
+    {
+        var service = await Start();
+        for (var m = 0; m < 3; m++) await Minute(("203.0.113.5", "udp", 7777, 100));
+        Assert.True(LogBytes() > 0);
+
+        service.OnReportPosted(AReport(T0));
+        await _service!.ClearLogsAsync();   // runs on the same worker: by the time it answers, the queued clear has run
+
+        Assert.Equal(0, LogBytes());
+        var events = Lines("events.jsonl");
+        Assert.Contains(events, l => l.Contains("\"started\"", StringComparison.Ordinal));   // the audit trail is kept
+        Assert.Contains(events, l => l.Contains("\"category\":\"storage\"", StringComparison.Ordinal) && l.Contains("\"action\":\"cleared\"", StringComparison.Ordinal)
+                                     && l.Contains("after the attack report", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WithClearingOffTheLogsStayAfterAReport()
+    {
+        var service = await Start();
+        Assert.Null(await service.SetThresholdAsync(Thresholds.Find("clear_after_report")!, 0, "owner"));
+        await Minute(("203.0.113.5", "udp", 7777, 100));
+        var before = LogBytes();
+
+        service.OnReportPosted(AReport(T0));
+        await Minute();   // the worker has handled the queued clear by now
+
+        Assert.True(LogBytes() >= before);
+        Assert.DoesNotContain(Lines("events.jsonl"), l => l.Contains("\"action\":\"cleared\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AFloodThatIsStillOnKeepsItsLogs()
+    {
+        var service = await Start();
+        await Minute(("203.0.113.5", "udp", 7777, 100));
+        Flood();
+        var before = LogBytes();
+
+        service.OnReportPosted(AReport(T0));
+        var skipped = await service.ClearLogsAsync();
+
+        Assert.Equal("another flood is in progress", skipped.Skipped);
+        Assert.True(LogBytes() >= before);
+    }
+
+    [Fact]
+    public async Task TheOwnerCanClearByHandEvenWithTheAutomaticClearOff()
+    {
+        var service = await Start();
+        Assert.Null(await service.SetThresholdAsync(Thresholds.Find("clear_after_report")!, 0, "owner"));
+        await Minute(("203.0.113.5", "udp", 7777, 100));
+
+        var cleared = await service.ClearLogsAsync();
+
+        Assert.Null(cleared.Skipped);
+        Assert.Equal(0, LogBytes());
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("by request", StringComparison.Ordinal));
+    }
+
     // ---- every source of a flood, banned when it ends ----
 
     [Fact]
@@ -921,6 +989,58 @@ public sealed class AntiDdosLogTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+    }
+
+    [Fact]
+    public async Task ClearingEmptiesTheLiveFilesInPlaceDeletesRotatedOnesAndKeepsEventsAndExports()
+    {
+        var log = new AntiDdosLog(new AntiDdosPaths(_root), NullLogger<AntiDdosLog>.Instance);
+        var t = new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero);
+        Directory.CreateDirectory(Path.Combine(_root, "packets"));
+        Directory.CreateDirectory(Path.Combine(_root, "exports"));
+        Directory.CreateDirectory(Path.Combine(_root, "capture"));
+        File.WriteAllText(Path.Combine(_root, "packets", "packets.jsonl"), new string('p', 1000));
+        File.WriteAllText(Path.Combine(_root, "packets", "packets.jsonl-20261110-000000.gz"), new string('g', 300));
+        File.WriteAllText(Path.Combine(_root, "sources.jsonl-20261110-000000"), new string('s', 200));
+        File.WriteAllText(Path.Combine(_root, "exports", "export.jsonl"), "keep me");
+        File.WriteAllText(Path.Combine(_root, "capture", "ring_00001_20261112120000.pcap"), "ring is not this method's");
+        await log.WriteAsync(RecordKind.Source, [AntiDdosRecords.Event(new AntiDdosEvent(t, "x", "info"))], CancellationToken.None);
+        await log.WriteAsync(RecordKind.Event, [AntiDdosRecords.Event(new AntiDdosEvent(t, "ban", "info", "203.0.113.5", "banned"))], CancellationToken.None);
+
+        // Emptied in place, not deleted: ulogd holds packets.jsonl open in append mode (O_APPEND) for as long as
+        // it runs. Checked live against a real ulogd2: it kept writing to the same inode, from byte 0, no hole.
+        // (Not simulated here: .NET's FileStream keeps its own offset and would leave a hole, which ulogd's does not.)
+        await using var holder = new FileStream(Path.Combine(_root, "packets", "packets.jsonl"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        Assert.Equal(1000, holder.Length);
+        var (files, bytes) = await log.ClearAsync(includeEvents: false, CancellationToken.None);
+
+        Assert.Equal(4, files);   // live packets, rotated packets, rotated sources, live sources
+        Assert.True(bytes >= 1000 + 300 + 200);
+        Assert.Equal(0, new FileInfo(Path.Combine(_root, "packets", "packets.jsonl")).Length);
+        Assert.False(File.Exists(Path.Combine(_root, "packets", "packets.jsonl-20261110-000000.gz")));
+        Assert.False(File.Exists(Path.Combine(_root, "sources.jsonl-20261110-000000")));
+        Assert.Equal(0, new FileInfo(Path.Combine(_root, "sources.jsonl")).Length);
+        Assert.Contains("\"ban\"", File.ReadAllText(Path.Combine(_root, "events.jsonl")), StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(_root, "exports", "export.jsonl")));
+        Assert.True(File.Exists(Path.Combine(_root, "capture", "ring_00001_20261112120000.pcap")));
+
+        // The same file, emptied: a handle opened before still sees it, empty. Had it been deleted and recreated,
+        // that handle would still see the old 1,000 bytes - which is where a writer holding it would be writing.
+        Assert.Equal(0, holder.Length);
+
+        // Once everything is empty, clearing is no work and no count.
+        Assert.Equal((0, 0L), await log.ClearAsync(false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ClearingWithEventsAlsoEmptiesTheEventLog()
+    {
+        var log = new AntiDdosLog(new AntiDdosPaths(_root), NullLogger<AntiDdosLog>.Instance);
+        await log.WriteAsync(RecordKind.Event, [AntiDdosRecords.Event(new AntiDdosEvent(DateTimeOffset.UtcNow, "ban", "info"))], CancellationToken.None);
+
+        await log.ClearAsync(includeEvents: true, CancellationToken.None);
+
+        Assert.Equal(0, new FileInfo(Path.Combine(_root, "events.jsonl")).Length);
     }
 
     [Fact]

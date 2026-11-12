@@ -218,6 +218,24 @@ Rules for modes:
   - **critical** under half the reserve: packet logging stops. Filtering and events carry on.
 
   Each change of level is one alert and one event, not one a minute.
+- **Cleared after each attack report.** Once an attack's report is on Discord (on time or late),
+  the bot empties the logs to free the space:
+  - **Emptied:** the packet, source and traffic logs, rotated files included, and the capture ring.
+  - **Kept:** the events. They are tiny, they are the audit trail (who banned what), and a restart
+    reloads the last day's bans from them to keep repeat-offender bans doubling. The attack's pcap
+    and report file, in `data/attacks`, and anything in `exports/`, are kept too.
+  - **How:** live files are emptied in place, not deleted, because ulogd2 keeps `packets.jsonl`
+    open. Checked against a real ulogd2: it carries on writing to the same file from the start.
+    The ring keeps the file being written.
+  - **Not cleared:**
+    - a report that could not be posted, because then the logs are the only detail there is;
+    - while another flood is on, because its logs aren't reported yet;
+    - the ring, while an attack is being captured.
+  - **The cost:** the quiet hours before the attack go too, so `/antiddos history` and `traffic`
+    start empty after each attack. Every clear is an event (`storage cleared`) with the bytes freed.
+  - **Switches:**
+    - `ANTIDDOS_CLEAR_AFTER_REPORT=off`, or the `clear_after_report` threshold, keeps everything;
+    - `ANTIDDOS_CLEAR_EVENTS=on` clears the events too.
 - **Nothing loops.** Packets go kernel → NFLOG → ulogd2 → file, never through printk, journald or
   rsyslog. CrowdSec's bouncer logs to its own file, and `deny_log` is left off.
 

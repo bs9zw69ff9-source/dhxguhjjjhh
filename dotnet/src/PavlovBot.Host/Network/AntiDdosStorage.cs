@@ -58,6 +58,7 @@ public static class Thresholds
         new("escalate_after", 2, 60, "Detection minutes within the correlation window before an automatic ban"),
         new("ban_minutes", 5, 10_080, "The first automatic ban's length; repeats double it"),
         new("autoban", 0, 1, "1 lets the bot ban repeat offenders automatically, 0 only alerts"),
+        new("clear_after_report", 0, 1, "1 empties the packet, source and traffic logs and the capture ring once an attack report is posted, 0 keeps them"),
         new("attack_permaban", 0, 1, "1 bans an address detected during a flood at once and permanently, 0 treats it like any other"),
     ];
 
@@ -93,6 +94,7 @@ public static class Thresholds
             BanMinutes = Get("ban_minutes", options.BanMinutes),
             AutoBan = Get("autoban", options.AutoBan ? 1 : 0) == 1,
             AttackPermaban = Get("attack_permaban", options.AttackPermaban ? 1 : 0) == 1,
+            ClearAfterReport = Get("clear_after_report", options.ClearAfterReport ? 1 : 0) == 1,
         };
     }
 }
@@ -261,6 +263,67 @@ public sealed class AntiDdosLog(AntiDdosPaths paths, ILogger<AntiDdosLog> logger
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger.LogWarning(ex, "Could not write {Count} {Kind} record(s) to {Path}", lines.Count, kind, path);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Empty the packet, source and traffic logs (and the events, only when asked): rotated files
+    /// are deleted, the live ones emptied in place.
+    /// </summary>
+    /// <remarks>
+    /// IN PLACE, NOT DELETED. ulogd2 holds <c>packets.jsonl</c> open in append mode; deleting it
+    /// would leave ulogd writing to a file nobody can see, and the space would not come back
+    /// until it reopened. Emptying keeps the same file: checked against a real ulogd2, which
+    /// carried on writing to it, from byte 0, with no hole.
+    ///
+    /// UNDER THE WRITE GATE, so a record is never half in a file being emptied. The exports
+    /// folder and the capture ring are not touched here: exports are the owner's, and the ring
+    /// has its own budget.
+    /// </remarks>
+    /// <returns>Files emptied or deleted, and the bytes freed.</returns>
+    public async Task<(int Files, long Bytes)> ClearAsync(bool includeEvents, CancellationToken ct)
+    {
+        var kinds = includeEvents
+            ? new[] { RecordKind.Packet, RecordKind.Source, RecordKind.Traffic, RecordKind.Event }
+            : [RecordKind.Packet, RecordKind.Source, RecordKind.Traffic];
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var files = 0;
+            long bytes = 0;
+            foreach (var kind in kinds)
+            {
+                var live = paths.File(kind);
+                foreach (var file in paths.Files(kind))
+                {
+                    try
+                    {
+                        var length = file.Length;
+                        if (file.FullName == live)
+                        {
+                            if (length == 0) continue;
+                            using var stream = new FileStream(live, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                            stream.SetLength(0);
+                        }
+                        else
+                        {
+                            file.Delete();
+                        }
+                        files++;
+                        bytes += length;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        logger.LogWarning(ex, "Could not clear {Path}", file.FullName);
+                    }
+                }
+            }
+            return (files, bytes);
         }
         finally
         {

@@ -47,6 +47,15 @@ public sealed record AntiDdosOptions
     public bool AttackPermaban { get; init; } = true;
 
     /// <summary>
+    /// Empty the packet, source and traffic logs and the capture ring once an attack report has been
+    /// posted (<c>ANTIDDOS_CLEAR_AFTER_REPORT</c>, on unless off), so a flood's logs do not sit on the disk.
+    /// </summary>
+    public bool ClearAfterReport { get; init; } = true;
+
+    /// <summary>Clear the events too (<c>ANTIDDOS_CLEAR_EVENTS</c>, off by default): they are the audit trail and the ban memory.</summary>
+    public bool ClearEvents { get; init; }
+
+    /// <summary>
     /// Packets to the game ports during a flood that make an address one of its sources, banned
     /// when it ends (<c>ANTIDDOS_FLOOD_BAN_MIN_PACKETS</c>). A server browser's query is one or two.
     /// </summary>
