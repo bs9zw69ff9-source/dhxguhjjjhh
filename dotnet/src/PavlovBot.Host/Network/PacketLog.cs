@@ -136,6 +136,38 @@ public sealed partial class PacketLog : BackgroundService
     /// <summary>The ring's size on disk now.</summary>
     public long RingBytes() => RingFiles(_directory).Sum(f => f.Length);
 
+    /// <summary>
+    /// Delete the ring's closed files, keeping the newest, which the capture is writing.
+    /// </summary>
+    /// <remarks>
+    /// NOT WHILE AN ATTACK IS BEING CAPTURED: its pcap is cut from these files as they close, so
+    /// they are its evidence. A file the capture still holds open is the newest, and deleting it
+    /// would free nothing until the capture let go.
+    /// </remarks>
+    /// <returns>Files deleted and bytes freed, or null when an attack is attached and nothing was touched.</returns>
+    public (int Files, long Bytes)? ClearRing()
+    {
+        lock (_ringGate)
+        {
+            if (_attached.Length > 0) return null;
+            var rings = RingFiles(_directory);
+            var files = 0;
+            long bytes = 0;
+            foreach (var ring in rings.Take(Math.Max(0, rings.Count - 1)))
+            {
+                ring.Refresh();
+                if (!ring.Exists) continue;
+                var length = ring.Length;
+                TryDelete(ring.FullName);
+                ring.Refresh();
+                if (ring.Exists) continue;
+                files++;
+                bytes += length;
+            }
+            return (files, bytes);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!LinkCounters.IsPlausibleInterface(_iface)) { Fail($"\"{_iface}\" is not a usable interface name"); return; }

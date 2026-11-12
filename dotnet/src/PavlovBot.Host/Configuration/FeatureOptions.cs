@@ -614,6 +614,8 @@ public sealed record FeatureOptions
                 SpoofSources = Int(configuration, "ANTIDDOS_SPOOF_SOURCES", 5000),
                 AttackPermaban = OptionalFlag(configuration, "ANTIDDOS_ATTACK_PERMABAN") != false,
                 AttackBansPerHour = Int(configuration, "ANTIDDOS_ATTACK_BANS_PER_HOUR", 300),
+                ClearAfterReport = OptionalFlag(configuration, "ANTIDDOS_CLEAR_AFTER_REPORT") != false,
+                ClearEvents = OptionalFlag(configuration, "ANTIDDOS_CLEAR_EVENTS") == true,
                 FloodBanMinPackets = Math.Max(1, Int(configuration, "ANTIDDOS_FLOOD_BAN_MIN_PACKETS", 50)),
                 LogMode = AntiDdosOptions.ModeFrom(Text(configuration, "ANTIDDOS_LOG_MODE")),
                 IncidentMinutes = Int(configuration, "ANTIDDOS_INCIDENT_MINUTES", 30),

@@ -110,6 +110,38 @@ public sealed class PacketLogTests : IDisposable
     // ---- an attack's pcap ----
 
     [Fact]
+    public void ClearingTheRingDeletesTheClosedFilesAndKeepsTheOneBeingWritten()
+    {
+        var old = Ring(1, "20261029120000", 10 * Mb, Now.AddMinutes(-30));
+        var older = Ring(2, "20261029120000", 20 * Mb, Now.AddMinutes(-20));
+        var current = Ring(3, "20261029120000", 5 * Mb, Now);
+        var log = Log();
+
+        var cleared = log.ClearRing();
+
+        Assert.Equal((2, 30L * Mb), cleared);
+        Assert.False(File.Exists(old));
+        Assert.False(File.Exists(older));
+        Assert.True(File.Exists(current));
+        Assert.Equal((0, 0L), log.ClearRing());
+    }
+
+    [Fact]
+    public async Task TheRingIsLeftAloneWhileAnAttackIsBeingCaptured()
+    {
+        var closed = Ring(1, "20261029120000", 10 * Mb, Now.AddMinutes(-30));
+        Ring(2, "20261029120000", 5 * Mb, Now);
+        var log = Log();
+        var capture = log.Attach(Path.Combine(_attacks, "attack-20261029-135230.pcap"));
+
+        Assert.Null(log.ClearRing());
+        Assert.True(File.Exists(closed));
+
+        await capture.DisposeAsync();
+        Assert.Equal(1, log.ClearRing()?.Files);
+    }
+
+    [Fact]
     public async Task AnAttackKeepsTheRingFilesWrittenDuringItAndJoinsThemWhenItEnds()
     {
         var before = Ring(1, "20261029120000", 10, Now.AddMinutes(-5));

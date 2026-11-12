@@ -10,6 +10,9 @@ using PavlovBot.Host.Discord;
 namespace PavlovBot.Host.Network;
 
 /// <summary>A detection and what was done about it, for <c>/antiddos detections</c>.</summary>
+/// <summary>What clearing the logs freed, or why it did not.</summary>
+public sealed record LogsCleared(int Files, long Bytes, string? Skipped);
+
 public sealed record DetectionRecord(DateTimeOffset At, PlannedResponse Plan, string? BanProblem);
 
 /// <summary>
@@ -247,6 +250,55 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
                     await RequestModeAsync(LogMode.Incident, until, "auto (flood)", incident, ct).ConfigureAwait(false);
             }
         });
+    }
+
+    /// <summary>The report is on Discord: free the attack's logs, on the worker, after the bans and events queued before it.</summary>
+    public void OnReportPosted(AttackReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        Enqueue(ct => ClearAsync(report.Start, ct));
+    }
+
+    /// <summary>Clear the logs now, as the owner could ask; null when it was not done, with why.</summary>
+    internal Task<LogsCleared> ClearLogsAsync() => RunAsync(ct => ClearAsync(null, ct));
+
+    /// <summary>
+    /// Empty the packet, source and traffic logs and the capture ring, and say so in the events.
+    /// </summary>
+    /// <remarks>
+    /// AFTER THE REPORT, NOT BEFORE. By then the report is on Discord and beside its pcap, the
+    /// sources are banned, and every ban and decision is in the events - which are kept (unless
+    /// <see cref="AntiDdosOptions.ClearEvents"/>), because they are the audit trail and the ban
+    /// memory a restart reloads.
+    ///
+    /// NOT DURING ANOTHER FLOOD: its logs are not reported yet. It waits for that one's report.
+    /// What this does cost, honestly: the quiet hours before the attack go too, so history
+    /// before it is gone.
+    /// </remarks>
+    private async Task<LogsCleared> ClearAsync(DateTimeOffset? attackStart, CancellationToken ct)
+    {
+        if (!Options.ClearAfterReport && attackStart is not null) return new LogsCleared(0, 0, "clear_after_report is off");
+        if (Volatile.Read(ref _incident) is not null) return new LogsCleared(0, 0, "another flood is in progress");
+
+        var logs = await _log.ClearAsync(Options.ClearEvents, ct).ConfigureAwait(false);
+        var ring = _capture?.ClearRing();
+        var files = logs.Files + (ring?.Files ?? 0);
+        var bytes = logs.Bytes + (ring?.Bytes ?? 0);
+
+        var now = _time.GetUtcNow();
+        var what = string.Create(CultureInfo.InvariantCulture,
+            $"{(attackStart is null ? "by request" : "after the attack report")}: {files:N0} file(s), {AttackReport.Bytes(bytes)} freed");
+        what += $" - packet, source and traffic logs{(Options.ClearEvents ? ", events" : "")} and the capture ring";
+        if (ring is null && _capture is not null) what += " (ring kept: an attack is being captured)";
+        await _log.EventAsync(new AntiDdosEvent(now, "storage", "info", Action: "cleared", Reason: what,
+            Actor: attackStart is null ? "owner" : "auto",
+            Detail: new Dictionary<string, string>
+            {
+                ["files"] = files.ToString(CultureInfo.InvariantCulture),
+                ["bytes"] = bytes.ToString(CultureInfo.InvariantCulture),
+                ["events_kept"] = Options.ClearEvents ? "false" : "true",
+            }), ct).ConfigureAwait(false);
+        return new LogsCleared(files, bytes, null);
     }
 
     public void OnEnded(AttackReport report)

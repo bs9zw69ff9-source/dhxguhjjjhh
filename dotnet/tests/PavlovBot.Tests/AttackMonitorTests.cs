@@ -639,6 +639,10 @@ public class AttackMonitorTests
 
         public void OnEnded(AttackReport report) { }
 
+        public List<AttackReport> Posted { get; } = [];
+
+        public void OnReportPosted(AttackReport report) => Posted.Add(report);
+
         public Task<FloodBans?> BanFloodSourcesAsync(IReadOnlyList<string> sources, DateTimeOffset start, CancellationToken ct)
         {
             Asked.Add(sources);
@@ -800,6 +804,40 @@ public class AttackMonitorTests
         Assert.Contains(alert.Fields, f => f.Name == "Filter" && f.Value.Contains("could not engage", StringComparison.Ordinal));
         var (summary, _, _) = Assert.Single(rig.Posts.Files);
         Assert.Contains(summary.Fields, f => f.Name == "Dropped by the filter" && f.Value.Contains("nft is not installed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheListenerIsToldAReportWasPostedOnlyOnceItReallyWas()
+    {
+        var banner = new Banner();
+        var rig = new Rig(listener: banner);
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 4; i++) await rig.SecondAsync(50_000);
+
+        rig.Posts.Reachable = false;
+        for (var i = 0; i < 6; i++) await rig.SecondAsync(50_000);
+        for (var i = 0; i < 55; i++) await rig.SecondAsync(500);
+        // The report is on disk and held, not on Discord: the logs are the only copy of the detail.
+        Assert.Empty(banner.Posted);
+
+        rig.Posts.Reachable = true;
+        for (var i = 0; i < 31; i++) await rig.SecondAsync(500);
+        Assert.Single(banner.Posted);
+    }
+
+    [Fact]
+    public async Task AReportPostedOnTimeTellsTheListenerOnce()
+    {
+        var banner = new Banner();
+        var rig = new Rig(listener: banner);
+        await rig.SecondAsync(500);
+        await rig.SecondAsync(500);
+        for (var i = 0; i < 5; i++) await rig.SecondAsync(50_000);
+        for (var i = 0; i < 15; i++) await rig.SecondAsync(500);
+
+        Assert.Single(rig.Posts.Files);
+        Assert.Single(banner.Posted);
     }
 
     [Fact]

@@ -436,6 +436,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             ["icmp_pps"] = o.IcmpEchoPps, ["syn_per_minute"] = o.SynPerMinute, ["syn_block_pps"] = o.SynBlockPps, ["port_spread"] = o.PortSpread,
             ["escalate_after"] = o.EscalateAfter, ["ban_minutes"] = o.BanMinutes, ["autoban"] = o.AutoBan ? 1 : 0,
             ["attack_permaban"] = o.AttackPermaban ? 1 : 0,
+            ["clear_after_report"] = o.ClearAfterReport ? 1 : 0,
         };
         var b = new StringBuilder();
         foreach (var t in Thresholds.All)
