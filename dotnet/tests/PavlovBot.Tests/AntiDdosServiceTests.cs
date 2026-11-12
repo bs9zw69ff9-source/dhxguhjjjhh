@@ -557,6 +557,58 @@ public sealed class AntiDdosServiceTests : IAsyncDisposable
         Assert.Contains(Lines("events.jsonl"), l => l.Contains("by request", StringComparison.Ordinal));
     }
 
+    // ---- /antiddos clear ----
+
+    private AntiDdosCommand Command(AntiDdosService service) => new(null!,
+        new PavlovBot.Host.Moderation.AuditLog(new PavlovBot.Core.Data.SerializedStore(
+            new PavlovBot.Host.Storage.FileKeyValueBackend(Path.Combine(_root, "audit")), new PavlovBot.Host.Storage.SystemTextJsonCodec())),
+        service, NullLogger<AntiDdosCommand>.Instance);
+
+    [Fact]
+    public async Task TheCommandWipesTheLogsOnlyWhenTheWordIsTypedAndItIsTheOwners()
+    {
+        var service = await Start();
+        for (var m = 0; m < 2; m++) await Minute(("203.0.113.5", "udp", 7777, 100));
+        var command = Command(service);
+
+        var refused = await command.RunAsync("clear", new Dictionary<string, object> { ["confirm"] = "yes" }, "owner", CancellationToken.None);
+        Assert.True(LogBytes() > 0);
+        Assert.Contains("Nothing was cleared", refused.Embed.Title, StringComparison.Ordinal);
+
+        var done = await command.RunAsync("clear", new Dictionary<string, object> { ["confirm"] = "wipe" }, "owner", CancellationToken.None);
+        Assert.Equal(0, LogBytes());
+        Assert.Contains("Logs cleared", done.Embed.Title, StringComparison.Ordinal);
+        Assert.Contains("events were kept", done.Embed.Description, StringComparison.Ordinal);
+        Assert.Contains(Lines("events.jsonl"), l => l.Contains("by request", StringComparison.Ordinal) && l.Contains("\"actor\":\"owner\"", StringComparison.Ordinal));
+        Assert.Equal(RequiredAccess.Owner, AntiDdosCommand.RequiredFor("clear"));
+    }
+
+    [Theory]
+    [InlineData(true)]     // a Discord boolean option
+    [InlineData("YES")]    // the word the menu's text box collects
+    public async Task AskingForTheEventsToGoTooEmptiesTheEventLog(object yes)
+    {
+        var service = await Start();
+        await Minute(("203.0.113.5", "udp", 7777, 100));
+
+        await Command(service).RunAsync("clear", new Dictionary<string, object> { ["confirm"] = "WIPE", ["events"] = yes }, "owner", CancellationToken.None);
+
+        // Only the record of the clear itself is left: written after, so it says what happened.
+        var events = Lines("events.jsonl");
+        Assert.Single(events);
+        Assert.Contains("\"action\":\"cleared\"", events[0], StringComparison.Ordinal);
+        Assert.Contains("\"events_kept\":\"false\"", events[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheMenuEntryTypesTheWordBackAndPassesItOnSoTheCommandAcceptsIt()
+    {
+        var entry = AntiDdosPanel.Find("clear")!;
+
+        Assert.Equal(("clear", "WIPE"), (entry.Run, entry.Confirm));
+        Assert.Equal("WIPE", entry.Fixed!["confirm"]);
+    }
+
     // ---- every source of a flood, banned when it ends ----
 
     [Fact]
@@ -930,7 +982,7 @@ public class AntiDdosCommandTests
 
         Check(built.Options.Value);
         Assert.Equal(
-            ["status", "traffic", "history", "top", "detections", "bans", "crowdsec", "storage", "export", "block", "unban", "logging", "allow", "threshold"],
+            ["status", "traffic", "history", "top", "detections", "bans", "crowdsec", "storage", "export", "clear", "block", "unban", "logging", "allow", "threshold"],
             built.Options.Value.Select(o => o.Name));
     }
 

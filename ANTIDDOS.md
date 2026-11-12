@@ -236,6 +236,10 @@ Rules for modes:
   - **Switches:**
     - `ANTIDDOS_CLEAR_AFTER_REPORT=off`, or the `clear_after_report` threshold, keeps everything;
     - `ANTIDDOS_CLEAR_EVENTS=on` clears the events too.
+  - **By hand, now:** `/antiddos clear confirm:WIPE` (owner only), or "Wipe the logs now" in the
+    Anti-DDoS menu of `/configure`, which asks you to type `WIPE`. Add `events:true` to clear the
+    events too. It does the same as the automatic clear, with the same skips: it refuses while a
+    flood is on, and leaves the ring alone while an attack is being captured.
 - **Nothing loops.** Packets go kernel → NFLOG → ulogd2 → file, never through printk, journald or
   rsyslog. CrowdSec's bouncer logs to its own file, and `deny_log` is left off.
 
