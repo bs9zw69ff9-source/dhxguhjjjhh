@@ -84,6 +84,9 @@ public sealed class AntiDdosPanel(Access access, AntiDdosCommand antiddos, Packe
         new("export", "Export records", "📦", "Gzip JSON Lines, attached when small enough", "export",
             [new("minutes", "How many minutes back (default 1440)", "1440", Required: false, Number: true, MaxLength: 5),
              Ip with { Required = false }]),
+        new("clear", "Wipe the logs now", "🧹", "Empty packet, source and traffic logs and the capture ring", "clear",
+            [new("events", "Also clear the events? yes or no (default no)", "no", Required: false, MaxLength: 3)],
+            Fixed(("confirm", "WIPE")), Confirm: "WIPE"),
         new("unblockall", "Unblock every firewall block", "🔓", "Let every address the filter blocked back in", "tools:unblock", Confirm: "UNBLOCK"),
 
         // ── packet tools ──

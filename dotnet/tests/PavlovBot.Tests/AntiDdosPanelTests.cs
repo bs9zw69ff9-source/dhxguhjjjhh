@@ -11,7 +11,7 @@ public class AntiDdosPanelTests
     /// <summary>Every subcommand <see cref="AntiDdosCommand.RunAsync"/> knows.</summary>
     private static readonly HashSet<string> Subcommands =
     [
-        "status", "traffic", "history", "top", "detections", "bans", "crowdsec", "storage", "export", "block", "unban", "logging",
+        "status", "traffic", "history", "top", "detections", "bans", "crowdsec", "storage", "export", "block", "unban", "logging", "clear",
         "allow add", "allow remove", "allow list", "threshold set", "threshold list",
     ];
 
@@ -111,6 +111,7 @@ public class AntiDdosPanelTests
     }
 
     [Fact]
-    public void OnlyTheActionsThatLetAttackersBackInAskForAConfirmation() =>
-        Assert.Equal(["unblockall"], AntiDdosPanel.Actions.Where(a => a.Confirm is not null).Select(a => a.Key));
+    public void OnlyTheActionsThatCannotBeUndoneOrLetAttackersBackInAskForAConfirmation() =>
+        // Wiping the logs cannot be undone; unblocking everything lets every blocked address back in.
+        Assert.Equal(["clear", "unblockall"], AntiDdosPanel.Actions.Where(a => a.Confirm is not null).Select(a => a.Key));
 }

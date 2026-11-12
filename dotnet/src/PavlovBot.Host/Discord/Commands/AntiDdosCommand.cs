@@ -91,6 +91,9 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             .AddOption(Range(Sub("export", "Owner - Export a range of records for offline analysis"))
                 .AddOption("ip", ApplicationCommandOptionType.String, "Only this source address or network", isRequired: false)
                 .AddOption(kinds))
+            .AddOption(Sub("clear", "Owner - Empty the packet, source and traffic logs and the capture ring now")
+                .AddOption("confirm", ApplicationCommandOptionType.String, $"Type {ClearWord} to confirm - this cannot be undone", isRequired: true)
+                .AddOption("events", ApplicationCommandOptionType.Boolean, "Also clear the events: the audit trail of bans (default no)", isRequired: false))
             .AddOption(Sub("block", "Owner - Ban an address or network (needs CrowdSec for permanent bans and ranges)")
                 .AddOption("ip", ApplicationCommandOptionType.String, "Address or network (no wider than a /24 or /48)", isRequired: true)
                 .AddOption("duration", ApplicationCommandOptionType.String, "30m, 4h, 7d, or permanent", isRequired: true)
@@ -153,7 +156,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
 
     /// <summary>Whether a subcommand changes something, and so is the owner's.</summary>
     internal static RequiredAccess RequiredFor(string name) =>
-        name is "export" or "block" or "unban" or "logging" or "allow add" or "allow remove" or "threshold set"
+        name is "export" or "block" or "unban" or "logging" or "clear" or "allow add" or "allow remove" or "threshold set"
             ? RequiredAccess.Owner
             : RequiredAccess.Admin;
 
@@ -178,6 +181,7 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
                 case "crowdsec": await Reply(command, await CrowdSecAsync(ct).ConfigureAwait(false)).ConfigureAwait(false); break;
                 case "storage": await Reply(command, await StorageAsync(ct).ConfigureAwait(false)).ConfigureAwait(false); break;
                 case "export": await ExportAsync(command, args, actor, ct).ConfigureAwait(false); break;
+                case "clear": await ClearAsync(command, args, actor, ct).ConfigureAwait(false); break;
                 case "block": await BlockAsync(command, args, actor, ct).ConfigureAwait(false); break;
                 case "unban": await UnbanAsync(command, args, actor, ct).ConfigureAwait(false); break;
                 case "logging": await LoggingAsync(command, args, actor, ct).ConfigureAwait(false); break;
@@ -531,6 +535,29 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
             : Theme.Failure("Not banned", Sanitize.Code(problem))).ConfigureAwait(false);
     }
 
+    /// <summary>The word that has to be typed to wipe the logs, in the slash command and in the menu.</summary>
+    internal const string ClearWord = "WIPE";
+
+    private async Task ClearAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
+    {
+        // Here, not only in the menu's modal, so the slash command and the menu cannot disagree.
+        if (!string.Equals(Text(args, "confirm"), ClearWord, StringComparison.OrdinalIgnoreCase))
+        {
+            await Reply(command, Theme.Warning("Nothing was cleared", $"Type **{ClearWord}** to confirm. This cannot be undone.")).ConfigureAwait(false);
+            return;
+        }
+
+        var events = Flag(args, "events");
+        var done = await service.ClearLogsAsync(events).ConfigureAwait(false);
+        await audit.RecordAsync("antiddos-clear", actor, events ? "logs and events" : "logs", done.Skipped ?? $"{done.Files} files, {done.Bytes} bytes", ct)
+            .ConfigureAwait(false);
+        await Reply(command, done.Skipped is { } why
+            ? Theme.Warning("Nothing was cleared", $"{Sanitize.Code(why)}. Try again when it is over.")
+            : Theme.Success("Logs cleared",
+                $"{AttackReport.Bytes(done.Bytes)} freed from {done.Files:N0} file(s): the packet, source and traffic logs and the capture ring." +
+                (events ? " The events were cleared too." : " The events were kept: they are the audit trail of bans."))).ConfigureAwait(false);
+    }
+
     private async Task UnbanAsync(ReplySink command, IReadOnlyDictionary<string, object> args, string actor, CancellationToken ct)
     {
         var bad = Network(args, "ip", out var network);
@@ -725,6 +752,10 @@ public sealed class AntiDdosCommand(Access access, AuditLog audit, AntiDdosServi
 
     private static string? Text(IReadOnlyDictionary<string, object> args, string name) =>
         args.TryGetValue(name, out var v) && v is string s && s.Trim().Length > 0 ? s.Trim() : null;
+
+    /// <summary>A yes/no option: a Discord boolean, or the word a menu's text box collected.</summary>
+    private static bool Flag(IReadOnlyDictionary<string, object> args, string name) =>
+        args.TryGetValue(name, out var v) && (v is true || (v is string s && s.Trim().ToLowerInvariant() is "yes" or "y" or "true" or "on" or "1"));
 
     private static int? Int(IReadOnlyDictionary<string, object> args, string name) =>
         args.TryGetValue(name, out var v) && v is long l ? (int)Math.Clamp(l, int.MinValue, int.MaxValue) : null;

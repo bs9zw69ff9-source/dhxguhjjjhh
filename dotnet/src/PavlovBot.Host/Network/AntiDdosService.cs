@@ -256,11 +256,13 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     public void OnReportPosted(AttackReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
-        Enqueue(ct => ClearAsync(report.Start, ct));
+        Enqueue(ct => ClearAsync(report.Start, Options.ClearEvents, ct));
     }
 
-    /// <summary>Clear the logs now, as the owner could ask; null when it was not done, with why.</summary>
-    internal Task<LogsCleared> ClearLogsAsync() => RunAsync(ct => ClearAsync(null, ct));
+    /// <summary>Clear the logs now, as the owner asks. <see cref="LogsCleared.Skipped"/> says why when it was not done.</summary>
+    /// <param name="includeEvents">Clear the events too; null follows <see cref="AntiDdosOptions.ClearEvents"/>.</param>
+    internal Task<LogsCleared> ClearLogsAsync(bool? includeEvents = null) =>
+        RunAsync(ct => ClearAsync(null, includeEvents ?? Options.ClearEvents, ct));
 
     /// <summary>
     /// Empty the packet, source and traffic logs and the capture ring, and say so in the events.
@@ -275,12 +277,12 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
     /// What this does cost, honestly: the quiet hours before the attack go too, so history
     /// before it is gone.
     /// </remarks>
-    private async Task<LogsCleared> ClearAsync(DateTimeOffset? attackStart, CancellationToken ct)
+    private async Task<LogsCleared> ClearAsync(DateTimeOffset? attackStart, bool includeEvents, CancellationToken ct)
     {
         if (!Options.ClearAfterReport && attackStart is not null) return new LogsCleared(0, 0, "clear_after_report is off");
         if (Volatile.Read(ref _incident) is not null) return new LogsCleared(0, 0, "another flood is in progress");
 
-        var logs = await _log.ClearAsync(Options.ClearEvents, ct).ConfigureAwait(false);
+        var logs = await _log.ClearAsync(includeEvents, ct).ConfigureAwait(false);
         var ring = _capture?.ClearRing();
         var files = logs.Files + (ring?.Files ?? 0);
         var bytes = logs.Bytes + (ring?.Bytes ?? 0);
@@ -288,7 +290,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
         var now = _time.GetUtcNow();
         var what = string.Create(CultureInfo.InvariantCulture,
             $"{(attackStart is null ? "by request" : "after the attack report")}: {files:N0} file(s), {AttackReport.Bytes(bytes)} freed");
-        what += $" - packet, source and traffic logs{(Options.ClearEvents ? ", events" : "")} and the capture ring";
+        what += $" - packet, source and traffic logs{(includeEvents ? ", events" : "")} and the capture ring";
         if (ring is null && _capture is not null) what += " (ring kept: an attack is being captured)";
         await _log.EventAsync(new AntiDdosEvent(now, "storage", "info", Action: "cleared", Reason: what,
             Actor: attackStart is null ? "owner" : "auto",
@@ -296,7 +298,7 @@ public sealed class AntiDdosService : BackgroundService, IAttackListener
             {
                 ["files"] = files.ToString(CultureInfo.InvariantCulture),
                 ["bytes"] = bytes.ToString(CultureInfo.InvariantCulture),
-                ["events_kept"] = Options.ClearEvents ? "false" : "true",
+                ["events_kept"] = includeEvents ? "false" : "true",
             }), ct).ConfigureAwait(false);
         return new LogsCleared(files, bytes, null);
     }
