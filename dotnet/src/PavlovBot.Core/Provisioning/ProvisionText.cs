@@ -71,6 +71,12 @@ public static class ProvisionText
             ? string.Create(CultureInfo.InvariantCulture, $"Password={spec.GamePassword}\n")
             : "#Password=0000\n");
 
+        /* OMITTED WHEN THERE IS NO KEY, not written empty: an empty ServerKey= would hand the game a
+           blank credential. The value is charset-checked by ProvisionValidation, so it is safe on one
+           line unquoted - the same as Password above. */
+        if (!string.IsNullOrEmpty(spec.ServerKey))
+            sb.Append(CultureInfo.InvariantCulture, $"ServerKey={spec.ServerKey}\n");
+
         sb.Append("#BalanceTableURL=\"vankruptgames/BalancingTable/main\"\n");
 
         foreach (var map in spec.Maps)

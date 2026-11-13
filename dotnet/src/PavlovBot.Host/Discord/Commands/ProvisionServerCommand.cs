@@ -93,6 +93,7 @@ public sealed class ProvisionServerCommand(
                 "systemd only: copy server 1's install instead of downloading it with SteamCMD", isRequired: false)
             .AddOption("rconpassword", ApplicationCommandOptionType.String, "RCON password (default: a strong one is generated)", isRequired: false)
             .AddOption("gamepassword", ApplicationCommandOptionType.String, "Optional join password (default: open)", isRequired: false)
+            .AddOption("serverkey", ApplicationCommandOptionType.String, "Optional server key, written to Game.ini as ServerKey=", isRequired: false, maxLength: 128)
             .Build();
 
     private static SlashCommandOptionBuilder Port(string name, string description) =>
@@ -202,6 +203,7 @@ public sealed class ProvisionServerCommand(
             MaxPlayers = (int)(IntOption(command, "maxplayers") ?? features.DefaultServerCapacity),
             Maps = ParseMaps(StringOption(command, "maps")),
             GamePassword = StringOption(command, "gamepassword"),
+            ServerKey = StringOption(command, "serverkey"),
         };
 
         // ---- plan the slot and validate everything, reporting all problems at once ----
@@ -317,6 +319,10 @@ public sealed class ProvisionServerCommand(
 
         if (generatedPassword)
             embed.AddField("RCON password (generated - save it)", $"||`{spec.RconPassword}`||", inline: false);
+
+        // Said, but never shown: the key is a credential, and this channel is not private.
+        if (!string.IsNullOrEmpty(spec.ServerKey))
+            embed.AddField("Server key", "written to Game.ini as `ServerKey=` (value not shown)", inline: false);
 
 
         return embed.Build();
