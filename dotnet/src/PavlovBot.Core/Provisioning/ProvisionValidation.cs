@@ -33,6 +33,14 @@ public static partial class ProvisionValidation
     [GeneratedRegex(@"^[A-Za-z0-9_\-.!@%^*+=]{8,64}$")]
     private static partial Regex PasswordShape { get; }
 
+    /// <summary>
+    /// Characters allowed in a server key. It goes on one line of Game.ini, unquoted, so this
+    /// excludes <c>#</c> (a comment), quotes, backtick, <c>$</c>, whitespace and anything that could
+    /// end the line or start another setting.
+    /// </summary>
+    [GeneratedRegex(@"^[A-Za-z0-9_\-.!@%^*+=/:]{1,128}$")]
+    private static partial Regex ServerKeyShape { get; }
+
     /// <summary>A map id: a plain name or a <c>UGC</c>-prefixed workshop id. No spaces or quotes.</summary>
     [GeneratedRegex(@"^(?:UGC\d{1,20}|[A-Za-z0-9_\-]{1,64})$")]
     private static partial Regex MapIdShape { get; }
@@ -47,6 +55,9 @@ public static partial class ProvisionValidation
     /// </summary>
     [GeneratedRegex(@"^/[A-Za-z0-9_./\-]{1,200}$")]
     private static partial Regex InstallDirShape { get; }
+
+    /// <summary>Whether a string is a server key safe to write on one line of Game.ini.</summary>
+    public static bool IsValidServerKey(string? key) => key is not null && ServerKeyShape.IsMatch(key);
 
     /// <summary>Whether a string is a syntactically valid RCON password for this bot.</summary>
     public static bool IsValidPassword(string? password) =>
@@ -95,6 +106,12 @@ public static partial class ProvisionValidation
             problems.Add(
                 "The RCON password must be 8-64 characters from letters, digits and _-.!@%^*+= only " +
                 "(no spaces, quotes or #), so it is safe to write unquoted into both the server config and .env.");
+
+        // ---- server key (optional) ----
+        if (!string.IsNullOrEmpty(spec.ServerKey) && !IsValidServerKey(spec.ServerKey))
+            problems.Add(
+                "The server key must be 1-128 characters from letters, digits and _-.!@%^*+=/: only " +
+                "(no spaces, quotes or #), so it is safe to write unquoted into Game.ini.");
 
         // ---- capacity ----
         // 24 is SHACK'S HARD LIMIT, not a preference - the PC build allows 50, and this bot

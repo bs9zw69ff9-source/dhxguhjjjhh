@@ -47,4 +47,11 @@ public sealed record ServerProvisionSpec
 
     /// <summary>Optional join password for the game itself. Null or empty means an open server.</summary>
     public string? GamePassword { get; init; }
+
+    /// <summary>
+    /// Optional server key, written to Game.ini as <c>ServerKey=</c>. Null or empty writes no line.
+    /// A credential: checked by <see cref="ProvisionValidation.IsValidServerKey"/>, and never
+    /// shown in Discord or the log.
+    /// </summary>
+    public string? ServerKey { get; init; }
 }

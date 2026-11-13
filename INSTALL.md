@@ -176,6 +176,12 @@ running as root:
 curl -fsSL https://get.docker.com | sh
 ```
 
+`/provisionserver` takes an optional `serverkey`, written into the new server's `Game.ini` as
+`ServerKey=<value>`. It is 1-128 characters from letters, digits and `_-.!@%^*+=/:` (so it is safe
+on one unquoted line), and the bot never shows it in Discord or its log. Leave it out and no
+`ServerKey` line is written. It applies to new servers only; an existing server's `Game.ini` is
+not changed.
+
 Each server is one container from `powersjk/pavlov-vr-shack-server`, on host networking
 with `--restart unless-stopped`, and its entry in `PAVLOV_UNITS` is `docker:<name>`.
 Only `Pavlov/Saved` lives on the host, at `<install>/Pavlov/Saved`, owned by the image's

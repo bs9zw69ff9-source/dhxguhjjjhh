@@ -31,7 +31,8 @@ public class ProvisioningTests
         string password = "Ab1_-.!xyzZ",
         int maxPlayers = 24,
         string? gamePassword = null,
-        IReadOnlyList<MapEntry>? maps = null) =>
+        IReadOnlyList<MapEntry>? maps = null,
+        string? serverKey = null) =>
         new()
         {
             Slot = slot,
@@ -45,6 +46,7 @@ public class ProvisioningTests
             MaxPlayers = maxPlayers,
             Maps = maps ?? [new MapEntry("datacenter", "SND")],
             GamePassword = gamePassword,
+            ServerKey = serverKey,
         };
 
     // ---- config file text ----
@@ -100,6 +102,78 @@ public class ProvisioningTests
 
         Assert.Contains("MapRotation=(MapId=\"UGC1758245796\", GameMode=\"GUN\")\n", text, StringComparison.Ordinal);
         Assert.Contains("MapRotation=(MapId=\"datacenter\", GameMode=\"SND\")\n", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheProvisionCommandIsWithinDiscordsLimitsAndTakesAnOptionalServerKey()
+    {
+        // Build() touches no dependency, so none is needed.
+        var built = (global::Discord.SlashCommandProperties)new ProvisionServerCommand(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!).Build();
+
+        Assert.Empty(PavlovBot.Host.Discord.SlashCommandValidation.Problems(built));
+        var key = Assert.Single(built.Options.Value, o => o.Name == "serverkey");
+        Assert.False(key.IsRequired ?? false);
+        Assert.Equal(128, key.MaxLength);
+        Assert.Equal(global::Discord.ApplicationCommandOptionType.String, key.Type);
+    }
+
+    [Fact]
+    public void TheServerKeyIsWrittenAsServerKeyEqualsInTheDedicatedServerSection()
+    {
+        var text = ProvisionText.GameIni(Spec(serverKey: "abc-123_XYZ.+/="));
+
+        Assert.Contains("\nServerKey=abc-123_XYZ.+/=\n", text, StringComparison.Ordinal);
+        // Inside [/Script/Pavlov.DedicatedServer], which is the file's only section, and above the rotation.
+        Assert.StartsWith("[/Script/Pavlov.DedicatedServer]\n", text, StringComparison.Ordinal);
+        Assert.Equal(1, text.Split('\n').Count(l => l.StartsWith('[')));
+        Assert.True(text.IndexOf("ServerKey=", StringComparison.Ordinal) < text.IndexOf("MapRotation=", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void WithoutAServerKeyThereIsNoServerKeyLineAtAll(string? key)
+    {
+        // Not an empty "ServerKey=": that would hand the game a blank credential.
+        var text = ProvisionText.GameIni(Spec(serverKey: key));
+
+        Assert.DoesNotContain("ServerKey", text, StringComparison.Ordinal);
+        Assert.Equal(ProvisionText.GameIni(Spec()), text);
+    }
+
+    [Theory]
+    [InlineData("abc123")]
+    [InlineData("0f8fad5b-d9cb-469f-a165-70867728950e")]
+    [InlineData("A.b_c-d+e=f/g:h@i%j!k^l*m")]
+    public void AServerKeyOfSafeCharactersIsAccepted(string key)
+    {
+        Assert.True(ProvisionValidation.IsValidServerKey(key));
+        Assert.Empty(ProvisionValidation.Check(Spec(serverKey: key), [], [], []));
+    }
+
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("a#comment")]
+    [InlineData("quo\"te")]
+    [InlineData("back`tick")]
+    [InlineData("dollar$")]
+    [InlineData("tab\there")]
+    [InlineData("key\nPassword=hunter2")]       // would start another setting in Game.ini
+    [InlineData("key\r\nServerName=hijacked")]
+    [InlineData("ünïcode")]
+    public void AServerKeyThatCouldBreakTheFileIsRefusedBeforeAnythingIsWritten(string key)
+    {
+        Assert.False(ProvisionValidation.IsValidServerKey(key));
+        var problem = Assert.Single(ProvisionValidation.Check(Spec(serverKey: key), [], [], []));
+        Assert.Contains("server key", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AServerKeyIsAtMost128Characters()
+    {
+        Assert.True(ProvisionValidation.IsValidServerKey(new string('k', 128)));
+        Assert.False(ProvisionValidation.IsValidServerKey(new string('k', 129)));
+        Assert.False(ProvisionValidation.IsValidServerKey(""));   // "no key" is null or empty on the spec, not a key
     }
 
     [Fact]
