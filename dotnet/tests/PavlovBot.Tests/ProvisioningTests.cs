@@ -919,11 +919,14 @@ public class ProvisioningTests
         Assert.DoesNotContain("SteamCMD install", copy);
         Assert.DoesNotContain("SteamCMD (locate or bootstrap)", copy);
 
-        // One step shorter, and identical either side of the swap.
+        // One step shorter, and identical either side of the swap. steamclient.so is in both, right
+        // after the step that makes SteamCMD available.
         Assert.Equal(download.Count - 1, copy.Count);
         var at = download.ToList().IndexOf("SteamCMD (locate or bootstrap)");
         Assert.Equal(download.Take(at), copy.Take(at));
-        Assert.Equal(download.Skip(at + 2), copy.Skip(at + 1));
+        Assert.Equal("steamclient.so (SteamCMD app 1007)", download[at + 1]);
+        Assert.Equal("steamclient.so (SteamCMD app 1007)", copy[at + 1]);
+        Assert.Equal(download.Skip(at + 3), copy.Skip(at + 2));
     }
 
     // ---- the directories and files the guide creates ----
@@ -1198,8 +1201,9 @@ public class ProvisioningTests
             "Steam user account",
             "Remove legacy steam sudo grant",
             "SteamCMD (locate or bootstrap)",
+            "steamclient.so (SteamCMD app 1007)",
             "SteamCMD install",
-            "steamclient.so, libc++ and the launch script",
+            "libc++ and the launch script",
             "Server config (RconSettings.txt, Game.ini)",
             "Restore kept player data",
             "systemd unit (write, daemon-reload, enable --now)",

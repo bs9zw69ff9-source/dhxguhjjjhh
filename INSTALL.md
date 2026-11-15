@@ -169,17 +169,18 @@ step for step, as root, and ends with a systemd unit:
 1. the dependencies (`gdb curl lib32gcc-s1 libc++-dev unzip`, `lib32gcc1` on Ubuntu before 22.10);
    Rocky/RHEL are not touched, since the wiki's commands for them turn SELinux off machine-wide
 2. the locked `steam` account and SteamCMD
-3. `app_update 622970 -beta shack`
-4. the post-installation steps: `steamclient.so` (app 1007) copied to `~/.steam/sdk64` and
-   `Pavlov/Binaries/Linux`, the `libc++.so` link, `chmod +x PavlovServer.sh`
+3. straight after SteamCMD is there: `steamcmd.sh +login anonymous +app_update 1007 +quit`, then
+   `steamclient.so` copied to `~/.steam/sdk64` and to the install's `Pavlov/Binaries/Linux`
+4. `app_update 622970 -beta shack`, then the `libc++.so` link and `chmod +x PavlovServer.sh`
 5. `RconSettings.txt`, `Game.ini`, the `Logs` and `Config/LinuxServer` folders, and empty
    `mods.txt`, `whitelist.txt` and `blacklist.txt`
 6. the wiki's systemd unit, written as given: only the install folder and `-PORT=<port>` change
    per server (`pavlovserver` / 7777, `pavlovserver1` / 7778, and so on), then `enable --now`
 7. `ufw allow` for the game, query and RCON ports
-8. last, `[ConsoleVariables]` / `net.MaxPlayersOverride=32` added to the bottom of
-   `Pavlov/Saved/Config/LinuxServer/Engine.ini` (an existing value is left alone), and the server
-   restarted so it reads it
+8. last, if `Pavlov/Saved/Config/LinuxServer/Engine.ini` exists, `[ConsoleVariables]` /
+   `net.MaxPlayersOverride=32` is added to the bottom of it (an existing value is left alone) and
+   the server restarted so it reads it. The file is never created: if it is missing the step says
+   so and does nothing
 
 `Game.ini` is the wiki's block with your name, player cap, PIN and maps filled in. If one already
 exists it is left alone: the only thing ever added is `ServerKey=<value>`, and only when you give
