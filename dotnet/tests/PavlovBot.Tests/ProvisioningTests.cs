@@ -1141,6 +1141,25 @@ public class ProvisioningTests
     }
 
     [Fact]
+    public void EngineIniGetsTheConsoleVariablesBlockAtTheBottom()
+    {
+        Assert.Equal("[ConsoleVariables]\nnet.MaxPlayersOverride=32\n", ProvisionText.EnsureEngineIni(""));
+
+        var generated = "[/Script/Engine.GameSession]\nMaxPlayers=10\n";
+        Assert.Equal(generated + "\n[ConsoleVariables]\nnet.MaxPlayersOverride=32\n", ProvisionText.EnsureEngineIni(generated));
+    }
+
+    [Fact]
+    public void EngineIniAddsTheKeyToAnExistingConsoleVariablesSectionAndNeverTwice()
+    {
+        var existing = "[ConsoleVariables]\nfoo=1\n";
+        var once = ProvisionText.EnsureEngineIni(existing);
+
+        Assert.Equal("[ConsoleVariables]\nfoo=1\nnet.MaxPlayersOverride=32\n", once);
+        Assert.Same(once, ProvisionText.EnsureEngineIni(once));
+    }
+
+    [Fact]
     public void AnExistingServerKeyIsNeverReplaced()
     {
         var ini = LiveGameIni + "ServerKey=theirs\n";
@@ -1187,6 +1206,7 @@ public class ProvisioningTests
             "Firewall (ufw)",
             "RCON reachability",
             "Wire into the bot (.env)",
+            "Engine.ini (net.MaxPlayersOverride)",
             "Restart the bot",
         ], ServerProvisioner.StepNames);
     }
