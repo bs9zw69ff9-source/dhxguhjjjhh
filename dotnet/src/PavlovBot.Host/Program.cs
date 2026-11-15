@@ -620,8 +620,6 @@ public static class Program
         builder.Services.AddSingleton<ISlashCommand, StatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, ManualCommand>();
         builder.Services.AddSingleton<ISlashCommand, FirewallCommand>();
-        builder.Services.AddSingleton<PacketToolsCommand>();
-        builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<PacketToolsCommand>());
         /* Standing up a WHOLE NEW server - SteamCMD, a systemd unit, ufw, then a rewrite of the
            bot's own .env and a restart. A far larger privileged surface than restarting a
            configured unit, so it lives behind its own provisioner rather than on ServiceControl,
@@ -733,121 +731,6 @@ public static class Program
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
-        builder.Services.AddSingleton<IFilePostTarget>(sp => (IFilePostTarget)sp.GetRequiredService<IAutoPostTarget>());
-        /* THE ANTI-DDOS FIREWALL belongs to the bot with ATTACK_CHANNEL set, and only that one: its
-           own nftables table (inet pavlovbot_ddos), counting and logging always, dropping only with
-           ATTACK_MITIGATION=on. Every other bot on the box gets a firewall that refuses to act. */
-        var watchedInterface = features.AttackInterface ?? PavlovBot.Host.Network.LinkCounters.DefaultInterface();
-        var antiDdosPaths = new PavlovBot.Host.Network.AntiDdosPaths(features.AntiDdos.LogDirectory);
-        builder.Services.AddSingleton<PavlovBot.Host.Network.IAntiDdosFirewall>(sp => new PavlovBot.Host.Network.FloodShield(
-            new PavlovBot.Core.Network.FirewallSettings
-            {
-                // No interface found: the settings are refused and /antiddos status says why.
-                Interface = watchedInterface ?? "",
-                Limits = features.AttackLimits,
-                Enforce = features.AttackMitigation,
-                SshPorts = features.AntiDdos.SshPorts,
-                SshNewPerMinute = features.AntiDdos.SshNewPerMinute,
-                IcmpEchoPps = features.AntiDdos.IcmpEchoPps,
-                SuspectUdpPps = features.AntiDdos.SuspectUdpPps,
-                SuspectSynPerSecond = features.AntiDdos.SuspectSynPerSecond,
-                NflogGroup = features.AntiDdos.NflogGroup,
-                AlwaysPerSource = features.AntiDdos.AlwaysBlock,
-                SynBlockPps = features.AntiDdos.SynBlockPps,
-            },
-            managed: features.AttackChannel is not null,
-            sp.GetRequiredService<ILogger<PavlovBot.Host.Network.FloodShield>>(),
-            features.AttackChannel is null ? null : PavlovBot.Host.Network.FloodShield.BootScript));
-        builder.Services.AddSingleton<PavlovBot.Host.Network.IFloodShield>(sp => sp.GetRequiredService<PavlovBot.Host.Network.IAntiDdosFirewall>());
-        builder.Services.AddSingleton<PavlovBot.Host.Network.IPlayerTraffic>(sp =>
-            new PavlovBot.Host.Network.PlayerTraffic(sp.GetRequiredService<RconRegistry>(), sp.GetRequiredService<IpTrackingService>()));
-
-        /* PACKET_LOG (on with ATTACK_CHANNEL): a bounded ring of inbound packet headers, written
-           whether or not an attack is detected; an attack's pcap is cut from it. */
-        if (features.PacketLog)
-        {
-            builder.Services.AddSingleton(sp => new PavlovBot.Host.Network.PacketLog(
-                watchedInterface ?? "",
-                antiDdosPaths.Capture,
-                Path.Combine(options.DataDirectory, "attacks"),
-                features.PacketRingMegabytes,
-                keepDays: 7,
-                TimeProvider.System,
-                sp.GetRequiredService<ILogger<PavlovBot.Host.Network.PacketLog>>()));
-            builder.Services.AddHostedService(sp => sp.GetRequiredService<PavlovBot.Host.Network.PacketLog>());
-        }
-
-        if (features.AttackChannel is { } attackChannel)
-        {
-            builder.Services.AddSingleton(sp => new PavlovBot.Host.Network.AntiDdosLog(
-                antiDdosPaths, sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AntiDdosLog>>()));
-            builder.Services.AddSingleton(sp => new PavlovBot.Host.Network.AntiDdosStateStore(
-                Path.Combine(options.DataDirectory, "antiddos-state.json"), sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AntiDdosStateStore>>()));
-            builder.Services.AddSingleton<PavlovBot.Host.Network.ICrowdSec>(sp => new PavlovBot.Host.Network.CrowdSecClient(
-                features.AntiDdos.CrowdSec, sp.GetRequiredService<ILogger<PavlovBot.Host.Network.CrowdSecClient>>(), TimeProvider.System));
-            builder.Services.AddSingleton(sp => new PavlovBot.Host.Network.AntiDdosService(
-                features.AntiDdos,
-                features.AttackLimits,
-                watchedInterface ?? "",
-                sp.GetRequiredService<PavlovBot.Host.Network.IAntiDdosFirewall>(),
-                sp.GetRequiredService<PavlovBot.Host.Network.ICrowdSec>(),
-                sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosLog>(),
-                sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosStateStore>(),
-                sp.GetRequiredService<PavlovBot.Host.Network.IPlayerTraffic>(),
-                sp.GetService<PavlovBot.Host.Network.PacketLog>(),
-                // Resolved when an alert is sent, not now: the gateway depends on /antiddos, which
-                // depends on this service, so taking the gateway here closes a cycle the container
-                // never finishes building (it hung --selftest).
-                new LazyAutoPostTarget(sp),
-                iface => PavlovBot.Host.Network.LinkCounters.Read(iface),
-                PavlovBot.Host.Network.DiskSpace.Read,
-                TimeProvider.System,
-                sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AntiDdosService>>(),
-                iface => PavlovBot.Host.Network.LinkHealthReader.Read(iface),
-                // Beside the firewall's boot copy: survives the bot, its deploys and reboots.
-                new PavlovBot.Host.Network.ReadingStore(
-                    Path.Combine(Path.GetDirectoryName(PavlovBot.Host.Network.FloodShield.BootScript)!, "last-reading.json"),
-                    sp.GetRequiredService<ILogger<PavlovBot.Host.Network.ReadingStore>>())));
-            builder.Services.AddHostedService(sp => sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosService>());
-            builder.Services.AddSingleton<AntiDdosCommand>();
-            builder.Services.AddSingleton<ISlashCommand>(sp => sp.GetRequiredService<AntiDdosCommand>());
-            // The same actions as an Anti-DDoS menu in /configure.
-            builder.Services.AddSingleton<AntiDdosPanel>();
-            builder.Services.AddSingleton<IComponentHandler>(sp => sp.GetRequiredService<AntiDdosPanel>());
-
-            builder.Services.AddHostedService(sp =>
-            {
-                var monitorLogger = sp.GetRequiredService<ILogger<PavlovBot.Host.Network.AttackMonitor>>();
-                var packetLog = sp.GetService<PavlovBot.Host.Network.PacketLog>();
-                return new PavlovBot.Host.Network.AttackMonitor(
-                    attackChannel,
-                    watchedInterface,
-                    new PavlovBot.Core.Network.FloodThresholds(features.AttackPps, features.AttackMbps),
-                    Path.Combine(options.DataDirectory, "attacks"),
-                    iface => PavlovBot.Host.Network.LinkCounters.Read(iface),
-                    sp.GetRequiredService<PavlovBot.Host.Network.IPlayerTraffic>(),
-                    (iface, pcap, recorder, addresses) =>
-                    {
-                        // The breakdown always comes from a tshark of its own; the pcap from the
-                        // always-on ring when it is running, which already holds the attack's start.
-                        var ring = pcap is not null && packetLog is { Running: true } && packetLog.Interface == iface;
-                        var (capture, problem) = PavlovBot.Host.Network.TsharkCapture.Start(iface, ring ? null : pcap,
-                            packet => recorder.Add(packet, addresses().Contains(packet.Source)), monitorLogger);
-                        if (capture is null || !ring) return (capture, problem);
-                        return (new PavlovBot.Host.Network.CompositeCapture(capture, packetLog!.Attach(pcap!)), null);
-                    },
-                    sp.GetRequiredService<PavlovBot.Host.Network.IFloodShield>(),
-                    sp.GetRequiredService<IAutoPostTarget>(),
-                    sp.GetRequiredService<IFilePostTarget>(),
-                    TimeProvider.System,
-                    monitorLogger,
-                    () => sp.GetRequiredService<DiscordGateway>().IsReady,
-                    listener: sp.GetRequiredService<PavlovBot.Host.Network.AntiDdosService>(),
-                    portNames: features.AttackPortNames,
-                    banMinPackets: features.AntiDdos.FloodBanMinPackets);
-            });
-        }
-
         // ---- server monitoring: probe -> state machine -> alerts + history, on the background timer ----
         builder.Services.AddSingleton(sp => new PavlovBot.Host.Monitoring.MonitorHistory(
             sp.GetRequiredService<SerializedStore>(), TimeProvider.System));
