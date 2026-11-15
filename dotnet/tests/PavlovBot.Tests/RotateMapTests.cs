@@ -207,6 +207,24 @@ public class RotateMapTests
             ServiceControl.ParseUnits("pavlov-c, pavlov-a, pavlov-b"));
     }
 
+    [Theory]
+    [InlineData("docker:pavlovserver, docker:pavlovserver1, docker:pavlovserver2")]
+    [InlineData("DOCKER:pavlovserver,  pavlovserver1 ,docker:pavlovserver2")]
+    public void ALegacyDockerEntryKeepsItsSlotAsTheUnitOfTheSameName(string configured)
+    {
+        // An older, Docker-running build wrote these. Dropping one as invalid would shift every server
+        // after it down a slot, so the prefix goes and the entry stays where it was.
+        Assert.Equal(["pavlovserver", "pavlovserver1", "pavlovserver2"], ServiceControl.ParseUnits(configured));
+    }
+
+    [Fact]
+    public void ALegacyDockerEntryInTheMiddleDoesNotRenumberTheServersAfterIt()
+    {
+        Assert.Equal(["pavlovserver", "pavlovserver1", "pavlovserver2"],
+            ServiceControl.ParseUnits("pavlovserver, docker:pavlovserver1, pavlovserver2"));
+        Assert.Equal(["pavlovserver", "pavlovserver2"], ServiceControl.ParseUnits("pavlovserver, bad name, docker:pavlovserver2"));
+    }
+
     [Fact]
     public void AGarbledUnitInTheListIsDroppedRatherThanTakingTheRestWithIt()
     {

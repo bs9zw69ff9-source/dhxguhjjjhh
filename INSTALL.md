@@ -140,11 +140,6 @@ pavlovbot ALL=(root) NOPASSWD: /usr/sbin/ufw
 The ufw line is only for `/firewall`. As a non-root user the bot calls both through
 `sudo -n`, so a missing grant fails with a message instead of hanging.
 
-**Docker servers need a root bot.** Controlling a container means talking to the Docker
-daemon, and a sudoers line for `docker`, or membership of the `docker` group, is root
-in all but name, so there is no narrow grant to give. If your servers are `docker:`
-entries, run the bot as root.
-
 Getting group permissions wrong does not fail loudly. Reads succeed and writes fail,
 so `/whitelist add` answers "the roster could not be written" while everything else
 looks healthy.
@@ -166,49 +161,22 @@ passwd -l steam
 (`/provisionserver` now removes that sudoers file itself when it runs, but only
 then.)
 
-### Game servers in Docker
+### Provisioning a game server
 
-`/provisionserver` builds new servers as Docker containers (set `PAVLOV_RUNTIME=systemd`
-for the old SteamCMD-and-systemd way). It needs Docker Engine on the box and the bot
-running as root:
+`/provisionserver` builds a new server as a systemd unit: it creates the `steam` account, installs
+the game with SteamCMD, writes the server's config, and enables and starts the unit.
 
-```bash
-curl -fsSL https://get.docker.com | sh
-```
+**Coming from the Docker build.** Servers run under systemd only now. If this box ran them as
+Docker containers, `scripts/migrate-from-docker.sh` moves them over without losing data: it shows the
+plan first, and with `--yes` backs up each server's `Saved` folder, parks its player data where
+`/provisionserver` restores it from, and removes the container. A leftover `docker:` prefix in
+`PAVLOV_UNITS` is ignored, so each server keeps its slot.
 
-`/provisionserver` takes an optional `serverkey`, written into the new server's `Game.ini` as
+It takes an optional `serverkey`, written into the new server's `Game.ini` as
 `ServerKey=<value>`. It is 1-128 characters from letters, digits and `_-.!@%^*+=/:` (so it is safe
 on one unquoted line), and the bot never shows it in Discord or its log. Leave it out and no
 `ServerKey` line is written. It applies to new servers only; an existing server's `Game.ini` is
 not changed.
-
-Each server is one container from `powersjk/pavlov-vr-shack-server`, on host networking
-with `--restart unless-stopped`, and its entry in `PAVLOV_UNITS` is `docker:<name>`.
-Only `Pavlov/Saved` lives on the host, at `<install>/Pavlov/Saved`, owned by the image's
-user (uid 1000). The game updates itself every time the container starts, so a restart
-after a Pavlov update is enough.
-
-**Moving an existing systemd server into Docker** keeps its players' data, because the
-container mounts the same `Pavlov/Saved`. For server 3 (`pavlovserver2`):
-
-```bash
-systemctl disable --now pavlovserver2
-rm /etc/systemd/system/pavlovserver2.service && systemctl daemon-reload
-chown -R 1000:1000 /home/steam/pavlovserver2/Pavlov/Saved
-docker run -d --name pavlovserver2 --restart unless-stopped --network host \
-  --stop-timeout 30 --label pavlovbot.managed=true --label pavlovbot.slot=3 \
-  -e SERVER_NAME=pavlovserver2 -e SERVER_PORT=7779 \
-  -v /home/steam/pavlovserver2/Pavlov/Saved:/home/steam/pavlovserver/Pavlov/Saved \
-  powersjk/pavlov-vr-shack-server:1.8.0
-```
-
-Use that server's own game port for `SERVER_PORT`. Then change its entry in
-`PAVLOV_UNITS` from `pavlovserver2` to `docker:pavlovserver2` and restart the bot
-(or leave `PAVLOV_UNITS` blank: the label lets the bot find the container itself).
-
-Everything that used to act on the systemd service now acts on the container:
-`/serverswitch`, `/testmode`, crash recovery, the player-count channels, `/monitor`
-and `/server status` (CPU, memory, uptime from `docker stats`), and `/deleteserver`.
 
 ---
 
