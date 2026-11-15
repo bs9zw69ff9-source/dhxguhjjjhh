@@ -136,7 +136,7 @@ public sealed class ProvisionServerCommand(
         // ---- read the existing layout straight from configuration (not the defaulted views) ----
         var usedIndices = UsedRconIndices();
         var existingRconPorts = options.Servers.Select(s => s.Port).ToList();
-        var existingUnits = SplitList(configuration["PAVLOV_UNITS"]);
+        var existingUnits = SplitList(configuration["PAVLOV_UNITS"]).Select(PavlovBot.Host.Servers.ServiceControl.WithoutLegacyDockerPrefix).ToList();
         var existingBases = SplitList(configuration["PAVLOV_BASES"]);
 
         /* THE DISK DECIDES WHICH SLOT, not the count of .env entries. A configured slot with no

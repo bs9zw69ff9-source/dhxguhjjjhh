@@ -208,8 +208,8 @@ public class ProvisioningTests
     {
         /* THE WIKI'S UNIT, byte for byte, with only the install directory filled in. No After=, no
            Wants=, no Restart=on-failure, no extra hardening: a byte-for-byte golden is the only
-           assertion that catches somebody "improving" it. Server 1 listens on the game's default
-           port, so it carries no -PORT. */
+           assertion that catches somebody "improving" it. Every server carries its own -PORT,
+           the first one included (-PORT=7777). */
         var expected =
             "[Unit]\n" +
             "Description=Pavlov VR dedicated server\n" +
@@ -217,7 +217,7 @@ public class ProvisioningTests
             "[Service]\n" +
             "Type=simple\n" +
             "WorkingDirectory=/home/steam/pavlovserver\n" +
-            "ExecStart=/home/steam/pavlovserver/PavlovServer.sh\n" +
+            "ExecStart=/home/steam/pavlovserver/PavlovServer.sh -PORT=7777\n" +
             "\n" +
             "RestartSec=1\n" +
             "Restart=always\n" +
@@ -231,12 +231,14 @@ public class ProvisioningTests
     }
 
     [Fact]
-    public void ASecondServerOnTheSameMachineAddsOnlyThePortTheWikiGivesForIt()
+    public void ASecondServerChangesOnlyItsDirectoryAndItsPort()
     {
-        var text = ProvisionText.SystemdUnit(Spec(slot: 2, unit: "pavlovserver1", dir: "/home/steam/pavlovserver1", game: 7778));
+        var first = ProvisionText.SystemdUnit(Spec(slot: 1, unit: "pavlovserver", dir: "/home/steam/pavlovserver", game: 7777));
+        var second = ProvisionText.SystemdUnit(Spec(slot: 2, unit: "pavlovserver1", dir: "/home/steam/pavlovserver1", game: 7778));
 
-        Assert.Contains("ExecStart=/home/steam/pavlovserver1/PavlovServer.sh -PORT=7778\n", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("-PORT", text.Replace(" -PORT=7778", "", StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Equal(first
+            .Replace("/home/steam/pavlovserver", "/home/steam/pavlovserver1", StringComparison.Ordinal)
+            .Replace("-PORT=7777", "-PORT=7778", StringComparison.Ordinal), second);
     }
 
     // ---- editing one setting in an existing Game.ini ----
@@ -803,8 +805,7 @@ public class ProvisioningTests
             slot: slot, unit: unit, dir: installDir, game: ServerPortDefaults.GamePort(slot)));
 
         Assert.Contains($"WorkingDirectory={expectedDir}\n", text, StringComparison.Ordinal);
-        var portArg = expectedGamePort == 7777 ? "" : $" -PORT={expectedGamePort}";
-        Assert.Contains($"ExecStart={expectedDir}/PavlovServer.sh{portArg}\n", text, StringComparison.Ordinal);
+        Assert.Contains($"ExecStart={expectedDir}/PavlovServer.sh -PORT={expectedGamePort}\n", text, StringComparison.Ordinal);
     }
 
     // ---- finding SteamCMD ----
@@ -1156,6 +1157,15 @@ public class ProvisioningTests
         var updated = ProvisionText.EnsureGameIniSetting("[/Script/Pavlov.DedicatedServer]\n#ServerKey=old\n", "ServerKey", "new");
 
         Assert.Contains("\nServerKey=new\n", updated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeletingAlsoLooksForAndRemovesALegacyDockerContainerByTheUnitName()
+    {
+        Assert.Equal(["container", "inspect", "--format", "{{.Id}}", "pavlovserver2"], ServerProvisioner.DockerExistsArgv("pavlovserver2"));
+        Assert.Equal(["rm", "-f", "pavlovserver2"], ServerProvisioner.DockerRemoveArgv("pavlovserver2"));
+        // A "docker:" entry in PAVLOV_UNITS names the same container once the prefix is dropped.
+        Assert.Equal("pavlovserver2", ServiceControl.WithoutLegacyDockerPrefix("docker:pavlovserver2"));
     }
 
     // ---- the checklist itself: real step list, real cursor ----

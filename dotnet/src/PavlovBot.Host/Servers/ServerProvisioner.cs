@@ -557,6 +557,29 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         return await RestartAsync(run, $"to bring server {spec.Slot} online", ct).ConfigureAwait(false);
     }
 
+    /// <summary>Whether a Docker container of this name exists, running or not.</summary>
+    internal static IReadOnlyList<string> DockerExistsArgv(string container) =>
+        ["container", "inspect", "--format", "{{.Id}}", container];
+
+    /// <summary><c>docker rm -f</c>: stop and remove in one step.</summary>
+    internal static IReadOnlyList<string> DockerRemoveArgv(string container) => ["rm", "-f", container];
+
+    /// <summary>
+    /// Remove the Docker container a pre-systemd build made for this unit name, if there is one.
+    /// </summary>
+    /// <returns>Whether one was removed, or a problem when it exists and could not be.</returns>
+    private async Task<(bool Removed, string? Problem)> RemoveLegacyContainerAsync(string name, CancellationToken ct)
+    {
+        var exists = await RunAsync(null, "docker", DockerExistsArgv(name), SystemctlTimeout, ct).ConfigureAwait(false);
+        // Not started: no docker binary. Not Ok: no such container. Either way there is nothing to remove.
+        if (!exists.Started || !exists.Ok) return (false, null);
+
+        var remove = await RunAsync(null, "docker", DockerRemoveArgv(name), SteamCmdTimeout, ct).ConfigureAwait(false);
+        return remove.Ok
+            ? (true, null)
+            : (false, $"Docker container {name} exists but could not be removed: {Tail(remove.Combined)}");
+    }
+
     public async Task<ProvisionOutcome> DeleteAsync(
         DeleteRequest request,
         Func<IReadOnlyList<ProvisionStep>, Task> onProgress,
@@ -589,7 +612,20 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
            "failure" that is actually the goal. */
         await run.Start($"stopping {request.UnitName}…").ConfigureAwait(false);
         var stop = await RunAsync(null, "systemctl", ["disable", "--now", request.UnitName], SystemctlTimeout, ct).ConfigureAwait(false);
-        await run.Ok(stop.Ok ? "stopped and disabled." : $"already stopped or absent ({Tail(stop.Combined, 200)}).").ConfigureAwait(false);
+        var stopNote = stop.Ok ? "stopped and disabled." : $"already stopped or absent ({Tail(stop.Combined, 200)}).";
+
+        /* A SERVER THAT STILL RUNS AS A DOCKER CONTAINER IS REMOVED TOO. Servers built by the Docker
+           version of this bot are containers named after their unit, and a delete that only knew
+           systemd would leave one running on the same ports, with its restart policy, long after
+           its install and .env entry were gone. Looked for on every delete rather than flagged, so
+           it needs no setting and a box with no Docker is simply skipped. */
+        var container = await RemoveLegacyContainerAsync(request.UnitName, ct).ConfigureAwait(false);
+        if (container.Problem is not null)
+        {
+            await run.Fail(container.Problem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok(container.Removed ? $"{stopNote} Docker container {request.UnitName} stopped and removed too." : stopNote).ConfigureAwait(false);
 
         // ---- remove the unit ----
         await run.Start($"removing {unitPath}…").ConfigureAwait(false);
