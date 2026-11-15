@@ -177,6 +177,9 @@ step for step, as root, and ends with a systemd unit:
 6. the wiki's systemd unit, written as given: only the install folder and `-PORT=<port>` change
    per server (`pavlovserver` / 7777, `pavlovserver1` / 7778, and so on), then `enable --now`
 7. `ufw allow` for the game, query and RCON ports
+8. last, `[ConsoleVariables]` / `net.MaxPlayersOverride=32` added to the bottom of
+   `Pavlov/Saved/Config/LinuxServer/Engine.ini` (an existing value is left alone), and the server
+   restarted so it reads it
 
 `Game.ini` is the wiki's block with your name, player cap, PIN and maps filled in. If one already
 exists it is left alone: the only thing ever added is `ServerKey=<value>`, and only when you give

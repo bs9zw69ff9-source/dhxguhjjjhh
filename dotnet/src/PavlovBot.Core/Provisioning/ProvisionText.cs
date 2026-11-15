@@ -101,7 +101,30 @@ public static class ProvisionText
     /// line is not the setting, so it does not count and the line is still added.
     /// </remarks>
     /// <returns>The text to write: <paramref name="existing"/> itself when nothing needs adding.</returns>
-    public static string EnsureGameIniSetting(string existing, string key, string value)
+    public static string EnsureGameIniSetting(string existing, string key, string value) =>
+        EnsureIniSetting(existing, GameIniSection, key, value);
+
+    /// <summary>The section of <c>Engine.ini</c> the player-cap override lives in.</summary>
+    public const string EngineIniSection = "[ConsoleVariables]";
+
+    /// <summary>The Engine.ini key that lifts the engine's player cap, and the value the provision sets.</summary>
+    public const string EngineIniKey = "net.MaxPlayersOverride";
+
+    /// <summary>The value of <see cref="EngineIniKey"/>.</summary>
+    public const int EngineIniMaxPlayers = 32;
+
+    /// <summary>
+    /// <c>[ConsoleVariables]</c> / <c>net.MaxPlayersOverride=32</c> added to the bottom of an Engine.ini.
+    /// </summary>
+    /// <remarks>
+    /// Same rule as the Game.ini edit: nothing else in the file is touched, and a key that is
+    /// already set there is left as it is.
+    /// </remarks>
+    public static string EnsureEngineIni(string existing) =>
+        EnsureIniSetting(existing, EngineIniSection, EngineIniKey, EngineIniMaxPlayers.ToString(CultureInfo.InvariantCulture));
+
+    /// <summary>The shared edit behind <see cref="EnsureGameIniSetting"/> and <see cref="EnsureEngineIni"/>.</summary>
+    private static string EnsureIniSetting(string existing, string section, string key, string value)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
         existing ??= "";
@@ -116,11 +139,11 @@ public static class ProvisionText
             if (equals > 0 && trimmed[..equals].Trim().Equals(key, StringComparison.OrdinalIgnoreCase)) return existing;
         }
 
-        var header = lines.FindIndex(l => l.Trim().Equals(GameIniSection, StringComparison.OrdinalIgnoreCase));
+        var header = lines.FindIndex(l => l.Trim().Equals(section, StringComparison.OrdinalIgnoreCase));
         if (header < 0)
         {
             var body = existing.Length == 0 || existing.EndsWith('\n') ? existing : existing + "\n";
-            return body + (body.Length > 0 ? "\n" : "") + $"{GameIniSection}\n{key}={value}\n";
+            return body + (body.Length > 0 ? "\n" : "") + $"{section}\n{key}={value}\n";
         }
 
         // The end of the section: the next header, or the end of the file - before any blank lines that close it.

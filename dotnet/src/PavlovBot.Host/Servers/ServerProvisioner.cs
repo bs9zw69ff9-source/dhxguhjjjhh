@@ -69,6 +69,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Firewall (ufw)",
         "RCON reachability",
         "Wire into the bot (.env)",
+        "Engine.ini (net.MaxPlayersOverride)",
         "Restart the bot",
     ];
 
@@ -87,6 +88,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Firewall (ufw)",
         "RCON reachability",
         "Wire into the bot (.env)",
+        "Engine.ini (net.MaxPlayersOverride)",
         "Restart the bot",
     ];
 
@@ -553,6 +555,19 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok($"added as server {spec.Slot}.").ConfigureAwait(false);
 
+        /* ---- the final step: Engine.ini ----
+           Last of the provision's own work, and BEFORE the bot restarts itself - once that SIGTERM
+           is sent nothing after it runs. The game reads Engine.ini only when it starts, and by now
+           it is already running, so the server is restarted for the setting to count. */
+        await run.Start("adding net.MaxPlayersOverride=32 to Engine.ini…").ConfigureAwait(false);
+        var (engineProblem, engineNote) = await WriteEngineIniAsync(spec, ct).ConfigureAwait(false);
+        if (engineProblem is not null)
+        {
+            await run.Fail(engineProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        await run.Ok(engineNote).ConfigureAwait(false);
+
         // ---- restart the bot ----
         return await RestartAsync(run, $"to bring server {spec.Slot} online", ct).ConfigureAwait(false);
     }
@@ -973,6 +988,35 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
 
         return (null, note);
+    }
+
+    /// <summary>
+    /// Append <c>[ConsoleVariables]</c> / <c>net.MaxPlayersOverride=32</c> to the server's Engine.ini,
+    /// then restart the server so it reads it.
+    /// </summary>
+    private async Task<(string? Problem, string Note)> WriteEngineIniAsync(ServerProvisionSpec spec, CancellationToken ct)
+    {
+        var path = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "Config", "LinuxServer", "Engine.ini");
+        string updated;
+        try
+        {
+            var existing = File.Exists(path) ? await File.ReadAllTextAsync(path, ct).ConfigureAwait(false) : "";
+            updated = ProvisionText.EnsureEngineIni(existing);
+            if (!ReferenceEquals(updated, existing) && updated != existing)
+                await AtomicFile.WriteAsync(path, updated, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return ($"could not write {path}: {ex.Message}", "");
+        }
+
+        var chown = await RunAsync(null, "chown", [SteamUser, path], QuickTimeout, ct).ConfigureAwait(false);
+        if (!chown.Ok) return ($"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}", "");
+
+        var restart = await RunAsync(null, "systemctl", ["restart", spec.UnitName], SystemctlTimeout, ct).ConfigureAwait(false);
+        return restart.Ok
+            ? (null, $"{ProvisionText.EngineIniSection} {ProvisionText.EngineIniKey}={ProvisionText.EngineIniMaxPlayers} is in Engine.ini and {spec.UnitName} was restarted to read it.")
+            : (null, $"{ProvisionText.EngineIniKey} is in Engine.ini, but restarting {spec.UnitName} failed ({Tail(restart.Combined, 200)}) - restart it yourself for the setting to apply.");
     }
 
     /// <summary>The wiki's steps 1 and 2. A problem stops the run; a note is what the checklist says.</summary>
