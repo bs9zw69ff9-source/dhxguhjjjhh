@@ -402,50 +402,6 @@ public sealed record FeatureOptions
     /// <summary>The raw <c>PAVLOV_RUNTIME</c>, for the refusal when it is not a runtime.</summary>
     public string? ProvisionRuntimeSetting { get; init; }
 
-    /// <summary>
-    /// Where DDoS alerts and attack summaries go (<c>ATTACK_CHANNEL</c>). Null leaves the monitor off.
-    /// </summary>
-    public ulong? AttackChannel { get; init; }
-
-    /// <summary>The interface to watch (<c>ATTACK_INTERFACE</c>). Null uses the one the default route leaves by.</summary>
-    public string? AttackInterface { get; init; }
-
-    /// <summary>Packets a second that always count as an attack (<c>ATTACK_PPS</c>).</summary>
-    public int AttackPps { get; init; } = 20_000;
-
-    /// <summary>Megabits a second that always count as an attack (<c>ATTACK_MBPS</c>).</summary>
-    public int AttackMbps { get; init; } = 200;
-
-    /// <summary>
-    /// Whether this bot blocks and rate-limits floods with nftables (<c>ATTACK_MITIGATION</c>). Off by default.
-    /// </summary>
-    /// <remarks>
-    /// OFF UNLESS SET, and only ever on ONE bot per box: the firewall is the host's, and two bots
-    /// managing one table would undo each other's limits.
-    /// </remarks>
-    public bool AttackMitigation { get; init; }
-
-    /// <summary>The shield's limits: ATTACK_GAME_PORTS, ATTACK_PER_IP_PPS, ATTACK_UNKNOWN_PPS, ATTACK_BLOCK_MINUTES.</summary>
-    public PavlovBot.Core.Network.ShieldLimits AttackLimits { get; init; } = new();
-
-    /// <summary>Game ports by server name for the attack report (<c>ATTACK_PORT_NAMES=7777:shack-04,7779:shack-05</c>).</summary>
-    public IReadOnlyDictionary<ushort, string> AttackPortNames { get; init; } = new Dictionary<ushort, string>();
-
-    /// <summary>
-    /// Whether every inbound header and every source address is logged all the time (<c>PACKET_LOG</c>).
-    /// </summary>
-    /// <remarks>
-    /// ON WITH THE DDOS MONITOR unless set off, OFF without it unless set on: one bot per box
-    /// should log, and that is the one already watching the interface.
-    /// </remarks>
-    public bool PacketLog { get; init; }
-
-    /// <summary>The disk the rolling header capture may use, in megabytes (<c>PACKET_RING_MB</c>).</summary>
-    public int PacketRingMegabytes { get; init; } = 2048;
-
-    /// <summary>The anti-DDoS firewall, logging and CrowdSec settings (<c>ANTIDDOS_*</c>).</summary>
-    public AntiDdosOptions AntiDdos { get; init; } = new();
-
     /// <summary>The image a new Docker server runs (<c>PAVLOV_DOCKER_IMAGE</c>).</summary>
     public string DockerImage { get; init; } = PavlovBot.Host.Servers.DockerCli.DefaultImage;
 
@@ -580,54 +536,6 @@ public sealed record FeatureOptions
             ThemeName = Text(configuration, "THEME"),
             BanLogChannel = Snowflake(configuration, "BAN_LOG_CHANNEL"),
             PoliceLogChannel = Snowflake(configuration, "POLICE_LOG_CHANNEL"),
-            AttackChannel = Snowflake(configuration, "ATTACK_CHANNEL"),
-            AttackInterface = Text(configuration, "ATTACK_INTERFACE"),
-            AttackPps = Int(configuration, "ATTACK_PPS", 20_000),
-            AttackMbps = Int(configuration, "ATTACK_MBPS", 200),
-            AttackMitigation = Flag(configuration, "ATTACK_MITIGATION"),
-            AttackLimits = new PavlovBot.Core.Network.ShieldLimits(
-                Text(configuration, "ATTACK_GAME_PORTS") ?? new PavlovBot.Core.Network.ShieldLimits().GamePorts,
-                Int(configuration, "ATTACK_PER_IP_PPS", 1000),
-                Int(configuration, "ATTACK_UNKNOWN_PPS", 5000),
-                Int(configuration, "ATTACK_BLOCK_MINUTES", 10)),
-            AttackPortNames = PavlovBot.Core.Network.AttackReport.ParsePortNames(Text(configuration, "ATTACK_PORT_NAMES")),
-            PacketLog = OptionalFlag(configuration, "PACKET_LOG") ?? Snowflake(configuration, "ATTACK_CHANNEL") is not null,
-            AntiDdos = new AntiDdosOptions
-            {
-                LogDirectory = Text(configuration, "ANTIDDOS_LOG_DIR") ?? AntiDdosOptions.DefaultLogDirectory,
-                SshPorts = Text(configuration, "ANTIDDOS_SSH_PORTS") ?? "22",
-                SshNewPerMinute = Int(configuration, "ANTIDDOS_SSH_NEW_PER_MINUTE", 30),
-                IcmpEchoPps = Int(configuration, "ANTIDDOS_ICMP_PPS", 50),
-                SuspectUdpPps = Int(configuration, "ANTIDDOS_SUSPECT_UDP_PPS", 300),
-                SuspectSynPerSecond = Int(configuration, "ANTIDDOS_SUSPECT_SYN_PPS", 20),
-                NflogGroup = Int(configuration, "ANTIDDOS_NFLOG_GROUP", 7),
-                AlwaysBlock = OptionalFlag(configuration, "ANTIDDOS_ALWAYS_BLOCK") != false,
-                SynBlockPps = Int(configuration, "ANTIDDOS_SYN_BLOCK_PPS", 50),
-                SynPerMinute = Int(configuration, "ANTIDDOS_SYN_PER_MINUTE", 120),
-                PortSpread = Int(configuration, "ANTIDDOS_PORT_SPREAD", 50),
-                AutoBan = OptionalFlag(configuration, "ANTIDDOS_AUTOBAN") != false,
-                EscalateAfter = Int(configuration, "ANTIDDOS_ESCALATE_AFTER", 3),
-                CorrelationMinutes = Int(configuration, "ANTIDDOS_CORRELATION_MINUTES", 10),
-                BanMinutes = Int(configuration, "ANTIDDOS_BAN_MINUTES", 60),
-                MaxBanHours = Int(configuration, "ANTIDDOS_MAX_BAN_HOURS", 168),
-                MaxBansPerHour = Int(configuration, "ANTIDDOS_MAX_BANS_PER_HOUR", 30),
-                SpoofSources = Int(configuration, "ANTIDDOS_SPOOF_SOURCES", 5000),
-                AttackPermaban = OptionalFlag(configuration, "ANTIDDOS_ATTACK_PERMABAN") != false,
-                AttackBansPerHour = Int(configuration, "ANTIDDOS_ATTACK_BANS_PER_HOUR", 300),
-                ClearAfterReport = OptionalFlag(configuration, "ANTIDDOS_CLEAR_AFTER_REPORT") != false,
-                ClearEvents = OptionalFlag(configuration, "ANTIDDOS_CLEAR_EVENTS") == true,
-                FloodBanMinPackets = Math.Max(1, Int(configuration, "ANTIDDOS_FLOOD_BAN_MIN_PACKETS", 50)),
-                LogMode = AntiDdosOptions.ModeFrom(Text(configuration, "ANTIDDOS_LOG_MODE")),
-                IncidentMinutes = Int(configuration, "ANTIDDOS_INCIDENT_MINUTES", 30),
-                AutoIncident = OptionalFlag(configuration, "ANTIDDOS_AUTO_INCIDENT") != false,
-                MaxLogMegabytes = Int(configuration, "ANTIDDOS_LOG_MAX_MB", 2048),
-                WarnFreePercent = Int(configuration, "ANTIDDOS_WARN_FREE_PERCENT", 20),
-                PressureFreePercent = Int(configuration, "ANTIDDOS_PRESSURE_FREE_PERCENT", 10),
-                ReserveMegabytes = Int(configuration, "ANTIDDOS_RESERVE_MB", 2048),
-                CrowdSec = OptionalFlag(configuration, "ANTIDDOS_CROWDSEC") != false,
-                AlertChannel = Snowflake(configuration, "ANTIDDOS_ALERT_CHANNEL") ?? Snowflake(configuration, "ATTACK_CHANNEL"),
-            },
-            PacketRingMegabytes = Int(configuration, "PACKET_RING_MB", 2048),
             ArrestChannel = Snowflake(configuration, "ARREST_CHANNEL"),
             CommandLogChannel = Snowflake(configuration, "COMMAND_LOG_CHANNEL"),
             JoinWebhook = Text(configuration, "JOIN_WEBHOOK_URL"),
