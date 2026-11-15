@@ -61,8 +61,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Steam user account",
         "Remove legacy steam sudo grant",
         "SteamCMD (locate or bootstrap)",
+        "steamclient.so (SteamCMD app 1007)",
         "SteamCMD install",
-        "steamclient.so, libc++ and the launch script",
+        "libc++ and the launch script",
         "Server config (RconSettings.txt, Game.ini)",
         "Restore kept player data",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -81,7 +82,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         "Steam user account",
         "Remove legacy steam sudo grant",
         "Copy an existing install",
-        "steamclient.so, libc++ and the launch script",
+        "steamclient.so (SteamCMD app 1007)",
+        "libc++ and the launch script",
         "Server config (RconSettings.txt, Game.ini)",
         "Restore kept player data",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -382,6 +384,36 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         // ---- the game files: copied from a working install, or downloaded with SteamCMD ----
         string? steamCmd = null;
+
+        /* THE STEAMCLIENT STEP, RIGHT AFTER STEAMCMD IS THERE. In a download run that is straight
+           after SteamCMD is located and before the game is fetched; in a copy run SteamCMD was never
+           looked for, so it is found here. One run.Start for both, which is what the checklist
+           count test expects of a step shared by the two branches. Returns null to carry on, or the
+           aborted outcome. */
+        async Task<ProvisionOutcome?> InstallSteamClientAsync()
+        {
+            await run.Start("fetching steamclient.so with SteamCMD (app 1007) and copying it into place…").ConfigureAwait(false);
+            if (steamCmd is null)
+            {
+                var (located, locateFailure, _) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
+                steamCmd = located;
+                if (steamCmd is null)
+                {
+                    await run.Fail(locateFailure ?? "could not find or install SteamCMD.").ConfigureAwait(false);
+                    return await run.Abort().ConfigureAwait(false);
+                }
+            }
+
+            var (clientProblem, clientNote) = await SteamClientAsync(spec, steamCmd, ct).ConfigureAwait(false);
+            if (clientProblem is not null)
+            {
+                await run.Fail(clientProblem).ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            await run.Ok(clientNote).ConfigureAwait(false);
+            return null;
+        }
+
         if (copying)
         {
             var source = request.CopyFromInstallDir!;
@@ -419,6 +451,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             }
 
             await run.Ok($"copied from {source}.").ConfigureAwait(false);
+
+            if (await InstallSteamClientAsync().ConfigureAwait(false) is { } copyAborted) return copyAborted;
         }
         else
         {
@@ -434,6 +468,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             await run.Ok(bootstrapped
                 ? $"not installed, so it was unpacked to {steamCmd}."
                 : $"found at {steamCmd}.").ConfigureAwait(false);
+
+            if (await InstallSteamClientAsync().ConfigureAwait(false) is { } downloadAborted) return downloadAborted;
 
             // ---- SteamCMD ----
             await run.Start("downloading the dedicated server (several GB - this is slow)…").ConfigureAwait(false);
@@ -459,20 +495,9 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             await run.Ok("installed.").ConfigureAwait(false);
         }
 
-        // ---- the wiki's post-installation steps ----
-        await run.Start("installing steamclient.so, fixing libc++ and making PavlovServer.sh executable…").ConfigureAwait(false);
-        if (steamCmd is null)
-        {
-            // A copied install skipped the SteamCMD steps, and steamclient.so comes from SteamCMD.
-            var (located, locateProblem, _) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
-            steamCmd = located;
-            if (steamCmd is null)
-            {
-                await run.Fail(locateProblem ?? "could not find or install SteamCMD.").ConfigureAwait(false);
-                return await run.Abort().ConfigureAwait(false);
-            }
-        }
-        var (postProblem, postNote) = await PostInstallAsync(spec, steamCmd, ct).ConfigureAwait(false);
+        // ---- the wiki's remaining post-installation steps ----
+        await run.Start("fixing libc++ and making PavlovServer.sh executable…").ConfigureAwait(false);
+        var (postProblem, postNote) = await LaunchPrepAsync(spec, ct).ConfigureAwait(false);
         if (postProblem is not null)
         {
             await run.Fail(postProblem).ConfigureAwait(false);
@@ -559,14 +584,15 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
            Last of the provision's own work, and BEFORE the bot restarts itself - once that SIGTERM
            is sent nothing after it runs. The game reads Engine.ini only when it starts, and by now
            it is already running, so the server is restarted for the setting to count. */
-        await run.Start("adding net.MaxPlayersOverride=32 to Engine.ini…").ConfigureAwait(false);
+        await run.Start("adding net.MaxPlayersOverride=32 to Engine.ini if it exists…").ConfigureAwait(false);
         var (engineProblem, engineNote) = await WriteEngineIniAsync(spec, ct).ConfigureAwait(false);
         if (engineProblem is not null)
         {
             await run.Fail(engineProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(engineNote).ConfigureAwait(false);
+        if (engineNote.SoftFail) await run.SoftFail(engineNote.Text).ConfigureAwait(false);
+        else await run.Ok(engineNote.Text).ConfigureAwait(false);
 
         // ---- restart the bot ----
         return await RestartAsync(run, $"to bring server {spec.Slot} online", ct).ConfigureAwait(false);
@@ -994,29 +1020,34 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// Append <c>[ConsoleVariables]</c> / <c>net.MaxPlayersOverride=32</c> to the server's Engine.ini,
     /// then restart the server so it reads it.
     /// </summary>
-    private async Task<(string? Problem, string Note)> WriteEngineIniAsync(ServerProvisionSpec spec, CancellationToken ct)
+    private async Task<(string? Problem, (bool SoftFail, string Text) Note)> WriteEngineIniAsync(ServerProvisionSpec spec, CancellationToken ct)
     {
         var path = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "Config", "LinuxServer", "Engine.ini");
-        string updated;
+
+        // NEVER CREATED. The server writes its own Engine.ini; a file this step invented would be a
+        // second source of truth. No file, nothing to add to, and nothing to restart for.
+        if (!File.Exists(path))
+            return (null, (true, $"{path} does not exist, so it was not created and net.MaxPlayersOverride was not added."));
+
         try
         {
-            var existing = File.Exists(path) ? await File.ReadAllTextAsync(path, ct).ConfigureAwait(false) : "";
-            updated = ProvisionText.EnsureEngineIni(existing);
+            var existing = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+            var updated = ProvisionText.EnsureEngineIni(existing);
             if (!ReferenceEquals(updated, existing) && updated != existing)
                 await AtomicFile.WriteAsync(path, updated, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return ($"could not write {path}: {ex.Message}", "");
+            return ($"could not write {path}: {ex.Message}", (false, ""));
         }
 
         var chown = await RunAsync(null, "chown", [SteamUser, path], QuickTimeout, ct).ConfigureAwait(false);
-        if (!chown.Ok) return ($"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}", "");
+        if (!chown.Ok) return ($"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}", (false, ""));
 
         var restart = await RunAsync(null, "systemctl", ["restart", spec.UnitName], SystemctlTimeout, ct).ConfigureAwait(false);
         return restart.Ok
-            ? (null, $"{ProvisionText.EngineIniSection} {ProvisionText.EngineIniKey}={ProvisionText.EngineIniMaxPlayers} is in Engine.ini and {spec.UnitName} was restarted to read it.")
-            : (null, $"{ProvisionText.EngineIniKey} is in Engine.ini, but restarting {spec.UnitName} failed ({Tail(restart.Combined, 200)}) - restart it yourself for the setting to apply.");
+            ? (null, (false, $"{ProvisionText.EngineIniSection} {ProvisionText.EngineIniKey}={ProvisionText.EngineIniMaxPlayers} is in Engine.ini and {spec.UnitName} was restarted to read it."))
+            : (null, (true, $"{ProvisionText.EngineIniKey} is in Engine.ini, but restarting {spec.UnitName} failed ({Tail(restart.Combined, 200)}) - restart it yourself for the setting to apply."));
     }
 
     /// <summary>The wiki's steps 1 and 2. A problem stops the run; a note is what the checklist says.</summary>
@@ -1052,30 +1083,45 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     }
 
     /// <summary>
-    /// The wiki's "Post Installation Steps": steamclient.so (twice), the libc++ link, and chmod +x.
+    /// <c>steamcmd.sh +login anonymous +app_update 1007 +quit</c>, then <c>steamclient.so</c> copied to
+    /// <c>~/.steam/sdk64</c> and to the install's <c>Pavlov/Binaries/Linux</c>.
     /// </summary>
-    private async Task<(string? Problem, (bool SoftFail, string Text) Note)> PostInstallAsync(
-        ServerProvisionSpec spec, string steamCmd, CancellationToken ct)
+    /// <remarks>
+    /// The install's <c>Binaries/Linux</c> is created first (<c>mkdir -p</c>), because this runs
+    /// before the game is downloaded and the folder is not there yet.
+    /// </remarks>
+    private async Task<(string? Problem, string Note)> SteamClientAsync(ServerProvisionSpec spec, string steamCmd, CancellationToken ct)
     {
         var home = await SteamHomeAsync(ct).ConfigureAwait(false);
 
         var update = await RunAsync(SteamUser, steamCmd, SteamClientUpdateArgv(), SteamCmdTimeout, ct).ConfigureAwait(false);
-        if (!update.Started) return ($"could not execute {steamCmd}.", (false, ""));
-        if (!update.Ok) return ($"SteamCMD could not fetch the Steamworks SDK Redist (app 1007): {Tail(update.Combined)}", (false, ""));
+        if (!update.Started) return ($"could not execute {steamCmd}.", "");
+        if (!update.Ok) return ($"SteamCMD could not fetch the Steamworks SDK Redist (app 1007): {Tail(update.Combined)}", "");
 
         var source = SteamClientSource(steamCmd);
-        if (!File.Exists(source)) return ($"SteamCMD finished but {source} is not there.", (false, ""));
+        if (!File.Exists(source)) return ($"SteamCMD finished but {source} is not there.", "");
 
         var sdk = SteamClientSdkDirectory(home);
-        var mk = await RunAsync(SteamUser, "mkdir", ["-p", sdk], QuickTimeout, ct).ConfigureAwait(false);
-        if (!mk.Ok) return ($"could not create {sdk}: {Tail(mk.Combined)}", (false, ""));
-
-        foreach (var target in new[] { $"{sdk}/steamclient.so", SteamClientInstallPath(spec.InstallDir) })
+        var installed = SteamClientInstallPath(spec.InstallDir);
+        foreach (var directory in new[] { sdk, Path.GetDirectoryName(installed)! })
         {
-            var copy = await RunAsync(SteamUser, "cp", [source, target], QuickTimeout, ct).ConfigureAwait(false);
-            if (!copy.Ok) return ($"could not copy steamclient.so to {target}: {Tail(copy.Combined)}", (false, ""));
+            var mk = await RunAsync(SteamUser, "mkdir", ["-p", directory], QuickTimeout, ct).ConfigureAwait(false);
+            if (!mk.Ok) return ($"could not create {directory}: {Tail(mk.Combined)}", "");
         }
 
+        foreach (var target in new[] { $"{sdk}/steamclient.so", installed })
+        {
+            var copy = await RunAsync(SteamUser, "cp", [source, target], QuickTimeout, ct).ConfigureAwait(false);
+            if (!copy.Ok) return ($"could not copy steamclient.so to {target}: {Tail(copy.Combined)}", "");
+        }
+
+        return (null, $"steamclient.so copied to {sdk} and {installed}.");
+    }
+
+    /// <summary>The wiki's libc++ link and <c>chmod +x PavlovServer.sh</c>, once the game is installed.</summary>
+    private async Task<(string? Problem, (bool SoftFail, string Text) Note)> LaunchPrepAsync(
+        ServerProvisionSpec spec, CancellationToken ct)
+    {
         // The wiki: "All versions are required to run these commands to change the libc++ that steamclient uses".
         var libcxx = "libc++ link skipped: this system keeps its libraries somewhere other than " + LibcxxDirectory + ".";
         var softFail = true;
@@ -1095,7 +1141,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         var chmod = await RunAsync(SteamUser, "chmod", LaunchScriptArgv(spec.InstallDir), QuickTimeout, ct).ConfigureAwait(false);
         if (!chmod.Ok) return ($"could not make PavlovServer.sh executable: {Tail(chmod.Combined)}", (false, ""));
 
-        return (null, (softFail, $"steamclient.so copied to {sdk} and the install; {libcxx}; PavlovServer.sh is executable."));
+        return (null, (softFail, $"{libcxx}; PavlovServer.sh is executable."));
     }
 
     /// <summary>Write the unit, reload systemd, enable and start it. Null on success.</summary>
