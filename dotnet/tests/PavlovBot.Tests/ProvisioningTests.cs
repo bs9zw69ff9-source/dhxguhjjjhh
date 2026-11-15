@@ -60,11 +60,12 @@ public class ProvisioningTests
     [Fact]
     public void GameIniIsTheConfigThatActuallyRuns()
     {
-        /* GOLDEN, against the file taken off a working server rather than the wiki's minimal
-           example. Two lines here are load-bearing rather than cosmetic:
+        /* GOLDEN, against the wiki's own Game.ini block. The option values (name, capacity, PIN, maps)
+           go into the lines the wiki already has for them; nothing else is added or changed.
 
-             bVerboseLogging=true - the kill feed parses lines the game only writes with it on
-             (see PavlovLogLine), so without it a server looks healthy and produces no kills.
+             bVerboseLogging=false and TickRate=90 are the WIKI's values. The kill feed needs
+             bVerboseLogging=true (see PavlovLogLine), so a freshly provisioned server posts no
+             kills until that one line is edited - a known cost of following the wiki exactly.
 
              ServerName is UNQUOTED - quoting it made the quotes part of the name in the browser. */
         var spec = Spec(name: "Nuclear RP [#1]", maxPlayers: 24,
@@ -77,13 +78,13 @@ public class ProvisioningTests
             "MaxPlayers=24\n" +
             "bSecured=true\n" +
             "bCustomServer=true\n" +
-            "bVerboseLogging=true\n" +
+            "bVerboseLogging=false\n" +
             "bEnableBots=false\n" +
             "bCompetitive=false #This only works for SND\n" +
             "bWhitelist=false\n" +
             "RefreshListTime=120\n" +
             "LimitedAmmoType=0\n" +
-            "TickRate=60\n" +
+            "TickRate=90\n" +
             "TimeLimit=60\n" +
             "AFKTimeLimit=300\n" +
             "#Password=0000\n" +
@@ -123,10 +124,11 @@ public class ProvisioningTests
         var text = ProvisionText.GameIni(Spec(serverKey: "abc-123_XYZ.+/="));
 
         Assert.Contains("\nServerKey=abc-123_XYZ.+/=\n", text, StringComparison.Ordinal);
-        // Inside [/Script/Pavlov.DedicatedServer], which is the file's only section, and above the rotation.
+        // Inside [/Script/Pavlov.DedicatedServer], which is the file's only section. The wiki says
+        // to "add this line" to the file, so it goes after the wiki's block, last.
         Assert.StartsWith("[/Script/Pavlov.DedicatedServer]\n", text, StringComparison.Ordinal);
         Assert.Equal(1, text.Split('\n').Count(l => l.StartsWith('[')));
-        Assert.True(text.IndexOf("ServerKey=", StringComparison.Ordinal) < text.IndexOf("MapRotation=", StringComparison.Ordinal));
+        Assert.EndsWith("ServerKey=abc-123_XYZ.+/=\n", text, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -202,26 +204,39 @@ public class ProvisioningTests
     }
 
     [Fact]
-    public void SystemdUnitRunsAsSteamFromTheInstallDirWithTheGamePort()
+    public void SystemdUnitIsTheWikisFileAndNothingElse()
     {
+        /* THE WIKI'S UNIT, byte for byte, with only the install directory filled in. No After=, no
+           Wants=, no Restart=on-failure, no extra hardening: a byte-for-byte golden is the only
+           assertion that catches somebody "improving" it. Server 1 listens on the game's default
+           port, so it carries no -PORT. */
         var expected =
             "[Unit]\n" +
-            "Description=Pavlov VR Dedicated Server (pavlovserver2)\n" +
-            "After=network-online.target\n" +
-            "Wants=network-online.target\n" +
+            "Description=Pavlov VR dedicated server\n" +
             "\n" +
             "[Service]\n" +
             "Type=simple\n" +
+            "WorkingDirectory=/home/steam/pavlovserver\n" +
+            "ExecStart=/home/steam/pavlovserver/PavlovServer.sh\n" +
+            "\n" +
+            "RestartSec=1\n" +
+            "Restart=always\n" +
             "User=steam\n" +
-            "WorkingDirectory=/home/steam/pavlovserver2\n" +
-            "ExecStart=/home/steam/pavlovserver2/PavlovServer.sh -PORT=7787\n" +
-            "Restart=on-failure\n" +
-            "RestartSec=5\n" +
+            "Group=steam\n" +
             "\n" +
             "[Install]\n" +
-            "WantedBy=multi-user.target\n";
+            "WantedBy = multi-user.target\n";
 
-        Assert.Equal(expected, ProvisionText.SystemdUnit(Spec()));
+        Assert.Equal(expected, ProvisionText.SystemdUnit(Spec(slot: 1, unit: "pavlovserver", dir: "/home/steam/pavlovserver", game: 7777)));
+    }
+
+    [Fact]
+    public void ASecondServerOnTheSameMachineAddsOnlyThePortTheWikiGivesForIt()
+    {
+        var text = ProvisionText.SystemdUnit(Spec(slot: 2, unit: "pavlovserver1", dir: "/home/steam/pavlovserver1", game: 7778));
+
+        Assert.Contains("ExecStart=/home/steam/pavlovserver1/PavlovServer.sh -PORT=7778\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("-PORT", text.Replace(" -PORT=7778", "", StringComparison.Ordinal), StringComparison.Ordinal);
     }
 
     // ---- editing one setting in an existing Game.ini ----
@@ -646,8 +661,9 @@ public class ProvisioningTests
     public void EnableArgvAndUfwRuleAreExact()
     {
         Assert.Equal(["enable", "--now", "pavlovserver2"], ServerProvisioner.EnableArgv("pavlovserver2"));
-        Assert.Equal("7777/udp", ServerProvisioner.UfwRule(7777, "udp"));
-        Assert.Equal("9100/tcp", ServerProvisioner.UfwRule(9100, "tcp"));
+        // The wiki's "sudo ufw allow <port>": no protocol, so both TCP and UDP.
+        Assert.Equal(["allow", "7777"], ServerProvisioner.UfwAllowArgv(7777));
+        Assert.Equal(["allow", "9100"], ServerProvisioner.UfwAllowArgv(9100));
     }
 
     [Fact]
@@ -787,8 +803,8 @@ public class ProvisioningTests
             slot: slot, unit: unit, dir: installDir, game: ServerPortDefaults.GamePort(slot)));
 
         Assert.Contains($"WorkingDirectory={expectedDir}\n", text, StringComparison.Ordinal);
-        Assert.Contains($"ExecStart={expectedDir}/PavlovServer.sh -PORT={expectedGamePort}\n", text, StringComparison.Ordinal);
-        Assert.Contains($"Description=Pavlov VR Dedicated Server ({expectedUnit})\n", text, StringComparison.Ordinal);
+        var portArg = expectedGamePort == 7777 ? "" : $" -PORT={expectedGamePort}";
+        Assert.Contains($"ExecStart={expectedDir}/PavlovServer.sh{portArg}\n", text, StringComparison.Ordinal);
     }
 
     // ---- finding SteamCMD ----
@@ -907,8 +923,9 @@ public class ProvisioningTests
 
         // One step shorter, and identical either side of the swap.
         Assert.Equal(download.Count - 1, copy.Count);
-        Assert.Equal(download.Take(3), copy.Take(3));
-        Assert.Equal(download.Skip(5), copy.Skip(4));
+        var at = download.ToList().IndexOf("SteamCMD (locate or bootstrap)");
+        Assert.Equal(download.Take(at), copy.Take(at));
+        Assert.Equal(download.Skip(at + 2), copy.Skip(at + 1));
     }
 
     // ---- the directories and files the guide creates ----
@@ -1035,6 +1052,112 @@ public class ProvisioningTests
         Assert.Equal("/etc/sudoers.d/pavlov-steam-full", ServerProvisioner.LegacySudoersDropIn);
     }
 
+    // ---- the wiki's dependency and post-installation steps ----
+
+    [Theory]
+    [InlineData("ID=ubuntu\nVERSION_ID=\"24.04\"\n", "lib32gcc-s1")]
+    [InlineData("ID=ubuntu\nVERSION_ID=\"22.10\"\n", "lib32gcc-s1")]
+    [InlineData("ID=ubuntu\nVERSION_ID=\"22.04\"\n", "lib32gcc1")]
+    [InlineData("ID=debian\nVERSION_ID=\"12\"\n", "lib32gcc-s1")]
+    [InlineData("ID=pop\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22.04\"\n", "lib32gcc-s1")]
+    public void DependenciesAreTheWikisPackageLineForThisRelease(string osRelease, string gccPackage)
+    {
+        var packages = ServerProvisioner.DependencyPackages(osRelease);
+
+        Assert.Equal(["gdb", "curl", gccPackage, "libc++-dev", "unzip"], packages);
+    }
+
+    [Theory]
+    [InlineData("ID=rocky\nID_LIKE=\"rhel centos fedora\"\n")]
+    [InlineData("ID=alpine\n")]
+    [InlineData("")]
+    public void ASystemThatIsNotDebianLikeGetsNoPackageStep(string osRelease)
+    {
+        // The wiki's Rocky/RHEL line switches SELinux to permissive for the whole machine.
+        Assert.Null(ServerProvisioner.DependencyPackages(osRelease));
+    }
+
+    [Fact]
+    public void AptRunsNonInteractivelyThroughEnv()
+    {
+        Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "update"], ServerProvisioner.AptUpdateArgv());
+        Assert.Equal(["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "gdb", "curl"],
+            ServerProvisioner.AptInstallArgv(["gdb", "curl"]));
+    }
+
+    [Fact]
+    public void PostInstallCommandsAreTheWikisPathForPath()
+    {
+        Assert.Equal(["+login", "anonymous", "+app_update", "1007", "+quit"], ServerProvisioner.SteamClientUpdateArgv());
+        Assert.Equal("/home/steam/Steam/steamapps/common/Steamworks SDK Redist/linux64/steamclient.so",
+            ServerProvisioner.SteamClientSource("/home/steam/Steam/steamcmd.sh"));
+        Assert.Equal("/home/steam/.steam/sdk64", ServerProvisioner.SteamClientSdkDirectory("/home/steam/"));
+        Assert.Equal("/home/steam/pavlovserver1/Pavlov/Binaries/Linux/steamclient.so",
+            ServerProvisioner.SteamClientInstallPath("/home/steam/pavlovserver1"));
+        Assert.Equal(["-f", "/usr/lib/x86_64-linux-gnu/libc++.so"], ServerProvisioner.LibcxxRemoveArgv());
+        Assert.Equal(["-s", "/usr/lib/x86_64-linux-gnu/libc++.so.1", "/usr/lib/x86_64-linux-gnu/libc++.so"], ServerProvisioner.LibcxxLinkArgv());
+        Assert.Equal(["+x", "/home/steam/pavlovserver/PavlovServer.sh"], ServerProvisioner.LaunchScriptArgv("/home/steam/pavlovserver"));
+    }
+
+    [Fact]
+    public void OnlyAnEmptyFolderOrOneHoldingJustSavedDataMayBeProvisionedInto()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pavprov-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            Assert.True(ServerProvisioner.HoldsOnlySavedData(root));
+
+            Directory.CreateDirectory(Path.Combine(root, "Pavlov", "Saved", "Config"));
+            Assert.True(ServerProvisioner.HoldsOnlySavedData(root));
+
+            Directory.CreateDirectory(Path.Combine(root, "Pavlov", "Binaries"));
+            Assert.False(ServerProvisioner.HoldsOnlySavedData(root));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        var other = Path.Combine(Path.GetTempPath(), "pavprov-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(other, "Pavlov", "Saved"));
+            File.WriteAllText(Path.Combine(other, "PavlovServer.sh"), "x");
+            Assert.False(ServerProvisioner.HoldsOnlySavedData(other));
+        }
+        finally
+        {
+            Directory.Delete(other, recursive: true);
+        }
+    }
+
+    // ---- an existing Game.ini: only ServerKey, only when absent ----
+
+    [Fact]
+    public void ServerKeyIsAddedToAnExistingGameIniWithoutTouchingAnythingElse()
+    {
+        var updated = ProvisionText.EnsureGameIniSetting(LiveGameIni, "ServerKey", "k3y");
+
+        Assert.Equal(LiveGameIni + "ServerKey=k3y\n", updated);
+    }
+
+    [Fact]
+    public void AnExistingServerKeyIsNeverReplaced()
+    {
+        var ini = LiveGameIni + "ServerKey=theirs\n";
+
+        Assert.Same(ini, ProvisionText.EnsureGameIniSetting(ini, "ServerKey", "mine"));
+    }
+
+    [Fact]
+    public void ACommentedOutServerKeyDoesNotCount()
+    {
+        var updated = ProvisionText.EnsureGameIniSetting("[/Script/Pavlov.DedicatedServer]\n#ServerKey=old\n", "ServerKey", "new");
+
+        Assert.Contains("\nServerKey=new\n", updated, StringComparison.Ordinal);
+    }
+
     // ---- the checklist itself: real step list, real cursor ----
 
     [Fact]
@@ -1045,10 +1168,12 @@ public class ProvisioningTests
         Assert.Equal(
         [
             "Pre-flight checks",
+            "Operating system and dependencies",
             "Steam user account",
             "Remove legacy steam sudo grant",
             "SteamCMD (locate or bootstrap)",
             "SteamCMD install",
+            "steamclient.so, libc++ and the launch script",
             "Server config (RconSettings.txt, Game.ini)",
             "Restore kept player data",
             "systemd unit (write, daemon-reload, enable --now)",

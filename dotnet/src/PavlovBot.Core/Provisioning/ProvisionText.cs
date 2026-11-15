@@ -24,10 +24,8 @@ public static class ProvisionText
     }
 
     /// <summary>
-    /// <c>LinuxServer/Game.ini</c>: the dedicated-server section with name, capacity and rotation.
-    /// </summary>
-    /// <summary>
-    /// The mod every server on this network loads, from the working config this was taken from.
+    /// The mod line of the wiki's Game.ini block (<c>AdditionalMods=UGC3462586</c>), which is how the
+    /// wiki installs a mod: "take its resource ID, adding 'UGC' to the front of it".
     /// </summary>
     /// <remarks>
     /// One constant rather than scattered through the template, because it is the line most
@@ -35,47 +33,48 @@ public static class ProvisionText
     /// </remarks>
     public const string AdditionalMods = "UGC3462586";
 
+    /// <summary>
+    /// The wiki's Game.ini block, with this server's name, capacity, rotation and PIN filled in.
+    /// </summary>
+    /// <remarks>
+    /// THE WIKI'S BLOCK, NOT A HOUSE VERSION. Every other line is the wiki's, as written: nothing is
+    /// added and nothing else is changed. The values a provision takes as options (name, capacity,
+    /// maps, PIN) go into the lines the wiki already has for them, and <c>ServerKey=</c> is the one
+    /// line the wiki adds separately, so it is written only when a key was given.
+    ///
+    /// Two of the wiki's values differ from what this bot's features want, and are the wiki's anyway:
+    /// <c>bVerboseLogging=false</c> (the kill feed needs <c>true</c>) and <c>TickRate=90</c>. A
+    /// server's file can be edited afterwards; a provision writes the wiki's.
+    ///
+    /// THE NAME IS UNQUOTED where the wiki's example quotes it: a quoted name was shown with its
+    /// quotes in the server browser on this network's servers.
+    /// </remarks>
     public static string GameIni(ServerProvisionSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
 
         var sb = new StringBuilder();
-        sb.Append("[/Script/Pavlov.DedicatedServer]\n");
+        sb.Append(GameIniSection).Append('\n');
         sb.Append("bEnabled=true\n");
-
-        /* UNQUOTED, unlike the wiki's example. This follows the config that is actually running:
-           quoting made the quotes part of the name in the browser. */
         sb.Append(CultureInfo.InvariantCulture, $"ServerName={CleanServerName(spec.ServerName)}\n");
         sb.Append(CultureInfo.InvariantCulture, $"MaxPlayers={spec.MaxPlayers.ToString(CultureInfo.InvariantCulture)}\n");
         sb.Append("bSecured=true\n");
         sb.Append("bCustomServer=true\n");
-
-        /* NOT COSMETIC. The kill feed parses lines the game only writes with verbose logging on -
-           see PavlovLogLine - so a server provisioned without this looks healthy and silently
-           produces no kills. */
-        sb.Append("bVerboseLogging=true\n");
-
+        sb.Append("bVerboseLogging=false\n");
         sb.Append("bEnableBots=false\n");
         sb.Append("bCompetitive=false #This only works for SND\n");
         sb.Append("bWhitelist=false\n");
         sb.Append("RefreshListTime=120\n");
         sb.Append("LimitedAmmoType=0\n");
-        sb.Append("TickRate=60\n");
+        sb.Append("TickRate=90\n");
         sb.Append("TimeLimit=60\n");
         sb.Append("AFKTimeLimit=300\n");
 
-        /* COMMENTED OUT WHEN THERE IS NO PASSWORD, rather than omitted. An empty Password line
-           reads as "the password is the empty string" and locks everyone out; leaving the
-           commented example is what the working config does and shows where to put one. */
+        /* The wiki's own line is the commented example, "remove or comment out the Password=0000 line
+           to make a public server with no pin" - so no PIN is that line, still commented. */
         sb.Append(!string.IsNullOrEmpty(spec.GamePassword)
             ? string.Create(CultureInfo.InvariantCulture, $"Password={spec.GamePassword}\n")
             : "#Password=0000\n");
-
-        /* OMITTED WHEN THERE IS NO KEY, not written empty: an empty ServerKey= would hand the game a
-           blank credential. The value is charset-checked by ProvisionValidation, so it is safe on one
-           line unquoted - the same as Password above. */
-        if (!string.IsNullOrEmpty(spec.ServerKey))
-            sb.Append(CultureInfo.InvariantCulture, $"ServerKey={spec.ServerKey}\n");
 
         sb.Append("#BalanceTableURL=\"vankruptgames/BalancingTable/main\"\n");
 
@@ -84,35 +83,93 @@ public static class ProvisionText
 
         sb.Append(CultureInfo.InvariantCulture, $"AdditionalMods={AdditionalMods}\n");
 
+        // The wiki: "Open your server's Game.ini and add this line: ServerKey=<your server key>".
+        // Not written empty, which would hand the game a blank credential.
+        if (!string.IsNullOrEmpty(spec.ServerKey))
+            sb.Append(CultureInfo.InvariantCulture, $"ServerKey={spec.ServerKey}\n");
+
         return sb.ToString();
     }
 
     /// <summary>
-    /// The systemd unit that runs the server as the <c>steam</c> user and restarts it if it dies.
+    /// Add <c>key=value</c> to an existing Game.ini only if no active line for that key is there.
     /// </summary>
+    /// <remarks>
+    /// FOR A GAME.INI THAT ALREADY EXISTS - the server generated one, or the install was copied, or the
+    /// slot is being rebuilt over its old data. Nothing else in it is touched. An existing
+    /// <c>ServerKey=</c> is left as it is, whatever its value: it is somebody's key. A commented-out
+    /// line is not the setting, so it does not count and the line is still added.
+    /// </remarks>
+    /// <returns>The text to write: <paramref name="existing"/> itself when nothing needs adding.</returns>
+    public static string EnsureGameIniSetting(string existing, string key, string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        existing ??= "";
+
+        var lines = existing.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith('#') || trimmed.StartsWith(';')) continue;
+            var equals = trimmed.IndexOf('=', StringComparison.Ordinal);
+            if (equals > 0 && trimmed[..equals].Trim().Equals(key, StringComparison.OrdinalIgnoreCase)) return existing;
+        }
+
+        var header = lines.FindIndex(l => l.Trim().Equals(GameIniSection, StringComparison.OrdinalIgnoreCase));
+        if (header < 0)
+        {
+            var body = existing.Length == 0 || existing.EndsWith('\n') ? existing : existing + "\n";
+            return body + (body.Length > 0 ? "\n" : "") + $"{GameIniSection}\n{key}={value}\n";
+        }
+
+        // The end of the section: the next header, or the end of the file - before any blank lines that close it.
+        var end = lines.FindIndex(header + 1, l => l.TrimStart().StartsWith('['));
+        if (end < 0) end = lines.Count;
+        while (end > header + 1 && lines[end - 1].Trim().Length == 0) end--;
+
+        lines.Insert(end, $"{key}={value}");
+        var text = string.Join("\n", lines);
+        return text.EndsWith('\n') ? text : text + "\n";
+    }
+
+    /// <summary>
+    /// The wiki's systemd unit, as written (Setting up a dedicated server, "Supervising the server
+    /// using systemd"), for this server's install directory.
+    /// </summary>
+    /// <remarks>
+    /// THE WIKI'S FILE AND NOTHING ELSE, down to <c>WantedBy = multi-user.target</c> with its spaces.
+    /// The wiki says to change "the user or paths as appropriate", so the install directory is the
+    /// one thing filled in. For a server on any port but the default 7777 the wiki's section on
+    /// running several servers says to run each with <c>-PORT=</c>, and that goes on the
+    /// <c>ExecStart</c> line, the only line it can: without it every extra server would try to bind
+    /// the first one's ports.
+    /// </remarks>
     public static string SystemdUnit(ServerProvisionSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
 
         var dir = spec.InstallDir.TrimEnd('/');
-        var port = spec.GamePort.ToString(CultureInfo.InvariantCulture);
+        var exec = $"{dir}/PavlovServer.sh";
+        if (spec.GamePort != ServerPortDefaults.GamePort(1))
+            exec += string.Create(CultureInfo.InvariantCulture, $" -PORT={spec.GamePort}");
 
         return
             "[Unit]\n" +
-            $"Description=Pavlov VR Dedicated Server ({spec.UnitName})\n" +
-            "After=network-online.target\n" +
-            "Wants=network-online.target\n" +
+            "Description=Pavlov VR dedicated server\n" +
             "\n" +
             "[Service]\n" +
             "Type=simple\n" +
-            "User=steam\n" +
             $"WorkingDirectory={dir}\n" +
-            $"ExecStart={dir}/PavlovServer.sh -PORT={port}\n" +
-            "Restart=on-failure\n" +
-            "RestartSec=5\n" +
+            $"ExecStart={exec}\n" +
+            "\n" +
+            "RestartSec=1\n" +
+            "Restart=always\n" +
+            "User=steam\n" +
+            "Group=steam\n" +
             "\n" +
             "[Install]\n" +
-            "WantedBy=multi-user.target\n";
+            "WantedBy = multi-user.target\n";
     }
 
     /// <summary>

@@ -163,20 +163,36 @@ then.)
 
 ### Provisioning a game server
 
-`/provisionserver` builds a new server as a systemd unit: it creates the `steam` account, installs
-the game with SteamCMD, writes the server's config, and enables and starts the unit.
+`/provisionserver` follows the [Pavlov wiki's dedicated server guide](https://pavlovwiki.com/index.php/Setting_up_a_dedicated_server)
+step for step, as root, and ends with a systemd unit:
+
+1. the dependencies (`gdb curl lib32gcc-s1 libc++-dev unzip`, `lib32gcc1` on Ubuntu before 22.10);
+   Rocky/RHEL are not touched, since the wiki's commands for them turn SELinux off machine-wide
+2. the locked `steam` account and SteamCMD
+3. `app_update 622970 -beta shack`
+4. the post-installation steps: `steamclient.so` (app 1007) copied to `~/.steam/sdk64` and
+   `Pavlov/Binaries/Linux`, the `libc++.so` link, `chmod +x PavlovServer.sh`
+5. `RconSettings.txt`, `Game.ini`, the `Logs` and `Config/LinuxServer` folders, and empty
+   `mods.txt`, `whitelist.txt` and `blacklist.txt`
+6. the wiki's systemd unit, written as given (only the install folder is filled in, plus
+   `-PORT=<port>` on `ExecStart` for a second server on the same box), then `enable --now`
+7. `ufw allow` for the game, query and RCON ports
+
+`Game.ini` is the wiki's block with your name, player cap, PIN and maps filled in. If one already
+exists it is left alone: the only thing ever added is `ServerKey=<value>`, and only when you give
+a `serverkey` and the file has none. The API key is ignored. The wiki's `bVerboseLogging=false`
+is kept, which means the kill feed shows nothing until you set it to `true`.
+
+A folder holding only an old server's `Pavlov/Saved` is accepted (it is handed to `steam`);
+anything else in the folder is refused.
+
+`serverkey` is 1-128 characters from letters, digits and `_-.!@%^*+=/:`, and the bot never shows it
+in Discord or its log.
 
 **Coming from the Docker build.** Servers run under systemd only now. If this box ran them as
-Docker containers, `scripts/migrate-from-docker.sh` moves them over without losing data: it shows the
-plan first, and with `--yes` backs up each server's `Saved` folder, parks its player data where
-`/provisionserver` restores it from, and removes the container. A leftover `docker:` prefix in
-`PAVLOV_UNITS` is ignored, so each server keeps its slot.
-
-It takes an optional `serverkey`, written into the new server's `Game.ini` as
-`ServerKey=<value>`. It is 1-128 characters from letters, digits and `_-.!@%^*+=/:` (so it is safe
-on one unquoted line), and the bot never shows it in Discord or its log. Leave it out and no
-`ServerKey` line is written. It applies to new servers only; an existing server's `Game.ini` is
-not changed.
+Docker containers, `scripts/migrate-from-docker.sh` shows its plan first, and with `--yes` backs up
+each `Saved` folder and removes the container, leaving `Saved` where it is for `/provisionserver`.
+A leftover `docker:` prefix in `PAVLOV_UNITS` is ignored, so each server keeps its slot.
 
 ---
 

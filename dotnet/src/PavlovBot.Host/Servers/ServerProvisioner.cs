@@ -57,10 +57,12 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     internal static readonly string[] StepNames =
     [
         "Pre-flight checks",
+        "Operating system and dependencies",
         "Steam user account",
         "Remove legacy steam sudo grant",
         "SteamCMD (locate or bootstrap)",
         "SteamCMD install",
+        "steamclient.so, libc++ and the launch script",
         "Server config (RconSettings.txt, Game.ini)",
         "Restore kept player data",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -74,9 +76,11 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     internal static readonly string[] CopyStepNames =
     [
         "Pre-flight checks",
+        "Operating system and dependencies",
         "Steam user account",
         "Remove legacy steam sudo grant",
         "Copy an existing install",
+        "steamclient.so, libc++ and the launch script",
         "Server config (RconSettings.txt, Game.ini)",
         "Restore kept player data",
         "systemd unit (write, daemon-reload, enable --now)",
@@ -130,9 +134,15 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// <summary><c>systemctl enable --now &lt;unit&gt;</c>, as an argv array.</summary>
     internal static IReadOnlyList<string> EnableArgv(string unit) => ["enable", "--now", unit];
 
-    /// <summary>A ufw port rule, e.g. <c>7777/udp</c>.</summary>
-    internal static string UfwRule(int port, string proto) =>
-        $"{port.ToString(System.Globalization.CultureInfo.InvariantCulture)}/{proto}";
+    /// <summary>
+    /// The wiki's <c>sudo ufw allow 7777</c>: the port alone, which ufw opens for TCP and UDP.
+    /// </summary>
+    /// <remarks>
+    /// NO PROTOCOL, as the wiki writes it. The server's ports need UDP, and a Shack server also needs
+    /// them over TCP to hand out downloadable maps, which the wiki says in the same section.
+    /// </remarks>
+    internal static IReadOnlyList<string> UfwAllowArgv(int port) =>
+        ["allow", port.ToString(System.Globalization.CultureInfo.InvariantCulture)];
 
     /// <summary><c>useradd -m -s /bin/bash &lt;user&gt;</c>: a real home directory, for SteamCMD's cache.</summary>
     internal static IReadOnlyList<string> UseraddArgv(string user) => ["-m", "-s", "/bin/bash", user];
@@ -158,26 +168,20 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     }
 
     /// <summary>
-    /// Every place SteamCMD might already be, in the order worth trying.
+    /// Where the wiki puts SteamCMD: <c>~/Steam/steamcmd.sh</c>, an absolute path.
     /// </summary>
     /// <remarks>
-    /// ABSOLUTE PATHS, NOT A <c>PATH</c> LOOKUP, and that is the fix for the failure this was
-    /// written for: the bot ran <c>steamcmd</c> and got "command not found", because the ordinary
-    /// Linux install is a TARBALL unpacked into <c>~/Steam</c> that puts nothing on anyone's PATH.
-    /// The distro packages (<c>/usr/games/steamcmd</c> on Debian/Ubuntu) come first since a box
-    /// that has one should use it, then the tarball locations - including the one this bootstraps.
+    /// THE WIKI'S LOCATION ONLY, and a list of one so the lookup keeps its shape. The wiki's later
+    /// steps name paths under it: <c>steamclient.so</c> comes from
+    /// <c>~/Steam/steamapps/common/Steamworks SDK Redist</c>. A distro package puts SteamCMD
+    /// elsewhere, and its files would not be where those steps look. ABSOLUTE, NOT A <c>PATH</c>
+    /// LOOKUP: the tarball puts nothing on anyone's PATH, which is what once made a provision die
+    /// on "command not found" after it had created the account.
     /// </remarks>
     internal static IReadOnlyList<string> SteamCmdCandidates(string home)
     {
         var root = home.TrimEnd('/');
-        return
-        [
-            "/usr/games/steamcmd",
-            "/usr/bin/steamcmd",
-            "/usr/local/bin/steamcmd",
-            $"{root}/Steam/steamcmd.sh",
-            $"{root}/steamcmd/steamcmd.sh",
-        ];
+        return [$"{root}/Steam/steamcmd.sh"];
     }
 
     /// <summary>
@@ -196,6 +200,104 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// <summary><c>tar -xzf &lt;tarball&gt; -C &lt;dir&gt;</c>.</summary>
     internal static IReadOnlyList<string> SteamCmdExtractArgv(string tarballPath, string directory) =>
         ["-xzf", tarballPath, "-C", directory];
+
+    // ---- the wiki's step 2: dependencies ----
+
+    /// <summary>The <c>/etc/os-release</c> fields: <c>ID=ubuntu</c>, <c>VERSION_ID="24.04"</c>.</summary>
+    internal static IReadOnlyDictionary<string, string> ParseOsRelease(string? text)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var equals = line.IndexOf('=', StringComparison.Ordinal);
+            if (equals <= 0 || line.StartsWith('#')) continue;
+            fields[line[..equals]] = line[(equals + 1)..].Trim('"', '\'');
+        }
+        return fields;
+    }
+
+    /// <summary>
+    /// The packages of the wiki's step 2 for this system, or null when it is not Debian-like.
+    /// </summary>
+    /// <remarks>
+    /// <c>gdb curl lib32gcc-s1 libc++-dev unzip</c> for Ubuntu 22.10 and later, and
+    /// <c>lib32gcc1</c> in place of <c>lib32gcc-s1</c> for an older Ubuntu - the wiki's two lines.
+    /// The wiki's third line, for Rocky, CentOS and RHEL, switches SELinux to permissive for the
+    /// whole machine; that is not something to do on someone's behalf, so those systems get null.
+    /// </remarks>
+    internal static IReadOnlyList<string>? DependencyPackages(string? osRelease)
+    {
+        var fields = ParseOsRelease(osRelease);
+        var id = fields.GetValueOrDefault("ID", "").ToLowerInvariant();
+        var like = fields.GetValueOrDefault("ID_LIKE", "").ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (id is not ("ubuntu" or "debian") && !like.Contains("debian") && !like.Contains("ubuntu")) return null;
+
+        var olderUbuntu = id == "ubuntu" && VersionBefore(fields.GetValueOrDefault("VERSION_ID", ""), 22, 10);
+        return ["gdb", "curl", olderUbuntu ? "lib32gcc1" : "lib32gcc-s1", "libc++-dev", "unzip"];
+    }
+
+    /// <summary>Whether <c>22.04</c> is before <c>22.10</c>. An unreadable version is not "older".</summary>
+    internal static bool VersionBefore(string version, int major, int minor)
+    {
+        var parts = version.Split('.');
+        if (parts.Length < 2 || !int.TryParse(parts[0], out var m) || !int.TryParse(parts[1], out var n)) return false;
+        return m < major || (m == major && n < minor);
+    }
+
+    /// <summary>The wiki's <c>sudo apt update</c>, run through <c>env</c> so nothing waits at a prompt.</summary>
+    internal static IReadOnlyList<string> AptUpdateArgv() => ["DEBIAN_FRONTEND=noninteractive", "apt-get", "update"];
+
+    /// <summary>The wiki's <c>sudo apt install -y ...</c>.</summary>
+    internal static IReadOnlyList<string> AptInstallArgv(IEnumerable<string> packages) =>
+        ["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", .. packages];
+
+    private static readonly TimeSpan AptTimeout = TimeSpan.FromMinutes(15);
+
+    // ---- the wiki's post-installation steps ----
+
+    /// <summary>Where <c>libc++.so</c> lives on Debian and Ubuntu, the path the wiki's commands name.</summary>
+    internal const string LibcxxDirectory = "/usr/lib/x86_64-linux-gnu";
+
+    /// <summary><c>steamcmd.sh +login anonymous +app_update 1007 +quit</c>: Steamworks SDK Redist, which holds steamclient.so.</summary>
+    internal static IReadOnlyList<string> SteamClientUpdateArgv() => ["+login", "anonymous", "+app_update", "1007", "+quit"];
+
+    /// <summary>
+    /// <c>~/Steam/steamapps/common/Steamworks SDK Redist/linux64/steamclient.so</c>: beside the
+    /// <c>steamcmd.sh</c> that downloaded it.
+    /// </summary>
+    internal static string SteamClientSource(string steamCmd) =>
+        Path.Combine(Path.GetDirectoryName(steamCmd) ?? "/", "steamapps", "common", "Steamworks SDK Redist", "linux64", "steamclient.so");
+
+    /// <summary><c>~/.steam/sdk64</c>.</summary>
+    internal static string SteamClientSdkDirectory(string home) => $"{home.TrimEnd('/')}/.steam/sdk64";
+
+    /// <summary><c>&lt;install&gt;/Pavlov/Binaries/Linux/steamclient.so</c>, the second copy the wiki makes.</summary>
+    internal static string SteamClientInstallPath(string installDir) => $"{installDir.TrimEnd('/')}/Pavlov/Binaries/Linux/steamclient.so";
+
+    /// <summary>The wiki's <c>sudo rm /usr/lib/x86_64-linux-gnu/libc++.so</c>; <c>-f</c> so a re-run is not an error.</summary>
+    internal static IReadOnlyList<string> LibcxxRemoveArgv() => ["-f", $"{LibcxxDirectory}/libc++.so"];
+
+    /// <summary>The wiki's <c>sudo ln -s .../libc++.so.1 .../libc++.so</c>.</summary>
+    internal static IReadOnlyList<string> LibcxxLinkArgv() => ["-s", $"{LibcxxDirectory}/libc++.so.1", $"{LibcxxDirectory}/libc++.so"];
+
+    /// <summary>The wiki's <c>chmod +x ~/pavlovserver/PavlovServer.sh</c>.</summary>
+    internal static IReadOnlyList<string> LaunchScriptArgv(string installDir) => ["+x", $"{installDir.TrimEnd('/')}/PavlovServer.sh"];
+
+    /// <summary>
+    /// Whether an install folder holds nothing but an old server's <c>Pavlov/Saved</c> data.
+    /// </summary>
+    /// <remarks>
+    /// THE ONE EXISTING FOLDER A PROVISION MAY GO INTO. Rebuilding a server over its own saved data -
+    /// its Game.ini, ModSave, whitelist, blacklist - is the point; anything else in the folder is a
+    /// real install, which this refuses to install over.
+    /// </remarks>
+    internal static bool HoldsOnlySavedData(string installDir)
+    {
+        var top = Directory.EnumerateFileSystemEntries(installDir).Select(Path.GetFileName).ToList();
+        if (top.Count == 0) return true;
+        if (top.Count != 1 || top[0] != "Pavlov") return false;
+        return Directory.EnumerateFileSystemEntries(Path.Combine(installDir, "Pavlov")).Select(Path.GetFileName).All(n => n == "Saved");
+    }
 
     public async Task<ProvisionOutcome> ProvisionAsync(
         ProvisionRequest request,
@@ -225,6 +327,17 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         }
         await run.Ok("root, unit name and slot are usable.").ConfigureAwait(false);
 
+        // ---- the wiki's steps 1 and 2: the operating system, and the packages the server needs ----
+        await run.Start("checking the operating system and installing the dependencies…").ConfigureAwait(false);
+        var (dependencyProblem, dependencyNote) = await InstallDependenciesAsync(ct).ConfigureAwait(false);
+        if (dependencyProblem is not null)
+        {
+            await run.Fail(dependencyProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        if (dependencyNote.SoftFail) await run.SoftFail(dependencyNote.Text).ConfigureAwait(false);
+        else await run.Ok(dependencyNote.Text).ConfigureAwait(false);
+
         // ---- the steam OS account - created locked: no password, no sudo ----
         await run.Start("checking for the steam account…").ConfigureAwait(false);
         var (userProblem, created) = await EnsureSteamUserAsync(ct).ConfigureAwait(false);
@@ -233,9 +346,25 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             await run.Fail(userProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok(created
+
+        /* AN OLD SERVER'S SAVED DATA IS NOT steam'S. A server that ran in a container left its
+           Pavlov/Saved owned by the container's user, and the game and SteamCMD run as steam and must
+           write there. Only a folder that exists already needs this; a new one is made by steam. */
+        var handedOver = false;
+        if (Directory.Exists(spec.InstallDir))
+        {
+            var chown = await RunAsync(null, "chown", ["-R", $"{SteamUser}:{SteamUser}", spec.InstallDir], SteamCmdTimeout, ct).ConfigureAwait(false);
+            if (!chown.Ok)
+            {
+                await run.Fail($"could not hand {spec.InstallDir} to {SteamUser}: {Tail(chown.Combined)}").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+            handedOver = true;
+        }
+        await run.Ok((created
             ? "created with a locked password - reachable only from root (sudo -u steam / su - steam)."
-            : "already existed - left untouched.").ConfigureAwait(false);
+            : "already existed - left untouched.") +
+            (handedOver ? $" The existing {spec.InstallDir} (a server's saved data) now belongs to it." : "")).ConfigureAwait(false);
 
         // ---- undo the full-sudo grant earlier versions installed ----
         await run.Start($"checking for {LegacySudoersDropIn}…").ConfigureAwait(false);
@@ -250,6 +379,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             : "none present - steam has no sudo grant from this bot.").ConfigureAwait(false);
 
         // ---- the game files: copied from a working install, or downloaded with SteamCMD ----
+        string? steamCmd = null;
         if (copying)
         {
             var source = request.CopyFromInstallDir!;
@@ -292,7 +422,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         {
             // ---- find SteamCMD, or unpack Valve's tarball where the steam account can run it ----
             await run.Start("looking for steamcmd…").ConfigureAwait(false);
-            var (steamCmd, locateProblem, bootstrapped) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
+            var (found, locateProblem, bootstrapped) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
+            steamCmd = found;
             if (steamCmd is null)
             {
                 await run.Fail(locateProblem ?? "could not find or install SteamCMD.").ConfigureAwait(false);
@@ -326,14 +457,37 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
             await run.Ok("installed.").ConfigureAwait(false);
         }
 
+        // ---- the wiki's post-installation steps ----
+        await run.Start("installing steamclient.so, fixing libc++ and making PavlovServer.sh executable…").ConfigureAwait(false);
+        if (steamCmd is null)
+        {
+            // A copied install skipped the SteamCMD steps, and steamclient.so comes from SteamCMD.
+            var (located, locateProblem, _) = await EnsureSteamCmdAsync(ct).ConfigureAwait(false);
+            steamCmd = located;
+            if (steamCmd is null)
+            {
+                await run.Fail(locateProblem ?? "could not find or install SteamCMD.").ConfigureAwait(false);
+                return await run.Abort().ConfigureAwait(false);
+            }
+        }
+        var (postProblem, postNote) = await PostInstallAsync(spec, steamCmd, ct).ConfigureAwait(false);
+        if (postProblem is not null)
+        {
+            await run.Fail(postProblem).ConfigureAwait(false);
+            return await run.Abort().ConfigureAwait(false);
+        }
+        if (postNote.SoftFail) await run.SoftFail(postNote.Text).ConfigureAwait(false);
+        else await run.Ok(postNote.Text).ConfigureAwait(false);
+
         // ---- config files ----
         await run.Start("writing RconSettings.txt and Game.ini…").ConfigureAwait(false);
-        if (await WriteConfigAsync(spec, ct).ConfigureAwait(false) is { } configProblem)
+        var (configProblem, configNote) = await WriteConfigAsync(spec, ct).ConfigureAwait(false);
+        if (configProblem is not null)
         {
             await run.Fail(configProblem).ConfigureAwait(false);
             return await run.Abort().ConfigureAwait(false);
         }
-        await run.Ok("written and owned by steam.").ConfigureAwait(false);
+        await run.Ok(configNote).ConfigureAwait(false);
 
         /* ---- player data kept by an earlier /deleteserver of this slot ----
            ALWAYS A STEP, even with nothing to restore. The checklist is a cursor over a fixed
@@ -380,7 +534,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         // ---- firewall (non-critical) ----
         await run.Start("opening the game, query and RCON ports…").ConfigureAwait(false);
         var ufw = await OpenPortsAsync(spec, ct).ConfigureAwait(false);
-        if (ufw is null) await run.Ok($"allowed {spec.GamePort}/udp, {spec.QueryPort}/udp, {spec.RconPort}/tcp.").ConfigureAwait(false);
+        if (ufw is null) await run.Ok($"allowed {spec.GamePort}, {spec.QueryPort} and {spec.RconPort} (ufw allow <port>, as the wiki does).").ConfigureAwait(false);
         else await run.SoftFail(ufw).ConfigureAwait(false);
 
         // ---- RCON reachability (non-critical) ----
@@ -574,8 +728,8 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
 
         try
         {
-            if (Directory.Exists(spec.InstallDir) && Directory.EnumerateFileSystemEntries(spec.InstallDir).Any())
-                return $"{spec.InstallDir} already exists and is not empty - refusing to install over it.";
+            if (Directory.Exists(spec.InstallDir) && !HoldsOnlySavedData(spec.InstallDir))
+                return $"{spec.InstallDir} already exists and holds more than a server's Pavlov/Saved data - refusing to install over it.";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -726,7 +880,7 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     }
 
     /// <summary>Create the directories and files, then write the two configs. Null on success.</summary>
-    private async Task<string?> WriteConfigAsync(ServerProvisionSpec spec, CancellationToken ct)
+    private async Task<(string? Problem, string Note)> WriteConfigAsync(ServerProvisionSpec spec, CancellationToken ct)
     {
         var configDir = Path.Combine(spec.InstallDir, "Pavlov", "Saved", "Config");
         var linuxDir = Path.Combine(configDir, "LinuxServer");
@@ -734,37 +888,134 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
         foreach (var directory in ConfigDirectories(spec.InstallDir))
         {
             var mk = await RunAsync(SteamUser, "mkdir", ["-p", directory], QuickTimeout, ct).ConfigureAwait(false);
-            if (!mk.Ok) return $"could not create {directory}: {Tail(mk.Combined)}";
+            if (!mk.Ok) return ($"could not create {directory}: {Tail(mk.Combined)}", "");
         }
 
         foreach (var file in OptionalConfigFiles(spec.InstallDir))
         {
             // touch: creates it empty, and leaves an existing one untouched.
             var mkFile = await RunAsync(SteamUser, "touch", [file], QuickTimeout, ct).ConfigureAwait(false);
-            if (!mkFile.Ok) return $"could not create {file}: {Tail(mkFile.Combined)}";
+            if (!mkFile.Ok) return ($"could not create {file}: {Tail(mkFile.Combined)}", "");
         }
 
+        string note;
         try
         {
             var rconPath = Path.Combine(configDir, "RconSettings.txt");
             await AtomicFile.WriteAsync(rconPath, ProvisionText.RconSettings(spec.RconPassword, spec.RconPort), ct).ConfigureAwait(false);
 
+            /* AN EXISTING GAME.INI IS LEFT ALONE. The server generated one, or this is a rebuild over a
+               server's saved data, or the install was copied: it is the owner's file. The one thing
+               added is ServerKey, and only when a key was given and the file has none. The wiki's
+               block is written only when there is no file. */
             var gameIniPath = Path.Combine(linuxDir, "Game.ini");
-            await AtomicFile.WriteAsync(gameIniPath, ProvisionText.GameIni(spec), ct).ConfigureAwait(false);
+            var existing = File.Exists(gameIniPath) ? await File.ReadAllTextAsync(gameIniPath, ct).ConfigureAwait(false) : "";
+            if (existing.Trim().Length == 0)
+            {
+                await AtomicFile.WriteAsync(gameIniPath, ProvisionText.GameIni(spec), ct).ConfigureAwait(false);
+                note = "RconSettings.txt and Game.ini (the wiki's) written, owned by steam.";
+            }
+            else
+            {
+                var updated = string.IsNullOrEmpty(spec.ServerKey) ? existing : ProvisionText.EnsureGameIniSetting(existing, "ServerKey", spec.ServerKey);
+                var added = !ReferenceEquals(updated, existing) && updated != existing;
+                if (added) await AtomicFile.WriteAsync(gameIniPath, updated, ct).ConfigureAwait(false);
+                note = "RconSettings.txt written; the existing Game.ini was kept" +
+                       (added ? " and ServerKey added to it" : "") + ", owned by steam.";
+            }
 
             // Written by root into a steam-owned tree; hand ownership back so the server reads them.
             foreach (var path in new[] { rconPath, gameIniPath })
             {
                 var chown = await RunAsync(null, "chown", [SteamUser, path], QuickTimeout, ct).ConfigureAwait(false);
-                if (!chown.Ok) return $"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}";
+                if (!chown.Ok) return ($"could not chown {path} to {SteamUser}: {Tail(chown.Combined)}", "");
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return ex.Message;
+            return (ex.Message, "");
         }
 
-        return null;
+        return (null, note);
+    }
+
+    /// <summary>The wiki's steps 1 and 2. A problem stops the run; a note is what the checklist says.</summary>
+    private async Task<(string? Problem, (bool SoftFail, string Text) Note)> InstallDependenciesAsync(CancellationToken ct)
+    {
+        string osRelease;
+        try
+        {
+            osRelease = File.Exists("/etc/os-release") ? await File.ReadAllTextAsync("/etc/os-release", ct).ConfigureAwait(false) : "";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            osRelease = "";
+        }
+
+        var fields = ParseOsRelease(osRelease);
+        var name = fields.GetValueOrDefault("PRETTY_NAME", "an unknown system");
+        if (DependencyPackages(osRelease) is not { } packages)
+        {
+            return (null, (true, $"{name} is not Debian or Ubuntu, so the wiki's package step was not run: its Rocky/RHEL commands " +
+                                 "switch SELinux to permissive for the whole machine. If the server will not start, do step 2 of the " +
+                                 "wiki for this system by hand."));
+        }
+
+        var update = await RunAsync(null, "env", AptUpdateArgv(), AptTimeout, ct).ConfigureAwait(false);
+        if (!update.Started) return ("could not run apt-get.", (false, ""));
+        if (!update.Ok) return ($"apt-get update failed: {Tail(update.Combined)}", (false, ""));
+
+        var install = await RunAsync(null, "env", AptInstallArgv(packages), AptTimeout, ct).ConfigureAwait(false);
+        if (!install.Ok) return ($"apt-get install {string.Join(' ', packages)} failed: {Tail(install.Combined)}", (false, ""));
+
+        return (null, (false, $"{name}: {string.Join(", ", packages)} installed."));
+    }
+
+    /// <summary>
+    /// The wiki's "Post Installation Steps": steamclient.so (twice), the libc++ link, and chmod +x.
+    /// </summary>
+    private async Task<(string? Problem, (bool SoftFail, string Text) Note)> PostInstallAsync(
+        ServerProvisionSpec spec, string steamCmd, CancellationToken ct)
+    {
+        var home = await SteamHomeAsync(ct).ConfigureAwait(false);
+
+        var update = await RunAsync(SteamUser, steamCmd, SteamClientUpdateArgv(), SteamCmdTimeout, ct).ConfigureAwait(false);
+        if (!update.Started) return ($"could not execute {steamCmd}.", (false, ""));
+        if (!update.Ok) return ($"SteamCMD could not fetch the Steamworks SDK Redist (app 1007): {Tail(update.Combined)}", (false, ""));
+
+        var source = SteamClientSource(steamCmd);
+        if (!File.Exists(source)) return ($"SteamCMD finished but {source} is not there.", (false, ""));
+
+        var sdk = SteamClientSdkDirectory(home);
+        var mk = await RunAsync(SteamUser, "mkdir", ["-p", sdk], QuickTimeout, ct).ConfigureAwait(false);
+        if (!mk.Ok) return ($"could not create {sdk}: {Tail(mk.Combined)}", (false, ""));
+
+        foreach (var target in new[] { $"{sdk}/steamclient.so", SteamClientInstallPath(spec.InstallDir) })
+        {
+            var copy = await RunAsync(SteamUser, "cp", [source, target], QuickTimeout, ct).ConfigureAwait(false);
+            if (!copy.Ok) return ($"could not copy steamclient.so to {target}: {Tail(copy.Combined)}", (false, ""));
+        }
+
+        // The wiki: "All versions are required to run these commands to change the libc++ that steamclient uses".
+        var libcxx = "libc++ link skipped: this system keeps its libraries somewhere other than " + LibcxxDirectory + ".";
+        var softFail = true;
+        if (Directory.Exists(LibcxxDirectory))
+        {
+            if (!File.Exists($"{LibcxxDirectory}/libc++.so.1"))
+                return ($"{LibcxxDirectory}/libc++.so.1 is not there, so libc++.so cannot be linked to it - the libc++-dev package should have provided it.", (false, ""));
+
+            var rm = await RunAsync(null, "rm", LibcxxRemoveArgv(), QuickTimeout, ct).ConfigureAwait(false);
+            if (!rm.Ok) return ($"could not remove {LibcxxDirectory}/libc++.so: {Tail(rm.Combined)}", (false, ""));
+            var link = await RunAsync(null, "ln", LibcxxLinkArgv(), QuickTimeout, ct).ConfigureAwait(false);
+            if (!link.Ok) return ($"could not link libc++.so: {Tail(link.Combined)}", (false, ""));
+            libcxx = "libc++.so linked to libc++.so.1";
+            softFail = false;
+        }
+
+        var chmod = await RunAsync(SteamUser, "chmod", LaunchScriptArgv(spec.InstallDir), QuickTimeout, ct).ConfigureAwait(false);
+        if (!chmod.Ok) return ($"could not make PavlovServer.sh executable: {Tail(chmod.Combined)}", (false, ""));
+
+        return (null, (softFail, $"steamclient.so copied to {sdk} and the install; {libcxx}; PavlovServer.sh is executable."));
     }
 
     /// <summary>Write the unit, reload systemd, enable and start it. Null on success.</summary>
@@ -791,18 +1042,12 @@ public sealed class ServerProvisioner(ILogger<ServerProvisioner> logger) : IServ
     /// <summary>Open the three ports. Null on success, else a note (non-fatal).</summary>
     private async Task<string?> OpenPortsAsync(ServerProvisionSpec spec, CancellationToken ct)
     {
-        (int Port, string Proto)[] rules =
-        [
-            (spec.GamePort, "udp"),
-            (spec.QueryPort, "udp"),
-            (spec.RconPort, "tcp"),
-        ];
-
-        foreach (var (port, proto) in rules)
+        // The wiki's three: the game port, the query port (the game port + 400), and RCON.
+        foreach (var port in new[] { spec.GamePort, spec.QueryPort, spec.RconPort })
         {
-            var run = await RunAsync(null, "ufw", ["allow", UfwRule(port, proto)], QuickTimeout, ct).ConfigureAwait(false);
+            var run = await RunAsync(null, "ufw", UfwAllowArgv(port), QuickTimeout, ct).ConfigureAwait(false);
             if (!run.Started) return "ufw is not installed or not on PATH - open the ports yourself.";
-            if (!run.Ok) return $"ufw allow {UfwRule(port, proto)} did not succeed: {Tail(run.Combined)}";
+            if (!run.Ok) return $"ufw allow {port} did not succeed: {Tail(run.Combined)}";
         }
 
         return null;
