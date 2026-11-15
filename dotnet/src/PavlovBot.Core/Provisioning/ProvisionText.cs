@@ -150,9 +150,8 @@ public static class ProvisionText
         ArgumentNullException.ThrowIfNull(spec);
 
         var dir = spec.InstallDir.TrimEnd('/');
-        var exec = $"{dir}/PavlovServer.sh";
-        if (spec.GamePort != ServerPortDefaults.GamePort(1))
-            exec += string.Create(CultureInfo.InvariantCulture, $" -PORT={spec.GamePort}");
+        // The wiki's unit carries -PORT on every server, the first one included.
+        var exec = string.Create(CultureInfo.InvariantCulture, $"{dir}/PavlovServer.sh -PORT={spec.GamePort}");
 
         return
             "[Unit]\n" +

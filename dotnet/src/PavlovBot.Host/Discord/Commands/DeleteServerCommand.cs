@@ -109,7 +109,7 @@ public sealed class DeleteServerCommand(
     private async Task<bool> StartAsync(SocketSlashCommand command, int slot, CancellationToken ct)
     {
         var used = UsedRconIndices();
-        var units = SplitList(configuration["PAVLOV_UNITS"]);
+        var units = SplitList(configuration["PAVLOV_UNITS"]).Select(PavlovBot.Host.Servers.ServiceControl.WithoutLegacyDockerPrefix).ToList();
         var bases = SplitList(configuration["PAVLOV_BASES"]);
 
         if (Problem(slot, used, units, bases) is { } problem)

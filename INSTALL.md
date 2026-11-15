@@ -174,14 +174,17 @@ step for step, as root, and ends with a systemd unit:
    `Pavlov/Binaries/Linux`, the `libc++.so` link, `chmod +x PavlovServer.sh`
 5. `RconSettings.txt`, `Game.ini`, the `Logs` and `Config/LinuxServer` folders, and empty
    `mods.txt`, `whitelist.txt` and `blacklist.txt`
-6. the wiki's systemd unit, written as given (only the install folder is filled in, plus
-   `-PORT=<port>` on `ExecStart` for a second server on the same box), then `enable --now`
+6. the wiki's systemd unit, written as given: only the install folder and `-PORT=<port>` change
+   per server (`pavlovserver` / 7777, `pavlovserver1` / 7778, and so on), then `enable --now`
 7. `ufw allow` for the game, query and RCON ports
 
 `Game.ini` is the wiki's block with your name, player cap, PIN and maps filled in. If one already
 exists it is left alone: the only thing ever added is `ServerKey=<value>`, and only when you give
 a `serverkey` and the file has none. The API key is ignored. The wiki's `bVerboseLogging=false`
 is kept, which means the kill feed shows nothing until you set it to `true`.
+
+`/deleteserver` stops and removes the systemd unit, and also removes a Docker container of the same
+name if one is still there, so servers left over from the Docker build go the same way.
 
 A folder holding only an old server's `Pavlov/Saved` is accepted (it is handed to `steam`);
 anything else in the folder is refused.
