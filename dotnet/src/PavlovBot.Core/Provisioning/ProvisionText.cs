@@ -156,17 +156,14 @@ public static class ProvisionText
         return
             "[Unit]\n" +
             "Description=Pavlov VR dedicated server\n" +
-            "\n" +
             "[Service]\n" +
             "Type=simple\n" +
             $"WorkingDirectory={dir}\n" +
             $"ExecStart={exec}\n" +
-            "\n" +
             "RestartSec=1\n" +
             "Restart=always\n" +
             "User=steam\n" +
             "Group=steam\n" +
-            "\n" +
             "[Install]\n" +
             "WantedBy = multi-user.target\n";
     }
