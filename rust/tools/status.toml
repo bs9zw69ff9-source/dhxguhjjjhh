@@ -13,8 +13,11 @@ BanTests = "ported"
 DomainTests = "ported"
 EvasionScorerTests = "ported"
 FactionTests = "ported"
+IntelligenceRulesTests = "ported"
 LedgerConcurrencyTests = "ported"
 PenalCodeTests = "ported"
+ProfileRedactionTests = "ported"
+RiskScoringTests = "ported"
 
 [dropped]
 # Plugins: the C# host loads .NET assemblies, which a Rust binary cannot. Owner decision

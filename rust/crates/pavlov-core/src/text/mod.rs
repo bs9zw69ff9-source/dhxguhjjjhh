@@ -3,6 +3,7 @@
 pub mod case;
 mod currency;
 mod name_labels;
+pub mod number;
 mod sanitize;
 
 pub use currency::Currency;
