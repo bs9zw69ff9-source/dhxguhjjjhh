@@ -29,25 +29,13 @@ impl Currency {
     /// `ToString("N0", InvariantCulture)`: `-1,250` for a negative amount.
     #[must_use]
     pub fn format(&self, amount: i64) -> String {
-        format!("{}{}{}", self.prefix, group_thousands(amount), self.suffix)
+        format!(
+            "{}{}{}",
+            self.prefix,
+            super::number::group_thousands(amount),
+            self.suffix
+        )
     }
-}
-
-/// `1234567` as `1,234,567`, `-1250` as `-1,250`. `i64::MIN` included: the magnitude is
-/// taken as `u64`, so there is no negation overflow.
-fn group_thousands(amount: i64) -> String {
-    let digits = amount.unsigned_abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-    if amount < 0 {
-        out.push('-');
-    }
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 #[cfg(test)]
