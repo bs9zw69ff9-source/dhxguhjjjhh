@@ -6,5 +6,12 @@
 
 mod patterns;
 
+pub mod concurrency;
+pub mod economy;
+pub mod evasion;
+pub mod json;
+pub mod moderation;
+pub mod stats;
 pub mod text;
 pub mod time;
+pub mod verification;

@@ -22,10 +22,14 @@ todo = "deny"
 unimplemented = "deny"
 
 [workspace.dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 fancy-regex = "0.14"
+indexmap = { version = "2", features = ["serde"] }
 regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", default-features = false }
 
 [profile.release]
 codegen-units = 1

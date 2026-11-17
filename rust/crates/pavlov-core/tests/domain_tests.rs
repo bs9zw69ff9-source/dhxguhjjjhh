@@ -1,6 +1,9 @@
 //! Port of `dotnet/tests/PavlovBot.Tests/DomainTests.cs`. One Rust module per C# test class,
 //! one Rust test per C# test method (snake_case), `[InlineData]` rows as table loops.
 
+// Test helpers may panic: a panic is how a test reports failure.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 mod sanitize_tests {
     use pavlov_core::text::{NameLabels, Sanitize};
 
@@ -289,5 +292,618 @@ mod eastern_time_tests {
             BanDurations::length(Some("3d 4h")),
             Some(TimeDelta::days(3) + TimeDelta::hours(4))
         );
+    }
+}
+
+mod staff_hierarchy_tests {
+    use chrono::{TimeDelta, Utc};
+    use pavlov_core::moderation::{BanRecord, BanRules, StaffHierarchy, StaffTier};
+
+    #[test]
+    fn highest_matching_role_wins() {
+        assert_eq!(
+            StaffHierarchy::tier_of(true, true, true, true, false),
+            StaffTier::SuperOwner
+        );
+        assert_eq!(
+            StaffHierarchy::tier_of(false, false, false, true, false),
+            StaffTier::Mod
+        );
+        assert_eq!(
+            StaffHierarchy::tier_of(false, false, false, false, false),
+            StaffTier::None
+        );
+    }
+
+    #[test]
+    fn a_lower_tier_cannot_undo_a_higher_tiers_action() {
+        assert!(!StaffHierarchy::can_override(
+            StaffTier::Mod,
+            Some(StaffTier::Admin)
+        ));
+        assert!(!StaffHierarchy::can_override(
+            StaffTier::Admin,
+            Some(StaffTier::Owner)
+        ));
+        assert!(!StaffHierarchy::can_override(
+            StaffTier::Owner,
+            Some(StaffTier::SuperOwner)
+        ));
+    }
+
+    #[test]
+    fn a_super_owner_can_undo_anything_below_a_master_owner() {
+        for t in StaffTier::ALL
+            .into_iter()
+            .filter(|t| *t != StaffTier::MasterOwner)
+        {
+            assert!(
+                StaffHierarchy::can_override(StaffTier::SuperOwner, Some(t)),
+                "tier {t:?}"
+            );
+        }
+        assert!(!StaffHierarchy::can_override(
+            StaffTier::SuperOwner,
+            Some(StaffTier::MasterOwner)
+        ));
+    }
+
+    #[test]
+    fn a_master_owner_is_above_everyone_and_only_a_master_owner_can_undo_them() {
+        for t in StaffTier::ALL {
+            assert!(
+                StaffHierarchy::can_override(StaffTier::MasterOwner, Some(t)),
+                "tier {t:?}"
+            );
+        }
+        for t in StaffTier::ALL
+            .into_iter()
+            .filter(|t| *t != StaffTier::MasterOwner)
+        {
+            assert!(
+                !StaffHierarchy::can_override(t, Some(StaffTier::MasterOwner)),
+                "tier {t:?}"
+            );
+        }
+        assert_eq!(
+            StaffHierarchy::tier_of(true, true, true, true, true),
+            StaffTier::MasterOwner
+        );
+        assert_eq!(StaffHierarchy::name(StaffTier::MasterOwner), "Master Owner");
+    }
+
+    #[test]
+    fn a_ban_cannot_be_replaced_by_a_tier_that_could_not_lift_it() {
+        // Replacing is lifting: a mod who cannot /unban an owner's permanent ban must not be
+        // able to /tempban the same player for a minute and wait.
+        let now = Utc::now();
+        let bans = [BanRecord {
+            permanent: true,
+            tier: Some(StaffTier::MasterOwner),
+            ..BanRecord::for_player("Cheater")
+        }];
+
+        assert!(
+            BanRules::protected_from_replacement(&bans, "cheater", StaffTier::SuperOwner, now)
+                .is_some()
+        );
+        assert!(
+            BanRules::protected_from_replacement(&bans, "Cheater", StaffTier::None, now).is_some()
+        ); // automation
+        assert!(
+            BanRules::protected_from_replacement(&bans, "Cheater", StaffTier::MasterOwner, now)
+                .is_none()
+        );
+        assert!(
+            BanRules::protected_from_replacement(&bans, "SomeoneElse", StaffTier::Mod, now)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_expired_or_untiered_ban_can_always_be_replaced() {
+        let now = Utc::now();
+        let bans = [
+            BanRecord {
+                expires: Some(now - TimeDelta::minutes(1)),
+                tier: Some(StaffTier::MasterOwner),
+                ..BanRecord::for_player("Served")
+            },
+            BanRecord {
+                permanent: true,
+                tier: None,
+                ..BanRecord::for_player("Auto")
+            },
+        ];
+
+        assert!(
+            BanRules::protected_from_replacement(&bans, "Served", StaffTier::Mod, now).is_none()
+        );
+        assert!(BanRules::protected_from_replacement(&bans, "Auto", StaffTier::Mod, now).is_none());
+    }
+
+    #[test]
+    fn equal_tiers_can_undo_each_other() {
+        assert!(StaffHierarchy::can_override(
+            StaffTier::Mod,
+            Some(StaffTier::Mod)
+        ));
+        assert!(StaffHierarchy::can_override(
+            StaffTier::Admin,
+            Some(StaffTier::Admin)
+        ));
+    }
+
+    #[test]
+    fn a_record_with_no_tier_can_be_lifted_by_anyone() {
+        assert!(StaffHierarchy::can_override(StaffTier::Mod, None));
+        assert!(StaffHierarchy::can_override(
+            StaffTier::Mod,
+            Some(StaffTier::None)
+        ));
+    }
+}
+
+mod menu_link_tests {
+    use pavlov_core::moderation::{MenuClaimAction, MenuLink};
+
+    #[test]
+    fn a_first_claim_is_granted() {
+        assert_eq!(
+            MenuLink::decide(None, Some("Alice"), None, "1", false).action,
+            MenuClaimAction::Grant
+        );
+    }
+
+    #[test]
+    fn a_bound_member_cannot_claim_a_different_name() {
+        let decision = MenuLink::decide(Some("Alice"), Some("Bob"), None, "1", false);
+        assert_eq!(decision.action, MenuClaimAction::Locked);
+        assert_eq!(decision.bound_name.as_deref(), Some("Alice"));
+    }
+
+    #[test]
+    fn the_lock_holds_even_with_no_menu_held() {
+        // The state somebody would engineer: release the menu, then re-claim as an alt.
+        assert_eq!(
+            MenuLink::decide(Some("Alice"), Some("Bob"), None, "1", false).action,
+            MenuClaimAction::Locked
+        );
+    }
+
+    #[test]
+    fn two_accounts_cannot_converge_on_one_name() {
+        let decision = MenuLink::decide(None, Some("Alice"), Some("999"), "1", false);
+        assert_eq!(decision.action, MenuClaimAction::Taken);
+        assert_eq!(decision.owner_id.as_deref(), Some("999"));
+    }
+
+    #[test]
+    fn re_entering_your_own_name_while_holding_a_menu_releases_it() {
+        assert_eq!(
+            MenuLink::decide(Some("Alice"), Some("alice"), Some("1"), "1", true).action,
+            MenuClaimAction::Release
+        );
+    }
+
+    #[test]
+    fn re_entering_your_own_name_without_a_menu_grants_it_back() {
+        assert_eq!(
+            MenuLink::decide(Some("Alice"), Some("Alice"), Some("1"), "1", false).action,
+            MenuClaimAction::Grant
+        );
+    }
+
+    #[test]
+    fn name_matching_ignores_case_and_surrounding_space() {
+        assert_eq!(
+            MenuLink::decide(Some("Alice"), Some("  ALICE "), Some("1"), "1", false).action,
+            MenuClaimAction::Grant
+        );
+    }
+}
+
+mod verification_rules_tests {
+    use indexmap::IndexMap;
+    use pavlov_core::verification::{VerificationConflict, VerificationRecord, VerificationRules};
+
+    fn store(rows: &[(&str, &str, &[&str])]) -> IndexMap<String, VerificationRecord> {
+        rows.iter()
+            .map(|(id, name, ips)| {
+                (
+                    (*id).to_owned(),
+                    VerificationRecord {
+                        name: (*name).to_owned(),
+                        ips: ips.iter().map(|s| (*s).to_owned()).collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn ips(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_fresh_account_with_a_free_name_is_allowed() {
+        assert!(
+            VerificationRules::check(&store(&[]), "1", Some("Alice"), &ips(&["1.2.3.4"]))
+                .is_allowed()
+        );
+    }
+
+    #[test]
+    fn an_already_verified_account_is_refused_with_its_own_name() {
+        let verdict =
+            VerificationRules::check(&store(&[("1", "Alice", &[])]), "1", Some("Bob"), &[]);
+        assert_eq!(verdict.conflict, VerificationConflict::AlreadyVerified);
+        assert!(verdict.reason.unwrap().contains("Alice"));
+    }
+
+    #[test]
+    fn a_name_verified_to_somebody_else_is_refused() {
+        let verdict =
+            VerificationRules::check(&store(&[("999", "Alice", &[])]), "1", Some("alice"), &[]);
+        assert_eq!(verdict.conflict, VerificationConflict::NameTaken);
+        assert_eq!(verdict.other_id.as_deref(), Some("999"));
+    }
+
+    #[test]
+    fn a_shared_ip_reads_as_an_alt() {
+        let verdict = VerificationRules::check(
+            &store(&[("999", "Bob", &["1.2.3.4"])]),
+            "1",
+            Some("Alice"),
+            &ips(&["1.2.3.4"]),
+        );
+        assert_eq!(verdict.conflict, VerificationConflict::Alt);
+        assert_eq!(verdict.other_id.as_deref(), Some("999"));
+    }
+
+    #[test]
+    fn no_shared_ip_means_no_alt_finding() {
+        assert!(
+            VerificationRules::check(
+                &store(&[("999", "Bob", &["5.6.7.8"])]),
+                "1",
+                Some("Alice"),
+                &ips(&["1.2.3.4"])
+            )
+            .is_allowed()
+        );
+    }
+
+    #[test]
+    fn verifying_with_no_ips_at_all_still_checks_the_name() {
+        let verdict = VerificationRules::check(
+            &store(&[("999", "Alice", &["1.2.3.4"])]),
+            "1",
+            Some("Alice"),
+            &[],
+        );
+        assert_eq!(verdict.conflict, VerificationConflict::NameTaken);
+    }
+}
+
+mod peak_tracker_tests {
+    use chrono::{DateTime, TimeZone, Utc};
+    use indexmap::IndexMap;
+    use pavlov_core::stats::PeakTracker;
+
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap()
+    }
+
+    fn counts(rows: &[(&str, i64)]) -> IndexMap<String, i64> {
+        rows.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect()
+    }
+
+    #[test]
+    fn all_time_peaks_only_ever_rise() {
+        let first =
+            PeakTracker::reduce(&counts(&[("server1", 20)]), None, now(), Some("2026-07-15"));
+        assert!(first.changed);
+        assert_eq!(first.stats.per_server["server1"].peak, 20);
+
+        let lower = PeakTracker::reduce(
+            &counts(&[("server1", 5)]),
+            Some(&first.stats),
+            now(),
+            Some("2026-07-15"),
+        );
+        assert!(!lower.changed);
+        assert_eq!(lower.stats.per_server["server1"].peak, 20);
+    }
+
+    #[test]
+    fn the_combined_peak_is_across_servers_not_the_max_of_them() {
+        let update = PeakTracker::reduce(
+            &counts(&[("server1", 12), ("server2", 9)]),
+            None,
+            now(),
+            None,
+        );
+        assert_eq!(update.stats.combined.unwrap().peak, 21);
+    }
+
+    #[test]
+    fn a_day_roll_over_resets_the_daily_bucket_but_not_the_all_time_one() {
+        let monday =
+            PeakTracker::reduce(&counts(&[("server1", 30)]), None, now(), Some("2026-07-15"));
+        let tuesday = PeakTracker::reduce(
+            &counts(&[("server1", 4)]),
+            Some(&monday.stats),
+            now(),
+            Some("2026-07-16"),
+        );
+        let daily = tuesday.stats.daily.as_ref().unwrap();
+        assert_eq!(daily.combined.peak, 4);
+        assert_eq!(daily.date, "2026-07-16");
+        assert_eq!(tuesday.stats.per_server["server1"].peak, 30);
+    }
+
+    #[test]
+    fn the_days_reset_is_persisted_even_at_zero_players() {
+        let monday =
+            PeakTracker::reduce(&counts(&[("server1", 30)]), None, now(), Some("2026-07-15"));
+        let tuesday = PeakTracker::reduce(
+            &counts(&[("server1", 0)]),
+            Some(&monday.stats),
+            now(),
+            Some("2026-07-16"),
+        );
+        assert!(tuesday.changed);
+        assert_eq!(tuesday.stats.daily.unwrap().combined.peak, 0);
+    }
+
+    #[test]
+    fn nothing_beating_a_record_reports_no_change_so_the_caller_can_skip_the_write() {
+        let first =
+            PeakTracker::reduce(&counts(&[("server1", 10)]), None, now(), Some("2026-07-15"));
+        assert!(
+            !PeakTracker::reduce(
+                &counts(&[("server1", 10)]),
+                Some(&first.stats),
+                now(),
+                Some("2026-07-15")
+            )
+            .changed
+        );
+    }
+
+    #[test]
+    fn passing_no_date_key_skips_daily_tracking_entirely() {
+        assert!(
+            PeakTracker::reduce(&counts(&[("server1", 10)]), None, now(), None)
+                .stats
+                .daily
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reading_todays_peak_from_another_days_bucket_gives_zero() {
+        let stats =
+            PeakTracker::reduce(&counts(&[("server1", 10)]), None, now(), Some("2026-07-15")).stats;
+        assert_eq!(PeakTracker::daily_peak(Some(&stats), "2026-07-15"), 10);
+        assert_eq!(PeakTracker::daily_peak(Some(&stats), "2026-07-16"), 0);
+        assert_eq!(PeakTracker::daily_peak(None, "2026-07-15"), 0);
+    }
+}
+
+mod ledger_tests {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use pavlov_core::economy::{BalanceStore, Ledger};
+    use pavlov_core::text::case::fold_case;
+
+    #[derive(Default)]
+    struct MemoryBalances {
+        balances: Mutex<HashMap<String, i64>>,
+        fail_writes: AtomicBool,
+    }
+
+    impl BalanceStore for MemoryBalances {
+        fn read(&self, player_id: &str) -> Option<i64> {
+            self.balances
+                .lock()
+                .unwrap()
+                .get(&fold_case(player_id))
+                .copied()
+        }
+
+        fn write(&self, player_id: &str, balance: i64) -> bool {
+            if self.fail_writes.load(Ordering::SeqCst) {
+                return false;
+            }
+            self.balances
+                .lock()
+                .unwrap()
+                .insert(fold_case(player_id), balance);
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn a_credit_applies_and_reports_the_delta() {
+        let ledger = Ledger::new(MemoryBalances::default());
+        let change = ledger.credit("alice", 500).await;
+        assert!(change.ok);
+        assert_eq!(change.before, 0);
+        assert_eq!(change.after, 500);
+        assert_eq!(change.delta(), 500);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_credits_do_not_double_spend() {
+        // Two concurrent payouts both reading 500 and both writing 600 is the bug this prevents.
+        let ledger = Arc::new(Ledger::new(MemoryBalances::default()));
+        let tasks: Vec<_> = (0..100)
+            .map(|_| {
+                let ledger = Arc::clone(&ledger);
+                tokio::spawn(async move { ledger.credit("alice", 10).await })
+            })
+            .collect();
+        for t in tasks {
+            t.await.unwrap();
+        }
+        assert_eq!(ledger.credit("alice", 0).await.after, 1000);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn different_players_do_not_wait_on_each_other() {
+        let ledger = Arc::new(Ledger::new(MemoryBalances::default()));
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+
+        // The mutator BLOCKS inside alice's lock, on a worker of its own.
+        let slow = {
+            let ledger = Arc::clone(&ledger);
+            tokio::spawn(async move {
+                ledger
+                    .mutate::<()>("alice", move |before| {
+                        let _ = entered_tx.send(());
+                        let _ = release_rx.recv();
+                        Ok(Some(before + 1))
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(5), entered_rx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Bob must complete while alice's mutator is still held.
+        let fast = tokio::time::timeout(Duration::from_secs(5), ledger.credit("bob", 5))
+            .await
+            .unwrap();
+        assert!(fast.ok);
+
+        release_tx.send(()).unwrap();
+        slow.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_veto_leaves_the_balance_untouched() {
+        let ledger = Ledger::new(MemoryBalances::default());
+        ledger.credit("alice", 100).await;
+        let change = ledger.debit("alice", 500).await;
+        assert!(!change.ok);
+        assert_eq!(change.before, 100);
+        assert_eq!(change.after, 100);
+    }
+
+    #[tokio::test]
+    async fn a_debit_to_exactly_zero_is_allowed() {
+        let ledger = Ledger::new(MemoryBalances::default());
+        ledger.credit("alice", 100).await;
+        assert!(ledger.debit("alice", 100).await.ok);
+    }
+
+    #[tokio::test]
+    async fn a_throwing_mutator_propagates_but_leaves_the_balance_untouched() {
+        // A defect must not come back in the vocabulary of a routine veto.
+        let ledger = Ledger::new(MemoryBalances::default());
+        ledger.credit("alice", 100).await;
+
+        let result = ledger.mutate("alice", |_| Err("boom")).await;
+        assert_eq!(result, Err("boom"));
+
+        // Untouched, and the next caller must still get through.
+        let next = ledger.credit("alice", 1).await;
+        assert!(next.ok);
+        assert_eq!(next.before, 100);
+        assert_eq!(next.after, 101);
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_reports_the_old_balance_not_the_intended_one() {
+        let store = MemoryBalances::default();
+        store.fail_writes.store(true, Ordering::SeqCst);
+        let ledger = Ledger::new(store);
+        let change = ledger.credit("alice", 500).await;
+        assert!(!change.ok);
+        assert_eq!(change.after, 0);
+    }
+
+    #[tokio::test]
+    async fn many_distinct_players_each_keep_their_own_balance() {
+        // Striping means distinct players share a LOCK; it must never mean sharing a BALANCE.
+        let ledger = Ledger::new(MemoryBalances::default());
+        for i in 0..500 {
+            ledger.credit(&format!("player{i}"), i).await;
+        }
+        assert_eq!(ledger.credit("player0", 0).await.before, 0);
+        assert_eq!(ledger.credit("player250", 0).await.before, 250);
+        assert_eq!(ledger.credit("player499", 0).await.before, 499);
+    }
+}
+
+mod menu_role_map_tests {
+    use pavlov_core::moderation::{MenuRoleMap, MenuTier};
+
+    fn map(high_staff: Option<u64>, staff: Option<u64>) -> MenuRoleMap {
+        MenuRoleMap {
+            high_staff,
+            staff,
+            blacklist: None,
+        }
+    }
+
+    #[test]
+    fn the_highest_tier_wins() {
+        let map = map(Some(1), Some(2));
+        assert_eq!(map.tier_for(&[1, 2]), Some(MenuTier::HighStaff));
+        assert_eq!(map.tier_for(&[1]), Some(MenuTier::HighStaff));
+        assert_eq!(map.tier_for(&[2]), Some(MenuTier::Staff));
+        assert_eq!(MenuTier::HighStaff.as_str(), "highstaff");
+    }
+
+    #[test]
+    fn an_unmapped_member_gets_no_tier() {
+        let map = map(Some(1), Some(2));
+        assert_eq!(map.tier_for(&[99]), None);
+        assert_eq!(map.tier_for(&[]), None);
+    }
+
+    #[test]
+    fn an_unconfigured_map_grants_nothing() {
+        assert_eq!(MenuRoleMap::EMPTY.tier_for(&[1, 2, 3]), None);
+    }
+
+    #[test]
+    fn what_the_command_stored_beats_the_environment() {
+        let in_force = map(Some(10), Some(20)).over(Some(1), Some(2), Some(3));
+        assert_eq!(in_force.tier_for(&[10]), Some(MenuTier::HighStaff));
+        assert_eq!(in_force.tier_for(&[20]), Some(MenuTier::Staff));
+        assert_eq!(in_force.tier_for(&[1]), None);
+    }
+
+    #[test]
+    fn the_environment_still_applies_to_tiers_the_command_never_set() {
+        let in_force = map(None, Some(20)).over(Some(1), Some(2), Some(3));
+        assert_eq!(in_force.tier_for(&[1]), Some(MenuTier::HighStaff));
+        assert_eq!(in_force.tier_for(&[20]), Some(MenuTier::Staff));
+        assert_eq!(in_force.blacklist, Some(3));
+    }
+
+    #[test]
+    fn an_empty_store_leaves_the_environment_in_charge() {
+        let in_force = MenuRoleMap::EMPTY.over(Some(1), Some(2), Some(3));
+        assert_eq!(in_force.tier_for(&[1]), Some(MenuTier::HighStaff));
+        assert_eq!(in_force.tier_for(&[2]), Some(MenuTier::Staff));
+        assert!(in_force.any());
+    }
+
+    #[test]
+    fn neither_source_set_means_nobody_qualifies() {
+        let in_force = MenuRoleMap::EMPTY.over(None, None, None);
+        assert!(!in_force.any());
+        assert_eq!(in_force.tier_for(&[1, 2, 3]), None);
     }
 }
