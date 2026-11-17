@@ -52,6 +52,12 @@ static_regex!(CLOCK_TIME = r"^(\d{1,2})(?::(\d{2}))?(am|pm)?$");
 pub struct EasternTime;
 
 impl EasternTime {
+    /// The longest span either parser produces ([`MAX_SPAN_TICKS`]: a hundred years).
+    #[must_use]
+    pub fn max_span() -> TimeDelta {
+        ticks_to_delta(MAX_SPAN_TICKS)
+    }
+
     /// `YYYY-MM-DD HH:MM:SS` Eastern, or `unknown` for an absent or non-positive timestamp.
     /// Zero means NEVER SEEN; printing 1970-01-01 is a lie that reads as data.
     #[must_use]

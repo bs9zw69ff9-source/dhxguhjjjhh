@@ -8,7 +8,12 @@
 # reason. Anything not ported and not listed here is simply not done yet.
 
 [files]
+BanSpanOverflowTests = "ported"
+BanTests = "ported"
 DomainTests = "ported"
+EvasionScorerTests = "ported"
+LedgerConcurrencyTests = "ported"
+PenalCodeTests = "ported"
 
 [dropped]
 # Plugins: the C# host loads .NET assemblies, which a Rust binary cannot. Owner decision
