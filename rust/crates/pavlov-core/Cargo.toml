@@ -1,0 +1,17 @@
+[package]
+name = "pavlov-core"
+description = "Pure domain rules of the Pavlov bot: no I/O, no Discord, no sockets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+fancy-regex.workspace = true
+regex.workspace = true
+
+[lints]
+workspace = true

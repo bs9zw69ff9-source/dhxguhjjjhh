@@ -1,0 +1,25 @@
+# Port status, read by rust/tools/parity.py and rust/tools/inventory.py.
+#
+# [files]: a C# test FILE (stem) marked "ported" must have every one of its test methods
+# present in Rust, in a file of the same name in snake_case. parity.py fails the gate the
+# moment a ported file is missing a test, so "ported" is a claim the tool checks.
+#
+# [dropped]: C# tests deliberately NOT ported, as "File::Method" glob patterns, each with the
+# reason. Anything not ported and not listed here is simply not done yet.
+
+[files]
+
+[dropped]
+# Plugins: the C# host loads .NET assemblies, which a Rust binary cannot. Owner decision
+# 2026-11-17: drop the plugin system rather than replace it.
+"PluginPermissionTests::*" = "plugins dropped by owner decision (2026-11-17)"
+"ServerBanFileAndPluginTests::ABrokenPluginIsDisabledAndTheRestStillRun" = "plugins dropped by owner decision (2026-11-17)"
+"ServerBanFileAndPluginTests::ABadDependencyGraphDisablesThePluginSystem_NotTheBot" = "plugins dropped by owner decision (2026-11-17)"
+"ServerBanFileAndPluginTests::PluginsStopInReverseOrder" = "plugins dropped by owner decision (2026-11-17)"
+"ServerBanFileAndPluginTests::AFailedPluginIsNotStopped" = "plugins dropped by owner decision (2026-11-17)"
+"ServerBanFileAndPluginTests::AMissingPluginDirectoryIsNotAnError" = "plugins dropped by owner decision (2026-11-17)"
+
+# Fallout: owner decision 2026-11-17, the fallout bot is dropped completely, deployment and
+# theme. The Rust bot is police-only. Tests that exercise a MECHANISM through fallout data
+# (sub-classes, ranks) are ported with police data instead and are not listed here.
+"FalloutPresetTests::*" = "fallout theme removed by owner decision (2026-11-17)"
