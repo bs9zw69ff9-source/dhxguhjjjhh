@@ -103,41 +103,53 @@ fi
 # state (.env, bot.db and the rest) is untouched: no -x.
 git clean -fd
 
-# The C# bot. deploy-csharp.sh owns the build, the selftest gate and the
-# refuse-to-double-run check, so none of that is duplicated here.
+# The C# bot. deploy-csharp.sh owns the build and the selftest gate, so none of
+# that is duplicated here. BUILD AND VERIFY ONLY: it never starts anything. The
+# systemd restart below is the one thing that puts the new binary live.
 # ${CS_ARGS[@]+...} because `set -u` treats an unset empty array as an error on
 # older bash, and this runs on whatever bash the game host happens to ship.
-# BUILD AND VERIFY ONLY - this box runs the bot as pavlov-bot-fallout, so
-# pavlov-bot-cs is never started here. A second process on the same Discord token
-# answers every command twice and posts every feed line twice; the fallout restart
-# below is the one and only thing that puts the new binary live.
 bash scripts/deploy-csharp.sh ${CS_ARGS[@]+"${CS_ARGS[@]}"}
 if [ "$START" != true ]; then
   echo "Built and verified. NOT restarted, because --no-start was given."
 fi
 
-# ---- the fallout bot --------------------------------------------------------
-# IT RUNS THE SAME PUBLISHED OUTPUT as anything else on this box, so the build
-# above is already its build - but it keeps serving the OLD binary until its own
-# process is replaced. Forgetting that step is exactly what "the fix is deployed
-# and the bot is not doing it" looks like, and it has cost days.
+# ---- the bot: the systemd unit pavlov-bot -----------------------------------
+# IT KEEPS SERVING THE OLD BINARY until its process is replaced. Forgetting that
+# step is exactly what "the fix is deployed and the bot is not doing it" looks
+# like, and it has cost days.
 #
-# THE ECOSYSTEM FILE, NOT THE APP NAME. `pm2 restart pavlov-bot-fallout` restarts
-# the process without re-reading the config, so a change to kill_timeout or the
-# env block would deploy and never apply - the same trap deploy-csharp.sh
-# documents for the other app.
-if [ "$START" = true ] && command -v pm2 >/dev/null; then
-  if pm2 describe pavlov-bot-fallout >/dev/null 2>&1; then
-    echo "==> Restarting pavlov-bot-fallout"
-
-    # Not fatal: a restart that fails is worth saying loudly and not worth
-    # undoing a good deploy over.
-    if pm2 restart ecosystem.fallout.config.js --update-env; then
-      pm2 save >/dev/null 2>&1 || true
-    else
-      echo "WARNING: pavlov-bot-fallout did not restart. It is still serving the OLD binary." >&2
-      echo "  Retry with:  pm2 restart ecosystem.fallout.config.js --update-env" >&2
-    fi
+# ONLY IF THE UNIT RUNS THIS BUILD. Restarting a unit whose ExecStart points
+# somewhere else takes the bot down and brings the OLD binary back - downtime for
+# nothing, reported as a deploy. So the unit's ExecStart is read first and the
+# restart is refused, loudly, unless it is this checkout's published binary.
+#
+# (This used to restart the pm2 app pavlov-bot-fallout. The fallout bot was
+# dropped on 2026-11-17; the bot is the systemd unit.)
+BOT_UNIT="${BOT_UNIT:-pavlov-bot}"
+BUILT="$(pwd)/dotnet-out/PavlovBot"
+if [ "$START" = true ]; then
+  if ! command -v systemctl >/dev/null 2>&1 || ! systemctl cat "$BOT_UNIT" >/dev/null 2>&1; then
+    echo "WARNING: there is no systemd unit $BOT_UNIT on this host, so nothing was restarted." >&2
+    echo "  The new build is at $BUILT. Start the bot from it yourself." >&2
+  else
+    EXEC_START="$(systemctl show -p ExecStart --value "$BOT_UNIT" 2>/dev/null || true)"
+    case "$EXEC_START" in
+      *"$BUILT"*)
+        echo "==> Restarting $BOT_UNIT"
+        # Not fatal: a restart that fails is worth saying loudly and not worth
+        # undoing a good deploy over.
+        if ! systemctl restart "$BOT_UNIT"; then
+          echo "WARNING: $BOT_UNIT did not restart. It is still serving the OLD binary." >&2
+          echo "  Retry with:  systemctl restart $BOT_UNIT   then  journalctl -u $BOT_UNIT -n 50" >&2
+        fi
+        ;;
+      *)
+        echo "WARNING: $BOT_UNIT does not run this build, so it was NOT restarted." >&2
+        echo "  This build:          $BUILT" >&2
+        echo "  The unit's ExecStart: ${EXEC_START:-(unreadable)}" >&2
+        echo "  See it with:  systemctl cat $BOT_UNIT" >&2
+        ;;
+    esac
   fi
 fi
 
@@ -145,18 +157,13 @@ echo "Deployed $(git log --oneline -1)"
 
 
 # ---- proof it is the new binary that is running -----------------------------
-# "Did the deploy take?" has come up on nearly every fix in this branch, and the
-# answer lived only in a log line at startup. pm2 restarting is not the same as
-# the new build serving, so print what is actually up and where to confirm it.
+# "Did the deploy take?" has come up on nearly every fix, and the answer lived
+# only in a log line at startup. A restart is not the same as the new build
+# serving, so print what is actually up and where to confirm it.
 if [ "$START" = true ]; then
-  if command -v pm2 >/dev/null; then
-    for app in pavlov-bot-fallout; do
-      if pm2 describe "$app" >/dev/null 2>&1; then
-        echo "--- $app"
-        pm2 describe "$app" 2>/dev/null \
-          | grep -E "status|uptime|restarts" | head -3 || true
-      fi
-    done
+  if command -v systemctl >/dev/null 2>&1 && systemctl cat "$BOT_UNIT" >/dev/null 2>&1; then
+    echo "--- $BOT_UNIT"
+    systemctl show -p ActiveState -p SubState -p ActiveEnterTimestamp -p NRestarts "$BOT_UNIT" 2>/dev/null || true
   fi
   echo
   echo "Confirm in Discord: /health shows 'build $(git rev-parse HEAD)' in its footer."

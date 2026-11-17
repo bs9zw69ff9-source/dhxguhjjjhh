@@ -9,7 +9,7 @@
 # sub-classes are in them, where the commands were registered, and what is on
 # disk in the roster directory.
 #
-# WHY IT EXISTS. Every one of those lives somewhere different - git, pm2, a
+# WHY IT EXISTS. Every one of those lives somewhere different - git, systemd, a
 # startup log line, a .env, the game's config directory - and chasing them one
 # at a time across a chat window has cost days. The failures it has caught so
 # far, none of which were visible from the code:
@@ -23,6 +23,15 @@
 # unset and never echoed, so the output is safe to paste into a chat.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# The bot is the systemd unit pavlov-bot (the pm2 fallout bot was dropped on
+# 2026-11-17). BOT_UNIT overrides the name.
+BOT_UNIT="${BOT_UNIT:-pavlov-bot}"
+have_unit() { command -v systemctl >/dev/null 2>&1 && systemctl cat "$BOT_UNIT" >/dev/null 2>&1; }
+BOT_DIR=""
+if have_unit; then
+  BOT_DIR="$(systemctl show -p WorkingDirectory --value "$BOT_UNIT" 2>/dev/null || true)"
+fi
 
 line() { printf '\n=== %s ===\n' "$1"; }
 
@@ -44,59 +53,47 @@ else
   echo "$BIN is missing - nothing has been published on this box."
 fi
 
-line "processes"
-if command -v pm2 >/dev/null; then
-  pm2 list 2>/dev/null | sed -n '1,20p'
+line "the bot process"
+if have_unit; then
+  systemctl status --no-pager -n 0 "$BOT_UNIT" 2>/dev/null | sed -n '1,6p'
   echo
-  echo "A status of errored or stopped is the answer: a bot that is not running"
-  echo "registers no commands, so Discord keeps serving the list from last time."
+  echo "failed or inactive is the answer: a bot that is not running registers no"
+  echo "commands, so Discord keeps serving the list from last time."
 else
-  echo "pm2 is not installed on this host."
+  echo "There is no systemd unit $BOT_UNIT on this host."
 fi
 
-line "which binary each process is running, and from where"
-# TWO PATHS, TWO JOBS, and confusing them is invisible: the repo holds the build
-# and this config, the bot's own directory holds its .env, its data and its logs.
-# A process whose exec path is NOT this checkout's dotnet-out is running a binary
-# no deploy here ever replaces - the one failure mode that survives every other
-# check in this script.
-if command -v pm2 >/dev/null; then
-  pm2 jlist 2>/dev/null | python3 -c '
-import json, os, sys, datetime
-try:
-    apps = json.load(sys.stdin)
-except Exception:
-    print("  (could not read pm2 jlist)"); raise SystemExit
-for a in apps:
-    env = a.get("pm2_env", {})
-    exe = env.get("pm_exec_path", "?")
-    cwd = env.get("pm_cwd", "?")
-    when = "missing"
-    if os.path.exists(exe):
-        when = datetime.datetime.fromtimestamp(os.path.getmtime(exe)).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"  {a.get(\"name\",\"?\")}")
-    print(f"    runs:   {exe}   (built {when})")
-    print(f"    cwd:    {cwd}   <- its .env and data")
-' || echo "  (python3 not available to read pm2 jlist)"
-else
-  echo "pm2 is not installed on this host."
+line "which binary it is running, and from where"
+# TWO PATHS, TWO JOBS, and confusing them is invisible: the repo holds the build,
+# the bot's working directory holds its .env, its data and its logs. A unit whose
+# ExecStart is NOT this checkout's dotnet-out is running a binary no deploy here
+# ever replaces - the one failure mode that survives every other check here.
+if have_unit; then
+  exec_start="$(systemctl show -p ExecStart --value "$BOT_UNIT" 2>/dev/null || true)"
+  exe="$(printf '%s' "$exec_start" | sed -n -E 's/.*path=([^ ;]+).*/\1/p')"
+  when="missing"
+  [ -n "$exe" ] && [ -f "$exe" ] && when="$(date -r "$exe" '+%Y-%m-%d %H:%M:%S')"
+  echo "  runs:   ${exe:-?}   (built $when)"
+  echo "  cwd:    ${BOT_DIR:-?}   <- its .env and data"
+  case "$exe" in
+    "$(pwd)/$BIN") ;;
+    *) echo "  !! NOT THIS CHECKOUT'S BUILD ($(pwd)/$BIN) - a deploy here does not reach it." ;;
+  esac
 fi
 
-line "what each bot loaded at startup"
-if command -v pm2 >/dev/null; then
-  for app in $(pm2 jlist 2>/dev/null | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | sort -u); do
-    echo "--- $app"
-    pm2 logs "$app" --nostream --lines 400 2>/dev/null \
-      | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:|Pavlov log|Tailing .* Pavlov log|CANNOT READ|Kill stats: recorded|staff roles" \
-      | tail -15
-    echo
-  done
+line "what the bot loaded at startup"
+if have_unit && command -v journalctl >/dev/null 2>&1; then
+  journalctl -u "$BOT_UNIT" -n 400 --no-pager 2>/dev/null \
+    | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:|Pavlov log|Tailing .* Pavlov log|CANNOT READ|Kill stats: recorded|staff roles" \
+    | tail -15
 else
-  echo "(no pm2 - check the bot's own log output for the 'factions:' line)"
+  echo "(no journal for $BOT_UNIT - check the bot's own log output for the 'factions:' line)"
 fi
 
 line "configuration that decides all of the above"
-for env in .env /root/pavlov-bot-fallout/.env; do
+ENV_FILES=".env"
+[ -n "$BOT_DIR" ] && [ "$BOT_DIR" != "$(pwd)" ] && ENV_FILES="$ENV_FILES $BOT_DIR/.env"
+for env in $ENV_FILES; do
   [ -f "$env" ] || continue
   echo "--- $env"
   for key in FACTION_SET FACTIONS_PATH GUILD_ID USER_APP FACTION_ROLES_PATH COMMANDS_DISABLED; do
@@ -119,6 +116,7 @@ line "the kill log, and whether anything has happened since the bot started"
 # and "nobody has died since the restart" are the same picture, and only this tells them
 # apart.
 for log in /home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log \
+           /home/steam/pavlovserver1/Pavlov/Saved/Logs/Pavlov.log \
            /home/steam/pavlovserver2/Pavlov/Saved/Logs/Pavlov.log; do
   [ -f "$log" ] || continue
   echo "--- $log"
@@ -133,20 +131,20 @@ for log in /home/steam/pavlovserver/Pavlov/Saved/Logs/Pavlov.log \
   fi
 done
 
-if command -v pm2 >/dev/null; then
+if have_unit; then
   echo
-  echo "  Compare that against when each bot started:"
-  pm2 list 2>/dev/null | grep -E "pavlov|uptime" | sed 's/^/    /' | head -6
-  echo "    A kill written BEFORE the uptime above was never seen: the tailer starts at the"
+  echo "  Compare that against when the bot started:"
+  echo "    $(systemctl show -p ActiveEnterTimestamp --value "$BOT_UNIT" 2>/dev/null)"
+  echo "    A kill written BEFORE that time was never seen: the tailer starts at the"
   echo "    end of the file, on purpose. Play a round, then look again."
 fi
 
 line "roster files on disk"
-ROSTERS=$(grep -hE "^[[:space:]]*FACTION_ROLES_PATH=" .env /root/pavlov-bot-fallout/.env 2>/dev/null \
+ROSTERS=$(grep -hE "^[[:space:]]*FACTION_ROLES_PATH=" $ENV_FILES 2>/dev/null \
   | tail -1 | cut -d= -f2- | xargs || true)
 if [ -n "${ROSTERS:-}" ] && [ -d "$ROSTERS" ]; then
   echo "$ROSTERS"
-  ls -la "$ROSTERS" | grep -iE "enclave|ncr|legion|bos" | head -20
+  ls -la "$ROSTERS" | grep -iE "police" | head -20
 else
   echo "FACTION_ROLES_PATH is unset or not a directory - the bot writes no rosters at all."
 fi
@@ -156,7 +154,7 @@ cat <<'EOF'
 Paste the whole output. The three things it settles:
 
   the binary is older than the checkout   -> the build or the restart did not happen
-  a process is errored or stopped         -> read its log; it is failing to start
+  the unit is failed or inactive          -> journalctl -u pavlov-bot -n 100; it is failing to start
   "sub-classes: ... " does not list yours -> the running bot loaded different ladders,
                                              and the "factions:" line above says from where
   "staff roles: mod unset, ..."           -> no role grants that tier, whatever /setroles

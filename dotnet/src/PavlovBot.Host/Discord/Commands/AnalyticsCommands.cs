@@ -53,7 +53,7 @@ public sealed class StaffStatsCommand(AnalyticsService analytics, Access access)
     public ApplicationCommandProperties Build() =>
         new SlashCommandBuilder()
             .WithName(Name)
-            .WithDescription("Admin - Staff activity, and anything outside somebody's usual rate")
+            .WithDescription("Admin - Staff activity over a period, busiest first")
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("activity").WithDescription("Everyone, busiest first")
                 .WithType(ApplicationCommandOptionType.SubCommand)

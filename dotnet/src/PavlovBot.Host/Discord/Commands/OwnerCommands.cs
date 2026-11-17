@@ -11,7 +11,6 @@ using PavlovBot.Core.Text;
 using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Observability;
-using PavlovBot.Host.Plugins;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Servers;
 using PavlovBot.Host.Storage;
@@ -27,7 +26,7 @@ namespace PavlovBot.Host.Discord.Commands;
 /// and the name people type when they want to know their own K/D is not it.
 /// </remarks>
 public sealed class BotStatsCommand(
-    MetricsRegistry metrics, PluginHost plugins, ServiceControl services, Access access,
+    MetricsRegistry metrics, ServiceControl services, Access access,
     PavlovBot.Host.Stats.KillStats? kills = null) : ISlashCommand
 {
     public string Name => "botstats";
@@ -78,10 +77,6 @@ public sealed class BotStatsCommand(
                 : $"{all.Count} player(s), {recorded.ToString("N0", CultureInfo.InvariantCulture)} kill(s)" +
                   (last is { } when ? $", last {Theme.Relative(when)}" : ""), inline: true);
         }
-
-        var loaded = plugins.Status();
-        if (loaded.Count > 0)
-            embed.AddField("Plugins", string.Join("\n", loaded.Select(p => $"`{p.Name}` v{p.Version} — {p.State}")));
 
         /* THE GAME SERVERS, which are what the box is actually spending itself on. The bot's
            own footprint is a rounding error beside three Pavlov processes, and "the server is

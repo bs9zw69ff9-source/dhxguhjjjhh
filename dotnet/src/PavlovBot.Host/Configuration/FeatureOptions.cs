@@ -98,37 +98,15 @@ public sealed record FeatureOptions
     /// <summary>Extra path fragments never mirrored, beyond the built-in menu-access ones.</summary>
     public IReadOnlyList<string> ModSaveSyncSkipExtra { get; init; } = [];
 
-    /// <summary>Where plugin assemblies live. Null uses ./plugins.</summary>
-    public string? PluginDirectory { get; init; }
-
     /// <summary>
-    /// Load plugins even when the bot runs as root (<c>PLUGINS_ALLOW_ROOT</c>). Off by default: a
-    /// plugin is ordinary .NET code with every right the process has, and its declared
-    /// permissions are a courtesy it chooses to honour, not a sandbox.
-    /// </summary>
-    public bool PluginsAllowRoot { get; init; }
-
-    /// <summary>Plugins to load. Empty means all of them - a list is how a crashing
-    /// plugin is disabled without deleting the file.</summary>
-    public IReadOnlyList<string> EnabledPlugins { get; init; } = [];
-
-    /// <summary>
-    /// Plugins to refuse, by name. Wins over <see cref="EnabledPlugins"/>.
+    /// Plugin settings still present in the configuration, which nothing reads any more.
     /// </summary>
     /// <remarks>
-    /// A DENY-LIST AS WELL AS AN ALLOW-LIST, because they answer different questions. The
-    /// allow-list says "run exactly these", which is right for a curated deployment. The
-    /// deny-list says "not that one", which is what an operator reaches for at 3am when one
-    /// plugin is misbehaving - and it must work whether or not they also maintain an
-    /// allow-list, or the answer at that moment is "I disabled it and it kept loading".
-    ///
-    /// PLUGINS ARE ENABLED AND DISABLED THROUGH CONFIGURATION, NOT AT RUNTIME, and that is a
-    /// deliberate limit rather than a missing feature. A plugin is loaded into the host's
-    /// AssemblyLoadContext and .NET cannot unload it, so a /plugin disable command could stop
-    /// a plugin's WORK but could not unload its code, leave its event subscriptions, or free
-    /// what it holds. A button that says disable and half-disables is worse than no button.
+    /// THE PLUGIN SYSTEM WAS REMOVED (owner decision, 2026-11-17): no plugin was ever deployed,
+    /// and the Rust port cannot load .NET assemblies. The settings are reported at startup
+    /// rather than silently ignored, because a setting that stops working must say so.
     /// </remarks>
-    public IReadOnlyList<string> DisabledPlugins { get; init; } = [];
+    public IReadOnlyList<string> IgnoredPluginSettings { get; init; } = [];
 
     public string? JoinWebhook { get; init; }
     public string? KillWebhook { get; init; }
@@ -605,10 +583,8 @@ public sealed record FeatureOptions
             MasterNames = [.. (configuration["MASTER_NAMES"] ?? "")
                 .Split([',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase)],
-            PluginDirectory = Text(configuration, "PLUGIN_DIR"),
-            PluginsAllowRoot = Flag(configuration, "PLUGINS_ALLOW_ROOT"),
-            EnabledPlugins = List(configuration, "PLUGINS_ENABLED"),
-            DisabledPlugins = List(configuration, "PLUGINS_DISABLED"),
+            IgnoredPluginSettings = [.. new[] { "PLUGIN_DIR", "PLUGINS_ENABLED", "PLUGINS_DISABLED", "PLUGINS_ALLOW_ROOT" }
+                .Where(key => Text(configuration, key) is not null)],
 
             LeaderboardInterval = Milliseconds(configuration, "LEADERBOARD_INTERVAL_MS", TimeSpan.FromMinutes(1)),
         };
