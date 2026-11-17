@@ -7,14 +7,17 @@
 mod patterns;
 
 pub mod concurrency;
+pub mod data;
 pub mod economy;
 pub mod evasion;
 pub mod events;
 pub mod factions;
 pub mod intelligence;
 pub mod json;
+pub mod licensing;
 pub mod moderation;
 pub mod penal;
+pub mod security;
 pub mod stats;
 pub mod text;
 pub mod time;

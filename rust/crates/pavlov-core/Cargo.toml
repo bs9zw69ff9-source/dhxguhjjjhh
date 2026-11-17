@@ -15,10 +15,12 @@ indexmap.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 # "sync" only: async locks with no runtime attached, so the crate stays free of I/O.
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+sha2.workspace = true
 tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros", "time"] }
 
 [lints]
