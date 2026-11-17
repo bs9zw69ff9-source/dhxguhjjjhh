@@ -11,6 +11,7 @@ pub mod economy;
 pub mod evasion;
 pub mod json;
 pub mod moderation;
+pub mod penal;
 pub mod stats;
 pub mod text;
 pub mod time;
