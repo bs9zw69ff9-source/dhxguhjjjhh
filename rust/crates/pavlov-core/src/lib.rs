@@ -9,6 +9,7 @@ mod patterns;
 pub mod concurrency;
 pub mod economy;
 pub mod evasion;
+pub mod factions;
 pub mod json;
 pub mod moderation;
 pub mod penal;

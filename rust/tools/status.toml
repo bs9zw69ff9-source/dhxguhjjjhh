@@ -12,6 +12,7 @@ BanSpanOverflowTests = "ported"
 BanTests = "ported"
 DomainTests = "ported"
 EvasionScorerTests = "ported"
+FactionTests = "ported"
 LedgerConcurrencyTests = "ported"
 PenalCodeTests = "ported"
 
