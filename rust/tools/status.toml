@@ -8,6 +8,7 @@
 # reason. Anything not ported and not listed here is simply not done yet.
 
 [files]
+DomainTests = "ported"
 
 [dropped]
 # Plugins: the C# host loads .NET assemblies, which a Rust binary cannot. Owner decision
