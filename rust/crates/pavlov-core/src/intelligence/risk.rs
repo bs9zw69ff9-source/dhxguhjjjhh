@@ -194,8 +194,7 @@ impl RiskScorer {
     }
 
     /// High with any decisive signal or two strong ones; Medium with one strong or three of
-    /// any; Low otherwise. Takes WEIGHTS so the fraud signals, whose weights are not risk
-    /// kinds, share the one notion of confidence, as they do in the C#.
+    /// any; Low otherwise.
     #[must_use]
     pub fn confidence_of(weights: impl IntoIterator<Item = i32>) -> RiskConfidence {
         let weights: Vec<i32> = weights.into_iter().collect();

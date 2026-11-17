@@ -8,29 +8,35 @@
 # sqlite3's .backup. Also folds in the human-readable JSON exports.
 #
 # WHICH DATABASE. The bot keeps bot.db in DATA_DIR, which defaults to data/ under
-# the directory it RUNS in (its pm2 cwd) - not the repo. The live bot runs in
-# /root/pavlov-bot-fallout, so that is BOT_DIR there. This script used to back up
-# <repo>/bot.db, a file the C# bot never writes: if a Node-era copy was still
-# sitting there, every hourly backup "succeeded" while saving stale data.
+# the directory it RUNS in - the WorkingDirectory of the systemd unit pavlov-bot -
+# not necessarily the repo. BOT_DIR defaults to that directory, read from systemd.
+# This script used to back up <repo>/bot.db, a file the C# bot never writes: if a
+# Node-era copy was still sitting there, every hourly backup "succeeded" while
+# saving stale data.
 #
 # ── One-time setup ──────────────────────────────────────────────────────────
 #   1. Install rclone:            curl https://rclone.org/install.sh | sudo bash
 #   2. Configure a remote:        rclone config          # pick B2 / S3 / R2 / Drive…
 #   3. Copy the config template:  cp scripts/backup.env.example backup.env
 #      then edit backup.env and set RCLONE_REMOTE (e.g. "b2:my-bucket/pavlov-bot")
-#   4. Add to root's crontab (hourly), naming the directory the bot RUNS in:
-#        0 * * * * BOT_DIR=/root/pavlov-bot-fallout /root/pavlov-bot/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1
+#   4. Add to root's crontab (hourly):
+#        0 * * * * /root/pavlov-bot/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1
+#      Set BOT_DIR=... in front only if the bot runs somewhere systemd cannot tell us.
 #
 # ── Restore (see the bottom of this file) ───────────────────────────────────
 #
 set -euo pipefail
 
-# BOT_DIR is the directory the bot RUNS in (where its .env and data/ live). It
-# defaults to the parent of this script's dir, which is only right when the bot
-# runs from the repo itself.
+# BOT_DIR is the directory the bot RUNS in (where its .env and data/ live): the
+# systemd unit's WorkingDirectory when there is one, else the repo this script is in.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-BOT_DIR="${BOT_DIR:-$REPO_DIR}"
+BOT_UNIT="${BOT_UNIT:-pavlov-bot}"
+UNIT_DIR=""
+if command -v systemctl >/dev/null 2>&1; then
+  UNIT_DIR="$(systemctl show -p WorkingDirectory --value "$BOT_UNIT" 2>/dev/null || true)"
+fi
+BOT_DIR="${BOT_DIR:-${UNIT_DIR:-$REPO_DIR}}"
 
 # Load config (gitignored) if present — lets you set RCLONE_REMOTE etc. out of git.
 if [ -f "$BOT_DIR/backup.env" ]; then . "$BOT_DIR/backup.env"
@@ -55,7 +61,7 @@ DB="$DATA_DIR/bot.db"
 
 [ -n "$RCLONE_REMOTE" ] || fail "RCLONE_REMOTE is not set (edit $BOT_DIR/backup.env)"
 command -v rclone >/dev/null 2>&1 || fail "rclone is not installed (curl https://rclone.org/install.sh | sudo bash)"
-[ -f "$DB" ] || fail "database not found at $DB - set BOT_DIR to the directory the bot runs in (its pm2 cwd), or DATA_DIR"
+[ -f "$DB" ] || fail "database not found at $DB - set BOT_DIR to the directory the bot runs in (the unit's WorkingDirectory), or DATA_DIR"
 
 # A live bot writes its database every minute. One untouched for a day is almost
 # certainly not the database the running bot uses - say so rather than back it up
@@ -114,9 +120,9 @@ rm -f "$ARCHIVE" "$JSON_TAR"
 log "done"
 
 # ── Restore (manual) ────────────────────────────────────────────────────────
-#   pm2 stop pavlov-bot-fallout
+#   systemctl stop pavlov-bot
 #   rclone lsf "$RCLONE_REMOTE/"                         # list backups, pick one
 #   rclone copy "$RCLONE_REMOTE/botdb-YYYYMMDD-HHMMSS.db.gz" /tmp/
-#   gunzip -c /tmp/botdb-YYYYMMDD-HHMMSS.db.gz > /root/pavlov-bot-fallout/data/bot.db
-#   rm -f /root/pavlov-bot-fallout/data/bot.db-wal /root/pavlov-bot-fallout/data/bot.db-shm   # drop stale WAL
-#   pm2 start pavlov-bot-fallout
+#   gunzip -c /tmp/botdb-YYYYMMDD-HHMMSS.db.gz > <BOT_DIR>/data/bot.db
+#   rm -f <BOT_DIR>/data/bot.db-wal <BOT_DIR>/data/bot.db-shm   # drop stale WAL
+#   systemctl start pavlov-bot

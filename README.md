@@ -252,9 +252,10 @@ remote with [`rclone`](https://rclone.org), and prunes old backups. Run it from
 system cron so it keeps working even when the bot is down.
 
 The database lives in `DATA_DIR` (default `data/`) under the directory the bot
-**runs** in, so tell the script where that is with `BOT_DIR` — for the live bot,
-`/root/pavlov-bot-fallout`. It warns if the database it finds has not been
-written for a day, which means it is looking at the wrong one.
+**runs** in. The script reads that from the systemd unit `pavlov-bot`
+(its `WorkingDirectory`); set `BOT_DIR` only if the bot runs somewhere systemd
+cannot tell it. It warns if the database it finds has not been written for a
+day, which means it is looking at the wrong one.
 
 ```bash
 # 1. install rclone and configure a remote (Backblaze B2 / S3 / R2 / Drive / …)
@@ -266,19 +267,19 @@ cp scripts/backup.env.example backup.env
 # edit backup.env -> RCLONE_REMOTE=b2:my-bucket/pavlov-bot-backups
 
 # 3. schedule it (hourly)
-( crontab -l 2>/dev/null; echo "0 * * * * BOT_DIR=/root/pavlov-bot-fallout $(pwd)/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1" ) | crontab -
+( crontab -l 2>/dev/null; echo "0 * * * * $(pwd)/scripts/backup.sh >> /var/log/pavlov-backup.log 2>&1" ) | crontab -
 ```
 
 **Restore:**
 
 ```bash
-pm2 stop pavlov-bot-fallout
+systemctl stop pavlov-bot
 rclone lsf b2:my-bucket/pavlov-bot-backups                    # list, pick a file
 rclone copy b2:my-bucket/pavlov-bot-backups/botdb-YYYYMMDD-HHMMSS.db.gz /tmp/
-cd /root/pavlov-bot-fallout/data
+cd "$(systemctl show -p WorkingDirectory --value pavlov-bot)/data"
 gunzip -c /tmp/botdb-YYYYMMDD-HHMMSS.db.gz > bot.db
 rm -f bot.db-wal bot.db-shm                                   # drop stale WAL
-pm2 start pavlov-bot-fallout
+systemctl start pavlov-bot
 ```
 
 Retention defaults to 30 days (`RETENTION_DAYS` in `backup.env`).

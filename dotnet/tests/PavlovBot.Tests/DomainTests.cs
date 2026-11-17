@@ -1,6 +1,5 @@
 using PavlovBot.Core.Economy;
 using PavlovBot.Core.Moderation;
-using PavlovBot.Core.Stats;
 using PavlovBot.Core.Text;
 using PavlovBot.Core.Time;
 using PavlovBot.Core.Verification;
@@ -453,79 +452,6 @@ public class VerificationRulesTests
         // The IP rule simply has nothing to compare; the name rule must still apply.
         Assert.Equal(VerificationConflict.NameTaken,
             VerificationRules.Check(Store(("999", "Alice", ["1.2.3.4"])), "1", "Alice", []).Conflict);
-    }
-}
-
-public class PeakTrackerTests
-{
-    private static readonly DateTimeOffset Now = new(2026, 7, 15, 12, 0, 0, TimeSpan.Zero);
-
-    [Fact]
-    public void AllTimePeaksOnlyEverRise()
-    {
-        var first = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 20 }, null, Now, "2026-07-15");
-        Assert.True(first.Changed);
-        Assert.Equal(20, first.Stats.PerServer["server1"].Peak);
-
-        var lower = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 5 }, first.Stats, Now, "2026-07-15");
-        Assert.False(lower.Changed);
-        Assert.Equal(20, lower.Stats.PerServer["server1"].Peak);
-    }
-
-    [Fact]
-    public void TheCombinedPeakIsAcrossServers_NotTheMaxOfThem()
-    {
-        var update = PeakTracker.Reduce(
-            new Dictionary<string, int> { ["server1"] = 12, ["server2"] = 9 }, null, Now, null);
-        Assert.Equal(21, update.Stats.Combined!.Peak);
-    }
-
-    [Fact]
-    public void ADayRollOverResetsTheDailyBucketButNotTheAllTimeOne()
-    {
-        var monday = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 30 }, null, Now, "2026-07-15");
-        var tuesday = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 4 }, monday.Stats, Now, "2026-07-16");
-
-        Assert.Equal(4, tuesday.Stats.Daily!.Combined.Peak);
-        Assert.Equal("2026-07-16", tuesday.Stats.Daily.Date);
-        Assert.Equal(30, tuesday.Stats.PerServer["server1"].Peak);
-    }
-
-    [Fact]
-    public void TheDaysResetIsPersistedEvenAtZeroPlayers()
-    {
-        /* Otherwise a quiet midnight leaves yesterday's numbers on display as though they
-           were today's, which is worse than showing zero. */
-        var monday = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 30 }, null, Now, "2026-07-15");
-        var tuesday = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 0 }, monday.Stats, Now, "2026-07-16");
-
-        Assert.True(tuesday.Changed);
-        Assert.Equal(0, tuesday.Stats.Daily!.Combined.Peak);
-    }
-
-    [Fact]
-    public void NothingBeatingARecordReportsNoChange_SoTheCallerCanSkipTheWrite()
-    {
-        // Peaks are sampled every minute and almost never move; writing unconditionally
-        // would be a disk write a minute forever.
-        var first = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 10 }, null, Now, "2026-07-15");
-        Assert.False(PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 10 }, first.Stats, Now, "2026-07-15").Changed);
-    }
-
-    [Fact]
-    public void PassingNoDateKeySkipsDailyTrackingEntirely()
-    {
-        var update = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 10 }, null, Now, null);
-        Assert.Null(update.Stats.Daily);
-    }
-
-    [Fact]
-    public void ReadingTodaysPeakFromAnotherDaysBucketGivesZero()
-    {
-        var stats = PeakTracker.Reduce(new Dictionary<string, int> { ["server1"] = 10 }, null, Now, "2026-07-15").Stats;
-        Assert.Equal(10, PeakTracker.DailyPeak(stats, "2026-07-15"));
-        Assert.Equal(0, PeakTracker.DailyPeak(stats, "2026-07-16"));
-        Assert.Equal(0, PeakTracker.DailyPeak(null, "2026-07-15"));
     }
 }
 

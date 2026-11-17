@@ -16,7 +16,6 @@ using PavlovBot.Host.Logs;
 using PavlovBot.Host.Moderation;
 using PavlovBot.Host.Vpn;
 using PavlovBot.Host.Observability;
-using PavlovBot.Host.Plugins;
 using PavlovBot.Host.Rcon;
 using PavlovBot.Host.Services;
 using PavlovBot.Host.Storage;
@@ -476,7 +475,6 @@ public static class Program
 
         // ---- analytics: aggregates over the event table, computed in SQL ----
         builder.Services.AddSingleton<AnalyticsService>();
-        builder.Services.AddSingleton<ISlashCommand, PluginsCommand>();
         builder.Services.AddSingleton<ISlashCommand, FactionStatsCommand>();
         builder.Services.AddSingleton<ISlashCommand, StaffStatsCommand>();
         /* The roster is what decides whether a ledger may be written at all - see
@@ -784,8 +782,6 @@ public static class Program
             sp.GetRequiredService<ILogger<MonitoringServer>>(),
             readiness: () => sp.GetRequiredService<DiscordGateway>().IsReady));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<MonitoringServer>());
-        builder.Services.AddSingleton<PluginHost>();
-        builder.Services.AddHostedService<PluginHostedService>();
         builder.Services.AddHostedService<BackgroundServiceHost>();
         /* After BackgroundServiceHost, which numbers the server logs a join is matched against. */
         builder.Services.AddHostedService(sp => new PavlovBot.Host.Moderation.MasterAccess(
@@ -1088,6 +1084,19 @@ public static class Program
            file. It is ignored now, and an operator who set it deliberately has to be told
            that to their face - a setting that quietly stops working is worse than one that
            was quietly wrong. */
+        /* THE PLUGIN SYSTEM IS GONE. Said once, loudly, so an install that still has the
+           settings or a plugins/ folder learns why nothing in it runs. */
+        var pluginFolder = Path.Combine(Directory.GetCurrentDirectory(), "plugins");
+        var strayPlugins = Directory.Exists(pluginFolder) && Directory.EnumerateFiles(pluginFolder, "*.dll").Any();
+        if (features.IgnoredPluginSettings.Count > 0 || strayPlugins)
+        {
+            logger.LogWarning(
+                "Plugins are no longer supported and nothing is loaded. Ignored: {Settings}{Folder}. " +
+                "Remove them from .env to silence this",
+                features.IgnoredPluginSettings.Count > 0 ? string.Join(", ", features.IgnoredPluginSettings) : "no settings",
+                strayPlugins ? $"; *.dll files in {pluginFolder}" : "");
+        }
+
         if (features.IgnoredBanFilePath is { Length: > 0 } retired)
         {
             logger.LogWarning(

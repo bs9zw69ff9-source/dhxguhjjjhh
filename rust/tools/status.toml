@@ -20,15 +20,6 @@ ProfileRedactionTests = "ported"
 RiskScoringTests = "ported"
 
 [dropped]
-# Plugins: the C# host loads .NET assemblies, which a Rust binary cannot. Owner decision
-# 2026-11-17: drop the plugin system rather than replace it.
-"PluginPermissionTests::*" = "plugins dropped by owner decision (2026-11-17)"
-"ServerBanFileAndPluginTests::ABrokenPluginIsDisabledAndTheRestStillRun" = "plugins dropped by owner decision (2026-11-17)"
-"ServerBanFileAndPluginTests::ABadDependencyGraphDisablesThePluginSystem_NotTheBot" = "plugins dropped by owner decision (2026-11-17)"
-"ServerBanFileAndPluginTests::PluginsStopInReverseOrder" = "plugins dropped by owner decision (2026-11-17)"
-"ServerBanFileAndPluginTests::AFailedPluginIsNotStopped" = "plugins dropped by owner decision (2026-11-17)"
-"ServerBanFileAndPluginTests::AMissingPluginDirectoryIsNotAnError" = "plugins dropped by owner decision (2026-11-17)"
-
 # Fallout: owner decision 2026-11-17, the fallout bot is dropped completely, deployment and
 # theme. The Rust bot is police-only. Tests that exercise a MECHANISM through fallout data
 # (sub-classes, ranks) are ported with police data instead and are not listed here.

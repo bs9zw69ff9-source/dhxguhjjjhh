@@ -2,9 +2,7 @@ PAVLOV VR DISCORD BOT: SUMMARY (as of 2026-11-16)
 
 WHAT IT IS
 - Pavlov VR Discord bot written in C# on .NET 9. Source is in dotnet/. It is the only bot in the repo (the Node bot was removed).
-- One binary, two deployments:
-  - Police bot: systemd service pavlov-bot, /root/pavlov-bot, THEME=police (dollars, warrants, the GWPD).
-  - Fallout bot: pm2, THEME=fallout (caps, the Mojave). Same build, not touched by any recent work.
+- The bot: systemd service pavlov-bot, /root/pavlov-bot, THEME=police (dollars, warrants, the GWPD). The fallout bot was dropped (2026-11-17).
 - Layout: PavlovBot.Core (pure domain logic, portable), PavlovBot.Rcon (RCON client), PavlovBot.Host (Discord, storage, log tailing, Linux-only systemd/ufw control).
 - Build state: 2175 tests pass, TreatWarningsAsErrors on. Tests include a fake RCON server that records the exact bytes on the wire.
 - Data files: still the JSON files the Node bot wrote.
@@ -20,15 +18,14 @@ FEATURES
 - Factions and RP: whitelist rosters with ranks and sub-classes; faction stats; payroll and wages; economy ledger; donators; penal code, arrests, bail, warrants, background checks; licences; in-game menu grants with permanent name binding; verification.
 - Boards and feeds: auto-posted leaderboards, K/D and playtime boards, player list, player-count voice channels; webhook feeds for joins, connects, kills and money; connect cards with geolocation.
 - Monitoring: server monitoring with alerts, /health, crash recovery, metrics endpoint (/health, /healthz, /ready; off unless METRICS_PORT is set).
-- Plugins: plugin host with per-plugin permissions.
 
-SLASH COMMANDS (58)
+SLASH COMMANDS (57)
 - Public: /help /stats /players /serverinfo /server /checkban /banlist
 - Mod: /kick /tempban /unban /warn /announce /flush /rotatemap /alts /counts /feeds /suspendrank /monitor
 - Admin: /permban /givemenu /stripmenu /donator /staff /staffactivity /staffleaderboard /unlinkname
 - Police and RP: /arrest /warrant /backgroundcheck /bail /license /wages /whitelist /subclass /factionstats
 - Owner, servers: /provisionserver /deleteserver /serverswitch /setpin /removepin /manual /configure
-- Owner, diagnostics: /inspect /iplookup /vpncheck /health /errors /botstats /plugins /testalert
+- Owner, diagnostics: /inspect /iplookup /vpncheck /health /errors /botstats /testalert
 - Owner, access: /firewall /setroles /setrconroles /guildinvites /testmode /tester
 - Destructive bulk actions live under /configure and need the operation name typed back exactly.
 

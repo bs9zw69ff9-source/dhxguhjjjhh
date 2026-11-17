@@ -117,9 +117,8 @@ building a tree the game never reads is worse than a refusal that says so.
 
 ## 4. Run it as its own user, not root
 
-A bot running as root turns any bug in it - or in Discord.Net, or in a plugin -
-into full control of the box. It logs a warning at startup when it is root, and it
-refuses to load plugins as root unless `PLUGINS_ALLOW_ROOT=1`. Everything except
+A bot running as root turns any bug in it - or in Discord.Net - into full control
+of the box. It logs a warning at startup when it is root. Everything except
 `/provisionserver` and `/deleteserver` works unprivileged.
 
 ```bash

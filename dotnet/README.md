@@ -1,7 +1,10 @@
-# PavlovBot (.NET port)
+# PavlovBot (C# / .NET 9)
 
-Staged port of the Node bot to .NET 9. **The Node bot in the repository root is still
-the production one** - nothing here is deployed yet.
+The bot that runs in production. It replaced the Node bot, which has been removed from the
+repository; `rust/` holds the port that will replace this one (see `rust/MIGRATION.md`).
+
+The design notes below explain decisions that are easy to undo by accident. Several were
+written while this was itself a port of the Node bot, which is why Node is mentioned.
 
 ## Why the port
 
@@ -18,74 +21,10 @@ src/PavlovBot.Core    pure domain logic - no Discord, no sockets, no filesystem
 src/PavlovBot.Rcon    Pavlov RCON client
 src/PavlovBot.Host    composition root, configuration, observability, Discord
 tests/PavlovBot.Tests xUnit
-tools/DiffCheck       differential harness: replays cases through both implementations
 ```
 
 `Core` and `Rcon` are marked `IsAotCompatible` so the parts that can be trimmed are kept
 honest as the port grows.
-
-## Porting method
-
-Each module goes across in this order, and does not count as ported until the last step
-passes:
-
-1. **Port the tests first.** They encode behaviour learned the hard way - `Ban` takes a
-   UniqueId not a name, a bare `SetPin` clears the pin, a lone shared ASN must never
-   report. That knowledge is the asset; the code is replaceable.
-2. Port the implementation until xUnit is green.
-3. **Differential-test against the running JS.** Passing the new tests only proves the
-   port is self-consistent. `tools/DiffCheck` replays identical inputs through both and
-   compares verdicts, which is what proves it agrees with production.
-
-## Status
-
-| Module | State |
-|---|---|
-| `Evasion` (ban-evasion scoring) | ported - 15 tests, 12/12 differential cases agree |
-| `Rcon` (client, coalescing, audit) | ported - 13 tests against a fake Pavlov listener |
-| `Data.SerializedStore` | ported - 8 tests |
-| `Data.RosterWriteGuard` | ported - 10 tests, 8/8 differential cases agree |
-| `Factions` (registry + membership rules) | ported - 24 tests, 3/3 factions and 52/52 rank scenarios agree |
-| `Penal` (59 charges + booking maths) | ported - 16 tests, 331/331 differential scenarios agree |
-| `Host` (config, DI, services, monitoring, gateway) | ported - 39/39 `.env` lines parse identically |
-| `Text` / `Time` / `StaffHierarchy` / `MenuLink` / `Verification` | ported |
-| `PeakTracker`, `Ledger` | ported |
-| storage (SQLite + dataset registry + JSON export) | ported |
-| ban rules and enforcement (sweep, reconcile, expiry) | ported |
-| VPN screening (6 detectors, two-tier consensus) | ported |
-| log pipeline (parsing, correlation, tailing, IP tracking) | ported |
-| roster service + faction commands | ported |
-| feeds, money log, auto-posting boards | ported |
-| boards (playtime, most wanted, player list, staff, dashboard) | ported |
-| menu grants + the permanent name binding | ported |
-| autocomplete, role config, donators, rank suspensions | ported |
-| modsave ban-list import/export | ported |
-| plugin system | ported |
-| audit log + staff auditing | ported |
-| commands | **39 - the whole Node surface** |
-
-Total: **473 xUnit tests**, and **442 differential scenarios** agreeing with the running
-JS across evasion, roster writes, factions, the penal code and `.env` parsing.
-
-### RCON: what changed versus Node
-
-The Node client opened a fresh TCP connection and MD5 handshake **per command**, which
-the Pavlov RCON reference explicitly advises against - Pavlov services RCON on the game
-thread, so every connection is work taken from the tick.
-
-Measured over 10 cycles of the bot's real pattern (player list, dashboard, leaderboards,
-ban sweep, health check and cache refresh all asking within the same second):
-
-| | connections opened |
-|---|---|
-| Node, before read coalescing | ~6 per cycle |
-| Node, after read coalescing | ~2 per cycle |
-| .NET, persistent session | **1 in total** |
-
-Three behaviours carried across from the Node work, all covered by tests: a mutation is
-never cached and clears the cached roster; a failure is never cached as an answer; retry
-backoff uses full jitter. Two are new: the session is reused and rebuilt transparently
-when dropped, and commands are paced 100ms apart as the docs advise.
 
 ## Running
 
@@ -98,9 +37,6 @@ dotnet test
 dotnet run --project src/PavlovBot.Host -- --selftest
 dotnet run --project src/PavlovBot.Host
 
-# Differential stages are selected by flag and are independent of each other.
-dotnet run --project tools/DiffCheck -- --evasion cases.json js-reference.json
-dotnet run --project tools/DiffCheck -- --dotenv dotenv-cases.json
 ```
 
 ## Data layer notes
@@ -160,7 +96,7 @@ from `penal/codes.js`.
 `rate` - the multiplier behind `/bail increase|decrease` - is applied and rounded **per
 charge**, never to the total. Otherwise a booking's bail would not equal the sum of the
 figures shown for its individual charges, and a receipt whose lines do not add up is
-worse than no receipt. The differential suite covers this explicitly: at rate 1.5,
+worse than no receipt. The tests cover this explicitly: at rate 1.5,
 `PC 100 + PC 102` is 38 + 23 = 61, not 60.
 
 Two special cases behave differently on purpose:
@@ -182,7 +118,7 @@ Configuration reports **every** problem at once, not the first. Fixing a bot's e
 one crash at a time, with a restart between each, is how a five-minute deploy becomes an
 hour.
 
-### The .env parser, and why it is differentially tested
+### The .env parser, and why it follows dotenv exactly
 
 Both bots read one `.env` during a migration, so the parser matches dotenv 16's grammar
 rather than inventing a cleaner one. A divergence here does not present as a parsing bug -
@@ -241,36 +177,6 @@ gives up AOT.
 
 The shipping recommendation is therefore **self-contained + ReadyToRun, untrimmed**.
 
-## Measured, honestly
-
-Both sides measured at the same point - **entire object graph constructed, Discord client
-created, nothing connected** - which is what `--selftest` exists for. Median of three runs
-on the same machine.
-
-| | Node (`index.js`) | .NET host |
-|---|---|---|
-| commands | ~39 | 39 |
-| construction | 333 ms | **~440 ms** |
-| resident | 101.6 MB | **64.3 MB** |
-| heap | 23.5 MB | **1.3 MB** |
-
-Published size:
-
-| | |
-|---|---|
-| self-contained + ReadyToRun | 90 MB |
-| framework-dependent | 14 MB |
-| trimmed (**not recommended**, see above) | 52 MB |
-| Node: `node_modules` | 57 MB (plus a ~119 MB `node` binary) |
-
-**This is still not a finished comparison.** The .NET host has 22 commands against roughly
-thirty, and a few features behind them are not ported. But the earlier prediction now has
-evidence: going from 1 command to 22, plus SQLite, the log pipeline, VPN screening, the
-boards and the feeds, moved resident from 56.8 MB to 63.4 MB and the managed heap from
-0.7 MB to 1.0 MB.
-Feature count and memory are not tracking together, because the features are code, and code
-lands in mapped R2R images rather than on the heap.
-
 ## Where the command surface differs
 
 Every Node command is ported. Two differences worth knowing:
@@ -294,12 +200,3 @@ escape hatches and both are now present:
 
 **RCON+ log auditing is still out**, at your request. The line parser recognises those
 lines; nothing consumes them.
-
-## The claim this port can and cannot make
-
-**Nothing here has run against a live Pavlov server or a real Discord gateway.** The whole
-port is verified by 463 tests, 442 differential scenarios agreeing with the running JS, and
-`--selftest` - which is a different and weaker claim than "it works".
-
-**The Node bot in the repository root is still the production one.** Switching over needs a
-staging server, a real gateway, and a period running both against the same `bot.db`.
