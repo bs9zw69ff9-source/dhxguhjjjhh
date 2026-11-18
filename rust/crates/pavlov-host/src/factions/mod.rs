@@ -3,6 +3,7 @@
 
 pub mod members;
 pub mod rank_restorer;
+pub mod renames;
 pub mod roster;
 
 pub use members::{FactionMember, FactionMembers};

@@ -26,6 +26,24 @@ use crate::metrics::{MetricLabels, MetricsRegistry};
 pub const LOG_CONFIRM_WINDOW: Duration = Duration::from_secs(10);
 /// A roster older than this is stale - reported, not silently served as current.
 pub const ROSTER_FRESHNESS: TimeDelta = TimeDelta::seconds(90);
+
+/// Whether a roster was taken within [`ROSTER_FRESHNESS`] of `now`. Never taken is stale.
+#[must_use]
+pub fn is_fresh(roster: &RosterSnapshot, now: DateTime<Utc>) -> bool {
+    roster
+        .taken_at
+        .is_some_and(|at| now - at <= ROSTER_FRESHNESS)
+}
+
+/// Everybody on a FRESH roster, deduplicated ignoring case, blanks dropped. A frozen roster
+/// from a crashed server is excluded: paying against it pays people who are not there.
+#[must_use]
+pub fn confirmed_online<'a>(
+    rosters: impl IntoIterator<Item = &'a RosterSnapshot>,
+    now: DateTime<Utc>,
+) -> Vec<String> {
+    RconRegistry::names(rosters.into_iter().filter(|r| is_fresh(r, now)))
+}
 const COMMAND_HELP: &str = "RCON command duration in milliseconds";
 
 /// One server's roster, with when it was taken. `taken_at = None` is "no roster yet".
@@ -358,9 +376,7 @@ impl RconRegistry {
     }
 
     fn fresh(&self, roster: &RosterSnapshot) -> bool {
-        roster
-            .taken_at
-            .is_some_and(|at| self.clock.now() - at <= ROSTER_FRESHNESS)
+        is_fresh(roster, self.clock.now())
     }
 
     fn names<'a>(rosters: impl Iterator<Item = &'a RosterSnapshot>) -> Vec<String> {
@@ -378,8 +394,7 @@ impl RconRegistry {
     /// Everybody on a server whose roster is FRESH - the only list that may be paid against.
     #[must_use]
     pub fn confirmed_online_players(&self) -> Vec<String> {
-        let state = self.lock();
-        Self::names(state.rosters.values().filter(|r| self.fresh(r)))
+        confirmed_online(self.lock().rosters.values(), self.clock.now())
     }
 
     /// Everybody on any server, a stale roster included - the conservative answer for a guard.
