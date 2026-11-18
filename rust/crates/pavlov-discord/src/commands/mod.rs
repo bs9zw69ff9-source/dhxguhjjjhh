@@ -18,6 +18,7 @@ pub mod feeds;
 pub mod guild_invites;
 pub mod license;
 pub mod membership_reply;
+pub mod menu;
 pub mod monitor;
 pub mod owner;
 pub mod players;

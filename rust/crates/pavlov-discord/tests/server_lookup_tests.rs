@@ -91,6 +91,12 @@ impl ComponentResponder for Press {
     fn show_modal(&self, _: Modal) -> BoxFuture<'_, Result<(), DiscordError>> {
         async { Ok(()) }.boxed()
     }
+    fn defer_reply(&self, _: bool) -> BoxFuture<'_, Result<(), DiscordError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn followup(&self, _: Reply, _: bool) -> BoxFuture<'_, Result<(), DiscordError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 fn press(step: &str, user: u64, values: &[&str]) -> ComponentInvocation {
