@@ -42,9 +42,17 @@ pub struct Embed {
     pub fields: Vec<EmbedField>,
     pub footer: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
+    /// The large image: a URL, or `attachment://name` for a file sent in the same message.
+    pub image: Option<String>,
 }
 
 impl Embed {
+    #[must_use]
+    pub fn image(mut self, url: impl Into<String>) -> Self {
+        self.image = Some(url.into());
+        self
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::default()
