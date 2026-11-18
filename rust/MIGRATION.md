@@ -16,7 +16,7 @@ summarised here so the checklist stands on its own.
 | M3 | `pavlov-rcon` and the byte-recording fake RCON server | done: the session (gated, paced, keepalive, drop-safe dirty flag), the client (read cache, coalescing on a spawned shared read, retry that never re-sends a mutation that may have run, reply correlation, the bot's-own-traffic memory), reply parsing, the roster and lifecycle traits, and `testing::FakeRconServer` recording the exact login and command bytes. The registry moved to M6: it needs the metrics and the Pavlov.log confirmations |
 | M4 | `pavlov-storage`: SQLite kv and events, files, atomic writes, game files | done: atomic writes (owner and mode carried over), the file and SQLite key-value backends, the dataset names and seeds, the SQLite timeline, the real disk probe, the game-file rules and `IGNORE_PATHS`, the whitelist editor, the ledger file store, the cross-install ModSave sync, and the stored shapes (Node ban list, arrests, the role map, account and flag rows). The game ban file (`ServerBanFile`), the IP-flag and VPN-cache datasets port with the moderation and VPN services in M6 |
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
-| M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | in progress: VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health) |
+| M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | in progress: VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health); recent command errors by correlation id, the `/health` errors field, component ids (moved to pavlov-core), and the roster-refresh failure wording |
 | M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | not started |
 | M8 | The 57 slash commands | not started |
 | M9 | `pavlov-bot` composition root and `--selftest` | not started |
@@ -146,6 +146,8 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | Abandoning a tick (budget or stop) | cancels its `CancellationToken`; a tick that ignores it keeps running | drops the tick's future at its next await | a hung tick cannot keep running in the background after it was abandoned |
 | Where a tick failure came from | the first stack frame with a file (needs PDBs) | `TickError::new` records the caller's file and line | the origin is there in a release build with no debug files |
 | A panicking tick or health check | n/a (exceptions) | caught and recorded as a failure (`panicked: ...`) | one bug cannot end a service's loop |
+| A recorded command error's trace | the exception's own stack trace | the error's source chain plus a backtrace taken where it was recorded | the recording site and the cause chain, not the throw site |
+| `ComponentId` | in the Discord layer | `pavlov_core::component_id`, pure | the routing and the Node-id translation are testable without a gateway |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Stored key case: the C# reads stored property names case-INSENSITIVELY; the Rust models read
@@ -691,7 +693,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `CommandBlacklistTests.cs` | 20 | 1/20 |
 | `CommandLogTests.cs` | 10 | 0/10 |
 | `ComponentFlowTests.cs` | 9 | 0/9 |
-| `ComponentIdTests.cs` | 11 | 0/11 |
+| `ComponentIdTests.cs` | 11 | ported |
 | `ConfigurationTests.cs` | 31 | ported |
 | `ConfirmedOnlineTests.cs` | 3 | ported |
 | `ConnectCardTests.cs` | 14 | ported |
@@ -717,7 +719,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `GameFileGuardTests.cs` | 9 | ported |
 | `GeoLocatorTests.cs` | 10 | ported |
 | `GuildInvitesTests.cs` | 7 | 0/7 |
-| `HealthErrorTests.cs` | 8 | 0/8 |
+| `HealthErrorTests.cs` | 8 | ported |
 | `HoldAllRanksTests.cs` | 6 | ported |
 | `HoldRanksEndToEndTests.cs` | 8 | ported |
 | `HomeGuildAccessTests.cs` | 13 | 0/13 |
@@ -770,7 +772,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RconLogConfirmationTests.cs` | 8 | ported |
 | `RconMenuTests.cs` | 7 | 0/7 |
 | `RconResilienceTests.cs` | 6 | ported |
-| `RecentErrorsTests.cs` | 6 | 0/6 |
+| `RecentErrorsTests.cs` | 6 | ported |
 | `RejectedCommandTests.cs` | 4 | ported |
 | `RiskScoringTests.cs` | 13 | ported |
 | `RoleMapLegacyShapeTests.cs` | 10 | ported |
@@ -779,7 +781,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RosterCommandGateTests.cs` | 5 | 0/5 |
 | `RosterFileCreationTests.cs` | 8 | ported |
 | `RosterProblemExcerptTests.cs` | 5 | 0/5 |
-| `RosterRefreshFailureTests.cs` | 3 | 0/3 |
+| `RosterRefreshFailureTests.cs` | 3 | ported |
 | `RosterServiceTests.cs` | 43 | ported |
 | `RotateMapTests.cs` | 49 | 47/49 |
 | `SecurityAlertTests.cs` | 17 | 4/17 |
@@ -805,7 +807,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `TempBanExpiryTests.cs` | 5 | ported |
 | `UserAppEphemeralTests.cs` | 6 | 0/6 |
 | `UserAppTests.cs` | 4 | 0/4 |
-| `VerificationServiceTests.cs` | 6 | 0/6 |
+| `VerificationServiceTests.cs` | 6 | ported |
 | `VpnAutoBanSwitchTests.cs` | 5 | ported |
 | `VpnAutoBanWiringTests.cs` | 8 | ported |
 | `VpnCacheSnapshotTests.cs` | 2 | ported |
