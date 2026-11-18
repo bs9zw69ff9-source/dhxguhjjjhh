@@ -13,9 +13,14 @@
 
 pub mod atomic_file;
 pub mod datasets;
+mod event_store;
 mod file_backend;
+pub mod game_files;
+pub mod installs;
 pub mod ownership;
 mod sqlite_backend;
+pub mod whitelist;
 
+pub use event_store::{EventGrouping, EventStore, NullEventStore, SqliteEventStore};
 pub use file_backend::FileKeyValueBackend;
 pub use sqlite_backend::SqliteKeyValueBackend;
