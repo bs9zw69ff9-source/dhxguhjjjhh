@@ -86,4 +86,5 @@ faction_file_bak/
 
 # C# publish output and pm2 logs
 dotnet-out/
+rust-out/
 /logs/

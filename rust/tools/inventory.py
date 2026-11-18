@@ -64,7 +64,34 @@ def table(rows: list[list[str]], header: list[str]) -> str:
     return "\n".join(out)
 
 
+# Commands whose name is not a `Name => "..."` literal in the C#: set through a constructor
+# (RankChangeCommand) or read from the skin (MoneyCommand). Listed so the count is the real one.
+CONSTRUCTOR_NAMED = {
+    "promotion": "RankChangeCommand.cs",
+    "demotion": "RankChangeCommand.cs",
+    "givemoney": "EconomyCommands.cs",
+    "adjustmoney": "EconomyCommands.cs",
+}
+
+
+def rust_command_sources() -> str:
+    """Every Rust source a command name can be declared in."""
+    text = ""
+    for root in (ROOT / "rust" / "crates" / "pavlov-discord" / "src",
+                 ROOT / "rust" / "crates" / "pavlov-core" / "src"):
+        for f in sorted(root.rglob("*.rs")):
+            text += f.read_text(encoding="utf-8")
+    return text
+
+
 def commands() -> list[list[str]]:
+    rust = rust_command_sources()
+
+    def status(name: str) -> str:
+        if name == "plugins":
+            return "DROPPED (plugins)"
+        return "ported" if f'"{name}"' in rust else "pending"
+
     rows = []
     for f in cs_files(SRC / "PavlovBot.Host" / "Discord" / "Commands"):
         text = f.read_text(encoding="utf-8")
@@ -74,9 +101,9 @@ def commands() -> list[list[str]]:
             window = text[build: build + 2500] if build >= 0 else ""
             d = re.search(r'WithDescription\("((?:[^"\\]|\\.)*)"', window)
             desc = d.group(1) if d else ""
-            dropped = m.group(1) == "plugins"
-            rows.append([f"`/{m.group(1)}`", desc.replace("|", "\\|"), f.name,
-                         "DROPPED (plugins)" if dropped else "pending"])
+            rows.append([f"`/{m.group(1)}`", desc.replace("|", "\\|"), f.name, status(m.group(1))])
+    for name, file in CONSTRUCTOR_NAMED.items():
+        rows.append([f"`/{name}`", "(named by its constructor)", file, status(name)])
     return sorted(rows)
 
 
@@ -89,21 +116,37 @@ def env_vars() -> list[list[str]]:
             if "_" in name or name in {"THEME", "USER_APP"}:
                 used.setdefault(name, set()).add(f.relative_to(SRC).as_posix())
     names = sorted((documented | set(used)) - {"UTF_8"})
+    config_text = ""
+    for crate in ("pavlov-config", "pavlov-bot", "pavlov-host", "pavlov-storage"):
+        for f in sorted((ROOT / "rust" / "crates" / crate / "src").rglob("*.rs")):
+            config_text += f.read_text(encoding="utf-8")
     rows = []
     for n in names:
         where = ", ".join(sorted(used.get(n, set())))[:120] or "(.env.example only)"
-        rows.append([f"`{n}`", "yes" if n in documented else "no", where, "pending"])
+        # Numbered settings are read as RCON_HOST_{n}: check the stem.
+        stem = re.sub(r"_?(\d+|\{[a-z]*\})$", "", n)
+        if n not in used:
+            state = "unused (the C# never read it either)"
+        elif f'"{n}"' in config_text or (stem != n and f'"{stem}_' in config_text):
+            state = "read"
+        else:
+            state = "NOT READ"
+        rows.append([f"`{n}`", "yes" if n in documented else "no", where, state])
     return rows
 
 
 def datasets() -> list[list[str]]:
     text = (SRC / "PavlovBot.Host" / "Storage" / "Datasets.cs").read_text(encoding="utf-8")
-    return [[f"`{c}`", f"`{v}`", "pending"] for c, v in re.findall(r'public const string (\w+) = "([^"]+)"', text)]
+    rust = (ROOT / "rust" / "crates" / "pavlov-storage" / "src" / "datasets.rs").read_text(encoding="utf-8")
+    return [[f"`{c}`", f"`{v}`", "ported" if f'"{v}"' in rust else "pending"]
+            for c, v in re.findall(r'public const string (\w+) = "([^"]+)"', text)]
 
 
 def services() -> list[list[str]]:
     text = (SRC / "PavlovBot.Host" / "Services" / "BackgroundServiceHost.cs").read_text(encoding="utf-8")
-    return [[f"`{n}`", "pending"] for n in re.findall(r'Name = "([a-z0-9-]+)"', text)]
+    rust = (ROOT / "rust" / "crates" / "pavlov-bot" / "src" / "services.rs").read_text(encoding="utf-8")
+    return [[f"`{n}`", "ported" if f'"{n}"' in rust else "pending"]
+            for n in re.findall(r'Name = "([a-z0-9-]+)"', text)]
 
 
 def source_map() -> list[list[str]]:

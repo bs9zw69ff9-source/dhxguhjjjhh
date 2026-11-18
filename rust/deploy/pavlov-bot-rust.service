@@ -1,0 +1,31 @@
+# The Rust bot as its own systemd unit, for STAGING (rust/DEPLOY.md). It runs from a separate
+# checkout with its own .env (a second Discord application, a test guild, a test server) and a
+# COPY of the data, so it never touches the live bot's files.
+#
+# Install:
+#   cp rust/deploy/pavlov-bot-rust.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now pavlov-bot-rust
+#
+# The cutover does NOT use this unit: it repoints the existing pavlov-bot unit's ExecStart
+# (rust/DEPLOY.md, "Cutover"), so the unit name, logs and anything watching it stay the same.
+
+[Unit]
+Description=Pavlov Discord bot (Rust, staging)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/pavlov-bot-staging
+ExecStart=/root/pavlov-bot-staging/rust-out/pavlov-bot
+# Root by owner decision: the bot runs systemctl, ufw and the provisioner itself.
+User=root
+Restart=on-failure
+RestartSec=5
+# SIGTERM drains in-flight interactions, stops the services in reverse and flushes kill stats.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -4,7 +4,8 @@
 #
 # Warnings are errors (clippy -D warnings), the same bar the C# holds with
 # TreatWarningsAsErrors. parity.py fails if a C# test file marked "ported" in
-# tools/status.toml is missing any of its tests in Rust.
+# tools/status.toml is missing any of its tests in Rust, and (--strict, since M10) if ANY C#
+# test is neither ported nor listed as dropped with a reason.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,7 +36,7 @@ cargo test --workspace --all-features
 step "cargo build --release"
 cargo build --release --workspace
 
-step "test parity with the C# suite"
-python3 tools/parity.py
+step "test parity with the C# suite (strict)"
+python3 tools/parity.py --strict
 
 printf '\nGate passed.\n'

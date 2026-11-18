@@ -7,6 +7,11 @@
 > no longer the deployment. It still builds, still passes its tests, and still
 > reads and writes the same `bot.db` — that is the point of keeping it. It will
 > be removed once C# has a run of live service behind it.
+>
+> **A Rust port is complete in [`rust/`](rust/) and not deployed yet.** It reads the same
+> `.env`, `bot.db` and game files. [`rust/DEPLOY.md`](rust/DEPLOY.md) has the staging
+> checklist, the cutover (one `ExecStart` drop-in on the `pavlov-bot` unit) and the rollback.
+> Until the owner runs that, the C# bot is the one in production.
 
 A theme-neutral Discord moderation bot for **Pavlov VR** RP servers. It drives
 the game servers over RCON and adds native bans/kicks with a reason + duration picker,

@@ -7,6 +7,7 @@
 //! Exit codes: 0 stopped cleanly or selftest passed; 78 (`EX_CONFIG`) a configuration that
 //! cannot be used; 1 anything else.
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,9 +33,12 @@ fn init_logging(level: Option<&str>) {
         _ => "info".to_owned(),
     };
     let filter = EnvFilter::new(format!("{level},serenity=warn,tracing::span=warn"));
+    // Colour only on a terminal: under systemd the journal would keep the escape codes, and
+    // the deploy script's "build=<commit>" check would never match them.
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_ansi(std::io::stdout().is_terminal())
         .init();
 }
 

@@ -5,6 +5,10 @@
 > layout. Kept because the Node bot's design is still the reference for the data formats
 > the C# bot reads, and `git log` before its removal is where to look when a feature "used
 > to work".
+>
+> The Rust port's architecture (eight crates, Discord behind trait seams, the graph built
+> by hand in the C# start order) is in [`rust/README.md`](rust/README.md) and
+> [`rust/MIGRATION.md`](rust/MIGRATION.md).
 
 How the bot was put together, and how to add to it.
 

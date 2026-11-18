@@ -18,9 +18,9 @@ summarised here so the checklist stands on its own.
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
 | M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | done (the Discord-facing remainder moves to M7/M8): VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health); recent command errors by correlation id, the `/health` errors field, component ids (moved to pavlov-core), and the roster-refresh failure wording; the server monitor, its 25-hour history and the live board; the loopback metrics and health endpoint |
 | M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher); the bar list and its refusal at dispatch, the command log, the command runner (log, bar, defer, prime, slots, budget, error id); the autoposter and the boards (cash, most wanted, warrants, staff, live players, K/D); player-count voice channels; the staff log by channel (mod, ban, police, arrest); security alerts by DM, the guild directory and invite pages, the staff menu bitcodes; every component prefix in one table, the per-server RCON failure reply; the owner panel's actions (`OwnerActions`) and whitelist snapshots |
-| M8 | The 57 slash commands | in progress: the `commands` module; `/checkban`'s ban history; the `FACTIONS_PATH` file and the startup line naming the faction source; `/arrest`'s override and receipt line; `/subclass`'s picker; paged replies and the component interaction model (`ComponentInvocation`, `ComponentResponder`, `ComponentHandler`). **Commands ported (all 57, with every component handler):** modal support in the component model (`ComponentInvocation::fields`, `ComponentResponder::acknowledge`/`show_modal`); the command catalog and the build stamp (`PAVLOV_BUILD_STAMP` at compile time); `PlayerIntelligenceService` (`pavlov-host/src/intelligence.rs`); player and rank autocomplete (`autocomplete.rs`) and `AnalyticsService` (`pavlov-host/src/analytics.rs`); `/whitelist` (with its wipe confirmation), `/promotion`, `/demotion`, `/subclasses`, `/subclass`, `/license`, `/setroles`, `/provisionserver`, `/players`, `/errors`, `/testalert`, `/counts`, `/rotatemap`, `/guildinvites`, `/alts`, `/staff`, `/stats`, `/feeds`, `/factionstats`, `/serverinfo`, `/kick`, `/announce`, `/health`, `/help`, `/warn`, `/givemoney`, `/adjustmoney`, `/wages`, `/tempban`, `/permban`, `/unban`, `/checkban`, `/warrant`, `/backgroundcheck`, `/bail`, `/arrest` with its booking picker, `/setpin`, `/removepin`, `/iplookup`, `/vpncheck`, `/staffactivity`, `/staffleaderboard`, `/banlist`, `/flush`, `/stripmenu`, `/donator`, `/suspendrank`, `/setrconroles`, `/serverswitch`, `/deleteserver`, `/monitor`, `/testmode`, `/tester`, `/botstats`, `/manual`, `/firewall`, `/inspect`, `/server lookup` with its browser, `/givemenu`, `/unlinkname` and the menu panel, `/configure` (the composition root MUST attach the server ban file to `BanService` with `with_ban_file`, or `/unban` cannot clear a file-only ban); the gateway's Discord-agnostic half: `component_router`, `autocomplete::answer`, `registration` (scopes, the faction split, the cleanup) and `home_guild` |
+| M8 | The slash commands (61: the C#'s own count, once the constructor-named ones are included) | in progress: the `commands` module; `/checkban`'s ban history; the `FACTIONS_PATH` file and the startup line naming the faction source; `/arrest`'s override and receipt line; `/subclass`'s picker; paged replies and the component interaction model (`ComponentInvocation`, `ComponentResponder`, `ComponentHandler`). **Commands ported (all 61, with every component handler):** modal support in the component model (`ComponentInvocation::fields`, `ComponentResponder::acknowledge`/`show_modal`); the command catalog and the build stamp (`PAVLOV_BUILD_STAMP` at compile time); `PlayerIntelligenceService` (`pavlov-host/src/intelligence.rs`); player and rank autocomplete (`autocomplete.rs`) and `AnalyticsService` (`pavlov-host/src/analytics.rs`); `/whitelist` (with its wipe confirmation), `/promotion`, `/demotion`, `/subclasses`, `/subclass`, `/license`, `/setroles`, `/provisionserver`, `/players`, `/errors`, `/testalert`, `/counts`, `/rotatemap`, `/guildinvites`, `/alts`, `/staff`, `/stats`, `/feeds`, `/factionstats`, `/serverinfo`, `/kick`, `/announce`, `/health`, `/help`, `/warn`, `/givemoney`, `/adjustmoney`, `/wages`, `/tempban`, `/permban`, `/unban`, `/checkban`, `/warrant`, `/backgroundcheck`, `/bail`, `/arrest` with its booking picker, `/setpin`, `/removepin`, `/iplookup`, `/vpncheck`, `/staffactivity`, `/staffleaderboard`, `/banlist`, `/flush`, `/stripmenu`, `/donator`, `/suspendrank`, `/setrconroles`, `/serverswitch`, `/deleteserver`, `/monitor`, `/testmode`, `/tester`, `/botstats`, `/manual`, `/firewall`, `/inspect`, `/server lookup` with its browser, `/givemenu`, `/unlinkname` and the menu panel, `/configure` (the composition root MUST attach the server ban file to `BanService` with `with_ban_file`, or `/unban` cannot clear a file-only ban); the gateway's Discord-agnostic half: `component_router`, `autocomplete::answer`, `registration` (scopes, the faction split, the cleanup) and `home_guild` |
 | M9 | `pavlov-bot` composition root and `--selftest` | done: the startup checks; the whole graph in Program.cs order (`graph.rs`), built against Discord as trait objects so `--selftest` never contacts it; the 30-odd background services in BackgroundServiceHost's order with their gates and dependencies (`services.rs`); the run with the gateway LAST and a reverse-order shutdown that drains interactions (`run.rs`); `--selftest` (graph built, services registered, nothing started). Also ported on the way, because the earlier milestones had missed them: the monitor's RCON probe, log activity and alert sink, verification, and the player-event timeline bridge. Parity 1792 of 1792 |
-| M10 | Deploy script, police systemd unit, rollback, documentation | not started |
+| M10 | Deploy script, police systemd unit, rollback, documentation | done: `scripts/deploy-rust.sh` (release build with the build stamp, the selftest gate on the new binary before it replaces anything, an atomic swap, a restart only of a unit that runs this binary, the stamp read back from the journal); `rust/deploy/pavlov-bot-rust.service` for staging; `rust/DEPLOY.md` (what was and was not verified, the staging checklist with the `scan_keys.py` step, the cutover as an `ExecStart` drop-in, the rollback); `parity.py --strict` in the gate. **Next: the owner's staging run and cutover, then M11** |
 | M11 | Delete the C# code, after the owner confirms the Rust bot live | not started |
 
 Nothing in `rust/` is deployed. `scripts/deploy.sh` builds and runs the C# bot until the
@@ -30,7 +30,7 @@ cutover in M10, which the owner runs.
 
 1. **Plugins are dropped**, from the C# as well (2026-11-17): no plugin was ever deployed,
    and a Rust binary cannot load .NET assemblies. There is no `pavlov-plugins` crate and no
-   `/plugins` command, so the bot has 57 commands. `PLUGIN_DIR`, `PLUGINS_ENABLED` and `PLUGINS_DISABLED` still parse so an
+   `/plugins` command, so the bot has 61 commands (the C# without `/plugins`; an earlier count of 57 missed the four named by a constructor). `PLUGIN_DIR`, `PLUGINS_ENABLED` and `PLUGINS_DISABLED` still parse so an
    existing `.env` is accepted; if any is set, or `plugins/` holds files, startup logs one
    warning that plugins are not supported.
 2. **The RCON firewall stays as it is.** Provisioning runs plain `ufw allow <port>` for the
@@ -198,154 +198,158 @@ bash rust/tools/gate.sh                # the merge gate: fmt, clippy -D warnings
 
 _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand; edit `rust/tools/status.toml` and re-run._
 
-### Slash commands (57)
+### Slash commands (61)
 
 | Command | Description (C#) | C# file | Rust |
 |---|---|---|---|
-| `/alts` | Moderation - Accounts that share an address with this player | AltsCommand.cs | pending |
-| `/announce` | Mod - Broadcast a message to the server | UtilityCommands.cs | pending |
-| `/arrest` | Police - Book a player on penal-code charges | PoliceCommands.cs | pending |
-| `/backgroundcheck` | Police - Pull a player's record | PoliceCommands.cs | pending |
-| `/bail` | Mod - Bail prices and the sentence cap | PoliceCommands.cs | pending |
-| `/banlist` | Show every ban currently in force | StaffCommands.cs | pending |
-| `/botstats` | Owner - CPU and memory for the bot and each game server | OwnerCommands.cs | pending |
-| `/checkban` | Check whether a player is banned | BanCommands.cs | pending |
-| `/configure` | Owner - The control panel: blacklists, access, tracking, wipes | ConfigPanel.cs | pending |
-| `/counts` | Mod - Update the player-count voice channels now | CountsCommand.cs | pending |
-| `/deleteserver` | Owner - Delete a server: its service, its install directory and its slot (needs root) | DeleteServerCommand.cs | pending |
-| `/donator` | Player ID or username | ConfigCommands.cs | pending |
-| `/errors` | Owner - Recent command failures, with the stack trace | ErrorsCommand.cs | pending |
-| `/factionstats` | Which faction | IntelligenceCommands.cs | pending |
-| `/feeds` | Mod - Check whether the join, connect, kill and money webhooks are working | FeedsCommand.cs | pending |
-| `/firewall` | Owner - Manual OS firewall (ufw) control. Bans are also denied automatically. | OwnerCommands.cs | pending |
-| `/flush` | Which server to free a slot on | StaffCommands.cs | pending |
-| `/givemenu` | Admin - Grant RCON menu access to a player | MenuCommands.cs | pending |
-| `/guildinvites` | Owner - DM the super owner an invite to every Discord server this bot is in | GuildInvitesCommand.cs | pending |
-| `/health` | Owner - Bot health and background services | UtilityCommands.cs | pending |
-| `/help` | Show the available commands and your access level | UtilityCommands.cs | pending |
-| `/inspect` | Owner - Everything the bot knows about a player | OwnerCommands.cs | pending |
-| `/iplookup` | Owner - Look up an IP: location, ISP and VPN status | AdminCommands.cs | pending |
-| `/kick` | Mod - Kick a player | UtilityCommands.cs | pending |
-| `/license` | Which license to take away | LicenseCommand.cs | pending |
-| `/manual` | Which server | OwnerCommands.cs | pending |
-| `/monitor` | Which server (default: all) | ServerStatusCommand.cs | pending |
-| `/permban` | Admin - Ban a player permanently | BanCommands.cs | pending |
-| `/players` | Who is online right now | PlayersCommand.cs | pending |
-| `/provisionserver` | Owner - Install a new Pavlov server, configure it and wire it into this bot (needs root) | ProvisionServerCommand.cs | pending |
-| `/removepin` | Which server to unlock | AdminCommands.cs | pending |
-| `/rotatemap` | Which server to rotate. Defaults to all of them. | RotateMapCommand.cs | pending |
-| `/server` | Browse the public Pavlov server list | ServerLookupCommand.cs | pending |
-| `/serverinfo` | Live server info - map, mode and who is online. | ServerInfoCommand.cs | pending |
-| `/serverswitch` | Which server | ServerSwitchCommand.cs | pending |
-| `/setpin` | Which server to lock | AdminCommands.cs | pending |
-| `/setrconroles` | Owner - Map Discord roles to RCON menu tiers | ConfigCommands.cs | pending |
-| `/setroles` | Owner - Map Discord roles to the bot's permission tiers | ConfigCommands.cs | pending |
-| `/staff` | Admin - Staff activity over a period, busiest first | AnalyticsCommands.cs | pending |
-| `/staffactivity` | Admin - Audit one staff member's actions | StaffCommands.cs | pending |
-| `/staffleaderboard` | Admin - Rank staff by moderation actions | StaffCommands.cs | pending |
-| `/stats` | Playtime, K/D and faction for a player | StatsCommand.cs | pending |
-| `/stripmenu` | Admin - Remove a member's RCON menu access | StaffCommands.cs | pending |
-| `/subclass` | Which sub-class | StaffCommands.cs | pending |
-| `/subclasses` | Which faction | FactionCommands.cs | pending |
-| `/suspendrank` | Mod - Pull a member's whitelist rank for a set time; it auto-restores | ConfigCommands.cs | pending |
-| `/tempban` | How long the ban lasts | BanCommands.cs | pending |
-| `/testalert` | Owner - Send a test security alert and report who received it | TestAlertCommand.cs | pending |
-| `/tester` | In-game username, exactly as it appears | TesterCommand.cs | pending |
-| `/testmode` | Which server | TestModeCommand.cs | pending |
-| `/unban` | Mod - Lift a ban | BanCommands.cs | pending |
-| `/unlinkname` | Admin - Break a member's permanent in-game name binding | MenuCommands.cs | pending |
-| `/vpncheck` | Owner - Probe every VPN detector: which are up and each one's role | AdminCommands.cs | pending |
-| `/wages` | What an on-duty officer has earned, banked and unbanked | EconomyCommands.cs | pending |
-| `/warn` | Player ID or username | WarnCommand.cs | pending |
-| `/warrant` | Player ID or username | PoliceCommands.cs | pending |
-| `/whitelist` | Which faction | FactionCommands.cs | pending |
+| `/adjustmoney` | (named by its constructor) | EconomyCommands.cs | ported |
+| `/alts` | Moderation - Accounts that share an address with this player | AltsCommand.cs | ported |
+| `/announce` | Mod - Broadcast a message to the server | UtilityCommands.cs | ported |
+| `/arrest` | Police - Book a player on penal-code charges | PoliceCommands.cs | ported |
+| `/backgroundcheck` | Police - Pull a player's record | PoliceCommands.cs | ported |
+| `/bail` | Mod - Bail prices and the sentence cap | PoliceCommands.cs | ported |
+| `/banlist` | Show every ban currently in force | StaffCommands.cs | ported |
+| `/botstats` | Owner - CPU and memory for the bot and each game server | OwnerCommands.cs | ported |
+| `/checkban` | Check whether a player is banned | BanCommands.cs | ported |
+| `/configure` | Owner - The control panel: blacklists, access, tracking, wipes | ConfigPanel.cs | ported |
+| `/counts` | Mod - Update the player-count voice channels now | CountsCommand.cs | ported |
+| `/deleteserver` | Owner - Delete a server: its service, its install directory and its slot (needs root) | DeleteServerCommand.cs | ported |
+| `/demotion` | (named by its constructor) | RankChangeCommand.cs | ported |
+| `/donator` | Player ID or username | ConfigCommands.cs | ported |
+| `/errors` | Owner - Recent command failures, with the stack trace | ErrorsCommand.cs | ported |
+| `/factionstats` | Which faction | IntelligenceCommands.cs | ported |
+| `/feeds` | Mod - Check whether the join, connect, kill and money webhooks are working | FeedsCommand.cs | ported |
+| `/firewall` | Owner - Manual OS firewall (ufw) control. Bans are also denied automatically. | OwnerCommands.cs | ported |
+| `/flush` | Which server to free a slot on | StaffCommands.cs | ported |
+| `/givemenu` | Admin - Grant RCON menu access to a player | MenuCommands.cs | ported |
+| `/givemoney` | (named by its constructor) | EconomyCommands.cs | ported |
+| `/guildinvites` | Owner - DM the super owner an invite to every Discord server this bot is in | GuildInvitesCommand.cs | ported |
+| `/health` | Owner - Bot health and background services | UtilityCommands.cs | ported |
+| `/help` | Show the available commands and your access level | UtilityCommands.cs | ported |
+| `/inspect` | Owner - Everything the bot knows about a player | OwnerCommands.cs | ported |
+| `/iplookup` | Owner - Look up an IP: location, ISP and VPN status | AdminCommands.cs | ported |
+| `/kick` | Mod - Kick a player | UtilityCommands.cs | ported |
+| `/license` | Which license to take away | LicenseCommand.cs | ported |
+| `/manual` | Which server | OwnerCommands.cs | ported |
+| `/monitor` | Which server (default: all) | ServerStatusCommand.cs | ported |
+| `/permban` | Admin - Ban a player permanently | BanCommands.cs | ported |
+| `/players` | Who is online right now | PlayersCommand.cs | ported |
+| `/promotion` | (named by its constructor) | RankChangeCommand.cs | ported |
+| `/provisionserver` | Owner - Install a new Pavlov server, configure it and wire it into this bot (needs root) | ProvisionServerCommand.cs | ported |
+| `/removepin` | Which server to unlock | AdminCommands.cs | ported |
+| `/rotatemap` | Which server to rotate. Defaults to all of them. | RotateMapCommand.cs | ported |
+| `/server` | Browse the public Pavlov server list | ServerLookupCommand.cs | ported |
+| `/serverinfo` | Live server info - map, mode and who is online. | ServerInfoCommand.cs | ported |
+| `/serverswitch` | Which server | ServerSwitchCommand.cs | ported |
+| `/setpin` | Which server to lock | AdminCommands.cs | ported |
+| `/setrconroles` | Owner - Map Discord roles to RCON menu tiers | ConfigCommands.cs | ported |
+| `/setroles` | Owner - Map Discord roles to the bot's permission tiers | ConfigCommands.cs | ported |
+| `/staff` | Admin - Staff activity over a period, busiest first | AnalyticsCommands.cs | ported |
+| `/staffactivity` | Admin - Audit one staff member's actions | StaffCommands.cs | ported |
+| `/staffleaderboard` | Admin - Rank staff by moderation actions | StaffCommands.cs | ported |
+| `/stats` | Playtime, K/D and faction for a player | StatsCommand.cs | ported |
+| `/stripmenu` | Admin - Remove a member's RCON menu access | StaffCommands.cs | ported |
+| `/subclass` | Which sub-class | StaffCommands.cs | ported |
+| `/subclasses` | Which faction | FactionCommands.cs | ported |
+| `/suspendrank` | Mod - Pull a member's whitelist rank for a set time; it auto-restores | ConfigCommands.cs | ported |
+| `/tempban` | How long the ban lasts | BanCommands.cs | ported |
+| `/testalert` | Owner - Send a test security alert and report who received it | TestAlertCommand.cs | ported |
+| `/tester` | In-game username, exactly as it appears | TesterCommand.cs | ported |
+| `/testmode` | Which server | TestModeCommand.cs | ported |
+| `/unban` | Mod - Lift a ban | BanCommands.cs | ported |
+| `/unlinkname` | Admin - Break a member's permanent in-game name binding | MenuCommands.cs | ported |
+| `/vpncheck` | Owner - Probe every VPN detector: which are up and each one's role | AdminCommands.cs | ported |
+| `/wages` | What an on-duty officer has earned, banked and unbanked | EconomyCommands.cs | ported |
+| `/warn` | Player ID or username | WarnCommand.cs | ported |
+| `/warrant` | Player ID or username | PoliceCommands.cs | ported |
+| `/whitelist` | Which faction | FactionCommands.cs | ported |
 
 ### Background services (30)
 
 | Service | Rust |
 |---|---|
-| `rcon-health` | pending |
-| `player-cache` | pending |
-| `server-monitor` | pending |
-| `monitor-board` | pending |
-| `runtime-metrics` | pending |
-| `log-tail` | pending |
-| `stats-log` | pending |
-| `ban-expiry` | pending |
-| `ban-firewall` | pending |
-| `timeline-retention` | pending |
-| `ban-sweep` | pending |
-| `ban-reconcile` | pending |
-| `payroll` | pending |
-| `kill-stats` | pending |
-| `playtime` | pending |
-| `leaderboard` | pending |
-| `arrest-board` | pending |
-| `kd-board` | pending |
-| `warrant-board` | pending |
-| `player-board` | pending |
-| `player-count-channels` | pending |
-| `crash-recovery` | pending |
-| `whitelist-backup` | pending |
-| `rank-restore` | pending |
-| `banlist-sync` | pending |
-| `modsave-sync` | pending |
-| `verify-panel` | pending |
-| `menu-panel` | pending |
-| `json-export` | pending |
-| `service-supervisor` | pending |
+| `rcon-health` | ported |
+| `player-cache` | ported |
+| `server-monitor` | ported |
+| `monitor-board` | ported |
+| `runtime-metrics` | ported |
+| `log-tail` | ported |
+| `stats-log` | ported |
+| `ban-expiry` | ported |
+| `ban-firewall` | ported |
+| `timeline-retention` | ported |
+| `ban-sweep` | ported |
+| `ban-reconcile` | ported |
+| `payroll` | ported |
+| `kill-stats` | ported |
+| `playtime` | ported |
+| `leaderboard` | ported |
+| `arrest-board` | ported |
+| `kd-board` | ported |
+| `warrant-board` | ported |
+| `player-board` | ported |
+| `player-count-channels` | ported |
+| `crash-recovery` | ported |
+| `whitelist-backup` | ported |
+| `rank-restore` | ported |
+| `banlist-sync` | ported |
+| `modsave-sync` | ported |
+| `verify-panel` | ported |
+| `menu-panel` | ported |
+| `json-export` | ported |
+| `service-supervisor` | ported |
 
 ### Datasets (47)
 
 | C# constant | Stored name | Rust |
 |---|---|---|
-| `TempBans` | `tempbans` | pending |
-| `ModLog` | `modlog` | pending |
-| `Mutes` | `mutes` | pending |
-| `UserBlacklist` | `user_blacklist` | pending |
-| `UserUnbarred` | `user_unbarred` | pending |
-| `IpFlags` | `ip_flags` | pending |
-| `IgnoredNames` | `ignored_names` | pending |
-| `AutobanExempt` | `autoban_exempt` | pending |
-| `NeverBan` | `never_ban` | pending |
-| `MasterPardons` | `master_pardons` | pending |
-| `MasterGrants` | `master_grants` | pending |
-| `FirewallBans` | `firewall_bans` | pending |
-| `Warnings` | `warnings` | pending |
-| `BanReconcileState` | `ban_reconcile_state` | pending |
-| `MonitorHistory` | `monitor_history` | pending |
-| `UnbanTombstones` | `unban_tombstones` | pending |
-| `VpnChecks` | `vpn_checks` | pending |
-| `ServerLock` | `server_lock` | pending |
-| `FactionRanks` | `faction_ranks` | pending |
-| `FactionConfig` | `faction_config` | pending |
-| `FactionAudit` | `faction_audit` | pending |
-| `FactionBackup` | `faction_backup` | pending |
-| `Warrants` | `warrants` | pending |
-| `Arrests` | `arrests` | pending |
-| `Sentences` | `sentences` | pending |
-| `PoliceConfig` | `police_config` | pending |
-| `RankSuspensions` | `rank_suspensions` | pending |
-| `Playtime` | `playtime` | pending |
-| `KillStats` | `killstats` | pending |
-| `LastSeen` | `lastseen` | pending |
-| `KnownPlayers` | `known_players` | pending |
-| `DiscordLinks` | `discord_links` | pending |
-| `Verifications` | `verifications` | pending |
-| `FactionMembers` | `faction_members` | pending |
-| `VerifyState` | `verify_state` | pending |
-| `DonatorSuspend` | `donator_suspend` | pending |
-| `Wages` | `wages` | pending |
-| `PayrollState` | `payroll_state` | pending |
-| `MenuGrants` | `menu_grants` | pending |
-| `MenuPanel` | `menu_panel` | pending |
-| `MenuRoles` | `menu_roles` | pending |
-| `MenuLinks` | `menu_links` | pending |
-| `Roles` | `roles` | pending |
-| `AutoRotate` | `autorotate` | pending |
-| `ServerStats` | `server_stats` | pending |
-| `AutopostState` | `autopost_state` | pending |
-| `UpdateLogState` | `update_log_state` | pending |
+| `TempBans` | `tempbans` | ported |
+| `ModLog` | `modlog` | ported |
+| `Mutes` | `mutes` | ported |
+| `UserBlacklist` | `user_blacklist` | ported |
+| `UserUnbarred` | `user_unbarred` | ported |
+| `IpFlags` | `ip_flags` | ported |
+| `IgnoredNames` | `ignored_names` | ported |
+| `AutobanExempt` | `autoban_exempt` | ported |
+| `NeverBan` | `never_ban` | ported |
+| `MasterPardons` | `master_pardons` | ported |
+| `MasterGrants` | `master_grants` | ported |
+| `FirewallBans` | `firewall_bans` | ported |
+| `Warnings` | `warnings` | ported |
+| `BanReconcileState` | `ban_reconcile_state` | ported |
+| `MonitorHistory` | `monitor_history` | ported |
+| `UnbanTombstones` | `unban_tombstones` | ported |
+| `VpnChecks` | `vpn_checks` | ported |
+| `ServerLock` | `server_lock` | ported |
+| `FactionRanks` | `faction_ranks` | ported |
+| `FactionConfig` | `faction_config` | ported |
+| `FactionAudit` | `faction_audit` | ported |
+| `FactionBackup` | `faction_backup` | ported |
+| `Warrants` | `warrants` | ported |
+| `Arrests` | `arrests` | ported |
+| `Sentences` | `sentences` | ported |
+| `PoliceConfig` | `police_config` | ported |
+| `RankSuspensions` | `rank_suspensions` | ported |
+| `Playtime` | `playtime` | ported |
+| `KillStats` | `killstats` | ported |
+| `LastSeen` | `lastseen` | ported |
+| `KnownPlayers` | `known_players` | ported |
+| `DiscordLinks` | `discord_links` | ported |
+| `Verifications` | `verifications` | ported |
+| `FactionMembers` | `faction_members` | ported |
+| `VerifyState` | `verify_state` | ported |
+| `DonatorSuspend` | `donator_suspend` | ported |
+| `Wages` | `wages` | ported |
+| `PayrollState` | `payroll_state` | ported |
+| `MenuGrants` | `menu_grants` | ported |
+| `MenuPanel` | `menu_panel` | ported |
+| `MenuRoles` | `menu_roles` | ported |
+| `MenuLinks` | `menu_links` | ported |
+| `Roles` | `roles` | ported |
+| `AutoRotate` | `autorotate` | ported |
+| `ServerStats` | `server_stats` | ported |
+| `AutopostState` | `autopost_state` | ported |
+| `UpdateLogState` | `update_log_state` | ported |
 
 ### Environment variables (131)
 
@@ -353,137 +357,137 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 
 | Variable | In .env.example | Read in | Rust |
 |---|---|---|---|
-| `APPEAL_LINK` | yes | (.env.example only) | pending |
-| `ARREST_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `ARREST_LEADERBOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `BAN_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `BLACKLIST_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `BLACKLIST_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `BLACKLIST_SYNC` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `BOT_NAME` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `BUILD_ID` | yes | (.env.example only) | pending |
-| `CLIENT_ID` | yes | (.env.example only) | pending |
-| `COMMANDS_DISABLED` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `COMMAND_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `CONNECT_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | pending |
-| `CRASH_RECOVERY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `DATA_DIR` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `DB_EXPORT_INTERVAL_MS` | yes | (.env.example only) | pending |
-| `DISCORD_TOKEN` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `DONATOR_PATH` | yes | (.env.example only) | pending |
-| `EVENT_RETENTION_DAYS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `FACTIONS_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `FACTION_BOT_TOKEN` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `FACTION_CLIENT_ID` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `FACTION_ROLES_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `FACTION_SET` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `FIREWALL_BANS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `FIREWALL_BLACKLIST` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `FIREWALL_NEVER_BLOCK` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `GEOAPIFY_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `GUILD_ID` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `HOME_GUILD_ID` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `ID_LIKE` | no | PavlovBot.Host/Servers/ServerProvisioner.cs | pending |
-| `IGNORE_PATHS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `INVOCATION_ID` | no | PavlovBot.Host/Servers/BotSupervisor.cs | pending |
-| `IPAPIIS_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `IPHUB_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `IPINFO_TOKEN` | yes | (.env.example only) | pending |
-| `IPQS_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `JOIN_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | pending |
-| `KD_LEADERBOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `KILL_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | pending |
-| `LEADERBOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `LEADERBOARD_INTERVAL_MS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `LOG_LEVEL` | yes | PavlovBot.Host/Program.cs | pending |
-| `MASTER_NAMES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MENU_PANEL_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MENU_ROLE_BLACKLIST` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MENU_ROLE_HIGHSTAFF` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MENU_ROLE_STAFF` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `METRICS_HOST` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `METRICS_PORT` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `METRICS_TOKEN` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `MODSAVE_BLACKLIST_PATH` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MODSAVE_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MODSAVE_SYNC` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MODSAVE_SYNC_SKIP_EXTRA` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MOD_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITORING` | yes | (.env.example only) | pending |
-| `MONITOR_ALERT_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_ALERT_ROLE` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_BOARD` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_CHECK_INTERVAL_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_ESCALATION_EVERY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_FAILURE_THRESHOLD` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_LATENCY_CRITICAL_MS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_LATENCY_WARN_MS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_LOG_INACTIVITY_MINUTES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_PLAYER_DROP_PERCENT` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_PLAYER_WINDOW_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_RCON_TIMEOUT_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_RECOVERY_MESSAGES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_RECOVERY_THRESHOLD` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_RETRY_BASE_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `MONITOR_RETRY_MAX_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `OWNER_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PAVLOV_BASES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/DeleteServerCommand.cs, PavlovBot.Host/D | pending |
-| `PAVLOV_BASE_1` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/ProvisionServerCommand.cs, PavlovBot.Hos | pending |
-| `PAVLOV_LOGS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PAVLOV_PM2_APP` | no | PavlovBot.Host/Servers/BotSupervisor.cs | pending |
-| `PAVLOV_SYSTEMCTL_SUDO` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PAVLOV_SYSTEMD_UNIT` | no | PavlovBot.Host/Servers/BotSupervisor.cs | pending |
-| `PAVLOV_UNITS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/DeleteServerCommand.cs, PavlovBot.Host/D | pending |
-| `PAVLOV_VERSION` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PAYROLL_AMOUNT` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PAYROLL_FACTION` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PAYROLL_INTERVAL_MINUTES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PLAYERLIST_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PLAYER_COUNT_CHANNELS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PLUGINS_ALLOW_ROOT` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PLUGINS_DISABLED` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PLUGINS_ENABLED` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PLUGIN_DIR` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `POLICE_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `PRETTY_NAME` | no | PavlovBot.Host/Servers/ServerProvisioner.cs | pending |
-| `PROXYCHECK_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `RCON_HEALTH_INTERVAL_MS` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `RCON_HOST_1` | yes | (.env.example only) | pending |
-| `RCON_HOST_2` | yes | (.env.example only) | pending |
-| `RCON_HOST_3` | yes | (.env.example only) | pending |
-| `RCON_HOST_{i}` | no | PavlovBot.Host/Configuration/BotOptions.cs, PavlovBot.Host/Discord/Commands/DeleteServerCommand.cs, PavlovBot.Host/Disco | pending |
-| `RCON_PASSWORD_1` | yes | (.env.example only) | pending |
-| `RCON_PASSWORD_2` | yes | (.env.example only) | pending |
-| `RCON_PASSWORD_3` | yes | (.env.example only) | pending |
-| `RCON_PASSWORD_{i}` | no | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `RCON_PORT_1` | yes | (.env.example only) | pending |
-| `RCON_PORT_2` | yes | (.env.example only) | pending |
-| `RCON_PORT_3` | yes | (.env.example only) | pending |
-| `RCON_PORT_{i}` | no | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `RCON_READ_CACHE_MS` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `RCON_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | pending |
-| `SECURITY_DM_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `SENTINEL_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `SERVER_MAX_PLAYERS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `SHACK_TOTAL_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `STAFF_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | pending |
-| `STATS_LOGS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `SUPER_OWNER_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `THEME` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `UFW_BLOCK` | yes | (.env.example only) | pending |
-| `UPDATE_LOG_CHANNEL` | yes | (.env.example only) | pending |
-| `USER_APP` | yes | PavlovBot.Host/Configuration/BotOptions.cs | pending |
-| `VERIFIED_ROLE` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VERIFY_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VERIFY_STAFF_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VERSION_ID` | no | PavlovBot.Host/Servers/ServerProvisioner.cs | pending |
-| `VPN_AUTOBAN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VPN_BAN_MIN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VPN_CACHE_TTL_DAYS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VPN_CONFIRM_MIN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VPN_SCREEN_BAN_MIN` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `VPN_SCREEN_MIN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
-| `WARRANT_BOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | pending |
+| `APPEAL_LINK` | yes | (.env.example only) | unused (the C# never read it either) |
+| `ARREST_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `ARREST_LEADERBOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `BAN_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `BLACKLIST_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `BLACKLIST_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `BLACKLIST_SYNC` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `BOT_NAME` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `BUILD_ID` | yes | (.env.example only) | unused (the C# never read it either) |
+| `CLIENT_ID` | yes | (.env.example only) | unused (the C# never read it either) |
+| `COMMANDS_DISABLED` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `COMMAND_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `CONNECT_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | read |
+| `CRASH_RECOVERY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `DATA_DIR` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `DB_EXPORT_INTERVAL_MS` | yes | (.env.example only) | unused (the C# never read it either) |
+| `DISCORD_TOKEN` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `DONATOR_PATH` | yes | (.env.example only) | unused (the C# never read it either) |
+| `EVENT_RETENTION_DAYS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `FACTIONS_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `FACTION_BOT_TOKEN` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `FACTION_CLIENT_ID` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `FACTION_ROLES_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `FACTION_SET` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `FIREWALL_BANS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `FIREWALL_BLACKLIST` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `FIREWALL_NEVER_BLOCK` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `GEOAPIFY_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `GUILD_ID` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `HOME_GUILD_ID` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `ID_LIKE` | no | PavlovBot.Host/Servers/ServerProvisioner.cs | read |
+| `IGNORE_PATHS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `INVOCATION_ID` | no | PavlovBot.Host/Servers/BotSupervisor.cs | read |
+| `IPAPIIS_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `IPHUB_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `IPINFO_TOKEN` | yes | (.env.example only) | unused (the C# never read it either) |
+| `IPQS_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `JOIN_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | read |
+| `KD_LEADERBOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `KILL_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | read |
+| `LEADERBOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `LEADERBOARD_INTERVAL_MS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `LOG_LEVEL` | yes | PavlovBot.Host/Program.cs | read |
+| `MASTER_NAMES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MENU_PANEL_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MENU_ROLE_BLACKLIST` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MENU_ROLE_HIGHSTAFF` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MENU_ROLE_STAFF` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `METRICS_HOST` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `METRICS_PORT` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `METRICS_TOKEN` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `MODSAVE_BLACKLIST_PATH` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MODSAVE_PATH` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MODSAVE_SYNC` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MODSAVE_SYNC_SKIP_EXTRA` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MOD_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITORING` | yes | (.env.example only) | unused (the C# never read it either) |
+| `MONITOR_ALERT_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_ALERT_ROLE` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_BOARD` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_CHECK_INTERVAL_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_ESCALATION_EVERY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_FAILURE_THRESHOLD` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_LATENCY_CRITICAL_MS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_LATENCY_WARN_MS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_LOG_INACTIVITY_MINUTES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_PLAYER_DROP_PERCENT` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_PLAYER_WINDOW_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_RCON_TIMEOUT_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_RECOVERY_MESSAGES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_RECOVERY_THRESHOLD` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_RETRY_BASE_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `MONITOR_RETRY_MAX_SECONDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `OWNER_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PAVLOV_BASES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/DeleteServerCommand.cs, PavlovBot.Host/D | read |
+| `PAVLOV_BASE_1` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/ProvisionServerCommand.cs, PavlovBot.Hos | read |
+| `PAVLOV_LOGS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PAVLOV_PM2_APP` | no | PavlovBot.Host/Servers/BotSupervisor.cs | read |
+| `PAVLOV_SYSTEMCTL_SUDO` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PAVLOV_SYSTEMD_UNIT` | no | PavlovBot.Host/Servers/BotSupervisor.cs | read |
+| `PAVLOV_UNITS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/DeleteServerCommand.cs, PavlovBot.Host/D | read |
+| `PAVLOV_VERSION` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PAYROLL_AMOUNT` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PAYROLL_FACTION` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PAYROLL_INTERVAL_MINUTES` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PLAYERLIST_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PLAYER_COUNT_CHANNELS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PLUGINS_ALLOW_ROOT` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PLUGINS_DISABLED` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PLUGINS_ENABLED` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PLUGIN_DIR` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `POLICE_LOG_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `PRETTY_NAME` | no | PavlovBot.Host/Servers/ServerProvisioner.cs | read |
+| `PROXYCHECK_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `RCON_HEALTH_INTERVAL_MS` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `RCON_HOST_1` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_HOST_2` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_HOST_3` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_HOST_{i}` | no | PavlovBot.Host/Configuration/BotOptions.cs, PavlovBot.Host/Discord/Commands/DeleteServerCommand.cs, PavlovBot.Host/Disco | read |
+| `RCON_PASSWORD_1` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_PASSWORD_2` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_PASSWORD_3` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_PASSWORD_{i}` | no | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `RCON_PORT_1` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_PORT_2` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_PORT_3` | yes | (.env.example only) | unused (the C# never read it either) |
+| `RCON_PORT_{i}` | no | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `RCON_READ_CACHE_MS` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `RCON_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | read |
+| `SECURITY_DM_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `SENTINEL_API_KEY` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `SERVER_MAX_PLAYERS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `SHACK_TOTAL_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `STAFF_WEBHOOK_URL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs, PavlovBot.Host/Discord/Commands/FeedsCommand.cs | read |
+| `STATS_LOGS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `SUPER_OWNER_IDS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `THEME` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `UFW_BLOCK` | yes | (.env.example only) | unused (the C# never read it either) |
+| `UPDATE_LOG_CHANNEL` | yes | (.env.example only) | unused (the C# never read it either) |
+| `USER_APP` | yes | PavlovBot.Host/Configuration/BotOptions.cs | read |
+| `VERIFIED_ROLE` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VERIFY_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VERIFY_STAFF_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VERSION_ID` | no | PavlovBot.Host/Servers/ServerProvisioner.cs | read |
+| `VPN_AUTOBAN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VPN_BAN_MIN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VPN_CACHE_TTL_DAYS` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VPN_CONFIRM_MIN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VPN_SCREEN_BAN_MIN` | no | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `VPN_SCREEN_MIN` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
+| `WARRANT_BOARD_CHANNEL` | yes | PavlovBot.Host/Configuration/FeatureOptions.cs | read |
 
 ### C# source files (206, 48,311 lines)
 
