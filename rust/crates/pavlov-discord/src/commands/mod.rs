@@ -23,6 +23,7 @@ pub mod rank_change;
 pub mod rotate_map;
 pub mod server_info;
 pub mod set_roles;
+pub mod staff;
 pub mod stats;
 pub mod subclass;
 pub mod test_alert;
