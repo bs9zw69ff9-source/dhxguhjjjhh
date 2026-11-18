@@ -53,3 +53,5 @@ debug = false
 [profile.release]
 codegen-units = 1
 lto = "thin"
+# Symbols are not needed to run, and halve the binary the deploy copies.
+strip = "symbols"
