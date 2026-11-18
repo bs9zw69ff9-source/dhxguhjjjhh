@@ -18,11 +18,15 @@ FactionBotTests = "ported"
 FactionTests = "ported"
 IntelligenceRulesTests = "ported"
 LedgerConcurrencyTests = "ported"
+LedgerFileTests = "ported"
 MasterNamesConfigTests = "ported"
+ModSaveSyncPlannerTests = "ported"
 PenalCodeTests = "ported"
 ProfileRedactionTests = "ported"
 RiskScoringTests = "ported"
 ServerHealthTests = "ported"
+VpnTests = "ported"
+VpnVerdictTests = "ported"
 
 [dropped]
 # Nothing is dropped at present. The fallout theme's tests (FalloutPresetTests) were deleted
