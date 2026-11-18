@@ -1,6 +1,7 @@
 //! The game's faction rosters (C# `Host/Factions`). The rules are pure and live in
 //! `pavlov_core::factions`; this is the file I/O they govern.
 
+pub mod factions_file;
 pub mod members;
 pub mod rank_restorer;
 pub mod renames;
