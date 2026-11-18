@@ -1,0 +1,15 @@
+[package]
+name = "pavlov-config"
+description = "The bot's configuration: the .env grammar, the environment layered over it, and the typed options."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+pavlov-core = { path = "../pavlov-core" }
+regex.workspace = true
+
+[lints]
+workspace = true
