@@ -1,9 +1,13 @@
-//! The compiled-in owner identity (C# `Core/Security/OwnerGuard.cs`).
+//! The compiled-in owner identity (C# `Core/Security/OwnerGuard.cs`), and [`Secret`].
 //!
 //! Two master owners and one master in-game name are built into the binary and pinned by a
 //! SHA-256 fingerprint, so an edit to them (in source or by patching) stops the bot at startup
 //! instead of silently handing the bot to somebody else. The resolved owner and master sets
 //! must also still contain them after configuration is applied.
+
+mod secret;
+
+pub use secret::Secret;
 
 use std::collections::HashSet;
 
