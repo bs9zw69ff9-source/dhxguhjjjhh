@@ -29,10 +29,12 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 indexmap = { version = "2", features = ["serde"] }
 md-5 = "0.10"
 regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 socket2 = { version = "0.5", features = ["all"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+tempfile = "3"
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
 
