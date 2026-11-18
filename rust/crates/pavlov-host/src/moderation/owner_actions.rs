@@ -630,8 +630,9 @@ impl OwnerActions {
 
     // ---- destructive wipes ----
 
-    /// Delete every player ledger. Failures are COUNTED: a file the game holds open keeps that
-    /// player's money while everyone else loses theirs.
+    /// Delete every player save. Only files that ARE saves (`<name>.json` with a `money`) go:
+    /// the directory also holds the role lists and other mods' files. Failures are COUNTED: a
+    /// file the game holds open keeps that player's money while everyone else loses theirs.
     #[must_use]
     pub fn wipe_money(&self) -> OwnerActionResult {
         let Some(directory) = self.parts.ledger_directory.as_ref().filter(|d| d.is_dir()) else {
@@ -639,26 +640,23 @@ impl OwnerActions {
                 "MODSAVE_PATH is not set, or does not exist. Nothing was deleted.",
             );
         };
-        let Ok(entries) = std::fs::read_dir(directory) else {
+        if std::fs::read_dir(directory).is_err() {
             return OwnerActionResult::refused(
                 "MODSAVE_PATH could not be read. Nothing was deleted.",
             );
-        };
+        }
         let (mut deleted, mut failed) = (0, 0);
-        for path in entries.flatten().map(|e| e.path()) {
-            if path.extension().and_then(|e| e.to_str()) != Some("txt") {
-                continue;
-            }
+        for (_, path, _) in pavlov_storage::ledger_store::all_saves(directory) {
             match std::fs::remove_file(&path) {
                 Ok(()) => deleted += 1,
                 Err(_) => failed += 1,
             }
         }
         OwnerActionResult::done(if failed == 0 {
-            format!("Deleted **{deleted}** player ledger(s).")
+            format!("Deleted **{deleted}** player save(s).")
         } else {
             format!(
-                "Deleted **{deleted}** player ledger(s). **{failed}** could not be deleted - most likely held open by the game server."
+                "Deleted **{deleted}** player save(s). **{failed}** could not be deleted - most likely held open by the game server."
             )
         })
     }

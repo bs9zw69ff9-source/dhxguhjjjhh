@@ -14,7 +14,6 @@ use pavlov_core::data::SerializedStore;
 use pavlov_core::embed::Embed;
 use pavlov_core::police::{Arrest, Warrant};
 use pavlov_core::skin::{lore, police, theme};
-use pavlov_core::sync::ModSaveFile;
 use pavlov_core::text::Sanitize;
 use pavlov_core::text::case::{IgnoreCaseMap, cmp_ignore_case};
 use pavlov_core::text::number::{fixed, group_thousands};
@@ -125,32 +124,18 @@ impl Boards {
         }
     }
 
-    /// Every balance, straight from the files the game writes. `banlist.txt` shares the
-    /// directory and is not a ledger; a ledger mid-write parses as nothing and is skipped for
-    /// a cycle rather than read as zero. `None` when the directory is unset or unreadable.
+    /// Every balance, straight from the saves the game writes (`<name>.json`). Anything in the
+    /// directory that is not a save (other mods' files, a save mid-write) parses as nothing and
+    /// is skipped for a cycle rather than read as zero. `None` when the directory is unset or
+    /// unreadable.
     #[must_use]
     pub fn read_cash(&self) -> Option<CashStanding> {
         let directory = self.ledger_directory.as_ref()?;
-        let entries = std::fs::read_dir(directory).ok()?;
-        let mut balances: Vec<(String, i64)> = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("txt") {
-                continue;
-            }
-            let Some(player) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if player.eq_ignore_ascii_case("banlist") {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Some(balance) = ModSaveFile::parse(Some(&content)).and_then(|f| f.money()) {
-                balances.push((player.to_owned(), balance));
-            }
-        }
+        std::fs::read_dir(directory).ok()?;
+        let mut balances: Vec<(String, i64)> = pavlov_storage::ledger_store::all_saves(directory)
+            .into_iter()
+            .filter_map(|(stem, _, save)| save.money().map(|m| (stem, m)))
+            .collect();
         // Stable, by balance; ties in name order so the board does not shuffle between cycles.
         balances.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let total = balances.iter().map(|b| b.1).sum();

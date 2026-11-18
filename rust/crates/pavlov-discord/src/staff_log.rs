@@ -59,7 +59,7 @@ pub fn is_ban_action(action: &str) -> bool {
 }
 
 /// An EXPLICIT set: "arrest", "release" and "warrant" are not distinctive the way "ban" is.
-const POLICE_ACTIONS: [&str; 12] = [
+const POLICE_ACTIONS: [&str; 13] = [
     "arrest",
     "release",
     "sentence",
@@ -72,6 +72,7 @@ const POLICE_ACTIONS: [&str; 12] = [
     "demotion",
     "subclass",
     "license-remove",
+    "license-give",
 ];
 
 #[must_use]

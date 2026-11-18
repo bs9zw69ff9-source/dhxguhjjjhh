@@ -1,7 +1,7 @@
-//! In-game licences `/license remove` can take away (C# `Core/Licensing/License.cs`).
+//! In-game licences `/license` gives and takes away (C# `Core/Licensing/License.cs`).
 //!
-//! The keys are spelled "Liscense" because that is the ModSave key the game mod reads. A
-//! corrected spelling would remove nothing.
+//! The keys are the fields of the JSON save the game mod writes (`drivers_license`,
+//! `firearm_license`). The old text saves spelled them "Liscense"; that format is gone.
 
 use crate::text::case::eq_ignore_case;
 
@@ -21,12 +21,12 @@ pub struct Licenses;
 
 impl Licenses {
     pub const DRIVERS: License = License {
-        key: "DriversLiscense",
+        key: "drivers_license",
         label: "Driver's license",
         choice: "drivers",
     };
     pub const FIREARM: License = License {
-        key: "FirearmLiscense",
+        key: "firearm_license",
         label: "Firearm license",
         choice: "firearm",
     };
@@ -59,7 +59,8 @@ mod tests {
         assert_eq!(Licenses::named(Some("Drivers")), vec![Licenses::DRIVERS]);
         assert!(Licenses::named(Some("pilot")).is_empty());
         assert!(Licenses::named(None).is_empty());
-        // The game mod's own spelling, which a "corrected" key would miss.
-        assert_eq!(Licenses::FIREARM.key, "FirearmLiscense");
+        // The JSON save's field names, exactly.
+        assert_eq!(Licenses::FIREARM.key, "firearm_license");
+        assert_eq!(Licenses::DRIVERS.key, "drivers_license");
     }
 }

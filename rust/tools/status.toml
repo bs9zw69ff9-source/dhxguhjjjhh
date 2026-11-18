@@ -155,6 +155,24 @@ WhitelistListTests = "ported"
 WhitelistTests = "ported"
 
 [dropped]
-# Nothing is dropped at present. The fallout theme's tests (FalloutPresetTests) were deleted
-# from the C# with the theme itself (2026-11-17), and the tests that exercised a mechanism
-# through fallout data were moved onto police data there, so they port like any other.
+# Each entry is a C# test whose behaviour was deliberately removed, with why. The fallout
+# theme's tests went with the theme in the C# itself (2026-11-17), so are not listed.
+"LedgerFileTests::ALedgerIsOneBareNonNegativeInteger" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::TheKeyedShapeIsRead" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::TheBareShapeStillReads" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::AnUneditedFileComesBackByteForByte" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::AnEditChangesOneValueAndNothingElse" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::MoneyIsWrittenIntoItsOwnLine" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::AKeyThatIsNotThereIsNeverInvented" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::ANeitherShapeFileIsNotASave" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::AValueCannotSmuggleInANewLine" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::TheSyncGuardsSeeKeyedMoney" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::TheBareShapeIsStillWrittenAsItWas" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::ABareSaveHasNoLicensesToTake" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
+"LicenseTests::AConnectedPlayerIsRefused" = "the online gate was removed: the mod syncs in-game state to the save live (owner, 2026-11-18)"
+"LicenseTests::AnUnknownRosterIsRefused" = "the online gate was removed: the mod syncs in-game state to the save live (owner, 2026-11-18)"
+"ModSaveSyncTests::AnOnlinePlayersLedgerIsNotTouchedByTheSweep" = "the online gate was removed: the mod syncs in-game state to the save live (owner, 2026-11-18)"
+"ModSaveSyncTests::MenuAccessFilesAreNeverMirrored" = "RCON+ was removed; the menu tier lists are plain files that mirror like any other (owner, 2026-11-18)"
+"ModSaveSyncTests::TheJoinFastPathPushesOneLedgerEvenForAnOnlinePlayer" = "the online gate was removed: the mod syncs in-game state to the save live (owner, 2026-11-18)"
+"ModSaveSyncTests::TheJoinFastPathStillRefusesToWipeABalance" = "the online gate was removed: the mod syncs in-game state to the save live (owner, 2026-11-18)"
+"PayrollTests::TheLedgerIsABareNumberTheGameCanRead" = "the text saves (Money / DriversLiscense lines, bare numbers) were replaced by <name>.json (owner, 2026-11-18)"
