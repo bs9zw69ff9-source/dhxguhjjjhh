@@ -20,6 +20,7 @@ pub mod monitoring;
 pub mod penal;
 pub mod security;
 pub mod servers;
+pub mod sync;
 pub mod text;
 pub mod time;
 pub mod verification;
