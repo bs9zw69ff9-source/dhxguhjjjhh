@@ -100,6 +100,22 @@ impl Embed {
     }
 
     /// The field with this name, for tests and for renderers.
+    /// Discord's counted length: title, description, author, footer and every field's name
+    /// and value, in characters. Over 6000 and Discord rejects the whole message.
+    #[must_use]
+    pub fn length(&self) -> usize {
+        let opt = |s: &Option<String>| s.as_deref().map_or(0, |t| t.chars().count());
+        opt(&self.title)
+            + opt(&self.description)
+            + opt(&self.author)
+            + opt(&self.footer)
+            + self
+                .fields
+                .iter()
+                .map(|f| f.name.chars().count() + f.value.chars().count())
+                .sum::<usize>()
+    }
+
     #[must_use]
     pub fn field_named(&self, name: &str) -> Option<&EmbedField> {
         self.fields.iter().find(|f| f.name == name)

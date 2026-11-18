@@ -7,7 +7,7 @@
 //! - THE ACCOUNT ID AND NOTHING ELSE is flagged. Flagging the caught account's addresses and
 //!   every account that ever shared one made one match into a spreading feedback loop.
 
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use pavlov_core::data::SerializedStore;
 use pavlov_core::evasion::FlagMatch;
@@ -89,14 +89,13 @@ impl EvasionResponder {
             clock,
             alerts,
         });
-        // Weak: the tracker holds the handler, and the handler must not keep this alive.
-        let weak: Weak<Self> = Arc::downgrade(&responder);
+        /* STRONG: the tracker keeps the responder alive, so dropping the handle cannot silently
+        unsubscribe it - "flagged and nothing listened" is the bug this exists for. */
+        let held = Arc::clone(&responder);
         tracking.flagged.subscribe(move |join| {
-            let weak = weak.clone();
+            let responder = Arc::clone(&held);
             Box::pin(async move {
-                if let Some(responder) = weak.upgrade() {
-                    responder.respond(&join).await;
-                }
+                responder.respond(&join).await;
             })
         });
         responder
