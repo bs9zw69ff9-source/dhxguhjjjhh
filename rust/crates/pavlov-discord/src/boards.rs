@@ -24,7 +24,6 @@ use pavlov_host::kill_stats::PlayerKills;
 use pavlov_host::moderation::ModAction;
 use pavlov_host::registry::RconRegistry;
 use pavlov_storage::datasets::{ARRESTS, MOD_LOG, PLAYTIME, WARRANTS};
-use serde::{Deserialize, Serialize};
 
 use crate::player_board::{self, BoardPlayer, BoardRoster};
 
@@ -48,18 +47,8 @@ pub const KD_MINIMUM_KILLS: i64 = 75;
 /// The bar under each most-wanted row.
 const BAR_WIDTH: usize = 12;
 
-/// Minutes played, accumulated by the playtime ticker. Stored camelCase, the time in epoch
-/// milliseconds, as the Node bot reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaytimeEntry {
-    #[serde(default)]
-    pub player: String,
-    #[serde(default)]
-    pub minutes: i64,
-    #[serde(with = "pavlov_core::json::epoch_ms_opt", default)]
-    pub last_seen: Option<DateTime<Utc>>,
-}
+/// The `playtime` row, defined beside the dataset it is stored in.
+pub use pavlov_storage::playtime::PlaytimeEntry;
 
 /// The whole economy: every ledger, richest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
