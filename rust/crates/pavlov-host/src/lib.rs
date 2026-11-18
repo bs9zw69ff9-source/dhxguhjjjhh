@@ -14,6 +14,7 @@
 
 pub mod confirmations;
 pub mod crash_recovery;
+pub mod factions;
 pub mod feeds;
 pub mod firewall;
 pub mod handlers;
