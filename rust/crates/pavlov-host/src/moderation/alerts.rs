@@ -1,9 +1,11 @@
 //! Security alerts to the owners (C# `Moderation/SecurityAlerts.cs`): an evasion catch, a VPN
 //! verdict, two accounts on one address. The Discord layer delivers them as direct messages.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::{DateTime, Utc};
+use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 
 /// What kind of alert.
@@ -82,9 +84,17 @@ impl SecurityAlerts {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        match sink {
-            Some(sink) => sink.post(alert).await,
-            None => Vec::new(),
+        let Some(sink) = sink else {
+            return Vec::new();
+        };
+        // A sink must not fail, and this is the belt to that braces: every caller is part-way
+        // through a ban it has already committed to, and a panicking DM must not unwind it.
+        match AssertUnwindSafe(sink.post(alert)).catch_unwind().await {
+            Ok(deliveries) => deliveries,
+            Err(_) => {
+                tracing::warn!(kind = ?alert.kind, player = %alert.player, "could not deliver a security alert: the sink panicked");
+                Vec::new()
+            }
         }
     }
 }
