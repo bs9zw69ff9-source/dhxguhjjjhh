@@ -1,0 +1,30 @@
+[package]
+name = "pavlov-discord"
+description = "The Discord side of the bot: access, the commands, boards and feeds. Commands work over a Discord-agnostic caller and reply; the gateway adapter is the only part that knows Discord's wire types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+futures-util.workspace = true
+indexmap.workspace = true
+pavlov-config = { path = "../pavlov-config" }
+pavlov-core = { path = "../pavlov-core" }
+pavlov-host = { path = "../pavlov-host" }
+pavlov-rcon = { path = "../pavlov-rcon" }
+pavlov-storage = { path = "../pavlov-storage" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time", "sync", "rt", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+pavlov-rcon = { path = "../pavlov-rcon", features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[lints]
+workspace = true
