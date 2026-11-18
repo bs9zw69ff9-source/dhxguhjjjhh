@@ -64,6 +64,21 @@ impl TickError {
         }
     }
 
+    /// An error value, as `"TypeName: message"`: the type identifies what the message alone
+    /// does not (the C# kept the exception type for the same reason).
+    #[must_use]
+    #[track_caller]
+    pub fn from_error<E: std::error::Error>(error: &E) -> Self {
+        let full = std::any::type_name::<E>();
+        let short = full.rsplit("::").next().unwrap_or(full);
+        let text = error.to_string();
+        Self::new(if text.is_empty() {
+            short.to_owned()
+        } else {
+            format!("{short}: {text}")
+        })
+    }
+
     fn bare(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),

@@ -32,6 +32,7 @@ pub mod preserved;
 pub mod process;
 pub mod provisioner;
 pub mod queue;
+pub mod recent_errors;
 pub mod registry;
 pub mod server_labels;
 pub mod service_control;

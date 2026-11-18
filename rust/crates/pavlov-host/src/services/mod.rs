@@ -1,6 +1,7 @@
 //! The background services and their supervisor (C# `Host/Services`).
 
 pub mod registry;
+pub mod report;
 
 pub use registry::{
     HealthCheck, RegistryError, ServiceDefinition, ServiceFailure, ServiceRegistry, ServiceState,

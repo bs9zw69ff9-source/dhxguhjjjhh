@@ -7,6 +7,7 @@
 mod patterns;
 
 pub mod cards;
+pub mod component_id;
 pub mod concurrency;
 pub mod data;
 pub mod economy;
