@@ -22,6 +22,7 @@ pub mod dispatcher;
 pub mod guild_directory;
 pub mod interaction;
 pub mod option_name;
+pub mod paged;
 pub mod player_board;
 pub mod player_count;
 pub mod post;

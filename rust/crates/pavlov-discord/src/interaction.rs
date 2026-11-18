@@ -290,6 +290,14 @@ pub trait Responder: Send + Sync {
     fn respond(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
     /// Replace the deferred or first answer.
     fn edit_original(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// [`edit_original`](Self::edit_original), returning the message's id when the adapter
+    /// knows it (paged replies key their state on it).
+    fn edit_original_message(
+        &self,
+        reply: Reply,
+    ) -> BoxFuture<'_, Result<Option<u64>, DiscordError>> {
+        Box::pin(async move { self.edit_original(reply).await.map(|()| None) })
+    }
     /// Another message after the first.
     fn followup(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
     /// Whether the interaction has been acknowledged.
@@ -300,4 +308,28 @@ pub trait Responder: Send + Sync {
 pub trait Suggester: Send + Sync {
     /// Offer these choices (at most 25; an empty list offers nothing).
     fn suggest(&self, choices: Vec<Choice>) -> BoxFuture<'_, Result<(), DiscordError>>;
+}
+
+/// A button press or select-menu choice as it arrived.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ComponentInvocation {
+    pub custom_id: String,
+    pub caller: Caller,
+    pub username: String,
+    pub guild_id: Option<u64>,
+    pub channel_id: u64,
+    /// The message the component is on.
+    pub message_id: u64,
+    /// That message's first embed title, for handlers that keep their state in it.
+    pub message_title: Option<String>,
+    /// What a select menu chose (empty for a button).
+    pub values: Vec<String>,
+}
+
+/// How a component interaction is answered.
+pub trait ComponentResponder: Send + Sync {
+    /// Replace the message the component is on.
+    fn update(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// Answer with a new message.
+    fn respond(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
 }
