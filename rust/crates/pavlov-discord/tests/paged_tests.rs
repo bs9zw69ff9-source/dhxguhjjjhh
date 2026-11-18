@@ -66,6 +66,15 @@ impl ComponentResponder for Component {
         self.updates.lock().unwrap().push(reply);
         async { Ok(()) }.boxed()
     }
+    fn acknowledge(&self) -> BoxFuture<'_, Result<(), DiscordError>> {
+        async { Ok(()) }.boxed()
+    }
+    fn show_modal(
+        &self,
+        _: pavlov_discord::component::Modal,
+    ) -> BoxFuture<'_, Result<(), DiscordError>> {
+        async { Ok(()) }.boxed()
+    }
 }
 
 fn press(step: &str, user: u64, title: &str) -> ComponentInvocation {

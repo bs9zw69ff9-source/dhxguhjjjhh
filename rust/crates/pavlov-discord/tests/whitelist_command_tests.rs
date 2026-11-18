@@ -294,6 +294,15 @@ impl ComponentResponder for Component {
         self.sent.lock().unwrap().push(reply);
         async { Ok(()) }.boxed()
     }
+    fn acknowledge(&self) -> BoxFuture<'_, Result<(), DiscordError>> {
+        async { Ok(()) }.boxed()
+    }
+    fn show_modal(
+        &self,
+        _: pavlov_discord::component::Modal,
+    ) -> BoxFuture<'_, Result<(), DiscordError>> {
+        async { Ok(()) }.boxed()
+    }
 }
 
 fn custom_id(rows: &[ActionRow], index: usize) -> String {

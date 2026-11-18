@@ -324,6 +324,20 @@ pub struct ComponentInvocation {
     pub message_title: Option<String>,
     /// What a select menu chose (empty for a button).
     pub values: Vec<String>,
+    /// A MODAL SUBMIT's text inputs, by their custom id (empty for a button or a select). A
+    /// modal opened from a message carries that message's id, so a handler finds its state.
+    pub fields: Vec<(String, String)>,
+}
+
+impl ComponentInvocation {
+    /// A modal text input's value.
+    #[must_use]
+    pub fn field(&self, custom_id: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|(id, _)| id == custom_id)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// How a component interaction is answered.
@@ -332,7 +346,12 @@ pub trait ComponentResponder: Send + Sync {
     fn update(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>>;
     /// Answer with a new message.
     fn respond(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
-    /// Edit the message again after [`update`](Self::update) acknowledged it, for work that
-    /// outlasts Discord's three seconds.
+    /// Edit the message again after [`update`](Self::update) or
+    /// [`acknowledge`](Self::acknowledge), for work that outlasts Discord's three seconds.
     fn edit_original(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// Acknowledge without changing anything (Discord's deferred update).
+    fn acknowledge(&self) -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// Open a modal. Only on an interaction NOT yet acknowledged: a modal cannot open on one.
+    fn show_modal(&self, modal: crate::component::Modal)
+    -> BoxFuture<'_, Result<(), DiscordError>>;
 }
