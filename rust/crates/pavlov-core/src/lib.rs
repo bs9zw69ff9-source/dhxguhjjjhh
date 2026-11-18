@@ -9,6 +9,7 @@ mod patterns;
 pub mod concurrency;
 pub mod data;
 pub mod economy;
+pub mod embed;
 pub mod evasion;
 pub mod events;
 pub mod factions;
