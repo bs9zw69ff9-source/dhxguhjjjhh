@@ -18,7 +18,7 @@ summarised here so the checklist stands on its own.
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
 | M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | done (the Discord-facing remainder moves to M7/M8): VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health); recent command errors by correlation id, the `/health` errors field, component ids (moved to pavlov-core), and the roster-refresh failure wording; the server monitor, its 25-hour history and the live board; the loopback metrics and health endpoint |
 | M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher); the bar list and its refusal at dispatch, the command log, the command runner (log, bar, defer, prime, slots, budget, error id); the autoposter and the boards (cash, most wanted, warrants, staff, live players, K/D); player-count voice channels; the staff log by channel (mod, ban, police, arrest); security alerts by DM, the guild directory and invite pages, the staff menu bitcodes; every component prefix in one table, the per-server RCON failure reply; the owner panel's actions (`OwnerActions`) and whitelist snapshots |
-| M8 | The 57 slash commands | in progress: the `commands` module; `/checkban`'s ban history; the `FACTIONS_PATH` file and the startup line naming the faction source; `/arrest`'s override and receipt line; `/subclass`'s picker; paged replies and the component interaction model (`ComponentInvocation`, `ComponentResponder`, `ComponentHandler`). **Commands ported (7 of 57):** `/whitelist` (with its wipe confirmation), `/promotion`, `/demotion`, `/subclasses`, `/subclass`, `/license`, `/setroles` |
+| M8 | The 57 slash commands | in progress: the `commands` module; `/checkban`'s ban history; the `FACTIONS_PATH` file and the startup line naming the faction source; `/arrest`'s override and receipt line; `/subclass`'s picker; paged replies and the component interaction model (`ComponentInvocation`, `ComponentResponder`, `ComponentHandler`). **Commands ported (8 of 57):** `/whitelist` (with its wipe confirmation), `/promotion`, `/demotion`, `/subclasses`, `/subclass`, `/license`, `/setroles`, `/provisionserver` |
 | M9 | `pavlov-bot` composition root and `--selftest` | not started |
 | M10 | Deploy script, police systemd unit, rollback, documentation | not started |
 | M11 | Delete the C# code, after the owner confirms the Rust bot live | not started |
@@ -164,6 +164,7 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | Lifting a ban when a player is protected | a `Func<string, CancellationToken, Task>` that throws on failure | `LiftBan` returning `Result<(), String>` | the failure text is shown the same way |
 | `FACTIONS_PATH` comments and trailing commas | System.Text.Json's `ReadCommentHandling.Skip` and `AllowTrailingCommas` | blanked to spaces before serde parses, so error positions still point at the file | same files load |
 | The faction source's relative path | resolved against the process's current directory | the same, passed in, so tests need not change the process's directory | none at runtime |
+| `/provisionserver` generated RCON password | Rust reads `/dev/urandom` with rejection sampling and refuses the provision if the source cannot be read, rather than falling back to a weaker password. |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Stored key case: the C# reads stored property names case-INSENSITIVELY; the Rust models read
@@ -692,7 +693,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `AccessTests.cs` | 19 | ported |
 | `ArrestInteropTests.cs` | 5 | ported |
 | `AtomicFileTests.cs` | 8 | ported |
-| `AuditLogTests.cs` | 9 | 8/9 |
+| `AuditLogTests.cs` | 9 | ported |
 | `AutoPostTests.cs` | 13 | ported |
 | `BanFileFormatTests.cs` | 7 | ported |
 | `BanFirewallTests.cs` | 14 | ported |
@@ -701,22 +702,22 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `BanResurrectionTests.cs` | 11 | ported |
 | `BanSpanOverflowTests.cs` | 8 | ported |
 | `BanTests.cs` | 16 | ported |
-| `BlacklistEndToEndTests.cs` | 4 | 0/4 |
+| `BlacklistEndToEndTests.cs` | 4 | ported |
 | `BoardsTests.cs` | 15 | ported |
 | `BotSupervisorTests.cs` | 6 | ported |
 | `CashTableTests.cs` | 8 | ported |
-| `CheckBanHistoryTests.cs` | 9 | 0/9 |
+| `CheckBanHistoryTests.cs` | 9 | ported |
 | `CommandBlacklistTests.cs` | 20 | ported |
 | `CommandLogTests.cs` | 10 | ported |
-| `ComponentFlowTests.cs` | 9 | 0/9 |
+| `ComponentFlowTests.cs` | 9 | ported |
 | `ComponentIdTests.cs` | 11 | ported |
 | `ConfigurationTests.cs` | 31 | ported |
 | `ConfirmedOnlineTests.cs` | 3 | ported |
 | `ConnectCardTests.cs` | 14 | ported |
 | `CrashRecoveryTests.cs` | 11 | ported |
 | `DataLayerTests.cs` | 24 | ported |
-| `DebugPassRegressionTests.cs` | 8 | 0/8 |
-| `DefaultSubclassTests.cs` | 10 | 0/10 |
+| `DebugPassRegressionTests.cs` | 8 | ported |
+| `DefaultSubclassTests.cs` | 10 | ported |
 | `DetectorFailureTests.cs` | 11 | ported |
 | `DomainTests.cs` | 62 | ported |
 | `EvasionResponderTests.cs` | 16 | ported |
@@ -725,9 +726,9 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `EventStoreTests.cs` | 13 | ported |
 | `FactionBotTests.cs` | 12 | ported |
 | `FactionRenameTests.cs` | 11 | ported |
-| `FactionRoleTests.cs` | 20 | 14/20 |
-| `FactionSetTests.cs` | 12 | 0/12 |
-| `FactionSourceTests.cs` | 10 | 0/10 |
+| `FactionRoleTests.cs` | 20 | ported |
+| `FactionSetTests.cs` | 12 | ported |
+| `FactionSourceTests.cs` | 10 | ported |
 | `FactionTests.cs` | 33 | ported |
 | `FeedBridgeTests.cs` | 11 | ported |
 | `FeedWebhookTests.cs` | 11 | ported |
@@ -750,7 +751,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `LeaveTrackingTests.cs` | 9 | ported |
 | `LedgerConcurrencyTests.cs` | 8 | ported |
 | `LedgerFileTests.cs` | 4 | ported |
-| `LicenseTests.cs` | 26 | 23/26 |
+| `LicenseTests.cs` | 26 | ported |
 | `LogParsingTests.cs` | 37 | ported |
 | `LogTailerLockingTests.cs` | 1 | ported |
 | `LogTailerTests.cs` | 16 | ported |
@@ -764,7 +765,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `MonitoringServerTests.cs` | 9 | ported |
 | `NodeCompatibilityTests.cs` | 8 | ported |
 | `ObservabilityTests.cs` | 15 | ported |
-| `OwnerActionsTests.cs` | 37 | 0/37 |
+| `OwnerActionsTests.cs` | 37 | ported |
 | `OwnerGuardTests.cs` | 14 | ported |
 | `PavlovServerDetectionTests.cs` | 7 | ported |
 | `PayrollTests.cs` | 26 | ported |
@@ -775,7 +776,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PreservedPlayerDataTests.cs` | 6 | ported |
 | `ProcessRunnerTests.cs` | 10 | ported |
 | `ProfileRedactionTests.cs` | 10 | ported |
-| `ProvisioningTests.cs` | 84 | 83/84 |
+| `ProvisioningTests.cs` | 84 | ported |
 | `RankRestorerTests.cs` | 6 | ported |
 | `RconBlankReplyTests.cs` | 3 | ported |
 | `RconChunkedReplyTests.cs` | 3 | ported |
@@ -783,7 +784,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RconConfirmationsTests.cs` | 6 | ported |
 | `RconCorrelationTests.cs` | 6 | ported |
 | `RconDeliveryTests.cs` | 6 | ported |
-| `RconFailureTests.cs` | 4 | 0/4 |
+| `RconFailureTests.cs` | 4 | ported |
 | `RconHealthTests.cs` | 6 | ported |
 | `RconLogConfirmationTests.cs` | 8 | ported |
 | `RconMenuTests.cs` | 7 | ported |
@@ -793,16 +794,16 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RiskScoringTests.cs` | 13 | ported |
 | `RoleMapLegacyShapeTests.cs` | 10 | ported |
 | `RoleMapRoundTripTests.cs` | 7 | ported |
-| `RosterAuditTests.cs` | 6 | 0/6 |
-| `RosterCommandGateTests.cs` | 5 | 0/5 |
+| `RosterAuditTests.cs` | 6 | ported |
+| `RosterCommandGateTests.cs` | 5 | ported |
 | `RosterFileCreationTests.cs` | 8 | ported |
-| `RosterProblemExcerptTests.cs` | 5 | 0/5 |
+| `RosterProblemExcerptTests.cs` | 5 | ported |
 | `RosterRefreshFailureTests.cs` | 3 | ported |
 | `RosterServiceTests.cs` | 43 | ported |
-| `RotateMapTests.cs` | 49 | 47/49 |
+| `RotateMapTests.cs` | 49 | ported |
 | `SecurityAlertTests.cs` | 17 | ported |
 | `SelfTestGraphTests.cs` | 1 | 0/1 |
-| `SentenceCapTests.cs` | 16 | 0/16 |
+| `SentenceCapTests.cs` | 16 | ported |
 | `ServerBanFileTests.cs` | 20 | ported |
 | `ServerHealthTests.cs` | 22 | ported |
 | `ServerListTests.cs` | 13 | ported |
@@ -810,16 +811,16 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `ServiceRegistryTests.cs` | 23 | ported |
 | `ServiceRestartBrakeTests.cs` | 3 | ported |
 | `SkinTests.cs` | 15 | ported |
-| `SlashCommandValidationTests.cs` | 10 | 7/10 |
-| `SpawnFactionTests.cs` | 14 | 0/14 |
+| `SlashCommandValidationTests.cs` | 10 | ported |
+| `SpawnFactionTests.cs` | 14 | ported |
 | `SqliteStorageTests.cs` | 10 | ported |
 | `StaffFeedTests.cs` | 18 | ported |
 | `StaticMapTests.cs` | 8 | ported |
 | `StatsLogTests.cs` | 19 | ported |
 | `StorageAndProtocolTests.cs` | 14 | ported |
 | `StoredShapeTests.cs` | 7 | ported |
-| `SubclassChoiceTests.cs` | 8 | 0/8 |
-| `SubcommandFilterTests.cs` | 9 | 8/9 |
+| `SubclassChoiceTests.cs` | 8 | ported |
+| `SubcommandFilterTests.cs` | 9 | ported |
 | `TempBanExpiryTests.cs` | 5 | ported |
 | `UserAppEphemeralTests.cs` | 6 | ported |
 | `UserAppTests.cs` | 4 | ported |
@@ -831,8 +832,8 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `VpnTests.cs` | 46 | ported |
 | `VpnVerdictTests.cs` | 13 | ported |
 | `WarningServiceTests.cs` | 15 | ported |
-| `WhitelistEphemeralTests.cs` | 3 | 0/3 |
-| `WhitelistListTests.cs` | 4 | 0/4 |
+| `WhitelistEphemeralTests.cs` | 3 | ported |
+| `WhitelistListTests.cs` | 4 | ported |
 | `WhitelistTests.cs` | 20 | ported |
 
 <!-- END GENERATED -->
