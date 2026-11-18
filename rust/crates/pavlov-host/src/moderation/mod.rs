@@ -10,6 +10,7 @@ pub mod command_blacklist;
 pub mod evasion;
 pub mod master_access;
 pub mod master_names;
+pub mod owner_actions;
 pub mod vpn_responder;
 pub mod warnings;
 

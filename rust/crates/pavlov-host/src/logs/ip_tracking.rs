@@ -161,7 +161,14 @@ impl IpTrackingService {
         lock(&self.untracked).insert(name.to_owned());
     }
 
-    fn is_untracked(&self, name: &str) -> bool {
+    /// Record a name's addresses again (`/configure` un-ignore).
+    pub fn retrack(&self, name: &str) {
+        lock(&self.untracked).remove(name);
+    }
+
+    /// Whether a name is on the ignore list (its addresses are not recorded).
+    #[must_use]
+    pub fn is_untracked(&self, name: &str) -> bool {
         lock(&self.untracked).contains(name)
     }
 
@@ -716,6 +723,20 @@ impl IpTrackingService {
     /// Update the flags, starting from the migrated legacy set when nothing is stored yet - or
     /// only the seeded `{}` - so the first write cannot drop what the read-through found.
     async fn update_flags(&self, change: impl FnOnce(&mut FlagSet)) {
+        if let Err(error) = self.edit_flags(change).await {
+            tracing::error!(%error, "could not update the evasion flags");
+        }
+    }
+
+    /// Change the flags under the store's lock, starting from the migrated legacy set when
+    /// nothing is stored yet (see [`load_flags`](Self::load_flags)).
+    ///
+    /// # Errors
+    /// When the dataset cannot be written.
+    pub async fn edit_flags(
+        &self,
+        change: impl FnOnce(&mut FlagSet),
+    ) -> Result<(), pavlov_core::data::StoreError> {
         let base = self.load_flags();
         let fallback = base.clone();
         let result = self
@@ -730,9 +751,7 @@ impl IpTrackingService {
                 },
             )
             .await;
-        if let Err(error) = result {
-            tracing::error!(%error, "could not update the evasion flags");
-        }
+        result.map(|_| ())
     }
 
     async fn apply_flags(&self, ips: &[String], ids: &[String]) {
