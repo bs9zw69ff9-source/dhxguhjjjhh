@@ -20,6 +20,7 @@ pub mod installs;
 pub mod ledger_store;
 pub mod mod_save_sync;
 pub mod ownership;
+pub mod playtime;
 mod sqlite_backend;
 pub mod whitelist;
 
