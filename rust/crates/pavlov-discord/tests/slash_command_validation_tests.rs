@@ -116,3 +116,39 @@ fn the_subclasses_command_registers_cleanly_and_offers_only_factions_with_subcla
         );
     }
 }
+
+#[test]
+fn the_subclass_command_takes_a_discord_account() {
+    let store = common::commands::store();
+    let command = pavlov_discord::commands::subclass::SubclassCommand {
+        rosters: common::commands::rosters(None),
+        members: std::sync::Arc::new(pavlov_host::factions::FactionMembers::new(
+            std::sync::Arc::clone(&store),
+        )),
+        access: common::commands::access(&store, &[]),
+    };
+    let built = command.build();
+    assert!(problems(&built).is_empty(), "{:?}", problems(&built));
+
+    let member = built.options.iter().find(|o| o.name == "member").unwrap();
+    assert_eq!(member.kind, OptionKind::User);
+    assert!(!built.options.iter().any(|o| o.name == "playerid"));
+
+    // Asserted on the VALUE and its round trip: the handler parses the bare name back out.
+    let choices = &built
+        .options
+        .iter()
+        .find(|o| o.name == "subclass")
+        .unwrap()
+        .choices;
+    assert!(
+        choices
+            .iter()
+            .any(|c| c.value.to_string() == "GWPD:Detective")
+    );
+    assert_eq!(
+        pavlov_discord::commands::subclass::parse_value("GWPD:Detective"),
+        (Some("GWPD".to_owned()), "Detective".to_owned())
+    );
+    assert!(choices.iter().any(|c| c.name == "GWPD - Detective"));
+}
