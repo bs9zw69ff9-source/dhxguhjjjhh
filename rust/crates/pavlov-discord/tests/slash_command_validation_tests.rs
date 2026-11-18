@@ -3,7 +3,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use pavlov_discord::command::{CommandSpec, OptionKind, OptionSpec, partition, problems};
+use pavlov_discord::slash::SlashCommand;
 
 fn sub(name: &str) -> OptionSpec {
     OptionSpec::sub(name, "a subcommand")
@@ -84,4 +87,32 @@ fn an_entirely_valid_payload_passes_through_untouched() {
     ]);
     assert_eq!(valid.len(), 3);
     assert!(rejected.is_empty());
+}
+
+#[test]
+fn the_whitelist_command_registers_cleanly() {
+    let store = common::commands::store();
+    let built = common::commands::whitelist(&store, common::commands::rosters(None), &[]).build();
+    assert!(problems(&built).is_empty(), "{:?}", problems(&built));
+}
+
+#[test]
+fn the_subclasses_command_registers_cleanly_and_offers_only_factions_with_subclasses() {
+    let command = common::commands::subclasses();
+    let built = command.build();
+    assert!(problems(&built).is_empty());
+    let faction = built.options.iter().find(|o| o.name == "faction").unwrap();
+    assert!(!faction.choices.is_empty());
+    let factions = pavlov_core::factions::FactionRegistry::police();
+    for choice in &faction.choices {
+        assert!(
+            !factions
+                .get(Some(&choice.name))
+                .unwrap()
+                .subclasses
+                .is_empty(),
+            "{}",
+            choice.name
+        );
+    }
 }

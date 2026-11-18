@@ -4,4 +4,8 @@
 
 pub mod arrest;
 pub mod check_ban;
+pub mod membership_reply;
+pub mod rank_change;
 pub mod subclass;
+pub mod whitelist;
+pub mod whitelist_command;

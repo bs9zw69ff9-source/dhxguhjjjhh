@@ -3,6 +3,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -157,4 +159,20 @@ fn the_wrapper_keeps_the_commands_own_settings() {
     let whitelist = named(&a.kept, "whitelist");
     assert_eq!(whitelist.name(), "whitelist");
     assert!(whitelist.ephemeral());
+}
+
+#[test]
+fn the_real_whitelist_has_the_subcommands_this_is_about() {
+    // The .env example switches off "whitelist playtime" and "whitelist setrank"; a rename
+    // would turn that line into a typo the bot only warns about.
+    let store = common::commands::store();
+    let whitelist = common::commands::whitelist(&store, common::commands::rosters(None), &[]);
+    let subs = whitelist
+        .build()
+        .subcommands()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert!(subs.contains(&"playtime".to_owned()));
+    assert!(subs.contains(&"setrank".to_owned()));
 }

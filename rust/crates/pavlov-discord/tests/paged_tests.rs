@@ -62,6 +62,10 @@ impl ComponentResponder for Component {
         self.answers.lock().unwrap().push((reply, ephemeral));
         async { Ok(()) }.boxed()
     }
+    fn edit_original(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>> {
+        self.updates.lock().unwrap().push(reply);
+        async { Ok(()) }.boxed()
+    }
 }
 
 fn press(step: &str, user: u64, title: &str) -> ComponentInvocation {
