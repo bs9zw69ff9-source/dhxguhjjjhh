@@ -31,6 +31,16 @@ pub trait BalanceStore: Send + Sync {
     fn write(&self, player_id: &str, balance: i64) -> bool;
 }
 
+/// A shared store is a store, so the ledger and other callers (licence edits) can hold one.
+impl<T: BalanceStore + ?Sized> BalanceStore for std::sync::Arc<T> {
+    fn read(&self, player_id: &str) -> Option<i64> {
+        (**self).read(player_id)
+    }
+    fn write(&self, player_id: &str, balance: i64) -> bool {
+        (**self).write(player_id, balance)
+    }
+}
+
 /// The ledger over a store.
 #[derive(Debug)]
 pub struct Ledger<S> {
