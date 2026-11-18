@@ -15,8 +15,8 @@ summarised here so the checklist stands on its own.
 | M2 | `pavlov-core` part 2: Logs, Monitoring, Intelligence, Provisioning, Servers, Sync, Verification, Vpn, Events | done: every file in `PavlovBot.Core` is ported. The Logs, StatsLog, KillLine and KillDataBlock tests still listed need the host feed and stats services and port with M6 |
 | M3 | `pavlov-rcon` and the byte-recording fake RCON server | done: the session (gated, paced, keepalive, drop-safe dirty flag), the client (read cache, coalescing on a spawned shared read, retry that never re-sends a mutation that may have run, reply correlation, the bot's-own-traffic memory), reply parsing, the roster and lifecycle traits, and `testing::FakeRconServer` recording the exact login and command bytes. The registry moved to M6: it needs the metrics and the Pavlov.log confirmations |
 | M4 | `pavlov-storage`: SQLite kv and events, files, atomic writes, game files | done: atomic writes (owner and mode carried over), the file and SQLite key-value backends, the dataset names and seeds, the SQLite timeline, the real disk probe, the game-file rules and `IGNORE_PATHS`, the whitelist editor, the ledger file store, the cross-install ModSave sync, and the stored shapes (Node ban list, arrests, the role map, account and flag rows). The game ban file (`ServerBanFile`), the IP-flag and VPN-cache datasets port with the moderation and VPN services in M6 |
-| M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | not started |
-| M6 | `pavlov-services`: moderation, factions, economy, logs, monitoring, metrics, VPN, verification, the 30 services | not started |
+| M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | in progress: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl` (systemctl through an argv `CommandRunner`, sudo -n, the unit allow-list in the runner, stats with a CPU delta, advice), the metrics and health registries |
+| M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | not started |
 | M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | not started |
 | M8 | The 57 slash commands | not started |
 | M9 | `pavlov-bot` composition root and `--selftest` | not started |
@@ -50,10 +50,9 @@ cutover in M10, which the owner runs.
 |---|---|
 | `pavlov-core` | all of `PavlovBot.Core`: pure rules, no I/O. Also the PURE parts of some Host types that configuration needs, because `pavlov-config` sits below `pavlov-host`: unit-name parsing (`ServiceControl.ParseUnits`), the install-discovery decision (`PavlovInstalls.Discover`, behind the `servers::HostProbe` trait that `pavlov-host` implements), install-to-unit matching, the crash-recovery limits, `VpnKeys`, and `Secret` |
 | `pavlov-config` | `Host/Configuration`: the dotenv parser and the typed options |
-| `pavlov-rcon` | `PavlovBot.Rcon`, and the `IOnlineRoster` / `IServerLifecycle` seams from `Host/Rcon`. `RconRegistry` is in `pavlov-services`, beside the metrics and the log confirmations it uses |
+| `pavlov-rcon` | `PavlovBot.Rcon`, and the `IOnlineRoster` / `IServerLifecycle` seams from `Host/Rcon`. `RconRegistry` is in `pavlov-host`, beside the metrics and the log confirmations it uses |
 | `pavlov-storage` | `Host/Storage`, `Host/Events/SqliteEventStore`, `Host/Economy/LedgerFileStore` |
-| `pavlov-host` | `Host/Servers`: systemd, ufw, provisioning, process running |
-| `pavlov-services` | the rest of `Host`: moderation, factions, economy, logs, monitoring, observability, VPN, verification, intelligence, the background service host |
+| `pavlov-host` | all of `Host` except `Discord/`: servers (systemd, ufw, provisioning, process running), the RCON registry, observability, logs, moderation, factions, economy, monitoring, VPN, verification, intelligence, the background service host. ONE crate rather than the planned host + services pair: the C# types reference each other across that line (map rotation needs the RCON registry, which needs the Pavlov.log confirmations and the metrics), and splitting them would mean trait seams that exist only to satisfy a crate boundary |
 | `pavlov-discord` | `Host/Discord` and its commands |
 | `pavlov-bot` | `Host/Program.cs`: the binary |
 
@@ -118,6 +117,8 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | A dataset that no longer parses, at JSON export | exported as `<key>.json.corrupt` only when the store had flagged it | also when the stored text itself no longer parses | the last good backup is never replaced by damaged text |
 | The whitelist backup directory | `whitelist_bak` in the process's working directory | injected by the caller (the composition root passes the same directory) | testable, and not dependent on where the bot was started from |
 | A canonical `roles` key (`modRole`) stored as a string | System.Text.Json fails the whole `roles` dataset, so every tier reads as unset | read like the legacy keys: a number or a numeric string | one quoted id should not cost every role |
+| Prometheus number formatting | .NET `G17`: `0.1` renders `0.10000000000000001` | the shortest round-trip form: `0.1` | both are valid exposition; the shorter is what Prometheus itself prints |
+| A health check that panics | (C#: throws) reported Unhealthy with the message | the panic is caught and reported Unhealthy with its message | the same rule: the monitor cannot take down what it monitors |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Open question for M4: the C# reads stored keys case-INSENSITIVELY; the Rust models read the
@@ -550,54 +551,54 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PavlovBot.Host/Discord/SubcommandFilter.cs` | 149 | pavlov-discord |
 | `PavlovBot.Host/Discord/Theme.cs` | 229 | pavlov-discord |
 | `PavlovBot.Host/Economy/LedgerFileStore.cs` | 254 | pavlov-storage |
-| `PavlovBot.Host/Economy/Payroll.cs` | 468 | pavlov-services |
-| `PavlovBot.Host/Events/AnalyticsService.cs` | 135 | pavlov-services |
-| `PavlovBot.Host/Events/EventRecorder.cs` | 185 | pavlov-services |
-| `PavlovBot.Host/Events/PlayerEventBridge.cs` | 96 | pavlov-services |
+| `PavlovBot.Host/Economy/Payroll.cs` | 468 | pavlov-host |
+| `PavlovBot.Host/Events/AnalyticsService.cs` | 135 | pavlov-host |
+| `PavlovBot.Host/Events/EventRecorder.cs` | 185 | pavlov-host |
+| `PavlovBot.Host/Events/PlayerEventBridge.cs` | 96 | pavlov-host |
 | `PavlovBot.Host/Events/SqliteEventStore.cs` | 417 | pavlov-storage |
-| `PavlovBot.Host/Factions/FactionMembers.cs` | 190 | pavlov-services |
-| `PavlovBot.Host/Factions/FactionRenames.cs` | 142 | pavlov-services |
-| `PavlovBot.Host/Factions/FactionsFile.cs` | 157 | pavlov-services |
-| `PavlovBot.Host/Factions/RankRestorer.cs` | 130 | pavlov-services |
-| `PavlovBot.Host/Factions/RosterService.cs` | 841 | pavlov-services |
-| `PavlovBot.Host/Factions/WhitelistBackup.cs` | 137 | pavlov-services |
-| `PavlovBot.Host/Intelligence/PlayerIntelligenceService.cs` | 384 | pavlov-services |
-| `PavlovBot.Host/Logs/FeedBridge.cs` | 448 | pavlov-services |
-| `PavlovBot.Host/Logs/IpTrackingService.cs` | 709 | pavlov-services |
-| `PavlovBot.Host/Logs/LogTailer.cs` | 341 | pavlov-services |
-| `PavlovBot.Host/Logs/RconConfirmations.cs` | 126 | pavlov-services |
-| `PavlovBot.Host/Logs/ServerLabels.cs` | 85 | pavlov-services |
-| `PavlovBot.Host/Logs/StatsLogService.cs` | 217 | pavlov-services |
-| `PavlovBot.Host/Moderation/AuditLog.cs` | 150 | pavlov-services |
-| `PavlovBot.Host/Moderation/BanFirewall.cs` | 289 | pavlov-services |
-| `PavlovBot.Host/Moderation/BanService.cs` | 590 | pavlov-services |
-| `PavlovBot.Host/Moderation/CommandBlacklist.cs` | 198 | pavlov-services |
-| `PavlovBot.Host/Moderation/EvasionResponder.cs` | 354 | pavlov-services |
-| `PavlovBot.Host/Moderation/IStaffLogSink.cs` | 33 | pavlov-services |
-| `PavlovBot.Host/Moderation/MasterAccess.cs` | 402 | pavlov-services |
-| `PavlovBot.Host/Moderation/MasterNames.cs` | 126 | pavlov-services |
-| `PavlovBot.Host/Moderation/OwnerActions.cs` | 522 | pavlov-services |
-| `PavlovBot.Host/Moderation/SecurityAlerts.cs` | 106 | pavlov-services |
-| `PavlovBot.Host/Moderation/ServerBanFile.cs` | 511 | pavlov-services |
-| `PavlovBot.Host/Moderation/VpnResponder.cs` | 340 | pavlov-services |
-| `PavlovBot.Host/Moderation/WarningService.cs` | 209 | pavlov-services |
-| `PavlovBot.Host/Monitoring/MonitorAlertSink.cs` | 150 | pavlov-services |
-| `PavlovBot.Host/Monitoring/MonitorBoard.cs` | 189 | pavlov-services |
-| `PavlovBot.Host/Monitoring/MonitorFormat.cs` | 68 | pavlov-services |
-| `PavlovBot.Host/Monitoring/MonitorHistory.cs` | 119 | pavlov-services |
-| `PavlovBot.Host/Monitoring/MonitorTargets.cs` | 29 | pavlov-services |
-| `PavlovBot.Host/Monitoring/ServerLogActivity.cs` | 37 | pavlov-services |
-| `PavlovBot.Host/Monitoring/ServerMonitor.cs` | 174 | pavlov-services |
-| `PavlovBot.Host/Monitoring/ServerProbe.cs` | 107 | pavlov-services |
-| `PavlovBot.Host/Observability/HealthRegistry.cs` | 163 | pavlov-services |
-| `PavlovBot.Host/Observability/MetricsRegistry.cs` | 283 | pavlov-services |
-| `PavlovBot.Host/Observability/MonitoringServer.cs` | 302 | pavlov-services |
-| `PavlovBot.Host/Observability/OperationLog.cs` | 97 | pavlov-services |
-| `PavlovBot.Host/Observability/RecentErrors.cs` | 82 | pavlov-services |
+| `PavlovBot.Host/Factions/FactionMembers.cs` | 190 | pavlov-host |
+| `PavlovBot.Host/Factions/FactionRenames.cs` | 142 | pavlov-host |
+| `PavlovBot.Host/Factions/FactionsFile.cs` | 157 | pavlov-host |
+| `PavlovBot.Host/Factions/RankRestorer.cs` | 130 | pavlov-host |
+| `PavlovBot.Host/Factions/RosterService.cs` | 841 | pavlov-host |
+| `PavlovBot.Host/Factions/WhitelistBackup.cs` | 137 | pavlov-host |
+| `PavlovBot.Host/Intelligence/PlayerIntelligenceService.cs` | 384 | pavlov-host |
+| `PavlovBot.Host/Logs/FeedBridge.cs` | 448 | pavlov-host |
+| `PavlovBot.Host/Logs/IpTrackingService.cs` | 709 | pavlov-host |
+| `PavlovBot.Host/Logs/LogTailer.cs` | 341 | pavlov-host |
+| `PavlovBot.Host/Logs/RconConfirmations.cs` | 126 | pavlov-host |
+| `PavlovBot.Host/Logs/ServerLabels.cs` | 85 | pavlov-host |
+| `PavlovBot.Host/Logs/StatsLogService.cs` | 217 | pavlov-host |
+| `PavlovBot.Host/Moderation/AuditLog.cs` | 150 | pavlov-host |
+| `PavlovBot.Host/Moderation/BanFirewall.cs` | 289 | pavlov-host |
+| `PavlovBot.Host/Moderation/BanService.cs` | 590 | pavlov-host |
+| `PavlovBot.Host/Moderation/CommandBlacklist.cs` | 198 | pavlov-host |
+| `PavlovBot.Host/Moderation/EvasionResponder.cs` | 354 | pavlov-host |
+| `PavlovBot.Host/Moderation/IStaffLogSink.cs` | 33 | pavlov-host |
+| `PavlovBot.Host/Moderation/MasterAccess.cs` | 402 | pavlov-host |
+| `PavlovBot.Host/Moderation/MasterNames.cs` | 126 | pavlov-host |
+| `PavlovBot.Host/Moderation/OwnerActions.cs` | 522 | pavlov-host |
+| `PavlovBot.Host/Moderation/SecurityAlerts.cs` | 106 | pavlov-host |
+| `PavlovBot.Host/Moderation/ServerBanFile.cs` | 511 | pavlov-host |
+| `PavlovBot.Host/Moderation/VpnResponder.cs` | 340 | pavlov-host |
+| `PavlovBot.Host/Moderation/WarningService.cs` | 209 | pavlov-host |
+| `PavlovBot.Host/Monitoring/MonitorAlertSink.cs` | 150 | pavlov-host |
+| `PavlovBot.Host/Monitoring/MonitorBoard.cs` | 189 | pavlov-host |
+| `PavlovBot.Host/Monitoring/MonitorFormat.cs` | 68 | pavlov-host |
+| `PavlovBot.Host/Monitoring/MonitorHistory.cs` | 119 | pavlov-host |
+| `PavlovBot.Host/Monitoring/MonitorTargets.cs` | 29 | pavlov-host |
+| `PavlovBot.Host/Monitoring/ServerLogActivity.cs` | 37 | pavlov-host |
+| `PavlovBot.Host/Monitoring/ServerMonitor.cs` | 174 | pavlov-host |
+| `PavlovBot.Host/Monitoring/ServerProbe.cs` | 107 | pavlov-host |
+| `PavlovBot.Host/Observability/HealthRegistry.cs` | 163 | pavlov-host |
+| `PavlovBot.Host/Observability/MetricsRegistry.cs` | 283 | pavlov-host |
+| `PavlovBot.Host/Observability/MonitoringServer.cs` | 302 | pavlov-host |
+| `PavlovBot.Host/Observability/OperationLog.cs` | 97 | pavlov-host |
+| `PavlovBot.Host/Observability/RecentErrors.cs` | 82 | pavlov-host |
 | `PavlovBot.Host/Program.cs` | 1508 | pavlov-bot |
 | `PavlovBot.Host/Rcon/IOnlineRoster.cs` | 53 | pavlov-rcon |
 | `PavlovBot.Host/Rcon/IServerLifecycle.cs` | 32 | pavlov-rcon |
-| `PavlovBot.Host/Rcon/RconRegistry.cs` | 640 | pavlov-services |
+| `PavlovBot.Host/Rcon/RconRegistry.cs` | 640 | pavlov-host |
 | `PavlovBot.Host/Servers/BotSupervisor.cs` | 104 | pavlov-host |
 | `PavlovBot.Host/Servers/CrashRecovery.cs` | 205 | pavlov-host |
 | `PavlovBot.Host/Servers/Firewall.cs` | 141 | pavlov-host |
@@ -612,9 +613,9 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PavlovBot.Host/Servers/ServerLayoutGate.cs` | 61 | pavlov-host |
 | `PavlovBot.Host/Servers/ServerProvisioner.cs` | 1373 | pavlov-host |
 | `PavlovBot.Host/Servers/ServiceControl.cs` | 573 | pavlov-host |
-| `PavlovBot.Host/Services/BackgroundServiceHost.cs` | 690 | pavlov-services |
-| `PavlovBot.Host/Services/ServiceRegistry.cs` | 594 | pavlov-services |
-| `PavlovBot.Host/Stats/KillStats.cs` | 207 | pavlov-services |
+| `PavlovBot.Host/Services/BackgroundServiceHost.cs` | 690 | pavlov-host |
+| `PavlovBot.Host/Services/ServiceRegistry.cs` | 594 | pavlov-host |
+| `PavlovBot.Host/Stats/KillStats.cs` | 207 | pavlov-host |
 | `PavlovBot.Host/Storage/ArrestConverter.cs` | 132 | pavlov-storage |
 | `PavlovBot.Host/Storage/AtomicFile.cs` | 108 | pavlov-storage |
 | `PavlovBot.Host/Storage/Datasets.cs` | 235 | pavlov-storage |
@@ -628,11 +629,11 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PavlovBot.Host/Storage/SqliteKeyValueBackend.cs` | 252 | pavlov-storage |
 | `PavlovBot.Host/Storage/UnixFileOwnership.cs` | 81 | pavlov-storage |
 | `PavlovBot.Host/Storage/WhitelistFile.cs` | 220 | pavlov-storage |
-| `PavlovBot.Host/Verification/VerificationService.cs` | 357 | pavlov-services |
-| `PavlovBot.Host/Vpn/Detectors.cs` | 375 | pavlov-services |
-| `PavlovBot.Host/Vpn/ResilientJsonClient.cs` | 205 | pavlov-services |
-| `PavlovBot.Host/Vpn/StaticMap.cs` | 92 | pavlov-services |
-| `PavlovBot.Host/Vpn/VpnScreeningService.cs` | 513 | pavlov-services |
+| `PavlovBot.Host/Verification/VerificationService.cs` | 357 | pavlov-host |
+| `PavlovBot.Host/Vpn/Detectors.cs` | 375 | pavlov-host |
+| `PavlovBot.Host/Vpn/ResilientJsonClient.cs` | 205 | pavlov-host |
+| `PavlovBot.Host/Vpn/StaticMap.cs` | 92 | pavlov-host |
+| `PavlovBot.Host/Vpn/VpnScreeningService.cs` | 513 | pavlov-host |
 | `PavlovBot.Rcon/Protocol/RconReply.cs` | 196 | pavlov-rcon |
 | `PavlovBot.Rcon/RconClient.cs` | 383 | pavlov-rcon |
 | `PavlovBot.Rcon/RconConnection.cs` | 471 | pavlov-rcon |
@@ -716,7 +717,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `ModSaveSyncTests.cs` | 15 | ported |
 | `MonitoringServerTests.cs` | 9 | 0/9 |
 | `NodeCompatibilityTests.cs` | 8 | ported |
-| `ObservabilityTests.cs` | 15 | 0/15 |
+| `ObservabilityTests.cs` | 15 | ported |
 | `OwnerActionsTests.cs` | 37 | 0/37 |
 | `OwnerGuardTests.cs` | 14 | 7/14 |
 | `PavlovServerDetectionTests.cs` | 7 | ported |
@@ -726,7 +727,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PlayerCountChannelTests.cs` | 26 | 0/26 |
 | `PoliceLogRoutingTests.cs` | 6 | 0/6 |
 | `PreservedPlayerDataTests.cs` | 6 | 0/6 |
-| `ProcessRunnerTests.cs` | 10 | 0/10 |
+| `ProcessRunnerTests.cs` | 10 | ported |
 | `ProfileRedactionTests.cs` | 10 | ported |
 | `ProvisioningTests.cs` | 84 | 49/84 |
 | `RankRestorerTests.cs` | 6 | 0/6 |
@@ -752,7 +753,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RosterProblemExcerptTests.cs` | 5 | 0/5 |
 | `RosterRefreshFailureTests.cs` | 3 | 0/3 |
 | `RosterServiceTests.cs` | 43 | 0/43 |
-| `RotateMapTests.cs` | 49 | 9/49 |
+| `RotateMapTests.cs` | 49 | 32/49 |
 | `SecurityAlertTests.cs` | 17 | 4/17 |
 | `SelfTestGraphTests.cs` | 1 | 0/1 |
 | `SentenceCapTests.cs` | 16 | 0/16 |
