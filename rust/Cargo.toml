@@ -40,6 +40,14 @@ tempfile = "3"
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
 
+# Every test file is its own linked binary; full debug info made a debug build tens of GB.
+# Line tables keep panics and backtraces readable.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
