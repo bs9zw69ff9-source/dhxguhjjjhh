@@ -1,0 +1,30 @@
+[package]
+name = "pavlov-rcon"
+description = "Pavlov's RCON protocol: one persistent, paced, self-healing session per server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The byte-recording fake server, for this crate's tests and every crate above it.
+testing = ["tokio/rt"]
+
+[dependencies]
+futures-util.workspace = true
+md-5.workspace = true
+pavlov-config = { path = "../pavlov-config" }
+pavlov-core = { path = "../pavlov-core" }
+serde.workspace = true
+serde_json.workspace = true
+socket2.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "time", "sync", "rt", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+pavlov-rcon = { path = ".", features = ["testing"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+
+[lints]
+workspace = true

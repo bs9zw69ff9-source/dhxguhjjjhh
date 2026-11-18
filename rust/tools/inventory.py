@@ -44,6 +44,8 @@ def target_crate(rel: str) -> str:
     if project == "PavlovBot.Rcon":
         return "pavlov-rcon"
     top = rest[0] if len(rest) > 1 else ""
+    if rel.endswith("RconRegistry.cs"):
+        return "pavlov-services"   # needs metrics and the Pavlov.log confirmations
     if rel.endswith("Program.cs"):
         return "pavlov-bot"
     return {

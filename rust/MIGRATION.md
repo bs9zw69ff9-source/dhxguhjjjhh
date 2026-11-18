@@ -13,7 +13,7 @@ summarised here so the checklist stands on its own.
 | M0c | Remove the fallout theme from the C# | done: police is the only skin and faction set; `THEME=fallout` and `FACTION_SET=fallout` stop startup (exit 78) saying they were removed; fallout-data tests moved to police data |
 | M1 | `pavlov-config`; `pavlov-core` part 1: Text, Time, Security, Concurrency, Data, Penal, Evasion, Factions, Economy, Licensing, Stats | done: `pavlov-config` (the dotenv grammar, the environment over the `.env`, `BotOptions`, `MonitoringOptions`, `RconOptions`, `FeatureOptions` with its startup summary, the `.env` permission check) and in `pavlov-core` Text, Time, Moderation (staff hierarchy, ban rules, menu link, menu roles), Verification, Stats, Economy ledger, KeyedLock, the JSON timestamp and tier compatibility, Evasion (scorer, flag registry), Penal, Factions (police set), Intelligence (risk scoring, profile redaction), Security (owner guard, `Secret`), Licensing, the roster write guard, `Data.SerializedStore` (with `IgnoreCaseMap` and an in-memory backend), the pure server types (unit names, install discovery, unit matching, crash limits), `MonitorSettings`, `VpnThresholds`, `VpnKeys`; fourteen C# test files fully ported, nine partly (the rest of each needs a later crate) |
 | M2 | `pavlov-core` part 2: Logs, Monitoring, Intelligence, Provisioning, Servers, Sync, Verification, Vpn, Events | done: every file in `PavlovBot.Core` is ported. The Logs, StatsLog, KillLine and KillDataBlock tests still listed need the host feed and stats services and port with M6 |
-| M3 | `pavlov-rcon` and the byte-recording fake RCON server | not started |
+| M3 | `pavlov-rcon` and the byte-recording fake RCON server | done: the session (gated, paced, keepalive, drop-safe dirty flag), the client (read cache, coalescing on a spawned shared read, retry that never re-sends a mutation that may have run, reply correlation, the bot's-own-traffic memory), reply parsing, the roster and lifecycle traits, and `testing::FakeRconServer` recording the exact login and command bytes. The registry moved to M6: it needs the metrics and the Pavlov.log confirmations |
 | M4 | `pavlov-storage`: SQLite kv and events, files, atomic writes, game files | not started |
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | not started |
 | M6 | `pavlov-services`: moderation, factions, economy, logs, monitoring, metrics, VPN, verification, the 30 services | not started |
@@ -50,7 +50,7 @@ cutover in M10, which the owner runs.
 |---|---|
 | `pavlov-core` | all of `PavlovBot.Core`: pure rules, no I/O. Also the PURE parts of some Host types that configuration needs, because `pavlov-config` sits below `pavlov-host`: unit-name parsing (`ServiceControl.ParseUnits`), the install-discovery decision (`PavlovInstalls.Discover`, behind the `servers::HostProbe` trait that `pavlov-host` implements), install-to-unit matching, the crash-recovery limits, `VpnKeys`, and `Secret` |
 | `pavlov-config` | `Host/Configuration`: the dotenv parser and the typed options |
-| `pavlov-rcon` | `PavlovBot.Rcon` and `Host/Rcon` |
+| `pavlov-rcon` | `PavlovBot.Rcon`, and the `IOnlineRoster` / `IServerLifecycle` seams from `Host/Rcon`. `RconRegistry` is in `pavlov-services`, beside the metrics and the log confirmations it uses |
 | `pavlov-storage` | `Host/Storage`, `Host/Events/SqliteEventStore`, `Host/Economy/LedgerFileStore` |
 | `pavlov-host` | `Host/Servers`: systemd, ufw, provisioning, process running |
 | `pavlov-services` | the rest of `Host`: moderation, factions, economy, logs, monitoring, observability, VPN, verification, intelligence, the background service host |
@@ -112,6 +112,8 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | A line break in the game password | not checked, written into Game.ini as a second line | refused by validation | it would add a setting of its own |
 | `UGC` map ids with non-ASCII digits | accepted (.NET `\d` is any Unicode digit) | ASCII digits only | no workshop id has any other kind |
 | Length caps on event fields and the server name | counted in UTF-16 units, and a cut can split a surrogate pair | counted in characters, cut on a character boundary | never writes half a character |
+| `RconOptions.MaxAttempts = 0` | the loop never runs: every command fails "after 0 attempt(s)" without trying | at least one attempt | not configurable from `.env`, so only reachable by a code change |
+| A caller abandoning an RCON exchange | the session is dropped in a `finally` when the exchange did not settle | the session is marked dirty before the write and clean after the read; a dropped future leaves the mark, and the next command reconnects | the same rule, but drop-safe by construction |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Open question for M4: the C# reads stored keys case-INSENSITIVELY; the Rust models read the
@@ -591,7 +593,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PavlovBot.Host/Program.cs` | 1508 | pavlov-bot |
 | `PavlovBot.Host/Rcon/IOnlineRoster.cs` | 53 | pavlov-rcon |
 | `PavlovBot.Host/Rcon/IServerLifecycle.cs` | 32 | pavlov-rcon |
-| `PavlovBot.Host/Rcon/RconRegistry.cs` | 640 | pavlov-rcon |
+| `PavlovBot.Host/Rcon/RconRegistry.cs` | 640 | pavlov-services |
 | `PavlovBot.Host/Servers/BotSupervisor.cs` | 104 | pavlov-host |
 | `PavlovBot.Host/Servers/CrashRecovery.cs` | 205 | pavlov-host |
 | `PavlovBot.Host/Servers/Firewall.cs` | 141 | pavlov-host |
@@ -724,17 +726,17 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `ProfileRedactionTests.cs` | 10 | ported |
 | `ProvisioningTests.cs` | 84 | 49/84 |
 | `RankRestorerTests.cs` | 6 | 0/6 |
-| `RconBlankReplyTests.cs` | 3 | 0/3 |
-| `RconChunkedReplyTests.cs` | 3 | 0/3 |
-| `RconClientTests.cs` | 13 | 0/13 |
+| `RconBlankReplyTests.cs` | 3 | ported |
+| `RconChunkedReplyTests.cs` | 3 | ported |
+| `RconClientTests.cs` | 13 | ported |
 | `RconConfirmationsTests.cs` | 6 | 0/6 |
-| `RconCorrelationTests.cs` | 6 | 0/6 |
-| `RconDeliveryTests.cs` | 6 | 0/6 |
+| `RconCorrelationTests.cs` | 6 | 5/6 |
+| `RconDeliveryTests.cs` | 6 | ported |
 | `RconFailureTests.cs` | 4 | 0/4 |
 | `RconHealthTests.cs` | 6 | 0/6 |
 | `RconLogConfirmationTests.cs` | 8 | 0/8 |
 | `RconMenuTests.cs` | 7 | 0/7 |
-| `RconResilienceTests.cs` | 6 | 0/6 |
+| `RconResilienceTests.cs` | 6 | ported |
 | `RecentErrorsTests.cs` | 6 | 0/6 |
 | `RejectedCommandTests.cs` | 4 | 0/4 |
 | `RiskScoringTests.cs` | 13 | ported |
@@ -763,7 +765,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `StaffFeedTests.cs` | 18 | 0/18 |
 | `StaticMapTests.cs` | 8 | 0/8 |
 | `StatsLogTests.cs` | 19 | 11/19 |
-| `StorageAndProtocolTests.cs` | 14 | 0/14 |
+| `StorageAndProtocolTests.cs` | 14 | 8/14 |
 | `StoredShapeTests.cs` | 7 | 0/7 |
 | `SubclassChoiceTests.cs` | 8 | 0/8 |
 | `SubcommandFilterTests.cs` | 9 | 0/9 |
