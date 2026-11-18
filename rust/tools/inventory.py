@@ -45,7 +45,7 @@ def target_crate(rel: str) -> str:
         return "pavlov-rcon"
     top = rest[0] if len(rest) > 1 else ""
     if rel.endswith("RconRegistry.cs"):
-        return "pavlov-services"   # needs metrics and the Pavlov.log confirmations
+        return "pavlov-host"   # beside the metrics and the Pavlov.log confirmations it uses
     if rel.endswith("Program.cs"):
         return "pavlov-bot"
     return {
@@ -55,7 +55,7 @@ def target_crate(rel: str) -> str:
         "Discord": "pavlov-discord",
         "Rcon": "pavlov-rcon",
         "Plugins": "DROPPED (plugins)",
-    }.get(top, "pavlov-services") if not rel.endswith(("SqliteEventStore.cs", "LedgerFileStore.cs")) else "pavlov-storage"
+    }.get(top, "pavlov-host") if not rel.endswith(("SqliteEventStore.cs", "LedgerFileStore.cs")) else "pavlov-storage"
 
 
 def table(rows: list[list[str]], header: list[str]) -> str:

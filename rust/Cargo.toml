@@ -28,6 +28,7 @@ fancy-regex = "0.14"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 indexmap = { version = "2", features = ["serde"] }
 md-5 = "0.10"
+nix = { version = "0.29", default-features = false, features = ["signal", "process"] }
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

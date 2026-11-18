@@ -1,0 +1,18 @@
+//! The bot's work on the box and on its game servers (C# `PavlovBot.Host`, everything but
+//! `Discord/`).
+//!
+//! ONE CRATE, NOT TWO. The plan split this into a host crate and a services crate, but the C#
+//! types reference each other across those lines (map rotation needs the RCON registry, which
+//! needs the Pavlov.log confirmations and the metrics), so splitting would mean trait seams that
+//! exist only to satisfy a crate boundary.
+//!
+//! LINUX ONLY, by design: `systemctl`, `ufw` and Linux paths. Every external command is an argv
+//! array through [`process::CommandRunner`] - never a shell - so tests assert the exact command
+//! lines without running anything privileged.
+
+#![forbid(unsafe_code)]
+
+pub mod health;
+pub mod metrics;
+pub mod process;
+pub mod service_control;
