@@ -20,6 +20,7 @@ pub mod http;
 pub mod layout_gate;
 pub mod master_list;
 pub mod metrics;
+pub mod moderation;
 pub mod notice;
 pub mod preserved;
 pub mod process;

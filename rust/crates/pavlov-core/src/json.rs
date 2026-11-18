@@ -185,3 +185,24 @@ mod tests {
         }
     }
 }
+
+/// A stored timestamp as a map VALUE (`{"name": 1700000000000}`): milliseconds written, read
+/// leniently as [`timestamp_from_value`]. Unreadable reads as the Unix epoch, as the C#
+/// non-nullable converter does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Stamp(pub DateTime<Utc>);
+
+impl serde::Serialize for Stamp {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i64(self.0.timestamp_millis())
+    }
+}
+
+impl<'de> Deserialize<'de> for Stamp {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(
+            timestamp_from_value(&Value::deserialize(deserializer)?)
+                .unwrap_or(DateTime::UNIX_EPOCH),
+        ))
+    }
+}

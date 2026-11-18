@@ -147,3 +147,11 @@ impl pavlov_host::http::HttpClient for FakeHttp {
         Box::pin(async move { answer })
     }
 }
+
+/// A store over the file backend in `dir`, as the C# tests build one.
+pub fn file_store(dir: &std::path::Path) -> std::sync::Arc<pavlov_core::data::SerializedStore> {
+    let backend = pavlov_storage::FileKeyValueBackend::new(dir).unwrap();
+    std::sync::Arc::new(pavlov_core::data::SerializedStore::new(
+        std::sync::Arc::new(backend),
+    ))
+}

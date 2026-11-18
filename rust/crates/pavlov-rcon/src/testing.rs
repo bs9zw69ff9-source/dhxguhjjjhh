@@ -47,6 +47,8 @@ pub struct Behaviour {
     pub split_reply_after_bytes: Option<usize>,
     /// Verbs the server ACCEPTS AND NEVER ANSWERS: a hung game thread, with the connection up.
     pub swallow: HashSet<String>,
+    /// Who is online, as `(name, unique id)`: the `PlayerList` every reply carries.
+    pub players: Vec<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -248,18 +250,25 @@ async fn serve_inner(shared: &Shared, stream: &mut TcpStream) -> std::io::Result
         }
 
         let answering = b.answer_everything_as.clone().unwrap_or(verb);
+        let players = serde_json::to_string(
+            &b.players
+                .iter()
+                .map(|(name, id)| serde_json::json!({ "Username": name, "UniqueId": id }))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".into());
         let outcome = if b.refuse_everything { "false" } else { "true" };
         let reply = if let Some(exact) = &b.exact_reply {
             exact.clone()
         } else if let Some(plain) = &b.plain_text_reply {
             format!("{plain}\r\n")
         } else if b.omit_command_field {
-            format!("{{\"Successful\":{outcome},\"PlayerList\":[]}}\r\n")
+            format!("{{\"Successful\":{outcome},\"PlayerList\":{players}}}\r\n")
         } else if b.omit_successful_field {
-            format!("{{\"Command\":\"{answering}\",\"PlayerList\":[]}}\r\n")
+            format!("{{\"Command\":\"{answering}\",\"PlayerList\":{players}}}\r\n")
         } else {
             format!(
-                "{{\"Command\":\"{answering}\",\"Successful\":{outcome},\"PlayerList\":[]}}\r\n"
+                "{{\"Command\":\"{answering}\",\"Successful\":{outcome},\"PlayerList\":{players}}}\r\n"
             )
         };
 
