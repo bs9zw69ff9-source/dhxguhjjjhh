@@ -6,12 +6,16 @@ use pavlov_core::skin::theme;
 use pavlov_host::metrics::{MetricLabels, MetricsRegistry};
 use pavlov_host::moderation::CommandBlacklist;
 
-use crate::interaction::{Reply, Responder, Suggester};
+use crate::interaction::{ComponentResponder, Reply, Responder, Suggester};
 
 /// What is asking: an interaction to answer, or an autocomplete to offer nothing to.
 #[derive(Clone, Copy)]
 pub enum Asker<'a> {
     Interaction(&'a dyn Responder),
+    /// A button, select or modal: a panel in a channel is clickable by anybody who can see
+    /// it, so refusing only the slash commands would leave a barred user every control
+    /// those commands ever posted.
+    Component(&'a dyn ComponentResponder),
     Autocomplete(&'a dyn Suggester),
 }
 
@@ -19,6 +23,7 @@ impl std::fmt::Debug for Asker<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Interaction(_) => "Asker::Interaction",
+            Self::Component(_) => "Asker::Component",
             Self::Autocomplete(_) => "Asker::Autocomplete",
         })
     }
@@ -56,7 +61,7 @@ pub async fn refuse_if_barred(
                 tracing::debug!(%error, "could not answer a barred user's autocomplete");
             }
         }
-        Asker::Interaction(responder) => {
+        Asker::Interaction(_) | Asker::Component(_) => {
             tracing::info!(
                 what,
                 user = username,
@@ -69,7 +74,12 @@ pub async fn refuse_if_barred(
                 1.0,
                 Some("Interactions refused because the user is barred from bot commands"),
             );
-            if let Err(error) = responder.respond(barred_reply(), true).await {
+            let said = match asker {
+                Asker::Interaction(responder) => responder.respond(barred_reply(), true).await,
+                Asker::Component(responder) => responder.respond(barred_reply(), true).await,
+                Asker::Autocomplete(_) => Ok(()),
+            };
+            if let Err(error) = said {
                 tracing::warn!(what, %error, "could not tell a barred user they were refused");
             }
         }
