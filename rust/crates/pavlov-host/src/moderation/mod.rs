@@ -2,10 +2,12 @@
 //! pure and live in `pavlov_core::moderation`.
 
 pub mod ban_file;
+pub mod ban_firewall;
 pub mod bans;
 pub mod master_names;
 
 pub use ban_file::{BanFileEntry, BanFileLookup, BanFileStatus, ServerBanFile};
+pub use ban_firewall::{BanFirewall, BanFirewallPass, FirewalledBan};
 pub use bans::{BanEvidence, BanFileExport, BanService, EnforcementResult, MasterNames};
 pub use master_names::StoredMasterNames;
 
