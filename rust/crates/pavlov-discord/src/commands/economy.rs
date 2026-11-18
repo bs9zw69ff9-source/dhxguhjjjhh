@@ -218,8 +218,7 @@ pub fn wages_card(payroll: &Payroll, player: &str) -> Embed {
         "How pay works",
         format!(
             "**{}** per **{period}** minutes on duty. Part periods carry forward rather than rounding.\n\nIt banks to \
-             the in-game balance once they log off — while they are connected the server overwrites that file from \
-             memory.",
+             the in-game balance when they go off duty.",
             lore::amount(payroll.amount())
         ),
         false,

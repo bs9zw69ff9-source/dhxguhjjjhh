@@ -1,5 +1,6 @@
-//! `/license remove` (C# `LicenseCommand.cs`): take a driver's or firearm licence out of a
-//! player's ModSave file. Police only, and it lands in the police log.
+//! `/license give` and `/license remove` (C# `LicenseCommand.cs`, which could only remove):
+//! set a driver's or firearm licence in a player's save (`<name>.json`). Police only, and both
+//! land in the police log. Works while the player is in game: the mod syncs the save live.
 
 use std::sync::Arc;
 
@@ -18,8 +19,10 @@ use crate::slash::{CommandContext, CommandError, SlashCommand};
 
 const REQUIRED: RequiredAccess = RequiredAccess::Police;
 
-/// The audit action, which the staff log routes to the police channel.
+/// The audit action for a removal, which the staff log routes to the police channel.
 pub const AUDIT_ACTION: &str = "license-remove";
+/// The audit action for a give, routed the same way.
+pub const GIVE_ACTION: &str = "license-give";
 
 /// The command. `saves` is `None` on a bot that does not read the game's save files.
 pub struct LicenseCommand {
@@ -55,9 +58,11 @@ impl LicenseCommand {
             )
             .await;
         }
-        if invocation.subcommand() != Some("remove") {
-            return reply(context, theme::failure("Unknown subcommand", None)).await;
-        }
+        let give = match invocation.subcommand() {
+            Some("give") => true,
+            Some("remove") => false,
+            _ => return reply(context, theme::failure("Unknown subcommand", None)).await,
+        };
         let player = Sanitize::id(invocation.string("player"));
         let licenses = Licenses::named(invocation.string("license"));
         let reason = invocation
@@ -92,38 +97,46 @@ impl LicenseCommand {
             )
             .await;
         };
-        let result = saves.remove_licenses(&player, &licenses);
+        let result = saves.set_licenses(&player, &licenses, give);
         let name = Sanitize::code(Some(&player));
+        let (action, title, verb) = if give {
+            (GIVE_ACTION, "License granted", "now holds")
+        } else {
+            (AUDIT_ACTION, "License revoked", "no longer holds")
+        };
         match result.outcome {
-            LicenseOutcome::Removed => {
-                let removed: Vec<&str> = result.removed.iter().map(|l| l.label).collect();
+            LicenseOutcome::Changed => {
+                let removed: Vec<&str> = result.changed.iter().map(|l| l.label).collect();
                 let removed = removed.join(", ");
                 let detail = match reason {
                     Some(reason) => format!("{removed} | {reason}"),
                     None => removed.clone(),
                 };
                 self.audit
-                    .record(AUDIT_ACTION, &invocation.username, &player, Some(&detail))
+                    .record(action, &invocation.username, &player, Some(&detail))
                     .await?;
-                tracing::info!(player = %player, licenses = %removed, by = %invocation.username, reason = reason.unwrap_or(""), "license remove");
-                let mut embed = theme::success(
-                    "License revoked",
-                    Some(&format!("**{name}** no longer holds: **{removed}**.")),
-                )
-                .field("By", invocation.username.clone(), true);
+                tracing::info!(player = %player, licenses = %removed, by = %invocation.username, reason = reason.unwrap_or(""), action);
+                let mut embed =
+                    theme::success(title, Some(&format!("**{name}** {verb}: **{removed}**.")))
+                        .field("By", invocation.username.clone(), true);
                 if let Some(reason) = reason {
                     embed = embed.field("Reason", Sanitize::code(Some(reason)), true);
                 }
                 reply(context, embed).await
             }
-            LicenseOutcome::NoneHeld => {
+            LicenseOutcome::AlreadySo => {
+                let (heading, state) = if give {
+                    ("Nothing to grant", "already holds")
+                } else {
+                    ("Nothing to revoke", "does not hold")
+                };
                 reply(
                     context,
                     theme::notice(
-                        "Nothing to revoke",
+                        heading,
                         Some(&format!(
-                            "**{name}** does not hold {}. Their save file is unchanged.",
-                            describe(&result.known)
+                            "**{name}** {state} {}. Their save file is unchanged.",
+                            describe(&licenses)
                         )),
                     ),
                 )
@@ -152,27 +165,35 @@ impl SlashCommand for LicenseCommand {
     }
 
     fn build(&self) -> CommandSpec {
-        let which = Licenses::ALL.iter().fold(
-            OptionSpec::new(OptionKind::String, "license", "Which license to take away").required(),
-            |option, license| option.choice(Choice::string(license.label, license.choice)),
-        );
-        CommandSpec::new("license", "Police - Player licenses").option(
-            OptionSpec::sub(
+        let sub = |name: &str, description: &str, which: &str| {
+            let licenses = Licenses::ALL.iter().fold(
+                OptionSpec::new(OptionKind::String, "license", which).required(),
+                |option, license| option.choice(Choice::string(license.label, license.choice)),
+            );
+            OptionSpec::sub(name, description)
+                .option(
+                    OptionSpec::new(OptionKind::String, "player", "Their in-game name")
+                        .required()
+                        .autocomplete(),
+                )
+                .option(licenses.choice(Choice::string("Both", Licenses::EVERY)))
+                .option(OptionSpec::new(
+                    OptionKind::String,
+                    "reason",
+                    "Why, for the audit log",
+                ))
+        };
+        CommandSpec::new("license", "Police - Player licenses")
+            .option(sub(
+                "give",
+                "Police - Grant a player a driver's or firearm license",
+                "Which license to grant",
+            ))
+            .option(sub(
                 "remove",
                 "Police - Revoke a player's driver's or firearm license",
-            )
-            .option(
-                OptionSpec::new(OptionKind::String, "player", "Their in-game name")
-                    .required()
-                    .autocomplete(),
-            )
-            .option(which.choice(Choice::string("Both", Licenses::EVERY)))
-            .option(OptionSpec::new(
-                OptionKind::String,
-                "reason",
-                "Why, for the audit log",
-            )),
-        )
+                "Which license to take away",
+            ))
     }
 
     fn handle<'a>(

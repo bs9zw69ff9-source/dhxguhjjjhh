@@ -1,20 +1,19 @@
-//! Recognising a caps ledger by its contents, and the two guards that reading protects (C#
-//! `Core/Sync/LedgerFile.cs`).
+//! Recognising a player save by its contents, and the money guard that reading protects (C#
+//! `Core/Sync/LedgerFile.cs`, now over the JSON saves: see [`PlayerSave`]).
 //!
-//! A player's balance file is either a single non-negative integer, or the keyed shape with a
-//! `Money` line (see [`ModSaveFile`]). Recognising one by CONTENT rather than by its folder is
-//! deliberate: the sub-directory a mod files balances under is the mod's choice, but the shape
-//! of the file is the same on every server.
+//! Recognising one by CONTENT rather than by its folder is deliberate: the folder holds other
+//! files, but a save always has a whole-number `money`.
 //!
-//! - THE ONLINE GUARD keys off [`looks_like_ledger`]. A connected player's balance is still
-//!   moving in server memory, so the newest modified time no longer says which copy is current.
-//!   The blanket sweep skips a ledger whose player is online; the join-time sync handles those.
-//! - THE MONEY GUARD is [`would_wipe_balance`]. A player hopping to a server that just made them
-//!   a fresh zero-cap file must not have that zero propagate over the caps they earned elsewhere.
+//! THE MONEY GUARD is [`would_wipe_balance`]. A player hopping to a server that just made them
+//! a fresh zero-money save must not have that zero propagate over the money they earned
+//! elsewhere.
+//!
+//! There is no online guard any more (owner, 2026-11-18): the mod writes a player's in-game
+//! state to the file live, so the newest file IS the current one, online or not.
 
-use super::ModSaveFile;
+use super::PlayerSave;
 
-/// True when the content holds a non-negative balance, in either shape.
+/// True when the content is a save holding a non-negative balance.
 #[must_use]
 pub fn looks_like_ledger(content: Option<&str>) -> bool {
     balance(content).is_some()
@@ -23,7 +22,7 @@ pub fn looks_like_ledger(content: Option<&str>) -> bool {
 /// The balance, or `None` when the content holds no non-negative one.
 #[must_use]
 pub fn balance(content: Option<&str>) -> Option<i64> {
-    ModSaveFile::parse(content)
+    PlayerSave::parse(content)
         .and_then(|f| f.money())
         .filter(|v| *v >= 0)
 }
@@ -39,5 +38,5 @@ pub fn would_wipe_balance(source: Option<&str>, destination: Option<&str>) -> bo
     if !source_blank && balance(source) != Some(0) {
         return false; // the source carries something real
     }
-    balance(destination).is_some_and(|b| b > 0) // and the destination is caps we would lose
+    balance(destination).is_some_and(|b| b > 0) // and the destination is money we would lose
 }

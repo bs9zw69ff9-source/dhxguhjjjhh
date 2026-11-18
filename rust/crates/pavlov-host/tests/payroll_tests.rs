@@ -91,22 +91,21 @@ impl Fixture {
 
     fn give_ledger(&self, player: &str, balance: i64) {
         std::fs::write(
-            self.ledgers.join(format!("{player}.txt")),
-            balance.to_string(),
+            self.ledgers.join(format!("{player}.json")),
+            format!("{{\n\t\"money\": {balance},\n\t\"skin\": 3,\n\t\"name\": \"{player}\"\n}}\n"),
         )
         .unwrap();
     }
 
     fn balance_of(&self, player: &str) -> Option<i64> {
-        std::fs::read_to_string(self.ledgers.join(format!("{player}.txt")))
+        std::fs::read_to_string(self.ledgers.join(format!("{player}.json")))
             .ok()
-            .and_then(|t| t.trim().parse().ok())
+            .and_then(|t| pavlov_core::sync::ledger_file::balance(Some(&t)))
     }
 
     fn build_with(&self, online: Arc<dyn OnlineRoster>, amount: i64) -> Payroll {
         let ledger_store: Arc<dyn BalanceStore> = Arc::new(LedgerFileStore::new(
             Some(self.ledgers.clone()),
-            Some(Arc::clone(&online)),
             Arc::new(GameFileGuard::none()),
         ));
         Payroll::new(PayrollParts {
@@ -415,7 +414,7 @@ async fn a_wage_accrued_while_settling_is_not_swallowed() {
 }
 
 #[tokio::test]
-async fn the_ledger_is_a_bare_number_the_game_can_read() {
+async fn the_wage_lands_in_the_json_save_and_keeps_its_other_fields() {
     let f = Fixture::new();
     f.put_on_roster(&["Alice"]);
     f.give_ledger("Alice", 1234);
@@ -426,9 +425,13 @@ async fn the_ledger_is_a_bare_number_the_game_can_read() {
     f.wait(1);
     f.build_with(roster(true, &[]), 1000).run().await;
 
-    assert_eq!(
-        std::fs::read_to_string(f.ledgers.join("Alice.txt")).unwrap(),
-        "2234"
+    let save = std::fs::read_to_string(f.ledgers.join("Alice.json")).unwrap();
+    let parsed = pavlov_core::sync::PlayerSave::parse(Some(&save)).unwrap();
+    assert_eq!(parsed.money(), Some(2234));
+    assert_eq!(parsed.name(), Some("Alice"));
+    assert!(
+        save.contains("\t\"skin\": 3"),
+        "the fields the bot does not own are kept: {save}"
     );
 }
 

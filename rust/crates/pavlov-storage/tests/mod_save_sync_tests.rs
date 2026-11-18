@@ -1,5 +1,6 @@
-//! Port of `ModSaveSyncTests.cs`: the sweep across installs and the join-time fast path, on
-//! real directories.
+//! Port of `ModSaveSyncTests.cs`: the sweep across installs, on real directories, over the JSON
+//! player saves (`<name>.json`). The C#'s online-guard, RCON+ skip and join fast-path tests
+//! are dropped with the behaviour (owner, 2026-11-18; see status.toml).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -7,11 +8,9 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use common::{FakeRoster, touch};
+use common::touch;
 use pavlov_core::servers::installs::mod_save_path;
-use pavlov_rcon::OnlineRoster;
 use pavlov_storage::mod_save_sync::ModSaveSync;
 
 struct Box_ {
@@ -40,24 +39,37 @@ impl Box_ {
 }
 
 fn ledger_path(install: &str, player: &str) -> PathBuf {
-    Path::new(&mod_save_path(install)).join(format!("{player}.txt"))
+    Path::new(&mod_save_path(install)).join(format!("{player}.json"))
 }
 
-fn write_ledger(install: &str, player: &str, content: &str, minutes: i64) {
+/// A save holding `money` (or, for "", an empty file).
+fn write_ledger(install: &str, player: &str, money: &str, minutes: i64) {
     let path = ledger_path(install, player);
+    let content = if money.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "{{\n\t\"money\": {money},\n\t\"drivers_license\": false,\n\t\"name\": \"{player}\"\n}}\n"
+        )
+    };
     fs::write(&path, content).unwrap();
     touch(&path, minutes);
+}
+
+/// The balance a save holds.
+fn money(path: &Path) -> String {
+    pavlov_core::sync::ledger_file::balance(Some(&read(path)))
+        .map(|m| m.to_string())
+        .unwrap_or_default()
 }
 
 fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap()
 }
 
-fn sync(installs: &[&str], roster: Option<FakeRoster>, enabled: bool) -> ModSaveSync {
-    let roster: Arc<dyn OnlineRoster> = Arc::new(roster.unwrap_or(FakeRoster::new(true, &[])));
+fn sync(installs: &[&str], _online: Option<()>, enabled: bool) -> ModSaveSync {
     ModSaveSync::new(
         installs.iter().map(|s| (*s).to_owned()).collect(),
-        Some(roster),
         enabled,
         &[],
         None,
@@ -72,7 +84,7 @@ fn the_newer_balance_lands_in_the_other_install() {
     write_ledger(&c, "Bob", "300", -10);
 
     assert_eq!(sync(&[&a, &c], None, true).sweep(), 1);
-    assert_eq!(read(&ledger_path(&c, "Bob")), "1250");
+    assert_eq!(money(&ledger_path(&c, "Bob")), "1250");
 }
 
 #[test]
@@ -97,20 +109,37 @@ fn a_file_only_one_install_has_is_copied_in_and_never_deleted_from_the_source() 
     let _ = sync(&[&a, &c], None, true).sweep();
 
     assert!(ledger_path(&a, "Solo").exists());
-    assert_eq!(read(&ledger_path(&c, "Solo")), "42");
+    assert_eq!(money(&ledger_path(&c, "Solo")), "42");
 }
 
 #[test]
-fn an_online_players_ledger_is_not_touched_by_the_sweep() {
+fn an_online_players_save_syncs_like_any_other() {
+    // The mod writes in-game state to the save live, so the newest file is current: there is
+    // no online guard to hold it back any more.
     let b = Box_::new();
     let (a, c) = (b.install("pavlovserver"), b.install("pavlovserver1"));
     write_ledger(&a, "Pkd", "999", 0);
     write_ledger(&c, "Pkd", "500", -10);
 
-    let copied = sync(&[&a, &c], Some(FakeRoster::new(true, &["pkd"])), true).sweep();
+    assert_eq!(sync(&[&a, &c], None, true).sweep(), 1);
+    assert_eq!(money(&ledger_path(&c, "Pkd")), "999");
+}
 
-    assert_eq!(copied, 0);
-    assert_eq!(read(&ledger_path(&c, "Pkd")), "500");
+#[test]
+fn the_menu_tier_lists_mirror_newest_wins() {
+    let b = Box_::new();
+    let (a, c) = (b.install("pavlovserver"), b.install("pavlovserver1"));
+    let roles_a = Path::new(&mod_save_path(&a)).join("ServerRoles");
+    let roles_c = Path::new(&mod_save_path(&c)).join("ServerRoles");
+    fs::create_dir_all(&roles_a).unwrap();
+    fs::create_dir_all(&roles_c).unwrap();
+    fs::write(roles_a.join("staff.txt"), "Alice\nBob\n").unwrap();
+    fs::write(roles_c.join("staff.txt"), "Alice\n").unwrap();
+    touch(&roles_c.join("staff.txt"), -10);
+
+    let _ = sync(&[&a, &c], None, true).sweep();
+
+    assert_eq!(read(&roles_c.join("staff.txt")), "Alice\nBob\n");
 }
 
 #[test]
@@ -121,24 +150,7 @@ fn an_empty_or_zero_file_never_wipes_a_positive_balance() {
     write_ledger(&c, "Rich", "5000", -5);
 
     assert_eq!(sync(&[&a, &c], None, true).sweep(), 0);
-    assert_eq!(read(&ledger_path(&c, "Rich")), "5000");
-}
-
-#[test]
-fn menu_access_files_are_never_mirrored() {
-    let b = Box_::new();
-    let (a, c) = (b.install("pavlovserver"), b.install("pavlovserver1"));
-    let rel_a = Path::new(&mod_save_path(&a)).join("RconPlus");
-    let rel_c = Path::new(&mod_save_path(&c)).join("RconPlus");
-    fs::create_dir_all(&rel_a).unwrap();
-    fs::create_dir_all(&rel_c).unwrap();
-    fs::write(rel_a.join("MenuAccess.txt"), "granted").unwrap();
-    fs::write(rel_c.join("MenuAccess.txt"), "revoked").unwrap();
-    touch(&rel_c.join("MenuAccess.txt"), -10);
-
-    let _ = sync(&[&a, &c], None, true).sweep();
-
-    assert_eq!(read(&rel_c.join("MenuAccess.txt")), "revoked");
+    assert_eq!(money(&ledger_path(&c, "Rich")), "5000");
 }
 
 #[test]
@@ -174,7 +186,7 @@ fn disabled_syncs_nothing_even_with_many_installs() {
     write_ledger(&c, "Bob", "1", -10);
 
     assert_eq!(sync(&[&a, &c], None, false).sweep(), 0);
-    assert_eq!(read(&ledger_path(&c, "Bob")), "1");
+    assert_eq!(money(&ledger_path(&c, "Bob")), "1");
 }
 
 #[test]
@@ -188,30 +200,6 @@ fn the_bot_never_creates_a_mod_save_tree_in_a_misdiscovered_install() {
 
     assert_eq!(sync(&[&a, &c], None, true).sweep(), 0);
     assert!(!Path::new(&mod_save_path(&c)).exists());
-}
-
-#[test]
-fn the_join_fast_path_pushes_one_ledger_even_for_an_online_player() {
-    let b = Box_::new();
-    let (a, c) = (b.install("pavlovserver"), b.install("pavlovserver1"));
-    write_ledger(&a, "Hopper", "800", 0);
-    write_ledger(&c, "Hopper", "100", -10);
-
-    sync(&[&a, &c], Some(FakeRoster::new(true, &["Hopper"])), true).sync_player_ledger("Hopper");
-
-    assert_eq!(read(&ledger_path(&c, "Hopper")), "800");
-}
-
-#[test]
-fn the_join_fast_path_still_refuses_to_wipe_a_balance() {
-    let b = Box_::new();
-    let (a, c) = (b.install("pavlovserver"), b.install("pavlovserver1"));
-    write_ledger(&a, "Hopper", "0", 0);
-    write_ledger(&c, "Hopper", "2500", -5);
-
-    sync(&[&a, &c], None, true).sync_player_ledger("Hopper");
-
-    assert_eq!(read(&ledger_path(&c, "Hopper")), "2500");
 }
 
 // ---- faction rosters on a freshly provisioned server ----
@@ -228,11 +216,9 @@ fn write_roster(install: &str, file: &str, content: &str, minutes: i64) {
 }
 
 fn roster_sync(installs: &[&str]) -> ModSaveSync {
-    let roster: Arc<dyn OnlineRoster> = Arc::new(FakeRoster::new(true, &[]));
     let folder = rosters(installs[0]).to_string_lossy().into_owned();
     ModSaveSync::new(
         installs.iter().map(|s| (*s).to_owned()).collect(),
-        Some(roster),
         true,
         &[],
         Some(&folder),

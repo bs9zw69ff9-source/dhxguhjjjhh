@@ -400,7 +400,6 @@ pub fn build(
     );
     let mod_save_sync = Arc::new(ModSaveSync::new(
         installs.clone(),
-        Some(Arc::clone(&online)),
         features.mod_save_sync,
         &features.mod_save_sync_skip_extra,
         features.roster_directory.as_deref(),
@@ -513,7 +512,6 @@ pub fn build(
 
     let ledger_files = Arc::new(LedgerFileStore::new(
         features.ledger_directory.as_deref().map(PathBuf::from),
-        Some(Arc::clone(&online)),
         Arc::clone(&guard),
     ));
     let balances: Arc<dyn BalanceStore> = ledger_files.clone();
@@ -787,19 +785,6 @@ pub fn build(
         Arc::clone(&clock),
         Some(Arc::clone(&alerts)),
     );
-    let sync_on_join = Arc::clone(&mod_save_sync);
-    if mod_save_sync.can_sync() {
-        tracking.joined.subscribe(move |join| {
-            let sync = Arc::clone(&sync_on_join);
-            Box::pin(async move {
-                if let Some(name) = join.name.filter(|n| !n.is_empty()) {
-                    // A file sweep must not hold the join path.
-                    let _ =
-                        tokio::task::spawn_blocking(move || sync.sync_player_ledger(&name)).await;
-                }
-            })
-        });
-    }
     let granting = Arc::clone(&master_access);
     tracking.joined.subscribe(move |join| {
         granting.on_joined(&join);

@@ -3,37 +3,31 @@
 //! The planner (`pavlov_core::sync`) decides from modified times; this reads only the files a
 //! candidate touches and applies the content guards:
 //!
-//! - THE ONLINE GUARD: a connected player's ledger is still moving in server memory, so the
-//!   sweep skips it; the join-time [`ModSaveSync::sync_player_ledger`] handles those.
+//! - NO ONLINE GUARD (owner, 2026-11-18): the mod writes a player's in-game state to their
+//!   save live, so the newest file is the current one whether they are online or not.
 //! - THE MONEY GUARD: an empty-or-zero file never lands on a positive balance.
 //! - THE ROSTER GUARD: an empty roster from anywhere but the folder the bot edits never wipes a
 //!   filled one (a fresh server's empty file is not a `/whitelist wipe`).
 //!
-//! The RCON+ menu-access files are never mirrored: they are managed live, and newest-winning
-//! them wipes a player's menu.
+//! The menu tier lists in `ServerRoles` mirror like any other file: they are plain whitelists
+//! now that RCON+ is gone, and the roster guard keeps an empty one from wiping a filled one.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use pavlov_core::servers::installs::mod_save_path;
-use pavlov_core::sync::ledger_file::{looks_like_ledger, would_wipe_balance};
+use pavlov_core::sync::ledger_file::would_wipe_balance;
 use pavlov_core::sync::{DEFAULT_TOLERANCE_MS, ModSaveSnapshot, candidates};
-use pavlov_core::text::case::{contains_ignore_case, eq_ignore_case, starts_with_ignore_case};
-use pavlov_rcon::OnlineRoster;
+use pavlov_core::text::case::{contains_ignore_case, starts_with_ignore_case};
 
 use crate::atomic_file;
 use crate::game_files::{config_path, create_owned_like_parent, inside_install};
 
-/// Never mirrored, whatever the configuration says.
-const ALWAYS_SKIP: [&str; 4] = ["menuaccess", "accessmanager", "rconplus", "rcon_plus"];
-
 /// The sync across a box's installs.
 pub struct ModSaveSync {
     installs: Vec<String>,
-    online: Option<Arc<dyn OnlineRoster>>,
     enabled: bool,
     skip: Vec<String>,
     /// The roster folder the bot edits, relative to ModSave with a trailing `/`, and its install.
@@ -109,11 +103,6 @@ fn read_text(path: &Path) -> Option<String> {
         .map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
-fn file_stem(rel: &str) -> &str {
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
-}
-
 fn folder_name(path: &str) -> String {
     Path::new(path)
         .file_name()
@@ -127,7 +116,6 @@ impl ModSaveSync {
     #[must_use]
     pub fn new(
         installs: Vec<String>,
-        online: Option<Arc<dyn OnlineRoster>>,
         enabled: bool,
         extra_skip: &[String],
         roster_directory: Option<&str>,
@@ -147,19 +135,13 @@ impl ModSaveSync {
                 Some((format!("{}/", rel.join("/")), root.clone()))
             })
         });
-        let skip = ALWAYS_SKIP
+        let skip = extra_skip
             .iter()
-            .map(|s| (*s).to_owned())
-            .chain(
-                extra_skip
-                    .iter()
-                    .map(|s| s.trim().to_owned())
-                    .filter(|s| !s.is_empty()),
-            )
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
             .collect();
         Self {
             installs,
-            online,
             enabled,
             skip,
             roster,
@@ -181,12 +163,6 @@ impl ModSaveSync {
         self.skip.iter().any(|term| contains_ignore_case(rel, term))
     }
 
-    fn is_online(&self, player: &str) -> bool {
-        self.online.as_ref().is_some_and(|roster| {
-            roster.is_trustworthy() && roster.online().iter().any(|p| eq_ignore_case(p, player))
-        })
-    }
-
     /// One pass over every install: how many files were copied. Blocking file I/O.
     #[must_use]
     pub fn sweep(&self) -> usize {
@@ -204,7 +180,7 @@ impl ModSaveSync {
         let skip = |rel: &str| self.skipped(rel);
         let planned = candidates(&snapshots, Some(&skip), DEFAULT_TOLERANCE_MS);
 
-        // Grouped by source so its content is read, and the online guard applied, once.
+        // Grouped by source so its content is read once.
         let mut by_source: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
         for copy in planned {
             by_source
@@ -220,10 +196,6 @@ impl ModSaveSync {
                 continue;
             };
             let text = String::from_utf8_lossy(&content).into_owned();
-
-            if looks_like_ledger(Some(&text)) && self.is_online(file_stem(&rel)) {
-                continue;
-            }
 
             for copy in copies {
                 let dest = Path::new(&mod_save_path(&copy.to_root)).join(&rel);
@@ -248,69 +220,6 @@ impl ModSaveSync {
             );
         }
         copied
-    }
-
-    /// Push one player's newest ledger to every other install, at join time - the path that
-    /// syncs ONLINE players, which the sweep leaves alone. Still never wipes a balance.
-    pub fn sync_player_ledger(&self, player_name: &str) {
-        if !self.can_sync() {
-            return;
-        }
-        let file: String = player_name
-            .chars()
-            .filter(|c| !c.is_control() && *c != '/' && *c != '\\')
-            .collect();
-        let file = file.trim();
-        if file.is_empty() {
-            return;
-        }
-        let rel = format!("{file}.txt");
-
-        let best = self
-            .installs
-            .iter()
-            .filter_map(|root| {
-                let path = Path::new(&mod_save_path(root)).join(&rel);
-                modified_unix_ms(&path).map(|m| (root, m))
-            })
-            .fold(None, |best: Option<(&String, i64)>, (root, m)| match best {
-                Some((_, b)) if b >= m => best,
-                _ => Some((root, m)),
-            });
-        // No install has a ledger for them yet: the game makes it, not the bot.
-        let Some((best_root, best_modified)) = best else {
-            return;
-        };
-        let Ok(content) = fs::read(Path::new(&mod_save_path(best_root)).join(&rel)) else {
-            return;
-        };
-        let text = String::from_utf8_lossy(&content).into_owned();
-
-        let mut copied = 0;
-        for root in &self.installs {
-            if root == best_root {
-                continue;
-            }
-            let dest = Path::new(&mod_save_path(root)).join(&rel);
-            if modified_unix_ms(&dest)
-                .is_some_and(|m| m >= best_modified.saturating_sub(DEFAULT_TOLERANCE_MS))
-            {
-                continue;
-            }
-            if would_wipe_balance(Some(&text), read_text(&dest).as_deref()) {
-                continue;
-            }
-            if self.write_mirrored(root, &dest, &content, best_modified) {
-                copied += 1;
-            }
-        }
-        if copied > 0 {
-            tracing::debug!(
-                player = player_name,
-                copied,
-                "ModSave sync propagated a ledger"
-            );
-        }
     }
 
     fn would_blank_roster(&self, rel: &str, from_root: &str, source: &str, dest: &Path) -> bool {

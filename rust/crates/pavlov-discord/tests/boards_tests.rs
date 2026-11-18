@@ -62,8 +62,15 @@ fn rig() -> Rig {
 }
 
 impl Rig {
-    fn ledger(&self, player: &str, content: &str) {
-        std::fs::write(self.ledgers.join(format!("{player}.txt")), content).unwrap();
+    /// A JSON save holding `money`; anything that is not a number is written as-is (a save
+    /// mid-write, say).
+    fn ledger(&self, player: &str, money: &str) {
+        let content = if money.parse::<i64>().is_ok() {
+            format!("{{\n\t\"money\": {money},\n\t\"name\": \"{player}\"\n}}\n")
+        } else {
+            money.to_owned()
+        };
+        std::fs::write(self.ledgers.join(format!("{player}.json")), content).unwrap();
     }
 }
 
@@ -128,7 +135,9 @@ fn the_combined_total_covers_every_ledger_not_just_the_rows_shown() {
 #[test]
 fn the_banlist_is_not_a_ledger() {
     let r = rig();
-    r.ledger("banlist", "0");
+    // The ban list, and any other file beside the saves, is not a save.
+    std::fs::write(r.ledgers.join("banlist.txt"), "0").unwrap();
+    std::fs::write(r.ledgers.join("othermod.json"), "{\"enabled\": true}").unwrap();
     r.ledger("Alice", "10");
     assert!(
         !description(&r.boards.build_cash_board())

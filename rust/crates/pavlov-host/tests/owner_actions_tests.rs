@@ -497,14 +497,32 @@ fn only_plain_txt_names_are_roster_files() {
 #[test]
 fn wiping_money_deletes_ledgers_and_says_how_many() {
     let r = Rig::new();
-    std::fs::write(r.ledgers.join("player1.txt"), "500").unwrap();
-    std::fs::write(r.ledgers.join("player2.txt"), "900").unwrap();
+    std::fs::write(r.ledgers.join("player1.json"), "{\"money\": 500}").unwrap();
+    std::fs::write(r.ledgers.join("player2.json"), "{\"money\": 900}").unwrap();
 
     let result = r.actions.wipe_money();
 
     assert!(result.ok);
     assert!(result.detail.contains("**2**"));
     assert_eq!(std::fs::read_dir(&r.ledgers).unwrap().count(), 0);
+}
+
+#[test]
+fn wiping_money_leaves_every_file_that_is_not_a_save() {
+    let r = Rig::new();
+    std::fs::write(r.ledgers.join("player1.json"), "{\"money\": 500}").unwrap();
+    std::fs::write(r.ledgers.join("othermod.json"), "{\"enabled\": true}").unwrap();
+    std::fs::write(r.ledgers.join("banlist.txt"), "Cheater").unwrap();
+    std::fs::create_dir_all(r.ledgers.join("ServerRoles")).unwrap();
+    std::fs::write(r.ledgers.join("ServerRoles/owner.txt"), "Boss").unwrap();
+
+    let result = r.actions.wipe_money();
+
+    assert!(result.detail.contains("**1**"));
+    assert!(!r.ledgers.join("player1.json").exists());
+    assert!(r.ledgers.join("othermod.json").exists());
+    assert!(r.ledgers.join("banlist.txt").exists());
+    assert!(r.ledgers.join("ServerRoles/owner.txt").exists());
 }
 
 #[test]
