@@ -13,7 +13,7 @@ use pavlov_discord::runner::GuildInstalled;
 use serenity::Client;
 use serenity::all::{Cache, GatewayIntents, GuildId, Http, ShardManager};
 
-use crate::handler::{Handler, HandlerState, Role, Wiring};
+use crate::handler::{Handler, HandlerState, Wiring};
 use crate::rest::{RestDirectory, RestMembers, RestPoster, RestRenamer};
 
 /// The intents. Guilds only, as the C#: interactions need no intent, and the bot reads no
@@ -56,10 +56,10 @@ impl DiscordClient {
     ///
     /// # Errors
     /// When serenity refuses the token's shape.
-    pub async fn build(token: &str, role: Role) -> Result<Self, DiscordError> {
+    pub async fn build(token: &str) -> Result<Self, DiscordError> {
         let state = Arc::new(HandlerState::default());
         let client = Client::builder(token, intents())
-            .event_handler(Handler::new(role, Arc::clone(&state)))
+            .event_handler(Handler::new(Arc::clone(&state)))
             .await
             .map_err(|e| DiscordError(e.to_string()))?;
         Ok(Self { client, state })

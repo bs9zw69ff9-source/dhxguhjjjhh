@@ -3,6 +3,7 @@
 
 pub mod feed_bridge;
 pub mod ip_tracking;
+pub mod player_events;
 pub mod stats_log_service;
 pub mod tailer;
 
