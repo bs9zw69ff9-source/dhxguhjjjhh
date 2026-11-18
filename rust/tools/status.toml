@@ -25,6 +25,7 @@ PenalCodeTests = "ported"
 ProfileRedactionTests = "ported"
 RiskScoringTests = "ported"
 ServerHealthTests = "ported"
+ServerListTests = "ported"
 VpnTests = "ported"
 VpnVerdictTests = "ported"
 

@@ -1,4 +1,5 @@
-//! The game servers as data: unit names, install locations, and the crash-recovery limits.
+//! The game servers as data: unit names, install locations, the crash-recovery limits, and
+//! the master server's public list.
 //!
 //! In the C# these sit in the Host layer beside the code that runs `systemctl` and reads the
 //! disk. The PURE parts live here because configuration (`pavlov-config`), which sits below
@@ -8,6 +9,7 @@
 pub mod crash_recovery;
 mod detection;
 pub mod installs;
+pub mod listing;
 pub mod units;
 
 pub use detection::{DetectedServer, units_for};

@@ -282,6 +282,7 @@ dependencies = [
 name = "pavlov-config"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "pavlov-core",
  "regex",
 ]

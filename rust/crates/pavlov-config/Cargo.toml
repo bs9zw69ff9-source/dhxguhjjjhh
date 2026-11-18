@@ -11,5 +11,8 @@ publish.workspace = true
 pavlov-core = { path = "../pavlov-core" }
 regex.workspace = true
 
+[dev-dependencies]
+chrono.workspace = true
+
 [lints]
 workspace = true
