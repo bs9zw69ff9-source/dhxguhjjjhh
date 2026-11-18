@@ -138,6 +138,12 @@ pub trait UnitControl: Send + Sync {
     /// Run one action on a unit.
     fn run<'a>(&'a self, unit: &'a str, action: UnitAction) -> BoxFuture<'a, UnitResult>;
 
+    /// How to fix these failures, when the cause is recognisable (no privilege, unknown
+    /// unit names); `None` otherwise.
+    fn advice(&self, _results: &[UnitResult]) -> Option<String> {
+        None
+    }
+
     /// The unit for a 1-based server number: server 1 is the first configured unit.
     fn unit_for(&self, server_number: i32) -> Option<&str> {
         let index = usize::try_from(server_number).ok()?.checked_sub(1)?;
@@ -445,6 +451,10 @@ impl UnitControl for ServiceControl {
 
     fn run<'a>(&'a self, unit: &'a str, action: UnitAction) -> BoxFuture<'a, UnitResult> {
         Box::pin(self.run_action(unit, action))
+    }
+
+    fn advice(&self, results: &[UnitResult]) -> Option<String> {
+        ServiceControl::advice(self, results)
     }
 }
 

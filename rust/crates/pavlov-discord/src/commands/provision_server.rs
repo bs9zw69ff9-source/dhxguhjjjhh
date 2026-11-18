@@ -57,7 +57,8 @@ impl std::fmt::Debug for ProvisionServerCommand {
     }
 }
 
-fn split_list(raw: Option<&str>) -> Vec<String> {
+/// A comma-separated `.env` list, trimmed, empty entries dropped.
+pub(crate) fn split_list(raw: Option<&str>) -> Vec<String> {
     raw.unwrap_or("")
         .split(',')
         .map(str::trim)
@@ -95,7 +96,8 @@ fn generate_password() -> Option<String> {
     Some(out)
 }
 
-fn glyph(status: ProvisionStatus) -> &'static str {
+/// A checklist step's mark.
+pub(crate) fn glyph(status: ProvisionStatus) -> &'static str {
     match status {
         ProvisionStatus::Ok => theme::OK,
         ProvisionStatus::Failed => theme::BAD,
@@ -103,6 +105,17 @@ fn glyph(status: ProvisionStatus) -> &'static str {
         ProvisionStatus::Skipped => "➖",
         ProvisionStatus::Pending => "⬜",
     }
+}
+
+/// The RCON slots `.env` configures (`RCON_HOST_n` set), in order.
+pub(crate) fn used_rcon_indices(config: &Config) -> Vec<i32> {
+    (1..=MAX_SERVERS)
+        .filter(|i| {
+            config
+                .get(&format!("RCON_HOST_{i}"))
+                .is_some_and(|h| !h.trim().is_empty())
+        })
+        .collect()
 }
 
 /// The live checklist.
@@ -223,13 +236,7 @@ impl ProvisionServerCommand {
     }
 
     fn used_rcon_indices(&self) -> Vec<i32> {
-        (1..=MAX_SERVERS)
-            .filter(|i| {
-                self.config
-                    .get(&format!("RCON_HOST_{i}"))
-                    .is_some_and(|h| !h.trim().is_empty())
-            })
-            .collect()
+        used_rcon_indices(&self.config)
     }
 
     fn installed_slots(&self, configured: i32) -> HashSet<i32> {
