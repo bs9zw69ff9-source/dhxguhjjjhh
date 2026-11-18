@@ -28,6 +28,46 @@ impl Clock for SystemClock {
     }
 }
 
+/// A clock that moves only when told to, for tests across the workspace (C# `TestClock`).
+#[derive(Debug)]
+pub struct ManualClock {
+    now: std::sync::Mutex<DateTime<Utc>>,
+}
+
+impl ManualClock {
+    /// A clock stopped at `start`.
+    #[must_use]
+    pub fn new(start: DateTime<Utc>) -> Self {
+        Self {
+            now: std::sync::Mutex::new(start),
+        }
+    }
+
+    /// A clock stopped at the real current time.
+    #[must_use]
+    pub fn at_now() -> Self {
+        Self::new(Utc::now())
+    }
+
+    /// Move the clock forward (or back, for a negative delta).
+    pub fn advance(&self, by: TimeDelta) {
+        let mut now = self
+            .now
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *now += by;
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> DateTime<Utc> {
+        *self
+            .now
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// .NET's 100-nanosecond tick, the unit the C# overflow arithmetic was written in. Keeping it
 /// keeps the ceilings and the rounding identical.
 const TICKS_PER_SECOND: i64 = 10_000_000;
