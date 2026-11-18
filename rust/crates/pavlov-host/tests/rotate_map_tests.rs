@@ -342,3 +342,205 @@ async fn a_live_stats_query_reads_memory_and_a_cpu_delta() {
     let percent = stats[0].cpu_percent.unwrap();
     assert!(percent > 30.0 && percent <= 51.0, "{percent}");
 }
+
+// ---- warnings (C# ServerSwitchCommand.WarningFor) ----
+
+mod warnings {
+    use pavlov_core::text::Sanitize;
+    use pavlov_host::notice::{RESTART_WARNING, warning_for};
+    use pavlov_host::service_control::UnitAction;
+
+    fn warnings() -> impl Iterator<Item = &'static str> {
+        UnitAction::ALL.into_iter().filter_map(warning_for)
+    }
+
+    #[test]
+    fn stopping_and_restarting_warn_players_differently() {
+        // Told "restarting", a player waits; told "shutting down", they go elsewhere.
+        assert_eq!(
+            warning_for(UnitAction::Stop),
+            Some("Server shutting down...")
+        );
+        assert_eq!(
+            warning_for(UnitAction::Restart),
+            Some("Server Rotating... Please rejoin after disconnect")
+        );
+    }
+
+    #[test]
+    fn starting_warns_nobody() {
+        // A stopped server has nobody on it and no RCON session to reach them through.
+        assert_eq!(warning_for(UnitAction::Start), None);
+    }
+
+    #[test]
+    fn every_action_that_drops_players_warns_them() {
+        for action in UnitAction::ALL {
+            match (action, warning_for(action)) {
+                (UnitAction::Start, warning) => assert_eq!(warning, None),
+                (_, Some(warning)) => assert!(!warning.trim().is_empty(), "{action:?}"),
+                (_, None) => panic!("{action:?} drops players and must warn them"),
+            }
+        }
+    }
+
+    #[test]
+    fn every_warning_survives_sanitising_intact() {
+        for warning in warnings() {
+            assert_eq!(Sanitize::message(Some(warning)), warning);
+        }
+    }
+
+    #[test]
+    fn the_broadcast_is_the_exact_line_asked() {
+        assert_eq!(
+            RESTART_WARNING,
+            "Server Rotating... Please rejoin after disconnect"
+        );
+    }
+
+    #[test]
+    fn no_warning_carries_its_own_target() {
+        for warning in warnings() {
+            assert!(
+                !warning.starts_with("All "),
+                "\"{warning}\" carries a target that PlayerNotice already supplies"
+            );
+        }
+    }
+
+    #[test]
+    fn the_broadcast_survives_sanitising_intact() {
+        assert_eq!(Sanitize::message(Some(RESTART_WARNING)), RESTART_WARNING);
+    }
+}
+
+// ---- what actually reaches the server ----
+
+mod on_the_wire {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use pavlov_host::metrics::MetricsRegistry;
+    use pavlov_host::notice::{GRACE, PlayerNotice, RESTART_WARNING, RotationOutcome, rotate};
+    use pavlov_host::registry::RconRegistry;
+    use pavlov_host::service_control::rcon_name_for;
+    use pavlov_rcon::testing::FakeRconServer;
+
+    fn registry(server: &FakeRconServer, slot: i32) -> Arc<RconRegistry> {
+        let mut options = server.options();
+        options.name = rcon_name_for(slot);
+        options.read_cache_duration = Duration::ZERO;
+        Arc::new(RconRegistry::with_system_clock(
+            &[options],
+            Duration::from_secs(60),
+            Arc::new(MetricsRegistry::default()),
+        ))
+    }
+
+    fn sent_notify(server: &FakeRconServer) -> String {
+        let notifies: Vec<String> = server
+            .commands()
+            .into_iter()
+            .filter(|c| c.starts_with("Notify"))
+            .collect();
+        assert_eq!(notifies.len(), 1, "{notifies:?}");
+        notifies[0].clone()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_broadcast_says_who_it_is_for() {
+        // THE BUG, ON THE WIRE: `Notify Server restarting...` took "Server" for a player.
+        let server = FakeRconServer::start().await.unwrap();
+
+        let result = PlayerNotice::new(registry(&server, 1))
+            .warn(1, "Server restarting...")
+            .await;
+
+        assert!(result.delivered, "{}", result.detail);
+        assert_eq!(sent_notify(&server), "Notify All Server restarting...");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_rotate_broadcast_does_not_address_itself_twice() {
+        let server = FakeRconServer::start().await.unwrap();
+
+        let _ = PlayerNotice::new(registry(&server, 1))
+            .warn(1, RESTART_WARNING)
+            .await;
+
+        assert_eq!(
+            sent_notify(&server),
+            "Notify All Server Rotating... Please rejoin after disconnect"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sends_exactly_rotate_map_and_nothing_else() {
+        // /rotatemap used to be `systemctl restart`; now the RCON verb with no arguments.
+        let server = FakeRconServer::start().await.unwrap();
+
+        let result = rotate(&registry(&server, 1), 1).await;
+
+        assert_eq!(result.outcome, RotationOutcome::Rotated);
+        assert!(result.ok());
+        assert_eq!(server.commands(), ["RotateMap"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_server_number_picks_the_matching_rcon_slot() {
+        // Slot 2 only: server 2 must reach it, and server 1 must not be redirected there.
+        let server = FakeRconServer::start().await.unwrap();
+        let rcon = registry(&server, 2);
+
+        assert!(rotate(&rcon, 2).await.ok());
+
+        let missing = rotate(&rcon, 1).await;
+        assert_eq!(missing.outcome, RotationOutcome::Failed);
+        assert!(missing.detail.contains("RCON_HOST_1"), "{}", missing.detail);
+        assert_eq!(
+            server
+                .commands()
+                .iter()
+                .filter(|c| *c == "RotateMap")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refusal_is_a_failure_not_a_rotation() {
+        let server = FakeRconServer::start().await.unwrap();
+        server.configure(|b| b.refuse_everything = true);
+
+        let result = rotate(&registry(&server, 1), 1).await;
+
+        assert_eq!(result.outcome, RotationOutcome::Failed);
+        assert!(!result.detail.trim().is_empty());
+    }
+
+    #[test]
+    fn the_grace_is_five_seconds_and_runs_before_the_system_command() {
+        // The broadcast has to reach the client and render before the process goes away.
+        assert_eq!(GRACE, Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn the_grace_is_actually_waited() {
+        let started = Instant::now();
+        PlayerNotice::wait().await;
+        assert!(
+            started.elapsed() >= Duration::from_millis(4500),
+            "waited only {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn server_numbers_map_to_rcon_slots_by_name_rather_than_by_position() {
+        // RCON slots may have gaps (1 and 3, no 2): the name, never the list position.
+        assert_eq!(rcon_name_for(1), "server1");
+        assert_eq!(rcon_name_for(2), "server2");
+        assert_eq!(rcon_name_for(3), "server3");
+    }
+}

@@ -63,3 +63,65 @@ impl CommandRunner for FakeRunner {
         Box::pin(async move { answer })
     }
 }
+
+type Answer = Box<
+    dyn Fn(
+            &pavlov_host::http::HttpRequest,
+        ) -> Result<pavlov_host::http::HttpResponse, pavlov_host::http::HttpError>
+        + Send
+        + Sync,
+>;
+
+/// An HTTP client answering from a closure, recording every request (the C# test
+/// `HttpMessageHandler`s).
+pub struct FakeHttp {
+    pub requests: Mutex<Vec<pavlov_host::http::HttpRequest>>,
+    answer: Answer,
+}
+
+impl FakeHttp {
+    pub fn new(
+        answer: impl Fn(
+            &pavlov_host::http::HttpRequest,
+        )
+            -> Result<pavlov_host::http::HttpResponse, pavlov_host::http::HttpError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            requests: Mutex::new(Vec::new()),
+            answer: Box::new(answer),
+        }
+    }
+
+    /// Always this status and body.
+    pub fn canned(status: u16, body: &str) -> Self {
+        let body = body.to_owned();
+        Self::new(move |_| Ok(pavlov_host::http::HttpResponse::new(status, body.clone())))
+    }
+
+    pub fn calls(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+
+    pub fn urls(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.url.clone())
+            .collect()
+    }
+}
+
+impl pavlov_host::http::HttpClient for FakeHttp {
+    fn send(
+        &self,
+        request: pavlov_host::http::HttpRequest,
+    ) -> BoxFuture<'_, Result<pavlov_host::http::HttpResponse, pavlov_host::http::HttpError>> {
+        let answer = (self.answer)(&request);
+        self.requests.lock().unwrap().push(request);
+        Box::pin(async move { answer })
+    }
+}

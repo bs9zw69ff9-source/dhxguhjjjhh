@@ -8,7 +8,7 @@ use pavlov_core::text::Sanitize;
 use pavlov_rcon::RconError;
 
 use crate::registry::RconRegistry;
-use crate::service_control::rcon_name_for;
+use crate::service_control::{UnitAction, rcon_name_for};
 
 /// How long players get between the warning and the action.
 pub const GRACE: Duration = Duration::from_secs(5);
@@ -16,6 +16,24 @@ pub const GRACE: Duration = Duration::from_secs(5);
 const BUDGET: Duration = Duration::from_secs(3);
 /// Every broadcast is addressed to everyone; a message must not carry its own target.
 const EVERYONE: &str = "All";
+
+/// The exact line broadcast before a restart. The MESSAGE only: [`PlayerNotice`] addresses
+/// every broadcast, so a leading "All" would go out as `Notify All All ...`.
+pub const RESTART_WARNING: &str = "Server Rotating... Please rejoin after disconnect";
+/// The line broadcast before a stop.
+pub const STOP_WARNING: &str = "Server shutting down...";
+
+/// What players are told before `action` (C# `ServerSwitchCommand.WarningFor`), or `None`
+/// when it drops nobody. THE SINGLE SOURCE: whether to broadcast, whether to wait the grace,
+/// and what the reply says about warning players all key off this.
+#[must_use]
+pub fn warning_for(action: UnitAction) -> Option<&'static str> {
+    match action {
+        UnitAction::Stop => Some(STOP_WARNING),
+        UnitAction::Restart => Some(RESTART_WARNING),
+        UnitAction::Start => None,
+    }
+}
 
 /// Whether the warning reached the server, and what to tell the admin.
 #[derive(Debug, Clone, PartialEq, Eq)]
