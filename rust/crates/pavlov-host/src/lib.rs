@@ -28,6 +28,7 @@ pub mod master_list;
 pub mod metrics;
 pub mod moderation;
 pub mod monitoring;
+pub mod monitoring_server;
 pub mod notice;
 pub mod preserved;
 pub mod process;
