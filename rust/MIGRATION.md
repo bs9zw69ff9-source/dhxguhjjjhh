@@ -15,7 +15,7 @@ summarised here so the checklist stands on its own.
 | M2 | `pavlov-core` part 2: Logs, Monitoring, Intelligence, Provisioning, Servers, Sync, Verification, Vpn, Events | done: every file in `PavlovBot.Core` is ported. The Logs, StatsLog, KillLine and KillDataBlock tests still listed need the host feed and stats services and port with M6 |
 | M3 | `pavlov-rcon` and the byte-recording fake RCON server | done: the session (gated, paced, keepalive, drop-safe dirty flag), the client (read cache, coalescing on a spawned shared read, retry that never re-sends a mutation that may have run, reply correlation, the bot's-own-traffic memory), reply parsing, the roster and lifecycle traits, and `testing::FakeRconServer` recording the exact login and command bytes. The registry moved to M6: it needs the metrics and the Pavlov.log confirmations |
 | M4 | `pavlov-storage`: SQLite kv and events, files, atomic writes, game files | done: atomic writes (owner and mode carried over), the file and SQLite key-value backends, the dataset names and seeds, the SQLite timeline, the real disk probe, the game-file rules and `IGNORE_PATHS`, the whitelist editor, the ledger file store, the cross-install ModSave sync, and the stored shapes (Node ban list, arrests, the role map, account and flag rows). The game ban file (`ServerBanFile`), the IP-flag and VPN-cache datasets port with the moderation and VPN services in M6 |
-| M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | in progress: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl` (systemctl through an argv `CommandRunner`, sudo -n, the unit allow-list in the runner, stats with a CPU delta, advice), the metrics and health registries, the RCON registry (roster cache, verified sends, the Pavlov.log confirmation race with the exchange finishing in its own task, parallel probes, health that excuses a server stopped on purpose), the log confirmations, server labels, player notices, map rotation, crash recovery |
+| M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
 | M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | not started |
 | M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | not started |
 | M8 | The 57 slash commands | not started |
@@ -119,6 +119,11 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | A canonical `roles` key (`modRole`) stored as a string | System.Text.Json fails the whole `roles` dataset, so every tier reads as unset | read like the legacy keys: a number or a numeric string | one quoted id should not cost every role |
 | Prometheus number formatting | .NET `G17`: `0.1` renders `0.10000000000000001` | the shortest round-trip form: `0.1` | both are valid exposition; the shorter is what Prometheus itself prints |
 | A health check that panics | (C#: throws) reported Unhealthy with the message | the panic is caught and reported Unhealthy with its message | the same rule: the monitor cannot take down what it monitors |
+| Provisioning, which paths and whose privilege | `/etc/systemd/system`, the sudoers drop-in, `/etc/os-release` and the libc++ directory are constants, root is read from the process | all four paths, the privilege and the supervisor are injected (the defaults are the C# constants) | a whole provision and delete are tested against a recording runner; the C# could only count `run.Start(` |
+| A checklist step past the end | `IndexOutOfRangeException` at the end of an otherwise good provision (the shipped bug) | logged as a checklist bug, the run finishes | the counting test still pins the lists; a miss can no longer crash the reply |
+| ufw address parsing | `IPAddress.TryParse`: `1.2.3` is `1.2.0.3`, `1` is `0.0.0.1`, IPv6 scope ids accepted | strict `IpAddr` parsing; anything else is "not an address" and runs nothing | a typo cannot block an address nobody named |
+| Master list age before the first fetch | `now - DateTimeOffset.MinValue`, a nonsense span | `None` | "never fetched" is its own answer |
+| Outbound HTTP | `HttpClient` with no body cap; request URLs can reach exception text | every request has its own timeout, bodies over 16 MiB are refused, header values and query strings are never logged | an endpoint cannot exhaust memory or leak a key into the logs |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Open question for M4: the C# reads stored keys case-INSENSITIVELY; the Rust models read the
@@ -657,7 +662,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `BanTests.cs` | 16 | ported |
 | `BlacklistEndToEndTests.cs` | 4 | 0/4 |
 | `BoardsTests.cs` | 15 | 0/15 |
-| `BotSupervisorTests.cs` | 6 | 0/6 |
+| `BotSupervisorTests.cs` | 6 | ported |
 | `CashTableTests.cs` | 8 | 0/8 |
 | `CheckBanHistoryTests.cs` | 9 | 0/9 |
 | `CommandBlacklistTests.cs` | 20 | 1/20 |
@@ -685,7 +690,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `FactionTests.cs` | 33 | ported |
 | `FeedBridgeTests.cs` | 11 | 0/11 |
 | `FeedWebhookTests.cs` | 11 | 0/11 |
-| `FirewallTests.cs` | 6 | 0/6 |
+| `FirewallTests.cs` | 6 | ported |
 | `GameFileGuardTests.cs` | 9 | ported |
 | `GeoLocatorTests.cs` | 10 | 0/10 |
 | `GuildInvitesTests.cs` | 7 | 0/7 |
@@ -712,7 +717,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `MasterAccessTests.cs` | 19 | 0/19 |
 | `MasterNamesConfigTests.cs` | 3 | ported |
 | `MasterPardonTests.cs` | 3 | 0/3 |
-| `MasterServerListTests.cs` | 10 | 0/10 |
+| `MasterServerListTests.cs` | 10 | ported |
 | `ModSaveSyncPlannerTests.cs` | 9 | ported |
 | `ModSaveSyncTests.cs` | 15 | ported |
 | `MonitoringServerTests.cs` | 9 | 0/9 |
@@ -726,10 +731,10 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `PlayerBoardTests.cs` | 13 | 0/13 |
 | `PlayerCountChannelTests.cs` | 26 | 0/26 |
 | `PoliceLogRoutingTests.cs` | 6 | 0/6 |
-| `PreservedPlayerDataTests.cs` | 6 | 0/6 |
+| `PreservedPlayerDataTests.cs` | 6 | ported |
 | `ProcessRunnerTests.cs` | 10 | ported |
 | `ProfileRedactionTests.cs` | 10 | ported |
-| `ProvisioningTests.cs` | 84 | 49/84 |
+| `ProvisioningTests.cs` | 84 | 83/84 |
 | `RankRestorerTests.cs` | 6 | 0/6 |
 | `RconBlankReplyTests.cs` | 3 | ported |
 | `RconChunkedReplyTests.cs` | 3 | ported |
@@ -753,7 +758,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RosterProblemExcerptTests.cs` | 5 | 0/5 |
 | `RosterRefreshFailureTests.cs` | 3 | 0/3 |
 | `RosterServiceTests.cs` | 43 | 0/43 |
-| `RotateMapTests.cs` | 49 | 32/49 |
+| `RotateMapTests.cs` | 49 | 47/49 |
 | `SecurityAlertTests.cs` | 17 | 4/17 |
 | `SelfTestGraphTests.cs` | 1 | 0/1 |
 | `SentenceCapTests.cs` | 16 | 0/16 |

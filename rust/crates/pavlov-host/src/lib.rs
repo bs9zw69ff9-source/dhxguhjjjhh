@@ -14,10 +14,17 @@
 
 pub mod confirmations;
 pub mod crash_recovery;
+pub mod firewall;
 pub mod health;
+pub mod http;
+pub mod layout_gate;
+pub mod master_list;
 pub mod metrics;
 pub mod notice;
+pub mod preserved;
 pub mod process;
+pub mod provisioner;
 pub mod registry;
 pub mod server_labels;
 pub mod service_control;
+pub mod supervisor;

@@ -7,6 +7,7 @@
 //! cannot align rather than bind a unit to the wrong server. The privileged OS work is the host
 //! crate's.
 
+pub mod commands;
 pub mod env_file;
 pub mod ports;
 mod slots;
