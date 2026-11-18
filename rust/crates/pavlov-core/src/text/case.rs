@@ -229,6 +229,11 @@ impl<V> IgnoreCaseMap<V> {
         self.entries.values().map(|(_, v)| v)
     }
 
+    /// The values, in insertion order, for changing in place.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.entries.values_mut().map(|(_, v)| v)
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
