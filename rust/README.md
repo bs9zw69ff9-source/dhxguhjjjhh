@@ -24,6 +24,7 @@ cargo test                # tests only
 |---|---|
 | `crates/pavlov-core` | Pure domain rules: no I/O, no Discord, no sockets |
 | `crates/pavlov-config` | The `.env` grammar, the environment over it, and the typed options |
+| `crates/pavlov-rcon` | Pavlov's RCON protocol: one persistent, paced, self-healing session per server, and a byte-recording fake server (`testing` feature) |
 
 The remaining crates (`pavlov-rcon`, `pavlov-storage`, `pavlov-host`,
 `pavlov-services`, `pavlov-discord`, `pavlov-bot`) are added as their milestones land; see

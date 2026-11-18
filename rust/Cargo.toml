@@ -25,12 +25,16 @@ unimplemented = "deny"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 fancy-regex = "0.14"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 indexmap = { version = "2", features = ["serde"] }
+md-5 = "0.10"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
+socket2 = { version = "0.5", features = ["all"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", default-features = false }
+tracing = "0.1"
 
 [profile.release]
 codegen-units = 1
