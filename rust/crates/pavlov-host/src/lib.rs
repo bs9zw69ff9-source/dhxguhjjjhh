@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 pub mod analytics;
+pub mod build;
 pub mod confirmations;
 pub mod crash_recovery;
 pub mod economy;
