@@ -16,6 +16,7 @@ pub mod guild_invites;
 pub mod license;
 pub mod membership_reply;
 pub mod players;
+pub mod police;
 pub mod provision_server;
 pub mod rank_change;
 pub mod rotate_map;
