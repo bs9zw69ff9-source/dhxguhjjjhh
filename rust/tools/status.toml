@@ -87,6 +87,7 @@ VpnCacheSnapshotTests = "ported"
 VpnResponderTests = "ported"
 VpnTests = "ported"
 VpnVerdictTests = "ported"
+WarningServiceTests = "ported"
 WhitelistTests = "ported"
 
 [dropped]
