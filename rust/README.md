@@ -23,8 +23,9 @@ cargo test                # tests only
 | Crate | What it is |
 |---|---|
 | `crates/pavlov-core` | Pure domain rules: no I/O, no Discord, no sockets |
+| `crates/pavlov-config` | The `.env` grammar, the environment over it, and the typed options |
 
-The remaining crates (`pavlov-config`, `pavlov-rcon`, `pavlov-storage`, `pavlov-host`,
+The remaining crates (`pavlov-rcon`, `pavlov-storage`, `pavlov-host`,
 `pavlov-services`, `pavlov-discord`, `pavlov-bot`) are added as their milestones land; see
 MIGRATION.md for the crate map.
 
