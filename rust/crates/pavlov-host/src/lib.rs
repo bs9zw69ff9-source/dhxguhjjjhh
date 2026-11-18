@@ -19,6 +19,7 @@ pub mod firewall;
 pub mod handlers;
 pub mod health;
 pub mod http;
+pub mod kill_stats;
 pub mod layout_gate;
 pub mod logs;
 pub mod master_list;

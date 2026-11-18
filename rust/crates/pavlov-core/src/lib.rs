@@ -6,6 +6,7 @@
 
 mod patterns;
 
+pub mod cards;
 pub mod concurrency;
 pub mod data;
 pub mod economy;
@@ -25,6 +26,7 @@ pub mod provisioning;
 pub mod roles;
 pub mod security;
 pub mod servers;
+pub mod skin;
 pub mod sync;
 pub mod text;
 pub mod time;

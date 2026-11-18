@@ -8,6 +8,7 @@ pub mod ban_firewall;
 pub mod bans;
 pub mod evasion;
 pub mod master_names;
+pub mod vpn_responder;
 
 pub use alerts::{
     AlertDelivery, SecurityAlert, SecurityAlertKind, SecurityAlertSink, SecurityAlerts,
@@ -18,6 +19,7 @@ pub use ban_firewall::{BanFirewall, BanFirewallPass, FirewalledBan};
 pub use bans::{BanEvidence, BanFileExport, BanService, EnforcementResult, MasterNames};
 pub use evasion::{AutoBanOutcome, EvasionResponder};
 pub use master_names::StoredMasterNames;
+pub use vpn_responder::{VpnBanOutcome, VpnResponder};
 
 /// An id-to-name lookup, from the account registry.
 pub type ResolveName = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
