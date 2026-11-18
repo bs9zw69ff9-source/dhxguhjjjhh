@@ -82,6 +82,12 @@ impl DiscordClient {
         Arc::new(RestPoster::new(self.http()))
     }
 
+    /// The monitor's alert poster (role pings).
+    #[must_use]
+    pub fn alert_poster(&self) -> Arc<dyn pavlov_discord::monitor_alerts::AlertPoster> {
+        Arc::new(RestPoster::new(self.http()))
+    }
+
     #[must_use]
     pub fn renamer(&self) -> Arc<dyn ChannelRenamer> {
         Arc::new(RestRenamer::new(self.http()))

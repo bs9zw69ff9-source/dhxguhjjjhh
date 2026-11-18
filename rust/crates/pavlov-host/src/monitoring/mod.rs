@@ -5,9 +5,11 @@
 pub mod board;
 pub mod history;
 pub mod monitor;
+pub mod probe;
 
 pub use board::MonitorBoard;
 pub use history::{HealthStats, MonitorHistory, MonitorSample};
 pub use monitor::{
     MonitorAlertSink, MonitorEvent, MonitorParts, MonitorTargets, ServerMonitor, ServerProbe,
 };
+pub use probe::{LastLogActivity, RconServerProbe, log_activity};

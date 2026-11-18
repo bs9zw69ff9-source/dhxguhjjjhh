@@ -40,6 +40,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tempfile = "3"
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "std"] }
 
 # Every test file is its own linked binary; full debug info made a debug build tens of GB.
 # Line tables keep panics and backtraces readable.

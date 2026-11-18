@@ -1,0 +1,33 @@
+[package]
+name = "pavlov-bot"
+description = "The binary: the composition root, in the C# Program.cs start order, and --selftest."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pavlov-bot"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+futures-util.workspace = true
+nix.workspace = true
+pavlov-config = { path = "../pavlov-config" }
+pavlov-core = { path = "../pavlov-core" }
+pavlov-discord = { path = "../pavlov-discord" }
+pavlov-gateway = { path = "../pavlov-gateway" }
+pavlov-host = { path = "../pavlov-host" }
+pavlov-rcon = { path = "../pavlov-rcon" }
+pavlov-storage = { path = "../pavlov-storage" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
