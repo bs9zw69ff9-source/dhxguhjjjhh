@@ -17,7 +17,7 @@ summarised here so the checklist stands on its own.
 | M4 | `pavlov-storage`: SQLite kv and events, files, atomic writes, game files | done: atomic writes (owner and mode carried over), the file and SQLite key-value backends, the dataset names and seeds, the SQLite timeline, the real disk probe, the game-file rules and `IGNORE_PATHS`, the whitelist editor, the ledger file store, the cross-install ModSave sync, and the stored shapes (Node ban list, arrests, the role map, account and flag rows). The game ban file (`ServerBanFile`), the IP-flag and VPN-cache datasets port with the moderation and VPN services in M6 |
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
 | M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | done (the Discord-facing remainder moves to M7/M8): VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health); recent command errors by correlation id, the `/health` errors field, component ids (moved to pavlov-core), and the roster-refresh failure wording; the server monitor, its 25-hour history and the live board; the loopback metrics and health endpoint |
-| M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher) |
+| M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher); the bar list and its refusal at dispatch, the command log, the command runner (log, bar, defer, prime, slots, budget, error id) |
 | M8 | The 57 slash commands | not started |
 | M9 | `pavlov-bot` composition root and `--selftest` | not started |
 | M10 | Deploy script, police systemd unit, rollback, documentation | not started |
@@ -153,6 +153,9 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | Who is asking | Discord.Net `IUser` / `IGuildUser` | `pavlov_discord::caller::Caller` (id, plus the member view when one was read) | access and the commands are tested with plain values; only the gateway adapter knows Discord's types |
 | A slash command's definition | Discord.Net builders that throw on some mistakes at build time | `CommandSpec` data, checked by `command::problems` before registration | every mistake (length, case, count, duplicates) is found by one validator and the bad command is dropped, not the whole set |
 | A command's failure | an exception | `Result<(), CommandError>` | same handling: the caller gets a correlation id, the detail is recorded |
+| The command runner | inside `DiscordGateway`, which needs a live socket client, so untested | `runner::CommandRunner`, Discord-agnostic, with its own tests of the order of events | the C# comments' ordering is now pinned |
+| A command's budget on shutdown | linked to the stopping token, so a shutdown cancels handlers | only the five-minute budget; shutdown waits in `InteractionDispatcher::drain` | a handler mid-restart is not cut off by a stop |
+| Command-log line cap | 1,000 UTF-16 units | 1,000 characters | only differs for text outside the BMP (emoji) |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Stored key case: the C# reads stored property names case-INSENSITIVELY; the Rust models read
@@ -695,8 +698,8 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `BotSupervisorTests.cs` | 6 | ported |
 | `CashTableTests.cs` | 8 | 0/8 |
 | `CheckBanHistoryTests.cs` | 9 | 0/9 |
-| `CommandBlacklistTests.cs` | 20 | 1/20 |
-| `CommandLogTests.cs` | 10 | 0/10 |
+| `CommandBlacklistTests.cs` | 20 | ported |
+| `CommandLogTests.cs` | 10 | ported |
 | `ComponentFlowTests.cs` | 9 | 0/9 |
 | `ComponentIdTests.cs` | 11 | ported |
 | `ConfigurationTests.cs` | 31 | ported |
@@ -810,8 +813,8 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `SubclassChoiceTests.cs` | 8 | 0/8 |
 | `SubcommandFilterTests.cs` | 9 | 8/9 |
 | `TempBanExpiryTests.cs` | 5 | ported |
-| `UserAppEphemeralTests.cs` | 6 | 0/6 |
-| `UserAppTests.cs` | 4 | 0/4 |
+| `UserAppEphemeralTests.cs` | 6 | ported |
+| `UserAppTests.cs` | 4 | ported |
 | `VerificationServiceTests.cs` | 6 | ported |
 | `VpnAutoBanSwitchTests.cs` | 5 | ported |
 | `VpnAutoBanWiringTests.cs` | 8 | ported |

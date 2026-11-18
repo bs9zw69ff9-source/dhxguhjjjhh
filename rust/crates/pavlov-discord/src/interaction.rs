@@ -11,7 +11,7 @@ use futures_util::future::BoxFuture;
 use pavlov_core::embed::Embed;
 
 use crate::caller::Caller;
-use crate::command::OptionKind;
+use crate::command::{Choice, OptionKind};
 use crate::component::ActionRow;
 
 /// An option's value.
@@ -105,6 +105,9 @@ pub struct Invocation {
     pub guild_name: Option<String>,
     pub channel_id: u64,
     pub resolved_users: HashMap<u64, ResolvedUser>,
+    /// Role and channel names Discord resolved alongside their ids.
+    pub resolved_roles: HashMap<u64, String>,
+    pub resolved_channels: HashMap<u64, String>,
     pub owners: IntegrationOwners,
 }
 
@@ -291,4 +294,10 @@ pub trait Responder: Send + Sync {
     fn followup(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
     /// Whether the interaction has been acknowledged.
     fn has_responded(&self) -> bool;
+}
+
+/// How an autocomplete request is answered.
+pub trait Suggester: Send + Sync {
+    /// Offer these choices (at most 25; an empty list offers nothing).
+    fn suggest(&self, choices: Vec<Choice>) -> BoxFuture<'_, Result<(), DiscordError>>;
 }
