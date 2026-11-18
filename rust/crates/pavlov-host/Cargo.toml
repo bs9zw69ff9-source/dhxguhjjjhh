@@ -23,6 +23,7 @@ tokio = { workspace = true, features = ["process", "io-util", "time", "sync", "r
 tracing.workspace = true
 
 [dev-dependencies]
+pavlov-core = { path = "../pavlov-core", features = ["testing"] }
 pavlov-rcon = { path = "../pavlov-rcon", features = ["testing"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "io-util", "sync", "test-util"] }

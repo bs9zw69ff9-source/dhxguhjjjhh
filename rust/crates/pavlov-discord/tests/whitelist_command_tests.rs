@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 use common::{RecordingResponder, Sent};
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
-use pavlov_core::factions::FactionRegistry;
 use pavlov_core::text::case::eq_ignore_case;
 use pavlov_discord::caller::Caller;
 use pavlov_discord::command::OptionKind;
@@ -87,7 +86,9 @@ fn member() -> InvokedOption {
 }
 
 fn gwpd() -> &'static pavlov_core::factions::FactionDefinition {
-    FactionRegistry::police().get(Some("GWPD")).unwrap()
+    pavlov_core::factions::testing::ladder()
+        .get(Some("GWPD"))
+        .unwrap()
 }
 
 #[tokio::test]

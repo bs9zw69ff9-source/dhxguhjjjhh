@@ -231,6 +231,18 @@ pub fn warnings(features: &FeatureOptions, env: &Environment) -> Vec<String> {
              {settings}{folder}. Delete the PLUGIN_* lines to silence this."
         ));
     }
+    if features.menu_panel_channel.is_some()
+        || features.menu_role_staff.is_some()
+        || features.menu_role_high_staff.is_some()
+        || features.menu_role_blacklist.is_some()
+    {
+        out.push(
+            "MENU_PANEL_CHANNEL and MENU_ROLE_* do nothing any more: the self-serve RCON+ menu \
+             panel was removed. Menus are the ServerRoles tier files, given with /givemenu. \
+             Delete those lines to silence this."
+                .to_owned(),
+        );
+    }
     if features.leaderboard_channel.is_some()
         && features.leaderboard_channel == features.arrest_board_channel
     {

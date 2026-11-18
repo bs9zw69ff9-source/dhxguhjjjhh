@@ -13,43 +13,40 @@ fn files(pairs: &[(&str, &str)]) -> IndexMap<String, String> {
         .collect()
 }
 
-/// GWPD, AND IT WAS NYPD. Only the name moved: every roster file is the one the game already
-/// reads, because renaming a faction must never repoint a file. The old name stays as a former
-/// name so records filed under it still resolve.
+/// GWPD, AND IT WAS NYPD. The name stays; the LADDER moved (owner, 2026-11-18) to the sheriff's
+/// ranks in `ModSave/ServerRoles`, one in-game name per line, read live by the game:
+/// `deputyfirstclass.txt` up to `sheriff.txt`.
+///
+/// - NO SUB-CLASSES and NO SPAWN FILE: being in a rank file is all the game needs. An empty
+///   `spawn_file` means none, and nothing writes one; a `FACTIONS_PATH` ladder can still name one.
+/// - The old name stays as a former name so records filed under it still resolve.
 fn gwpd() -> FactionDefinition {
     FactionDefinition {
         name: FactionRegistry::POLICE_NAME.to_owned(),
         former_names: vec!["NYPD".to_owned()],
         order: [
-            "Cadet",
-            "Patrolman",
+            "Deputy First Class",
             "Corporal",
             "Sergeant",
             "Lieutenant",
             "Captain",
-            "Deputy Chief",
-            "Chief of Police",
+            "Undersheriff",
+            "Sheriff",
         ]
         .map(str::to_owned)
         .to_vec(),
-        default: "Cadet".to_owned(),
-        spawn_file: "policespawn.txt".to_owned(),
+        default: "Deputy First Class".to_owned(),
+        spawn_file: String::new(),
         rank_files: files(&[
-            ("Cadet", "policecadet.txt"),
-            ("Patrolman", "policepatrolman.txt"),
-            ("Corporal", "policecorporal.txt"),
-            ("Sergeant", "policesergeant.txt"),
-            ("Lieutenant", "policelieutenant.txt"),
-            ("Captain", "policecaptain.txt"),
-            ("Deputy Chief", "policedeputychief.txt"),
-            ("Chief of Police", "policechief.txt"),
+            ("Deputy First Class", "deputyfirstclass.txt"),
+            ("Corporal", "corporal.txt"),
+            ("Sergeant", "sergeant.txt"),
+            ("Lieutenant", "lieutenant.txt"),
+            ("Captain", "captain.txt"),
+            ("Undersheriff", "undersheriff.txt"),
+            ("Sheriff", "sheriff.txt"),
         ]),
-        subclasses: files(&[
-            ("Vice Officer", "policevice.txt"),
-            ("Detective", "policedetective.txt"),
-            ("Tactical Response Unit", "policetacticalresponse.txt"),
-            ("Narcotics Bureau", "policenarcotics.txt"),
-        ]),
+        subclasses: IndexMap::new(),
     }
 }
 

@@ -100,6 +100,7 @@ fn files_of(faction: &FactionDefinition) -> Vec<String> {
         .values()
         .chain(faction.subclasses.values())
         .chain(std::iter::once(&faction.spawn_file))
+        .filter(|f| !f.trim().is_empty())
         .filter(|f| seen.insert(f.as_str()))
         .cloned()
         .collect()
@@ -507,6 +508,82 @@ impl RosterService {
             .unwrap_or_default()
     }
 
+    /// Whether a list file (a rank, or a menu tier) holds `name`, ignoring case.
+    #[must_use]
+    pub fn file_holds(&self, file: &str, name: &str) -> bool {
+        self.read(file).is_some_and(|lines| holds(&lines, name))
+    }
+
+    /// Add names to ONE list file - a menu tier in `ServerRoles` - where not already on it. A
+    /// file that does not exist yet starts empty and is created; one that exists but cannot be
+    /// read is never written. How many were added, or `None` when the write was refused.
+    pub async fn add_names(&self, file: &str, names: &[String]) -> Option<usize> {
+        let missing = self.path_for(file).is_some_and(|p| !p.exists());
+        let mut added = 0;
+        let mut unreadable = false;
+        let written = self
+            .update(
+                file,
+                |current| {
+                    let empty: &[String] = &[];
+                    let Some(current) = current.or(missing.then_some(empty)) else {
+                        unreadable = true;
+                        return None;
+                    };
+                    let mut seen = IgnoreCaseSet::new();
+                    let new: Vec<String> = names
+                        .iter()
+                        .filter(|n| !n.trim().is_empty() && !holds(current, n))
+                        .filter(|n| seen.insert(n.as_str()))
+                        .cloned()
+                        .collect();
+                    added = new.len();
+                    (added > 0 || missing).then(|| [current, new.as_slice()].concat())
+                },
+                false,
+            )
+            .await;
+        if written || (added == 0 && !unreadable && !missing) {
+            Some(added)
+        } else {
+            None
+        }
+    }
+
+    /// Take names off ONE list file. A missing file holds nobody (`Some(0)`); an unreadable
+    /// one, or a refused write, is `None`.
+    pub async fn remove_names(&self, file: &str, names: &[String]) -> Option<usize> {
+        if self.path_for(file).is_some_and(|p| !p.exists()) {
+            return self.enabled().then_some(0);
+        }
+        let mut dropped = 0;
+        let mut unreadable = false;
+        let written = self
+            .update(
+                file,
+                |current| {
+                    let Some(current) = current else {
+                        unreadable = true;
+                        return None;
+                    };
+                    let kept: Vec<String> = current
+                        .iter()
+                        .filter(|line| !holds(names, line.trim()))
+                        .cloned()
+                        .collect();
+                    dropped = current.len() - kept.len();
+                    (dropped > 0).then_some(kept)
+                },
+                false,
+            )
+            .await;
+        if written || (dropped == 0 && !unreadable && self.enabled()) {
+            Some(dropped)
+        } else {
+            None
+        }
+    }
+
     /// Take each name off every roster file: the reverse of
     /// [`ensure_on_every_roster`](Self::ensure_on_every_roster), for a former master.
     pub async fn remove_from_every_roster(&self, names: &[String]) -> (usize, Vec<String>) {
@@ -663,6 +740,10 @@ impl RosterService {
     /// Add a player to a roster if they are not already on it. True when they are on it after.
     /// Idempotent: a ladderless faction's join writes the same file twice.
     async fn ensure_listed(&self, file: &str, player: &str) -> bool {
+        // No file (a faction with no spawn file) is nothing to be listed on.
+        if file.trim().is_empty() {
+            return true;
+        }
         let Some(roster) = self.read(file) else {
             return false;
         };

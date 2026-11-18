@@ -279,7 +279,6 @@ pub struct Graph {
     pub master_access: Arc<MasterAccess>,
     pub owner_actions: Arc<OwnerActions>,
     pub verification: Arc<VerificationService>,
-    pub menu_panel: Arc<commands::menu::MenuPanel>,
     pub home: Arc<HomeGuildMembers>,
     pub catalog: Arc<CommandCatalog>,
     pub dispatcher: Arc<InteractionDispatcher>,
@@ -684,7 +683,6 @@ pub fn build(
     ));
     let master_access = MasterAccess::new(MasterAccessParts {
         masters: masters.clone(),
-        rcon: Arc::clone(&rcon),
         servers: Arc::clone(&labels),
         installs: installs.clone(),
         files: Arc::clone(&whitelist),
@@ -792,17 +790,12 @@ pub fn build(
     });
 
     // ---- the commands, in the C# registration order ----
+    // The menu tiers live in ServerRoles beside the rank files, so they go through the same
+    // roster service: one write path, one per-file lock, one guard.
     let menus = Arc::new(commands::menu::MenuAccess {
-        rcon: Arc::clone(&rcon),
+        rosters: Arc::clone(&rosters),
         store: Arc::clone(&store),
-        confirmations: Arc::clone(&confirmations),
         clock: Arc::clone(&clock),
-    });
-    let menu_panel = Arc::new(commands::menu::MenuPanel {
-        menus: Arc::clone(&menus),
-        features: Arc::clone(&features),
-        audit: Arc::clone(&audit),
-        access: Arc::clone(&access),
     });
     let booking = Arc::new(commands::arrest::ArrestBooking::new(Arc::new(
         commands::arrest::ArrestRecorder {
@@ -865,15 +858,6 @@ pub fn build(
             Arc::clone(&access),
             Arc::clone(&audit),
         )),
-        Arc::new(subclass::SubclassCommand {
-            rosters: Arc::clone(&rosters),
-            members: Arc::clone(&members),
-            access: Arc::clone(&access),
-        }),
-        Arc::new(rank_change::SubclassesCommand {
-            rosters: Arc::clone(&rosters),
-            paged: Arc::clone(&paged),
-        }),
         Arc::new(set_roles::SetRolesCommand::new(
             Arc::clone(&store),
             Arc::clone(&access),
@@ -973,9 +957,8 @@ pub fn build(
             audit: Arc::clone(&audit),
             access: Arc::clone(&access),
         }),
-        Arc::new(staff::StripMenuCommand {
-            rcon: Arc::clone(&rcon),
-            store: Arc::clone(&store),
+        Arc::new(menu::StripMenuCommand {
+            menus: Arc::clone(&menus),
             access: Arc::clone(&access),
         }),
         Arc::new(police::WarrantCommand {
@@ -1149,11 +1132,6 @@ pub fn build(
             access: Arc::clone(&access),
             clock: Arc::clone(&clock),
         }),
-        Arc::new(config::SetRconRolesCommand {
-            store: Arc::clone(&store),
-            features: Arc::clone(&features),
-            access: Arc::clone(&access),
-        }),
         Arc::new(menu::GiveMenuCommand {
             menus,
             access: Arc::clone(&access),
@@ -1164,6 +1142,20 @@ pub fn build(
         }),
         config_panel.clone(),
     ];
+    // Sub-class commands only for a ladder that has sub-classes: the built-in GWPD has none
+    // since the move to ServerRoles, and a command that can only ever say "none" is noise.
+    let mut all = all;
+    if factions.all().any(|f| !f.subclasses.is_empty()) {
+        all.push(Arc::new(subclass::SubclassCommand {
+            rosters: Arc::clone(&rosters),
+            members: Arc::clone(&members),
+            access: Arc::clone(&access),
+        }));
+        all.push(Arc::new(rank_change::SubclassesCommand {
+            rosters: Arc::clone(&rosters),
+            paged: Arc::clone(&paged),
+        }));
+    }
     let available = all.len();
     let disabled = DisabledCommandList::parse(&options.disabled_commands);
     let (kept, disabled_unknown) = apply(&all, &disabled);
@@ -1209,7 +1201,6 @@ pub fn build(
     }));
     let handlers: Vec<Arc<dyn ComponentHandler>> = vec![
         paged,
-        menu_panel.clone(),
         booking,
         verification.clone(),
         wipe,
@@ -1269,7 +1260,6 @@ pub fn build(
         master_access,
         owner_actions,
         verification,
-        menu_panel,
         home,
         catalog,
         dispatcher,

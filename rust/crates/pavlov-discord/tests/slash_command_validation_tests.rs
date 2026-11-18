@@ -103,7 +103,7 @@ fn the_subclasses_command_registers_cleanly_and_offers_only_factions_with_subcla
     assert!(problems(&built).is_empty());
     let faction = built.options.iter().find(|o| o.name == "faction").unwrap();
     assert!(!faction.choices.is_empty());
-    let factions = pavlov_core::factions::FactionRegistry::police();
+    let factions = pavlov_core::factions::testing::ladder();
     for choice in &faction.choices {
         assert!(
             !factions

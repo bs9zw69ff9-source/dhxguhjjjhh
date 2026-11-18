@@ -1,77 +1,111 @@
-//! `/givemenu`, `/unlinkname` and the menu panel: the grant goes over RCON+ and is recorded
-//! with its binding, nothing is recorded when nothing landed, and the panel's blacklist role
-//! beats even an owner. (The C# has no test file for these; `MenuLinkTests` covers the decision.)
+//! `/givemenu`, `/stripmenu` and `/unlinkname` over the ServerRoles tier files (owner change,
+//! 2026-11-18, replacing RCON+): a tier is a file write, a player holds one tier, owners alone
+//! touch owner and manager, and the permanent name binding still holds. (The C# has no test
+//! file for these; `MenuLinkTests` covers the binding decision.)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
 
+use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
-use indexmap::IndexMap;
-use pavlov_config::{Config, FeatureOptions};
 use pavlov_core::data::SerializedStore;
-use pavlov_core::moderation::MenuRoleMap;
-use pavlov_core::servers::{DetectedServer, HostProbe};
+use pavlov_core::roles::RoleMap;
 use pavlov_core::time::SystemClock;
+use pavlov_discord::access::Access;
 use pavlov_discord::caller::Caller;
 use pavlov_discord::command::OptionKind;
 use pavlov_discord::commands::menu::{
-    GiveMenuCommand, MenuAccess, MenuPanel, PanelTier, UnlinkNameCommand,
+    GiveMenuCommand, MenuAccess, StripMenuCommand, UnlinkNameCommand,
 };
 use pavlov_discord::interaction::{Invocation, InvokedOption, OptionValue};
 use pavlov_discord::slash::{CommandContext, SlashCommand};
-use pavlov_host::confirmations::RconConfirmations;
-use pavlov_host::metrics::MetricsRegistry;
-use pavlov_host::moderation::AuditLog;
-use pavlov_host::registry::RconRegistry;
-use pavlov_rcon::testing::FakeRconServer;
+use pavlov_storage::datasets::ROLES;
 
 const OWNER: u64 = 1;
+const ADMIN: u64 = 2;
+const MOD: u64 = 3;
+const ADMIN_ROLE: u64 = 200;
+const MOD_ROLE: u64 = 100;
 const MEMBER: u64 = 77;
 
-struct EmptyBox;
-impl HostProbe for EmptyBox {
-    fn systemd_servers(&self) -> Vec<DetectedServer> {
-        Vec::new()
+struct Rig {
+    dir: tempfile::TempDir,
+    store: Arc<SerializedStore>,
+    access: Arc<Access>,
+    menus: Arc<MenuAccess>,
+}
+
+impl Rig {
+    async fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = common::commands::store();
+        store
+            .write(
+                ROLES,
+                &RoleMap {
+                    mod_role: Some(MOD_ROLE),
+                    admin_role: Some(ADMIN_ROLE),
+                    ..RoleMap::default()
+                },
+            )
+            .await
+            .unwrap();
+        let access = common::commands::access(&store, &[OWNER]);
+        let menus = Arc::new(MenuAccess {
+            rosters: common::commands::rosters(Some(dir.path())),
+            store: Arc::clone(&store),
+            clock: Arc::new(SystemClock),
+        });
+        Self {
+            dir,
+            store,
+            access,
+            menus,
+        }
     }
-    fn installs_beside(&self, _: &str, _: &str) -> std::io::Result<Vec<String>> {
-        Ok(Vec::new())
+
+    fn give(&self) -> GiveMenuCommand {
+        GiveMenuCommand {
+            menus: Arc::clone(&self.menus),
+            access: Arc::clone(&self.access),
+        }
     }
-    fn directory_exists(&self, _: &str) -> bool {
-        false
+
+    fn strip(&self) -> StripMenuCommand {
+        StripMenuCommand {
+            menus: Arc::clone(&self.menus),
+            access: Arc::clone(&self.access),
+        }
+    }
+
+    fn lines(&self, file: &str) -> Vec<String> {
+        lines(&self.dir.path().join(file))
     }
 }
 
-async fn rcon(reachable: bool) -> (Option<FakeRconServer>, Arc<RconRegistry>) {
-    let fake = FakeRconServer::start().await.unwrap();
-    let mut options = fake.options();
-    options.name = "server1".into();
-    options.command_spacing = Duration::ZERO;
-    options.read_cache_duration = Duration::ZERO;
-    options.command_timeout = Duration::from_millis(500);
-    options.max_attempts = 1;
-    let fake = if reachable { Some(fake) } else { None };
-    let rcon = Arc::new(RconRegistry::with_system_clock(
-        &[options],
-        Duration::from_secs(60),
-        Arc::new(MetricsRegistry::default()),
-    ));
-    (fake, rcon)
+fn lines(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .map(|t| {
+            t.lines()
+                .map(str::to_owned)
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-fn menus(rcon: Arc<RconRegistry>, store: &Arc<SerializedStore>) -> Arc<MenuAccess> {
-    Arc::new(MenuAccess {
-        rcon,
-        store: Arc::clone(store),
-        confirmations: Arc::new(RconConfirmations::default()),
-        clock: Arc::new(SystemClock),
-    })
+fn caller(id: u64) -> Caller {
+    match id {
+        ADMIN => Caller::member(id, 0, &[ADMIN_ROLE]),
+        MOD => Caller::member(id, 0, &[MOD_ROLE]),
+        _ => Caller::user(id),
+    }
 }
 
-fn give(name: &str) -> Invocation {
-    Invocation::new("givemenu", Caller::user(OWNER))
+fn give(by: u64, name: &str, tier: &str) -> Invocation {
+    Invocation::new("givemenu", caller(by))
         .with(InvokedOption::value(
             "member",
             OptionKind::User,
@@ -83,10 +117,18 @@ fn give(name: &str) -> Invocation {
             OptionValue::String(name.into()),
         ))
         .with(InvokedOption::value(
-            "menu",
+            "tier",
             OptionKind::String,
-            OptionValue::String("highstaff".into()),
+            OptionValue::String(tier.into()),
         ))
+}
+
+fn strip(by: u64) -> Invocation {
+    Invocation::new("stripmenu", caller(by)).with(InvokedOption::value(
+        "member",
+        OptionKind::User,
+        OptionValue::User(MEMBER),
+    ))
 }
 
 async fn run(command: &dyn SlashCommand, invocation: &Invocation) -> String {
@@ -101,42 +143,23 @@ async fn run(command: &dyn SlashCommand, invocation: &Invocation) -> String {
     responder.last_text()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_grant_sends_givemenu_and_records_the_grant_and_binding() {
-    let (fake, rcon) = rcon(true).await;
-    let store = common::commands::store();
-    let command = GiveMenuCommand {
-        menus: menus(rcon, &store),
-        access: common::commands::access(&store, &[OWNER]),
-    };
-    let reply = run(&command, &give("Officer")).await;
-    assert!(reply.contains("High Staff menu granted"), "{reply}");
-    assert!(
-        fake.unwrap()
-            .commands()
-            .iter()
-            .any(|c| c.starts_with("GiveMenu Officer "))
-    );
-    let grants: IndexMap<String, String> = store.read("menu_grants", IndexMap::new()).unwrap();
-    assert_eq!(grants.get("77").map(String::as_str), Some("Officer"));
-    assert!(
-        store
-            .read_raw("menu_links")
-            .unwrap()
-            .unwrap()
-            .contains("\"inGameName\": \"Officer\"")
-    );
+#[tokio::test]
+async fn a_tier_is_written_to_its_file_and_the_grant_and_binding_recorded() {
+    let r = Rig::new().await;
 
-    // The same name again, holding the menu, is a release: the grant goes, the binding stays.
+    let reply = run(&r.give(), &give(OWNER, "Officer", "staff")).await;
+
+    assert!(reply.contains("Staff menu granted"), "{reply}");
+    assert_eq!(r.lines("staff.txt"), ["Officer"]);
     assert!(
-        run(&command, &give("Officer"))
-            .await
-            .contains("Menu access removed")
+        r.store
+            .read_raw("menu_grants")
+            .unwrap()
+            .unwrap()
+            .contains("Officer")
     );
-    let grants: IndexMap<String, String> = store.read("menu_grants", IndexMap::new()).unwrap();
-    assert!(grants.is_empty());
     assert!(
-        store
+        r.store
             .read_raw("menu_links")
             .unwrap()
             .unwrap()
@@ -144,28 +167,151 @@ async fn a_grant_sends_givemenu_and_records_the_grant_and_binding() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn nothing_landed_means_nothing_recorded() {
-    let (_gone, rcon) = rcon(false).await;
-    let store = common::commands::store();
+#[tokio::test]
+async fn giving_another_tier_moves_the_player_and_keeps_everyone_else() {
+    let r = Rig::new().await;
+    std::fs::write(r.dir.path().join("jrstaff.txt"), "Officer\nOther\n").unwrap();
+
+    let reply = run(&r.give(), &give(OWNER, "Officer", "srstaff")).await;
+
+    assert!(reply.contains("moved from Jr. Staff"), "{reply}");
+    assert_eq!(r.lines("srstaff.txt"), ["Officer"]);
+    assert_eq!(r.lines("jrstaff.txt"), ["Other"]);
+}
+
+#[tokio::test]
+async fn an_admin_gives_srstaff_and_below_but_never_manager_or_owner() {
+    let r = Rig::new().await;
+    for tier in ["owner", "manager"] {
+        let reply = run(&r.give(), &give(ADMIN, "Officer", tier)).await;
+        assert!(reply.contains("Owners only"), "{tier}: {reply}");
+    }
+    assert!(r.lines("owner.txt").is_empty());
+    assert!(r.lines("manager.txt").is_empty());
+
+    let reply = run(&r.give(), &give(ADMIN, "Officer", "srstaff")).await;
+    assert!(reply.contains("granted"), "{reply}");
+    assert_eq!(r.lines("srstaff.txt"), ["Officer"]);
+}
+
+#[tokio::test]
+async fn an_owner_gives_owner_and_a_mod_gives_nothing() {
+    let r = Rig::new().await;
+    assert!(
+        run(&r.give(), &give(OWNER, "Boss", "owner"))
+            .await
+            .contains("granted")
+    );
+    assert_eq!(r.lines("owner.txt"), ["Boss"]);
+
+    let reply = run(&r.give(), &give(MOD, "Other", "jrstaff")).await;
+    assert!(reply.contains("Not allowed"), "{reply}");
+    assert!(r.lines("jrstaff.txt").is_empty());
+}
+
+#[tokio::test]
+async fn an_admin_cannot_move_somebody_out_of_the_top_tiers() {
+    let r = Rig::new().await;
+    std::fs::write(r.dir.path().join("manager.txt"), "Officer\n").unwrap();
+
+    let reply = run(&r.give(), &give(ADMIN, "Officer", "staff")).await;
+
+    assert!(reply.contains("Owners only"), "{reply}");
+    assert_eq!(r.lines("manager.txt"), ["Officer"]);
+    assert!(r.lines("staff.txt").is_empty());
+}
+
+#[tokio::test]
+async fn a_name_bound_to_somebody_else_is_refused() {
+    let r = Rig::new().await;
+    r.menus.bind("999", "Officer").await.unwrap();
+
+    let reply = run(&r.give(), &give(OWNER, "Officer", "staff")).await;
+
+    assert!(reply.contains("belongs to someone else"), "{reply}");
+    assert!(r.lines("staff.txt").is_empty());
+}
+
+#[tokio::test]
+async fn nothing_is_recorded_when_the_files_cannot_be_written() {
+    let r = Rig::new().await;
+    let gone = r.dir.path().join("missing");
+    let menus = Arc::new(MenuAccess {
+        rosters: common::commands::rosters(Some(&gone)),
+        store: Arc::clone(&r.store),
+        clock: Arc::new(SystemClock),
+    });
     let command = GiveMenuCommand {
-        menus: menus(rcon, &store),
-        access: common::commands::access(&store, &[OWNER]),
+        menus,
+        access: Arc::clone(&r.access),
     };
-    let reply = run(&command, &give("Officer")).await;
-    assert!(reply.contains("Not granted"), "{reply}");
-    assert!(store.read_raw("menu_grants").unwrap().is_none());
-    assert!(store.read_raw("menu_links").unwrap().is_none());
+
+    let reply = run(&command, &give(OWNER, "Officer", "staff")).await;
+
+    assert!(reply.contains("Not available"), "{reply}");
+    assert!(reply.contains("ServerRoles"), "{reply}");
+    assert!(r.store.read_raw("menu_grants").unwrap().is_none());
+    assert!(r.store.read_raw("menu_links").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn stripping_takes_the_name_off_every_tier_and_drops_the_grant() {
+    let r = Rig::new().await;
+    run(&r.give(), &give(OWNER, "Officer", "staff")).await;
+    std::fs::write(r.dir.path().join("jrstaff.txt"), "Officer\nOther\n").unwrap();
+
+    let reply = run(&r.strip(), &strip(ADMIN)).await;
+
+    assert!(reply.contains("Menu access removed"), "{reply}");
+    assert!(r.lines("staff.txt").is_empty());
+    assert_eq!(r.lines("jrstaff.txt"), ["Other"]);
+    assert!(
+        !r.store
+            .read_raw("menu_grants")
+            .unwrap()
+            .unwrap()
+            .contains("Officer")
+    );
+    assert!(
+        r.store
+            .read_raw("menu_links")
+            .unwrap()
+            .unwrap()
+            .contains("Officer"),
+        "the binding stays"
+    );
+}
+
+#[tokio::test]
+async fn an_admin_cannot_strip_an_owner_tier() {
+    let r = Rig::new().await;
+    run(&r.give(), &give(OWNER, "Boss", "owner")).await;
+
+    let reply = run(&r.strip(), &strip(ADMIN)).await;
+
+    assert!(reply.contains("Owners only"), "{reply}");
+    assert_eq!(r.lines("owner.txt"), ["Boss"]);
+    assert!(run(&r.strip(), &strip(OWNER)).await.contains("removed"));
+    assert!(r.lines("owner.txt").is_empty());
+}
+
+#[tokio::test]
+async fn the_tier_option_offers_the_five_files() {
+    let r = Rig::new().await;
+    let built = r.give().build();
+    let tier = built.options.iter().find(|o| o.name == "tier").unwrap();
+    let values: Vec<String> = tier.choices.iter().map(|c| c.value.to_string()).collect();
+    assert_eq!(values, ["owner", "manager", "srstaff", "staff", "jrstaff"]);
+    assert!(tier.required);
 }
 
 #[tokio::test]
 async fn unlinking_breaks_the_binding() {
-    let store = common::commands::store();
-    let (_fake, rcon) = rcon(true).await;
-    menus(rcon, &store).bind("77", "Officer").await.unwrap();
+    let r = Rig::new().await;
+    r.menus.bind("77", "Officer").await.unwrap();
     let command = UnlinkNameCommand {
-        store: Arc::clone(&store),
-        access: common::commands::access(&store, &[OWNER]),
+        store: Arc::clone(&r.store),
+        access: Arc::clone(&r.access),
     };
     let invocation = Invocation::new("unlinkname", Caller::user(OWNER)).with(InvokedOption::value(
         "member",
@@ -174,55 +320,10 @@ async fn unlinking_breaks_the_binding() {
     ));
     assert!(run(&command, &invocation).await.contains("Binding broken"));
     assert!(
-        !store
+        !r.store
             .read_raw("menu_links")
             .unwrap()
             .unwrap()
             .contains("Officer")
     );
-}
-
-#[tokio::test]
-async fn the_blacklist_role_beats_even_an_owner() {
-    let store = common::commands::store();
-    store
-        .write(
-            "menu_roles",
-            &MenuRoleMap {
-                high_staff: Some(10),
-                staff: Some(20),
-                blacklist: Some(99),
-            },
-        )
-        .await
-        .unwrap();
-    let (_fake, rcon) = rcon(true).await;
-    let panel = MenuPanel {
-        menus: menus(rcon, &store),
-        features: Arc::new(FeatureOptions::bind(
-            &Config::from_pairs(Vec::<(&str, &str)>::new()),
-            &EmptyBox,
-        )),
-        audit: Arc::new(AuditLog::new(Arc::clone(&store), Arc::new(SystemClock))),
-        access: common::commands::access(&store, &[OWNER]),
-    };
-    assert_eq!(
-        panel.tier_of(&Caller::member(OWNER, 5, &[99])),
-        Some(PanelTier::Blacklisted)
-    );
-    assert_eq!(
-        panel.tier_of(&Caller::user(OWNER)),
-        Some(PanelTier::Menu("highstaff")),
-        "an owner, member or not"
-    );
-    assert_eq!(
-        panel.tier_of(&Caller::member(3, 5, &[20])),
-        Some(PanelTier::Menu("staff"))
-    );
-    assert_eq!(
-        panel.tier_of(&Caller::member(3, 5, &[10, 20])),
-        Some(PanelTier::Menu("highstaff")),
-        "highest wins"
-    );
-    assert_eq!(panel.tier_of(&Caller::member(3, 5, &[])), None);
 }

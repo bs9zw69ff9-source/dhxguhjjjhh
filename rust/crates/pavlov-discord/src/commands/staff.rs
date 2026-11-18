@@ -1,5 +1,5 @@
-//! `/staffactivity`, `/staffleaderboard`, `/banlist`, `/flush` and `/stripmenu` (C#
-//! `StaffCommands.cs`; `/subclass` lives with the faction commands).
+//! `/staffactivity`, `/staffleaderboard`, `/banlist` and `/flush` (C# `StaffCommands.cs`;
+//! `/subclass` lives with the faction commands, `/stripmenu` with the menu commands).
 
 use std::cmp::Reverse;
 use std::io::Read;
@@ -8,7 +8,6 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use futures_util::future::BoxFuture;
 use indexmap::IndexMap;
-use pavlov_core::data::SerializedStore;
 use pavlov_core::embed::Embed;
 use pavlov_core::moderation::BanRecord;
 use pavlov_core::skin::theme;
@@ -17,14 +16,12 @@ use pavlov_core::time::Clock;
 use pavlov_host::moderation::bans::{BanService, MasterNames};
 use pavlov_host::moderation::{AuditLog, ModAction};
 use pavlov_host::registry::RconRegistry;
-use pavlov_storage::datasets::MENU_GRANTS;
 
 use crate::access::{Access, RequiredAccess};
 use crate::boards::Boards;
 use crate::caller::Caller;
 use crate::command::{Choice, CommandSpec, OptionKind, OptionSpec};
 use crate::interaction::Reply;
-use crate::rcon_menu;
 use crate::slash::{CommandContext, CommandError, SlashCommand};
 
 /// Recent actions listed by `/staffactivity`.
@@ -438,92 +435,6 @@ impl SlashCommand for FlushCommand {
                         invocation.string("server").unwrap_or(""),
                     )
                     .await?
-                }
-            };
-            context.reply(Reply::embed(embed.brand(None))).await
-        })
-    }
-}
-
-// ---- /stripmenu ----
-
-/// `/stripmenu`: revoke a member's RCON menu on every server (`RemoveMenu`: RCON+ has no
-/// "StripMenu", so that looked like it worked and left the menu in place) and drop the grant.
-pub struct StripMenuCommand {
-    pub rcon: Arc<RconRegistry>,
-    pub store: Arc<SerializedStore>,
-    pub access: Arc<Access>,
-}
-
-impl std::fmt::Debug for StripMenuCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StripMenuCommand").finish_non_exhaustive()
-    }
-}
-
-impl StripMenuCommand {
-    async fn run(&self, username: &str, member: u64) -> Result<Embed, CommandError> {
-        let id = member.to_string();
-        let grants: IndexMap<String, String> = self
-            .store
-            .read(MENU_GRANTS, IndexMap::new())
-            .unwrap_or_default();
-        let Some(player) = grants.get(&id).cloned() else {
-            return Ok(theme::notice(
-                "No menu access",
-                Some(&format!("<@{member}> does not hold a menu.")),
-            ));
-        };
-        for server in self.rcon.servers() {
-            for line in rcon_menu::revoke(&player, true) {
-                if let Err(error) = self.rcon.send(&server, &line).await {
-                    tracing::warn!(%server, %error, "StripMenu failed");
-                    break;
-                }
-            }
-        }
-        self.store
-            .update(
-                MENU_GRANTS,
-                IndexMap::new,
-                |mut g: IndexMap<String, String>| {
-                    g.shift_remove(&id);
-                    Some(g)
-                },
-            )
-            .await?;
-        tracing::info!(member = %id, player = %player, by = username, "stripmenu");
-        Ok(theme::success(
-            "Menu access removed",
-            Some(&format!("<@{member}> no longer has menu access.")),
-        ))
-    }
-}
-
-impl SlashCommand for StripMenuCommand {
-    fn name(&self) -> &str {
-        "stripmenu"
-    }
-
-    fn build(&self) -> CommandSpec {
-        CommandSpec::new("stripmenu", "Admin - Remove a member's RCON menu access")
-            .option(OptionSpec::new(OptionKind::User, "member", "Which Discord member").required())
-    }
-
-    fn handle<'a>(
-        &'a self,
-        context: CommandContext<'a>,
-    ) -> BoxFuture<'a, Result<(), CommandError>> {
-        Box::pin(async move {
-            let invocation = context.invocation;
-            let embed = if let Some(refusal) =
-                refuse(&self.access, &invocation.caller, RequiredAccess::Admin)
-            {
-                refusal
-            } else {
-                match invocation.id("member") {
-                    Some(member) => self.run(&invocation.username, member).await?,
-                    None => theme::failure("Need a member", None),
                 }
             };
             context.reply(Reply::embed(embed.brand(None))).await

@@ -6,8 +6,6 @@
 
 /// `/arrest`'s booking flow.
 pub const ARREST_BOOKING: &str = "arr";
-/// The in-game menu claim panel.
-pub const MENU_PANEL: &str = "menu";
 /// Paged replies' previous and next buttons.
 pub const PAGED: &str = "page";
 /// `/configure`.
@@ -20,9 +18,8 @@ pub const WHITELIST_WIPE: &str = "wlwipe";
 pub const VERIFY: &str = pavlov_core::verification::COMPONENT_PREFIX;
 
 /// Every prefix.
-pub const ALL: [&str; 7] = [
+pub const ALL: [&str; 6] = [
     ARREST_BOOKING,
-    MENU_PANEL,
     PAGED,
     CONFIG_PANEL,
     SERVER_LOOKUP,

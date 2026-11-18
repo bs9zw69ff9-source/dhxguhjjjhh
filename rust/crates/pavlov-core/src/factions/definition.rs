@@ -17,9 +17,10 @@ pub struct FactionDefinition {
     pub default: String,
     /// Rank to the `Config/*.txt` roster the game reads for it.
     pub rank_files: IndexMap<String, String>,
-    /// The file that grants SPAWN ACCESS, holding every member regardless of rank. A member in
-    /// a rank file but not here is on the roster for the bot and cannot spawn for the game.
-    /// The C# port once dropped it, and every command still reported success.
+    /// The file that grants SPAWN ACCESS, holding every member regardless of rank, for a game
+    /// setup that has one; EMPTY when the rank files alone are enough (the built-in GWPD since
+    /// 2026-11-18). When set, a member in a rank file but not here could not spawn, so every
+    /// join and promotion keeps them listed (the C# port once dropped that and reported success).
     pub spawn_file: String,
     /// Sub-classes are NOT ranks: a member keeps their rank and may also hold one of these.
     pub subclasses: IndexMap<String, String>,
@@ -133,12 +134,6 @@ impl FactionSet {
         // Folded file name to (folded owner, display owner).
         let mut files: IndexMap<String, (String, String)> = IndexMap::new();
         for faction in self.all.values() {
-            if faction.spawn_file.trim().is_empty() {
-                problems.push(format!(
-                    "{} has no spawn file, so nobody could ever play as it.",
-                    faction.name
-                ));
-            }
             if faction.order.is_empty() {
                 problems.push(format!("{} has no ranks.", faction.name));
                 continue;

@@ -1,5 +1,5 @@
-//! `/staffactivity`, `/banlist`, `/flush` and `/stripmenu`. `/flush` and `/stripmenu` are
-//! checked against the fake RCON server's recorded commands. (The C# has no test file.)
+//! `/staffactivity`, `/banlist` and `/flush`. `/flush` is checked against the fake RCON server's
+//! recorded commands; `/stripmenu` is tested with the menu commands. (The C# has no test file.)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -10,12 +10,11 @@ use std::time::Duration;
 
 use chrono::{TimeDelta, Utc};
 use futures_util::future::BoxFuture;
-use indexmap::IndexMap;
 use pavlov_core::moderation::BanRecord;
 use pavlov_core::time::SystemClock;
 use pavlov_discord::caller::Caller;
 use pavlov_discord::command::OptionKind;
-use pavlov_discord::commands::staff::{FlushCommand, StripMenuCommand, activity, ban_list};
+use pavlov_discord::commands::staff::{FlushCommand, activity, ban_list};
 use pavlov_discord::interaction::{Invocation, InvokedOption, OptionValue};
 use pavlov_discord::slash::{CommandContext, SlashCommand};
 use pavlov_host::metrics::MetricsRegistry;
@@ -146,39 +145,4 @@ async fn flush_never_picks_a_master_and_only_kicks() {
         kicks[0].starts_with("Kick ") && !kicks[0].contains("Boss"),
         "{kicks:?}"
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn stripmenu_sends_removemenu_and_drops_the_grant() {
-    let (fake, rcon) = live(None).await;
-    let store = common::commands::store();
-    let mut grants = IndexMap::new();
-    grants.insert("77".to_owned(), "Officer".to_owned());
-    store.write("menu_grants", &grants).await.unwrap();
-    let command = StripMenuCommand {
-        rcon,
-        store: Arc::clone(&store),
-        access: common::commands::access(&store, &[OWNER]),
-    };
-    let invocation = Invocation::new("stripmenu", Caller::user(OWNER)).with(InvokedOption::value(
-        "member",
-        OptionKind::User,
-        OptionValue::User(77),
-    ));
-    let responder = common::RecordingResponder::default();
-    command
-        .handle(CommandContext {
-            invocation: &invocation,
-            responder: &responder,
-        })
-        .await
-        .unwrap();
-    let sent = fake.commands();
-    assert!(sent.iter().any(|c| c.starts_with("RemoveMenu")), "{sent:?}");
-    assert!(
-        !sent.iter().any(|c| c.starts_with("StripMenu")),
-        "RCON+ has no StripMenu: {sent:?}"
-    );
-    let left: IndexMap<String, String> = store.read("menu_grants", IndexMap::new()).unwrap();
-    assert!(left.is_empty());
 }

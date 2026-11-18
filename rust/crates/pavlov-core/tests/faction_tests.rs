@@ -1,6 +1,10 @@
 //! Port of `FactionTests.cs` (classes FactionRegistryTests and MembershipRulesTests, with the
 //! shared `TestFactions` helpers). The C# used the NYPD name to look up the police faction; it
 //! resolves to the GWPD through the former-name lookup, here as there.
+//!
+//! The registry tests check the BUILT-IN ladder, which moved to the sheriff's ranks in
+//! ServerRoles on 2026-11-18 (no sub-classes, no spawn file). The membership rules are a
+//! mechanism, tested on the full-featured ladder in `factions::testing`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -57,8 +61,14 @@ pub fn with_mafias() -> FactionSet {
     ])
 }
 
+/// The built-in police faction, by its former name.
 fn nypd() -> &'static FactionDefinition {
     FactionRegistry::get(Some("NYPD")).unwrap()
+}
+
+/// The ladder with sub-classes and a spawn file, for the mechanism tests.
+fn ladder() -> &'static FactionDefinition {
+    pavlov_core::factions::testing::faction(Some("NYPD")).unwrap()
 }
 
 mod faction_registry_tests {
@@ -77,11 +87,9 @@ mod faction_registry_tests {
                     faction.name
                 );
             }
-            assert!(
-                !faction.spawn_file.trim().is_empty(),
-                "{} has no spawn file",
-                faction.name
-            );
+            // No spawn file: the ServerRoles rank files alone let a member play.
+            assert!(faction.spawn_file.is_empty(), "{}", faction.name);
+            assert!(faction.subclasses.is_empty(), "{}", faction.name);
         }
         assert!(FactionRegistry::police().problems().is_empty());
         assert!(with_mafias().problems().is_empty());
@@ -90,18 +98,26 @@ mod faction_registry_tests {
     #[test]
     fn roster_filenames_match_the_ones_the_game_install_has() {
         // Spelled out, not derived: a rule computed from the registry would agree with it.
-        assert_eq!(nypd().spawn_file, "policespawn.txt");
-        let n = nypd();
-        assert!(
-            !n.rank_files
-                .values()
-                .any(|f| eq_ignore_case(f, &n.spawn_file))
+        // The files in ModSave/ServerRoles, highest first as the owner gave them.
+        let files: Vec<&str> = nypd()
+            .order
+            .iter()
+            .rev()
+            .map(|r| nypd().rank_files[r].as_str())
+            .collect();
+        assert_eq!(
+            files,
+            [
+                "sheriff.txt",
+                "undersheriff.txt",
+                "captain.txt",
+                "lieutenant.txt",
+                "sergeant.txt",
+                "corporal.txt",
+                "deputyfirstclass.txt",
+            ]
         );
-        assert!(
-            !n.subclasses
-                .values()
-                .any(|f| eq_ignore_case(f, &n.spawn_file))
-        );
+        assert!(files.iter().all(|f| !eq_ignore_case(f, &nypd().spawn_file)));
     }
 
     #[test]
@@ -116,9 +132,11 @@ mod faction_registry_tests {
 
     #[test]
     fn order_is_lowest_to_highest() {
-        assert_eq!(nypd().lowest(), "Cadet");
-        assert_eq!(nypd().highest(), "Chief of Police");
-        assert!(nypd().index_of(Some("Sergeant")) > nypd().index_of(Some("Patrolman")));
+        assert_eq!(nypd().lowest(), "Deputy First Class");
+        assert_eq!(nypd().highest(), "Sheriff");
+        assert_eq!(nypd().default, "Deputy First Class");
+        assert!(nypd().index_of(Some("Sergeant")) > nypd().index_of(Some("Corporal")));
+        assert!(nypd().index_of(Some("Undersheriff")) > nypd().index_of(Some("Captain")));
     }
 
     #[test]
@@ -154,8 +172,9 @@ mod faction_registry_tests {
     }
 
     #[test]
-    fn only_nypd_has_subclasses() {
-        assert!(nypd().has_subclass("Tactical Response Unit"));
+    fn the_built_in_ladder_has_no_subclasses_and_the_mechanism_still_works() {
+        assert!(nypd().subclasses.is_empty());
+        assert!(ladder().has_subclass("Tactical Response Unit"));
         assert!(other().subclasses.is_empty());
     }
 }
@@ -165,7 +184,7 @@ mod membership_rules_tests {
     use pavlov_core::factions::{MembershipDecision, MembershipOutcome, MembershipRules};
 
     fn n() -> Option<&'static FactionDefinition> {
-        Some(nypd())
+        Some(ladder())
     }
 
     fn held(list: &[&str]) -> Vec<String> {

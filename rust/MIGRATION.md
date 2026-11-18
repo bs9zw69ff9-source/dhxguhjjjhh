@@ -18,7 +18,7 @@ summarised here so the checklist stands on its own.
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
 | M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | done (the Discord-facing remainder moves to M7/M8): VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health); recent command errors by correlation id, the `/health` errors field, component ids (moved to pavlov-core), and the roster-refresh failure wording; the server monitor, its 25-hour history and the live board; the loopback metrics and health endpoint |
 | M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher); the bar list and its refusal at dispatch, the command log, the command runner (log, bar, defer, prime, slots, budget, error id); the autoposter and the boards (cash, most wanted, warrants, staff, live players, K/D); player-count voice channels; the staff log by channel (mod, ban, police, arrest); security alerts by DM, the guild directory and invite pages, the staff menu bitcodes; every component prefix in one table, the per-server RCON failure reply; the owner panel's actions (`OwnerActions`) and whitelist snapshots |
-| M8 | The slash commands (61: the C#'s own count, once the constructor-named ones are included) | in progress: the `commands` module; `/checkban`'s ban history; the `FACTIONS_PATH` file and the startup line naming the faction source; `/arrest`'s override and receipt line; `/subclass`'s picker; paged replies and the component interaction model (`ComponentInvocation`, `ComponentResponder`, `ComponentHandler`). **Commands ported (all 61, with every component handler):** modal support in the component model (`ComponentInvocation::fields`, `ComponentResponder::acknowledge`/`show_modal`); the command catalog and the build stamp (`PAVLOV_BUILD_STAMP` at compile time); `PlayerIntelligenceService` (`pavlov-host/src/intelligence.rs`); player and rank autocomplete (`autocomplete.rs`) and `AnalyticsService` (`pavlov-host/src/analytics.rs`); `/whitelist` (with its wipe confirmation), `/promotion`, `/demotion`, `/subclasses`, `/subclass`, `/license`, `/setroles`, `/provisionserver`, `/players`, `/errors`, `/testalert`, `/counts`, `/rotatemap`, `/guildinvites`, `/alts`, `/staff`, `/stats`, `/feeds`, `/factionstats`, `/serverinfo`, `/kick`, `/announce`, `/health`, `/help`, `/warn`, `/givemoney`, `/adjustmoney`, `/wages`, `/tempban`, `/permban`, `/unban`, `/checkban`, `/warrant`, `/backgroundcheck`, `/bail`, `/arrest` with its booking picker, `/setpin`, `/removepin`, `/iplookup`, `/vpncheck`, `/staffactivity`, `/staffleaderboard`, `/banlist`, `/flush`, `/stripmenu`, `/donator`, `/suspendrank`, `/setrconroles`, `/serverswitch`, `/deleteserver`, `/monitor`, `/testmode`, `/tester`, `/botstats`, `/manual`, `/firewall`, `/inspect`, `/server lookup` with its browser, `/givemenu`, `/unlinkname` and the menu panel, `/configure` (the composition root MUST attach the server ban file to `BanService` with `with_ban_file`, or `/unban` cannot clear a file-only ban); the gateway's Discord-agnostic half: `component_router`, `autocomplete::answer`, `registration` (scopes, the faction split, the cleanup) and `home_guild` |
+| M8 | The slash commands (61: the C#'s own count, once the constructor-named ones are included) | in progress: the `commands` module; `/checkban`'s ban history; the `FACTIONS_PATH` file and the startup line naming the faction source; `/arrest`'s override and receipt line; `/subclass`'s picker; paged replies and the component interaction model (`ComponentInvocation`, `ComponentResponder`, `ComponentHandler`). **Commands ported (all 61, with every component handler):** modal support in the component model (`ComponentInvocation::fields`, `ComponentResponder::acknowledge`/`show_modal`); the command catalog and the build stamp (`PAVLOV_BUILD_STAMP` at compile time); `PlayerIntelligenceService` (`pavlov-host/src/intelligence.rs`); player and rank autocomplete (`autocomplete.rs`) and `AnalyticsService` (`pavlov-host/src/analytics.rs`); `/whitelist` (with its wipe confirmation), `/promotion`, `/demotion`, `/subclasses`, `/subclass`, `/license`, `/setroles`, `/provisionserver`, `/players`, `/errors`, `/testalert`, `/counts`, `/rotatemap`, `/guildinvites`, `/alts`, `/staff`, `/stats`, `/feeds`, `/factionstats`, `/serverinfo`, `/kick`, `/announce`, `/health`, `/help`, `/warn`, `/givemoney`, `/adjustmoney`, `/wages`, `/tempban`, `/permban`, `/unban`, `/checkban`, `/warrant`, `/backgroundcheck`, `/bail`, `/arrest` with its booking picker, `/setpin`, `/removepin`, `/iplookup`, `/vpncheck`, `/staffactivity`, `/staffleaderboard`, `/banlist`, `/flush`, `/stripmenu`, `/donator`, `/suspendrank`, `/setrconroles`, `/serverswitch`, `/deleteserver`, `/monitor`, `/testmode`, `/tester`, `/botstats`, `/manual`, `/firewall`, `/inspect`, `/server lookup` with its browser, `/givemenu`, `/unlinkname` and the menu panel (the panel and `/setrconroles` were removed with RCON+ on 2026-11-18, see the behaviour differences), `/configure` (the composition root MUST attach the server ban file to `BanService` with `with_ban_file`, or `/unban` cannot clear a file-only ban); the gateway's Discord-agnostic half: `component_router`, `autocomplete::answer`, `registration` (scopes, the faction split, the cleanup) and `home_guild` |
 | M9 | `pavlov-bot` composition root and `--selftest` | done: the startup checks; the whole graph in Program.cs order (`graph.rs`), built against Discord as trait objects so `--selftest` never contacts it; the 30-odd background services in BackgroundServiceHost's order with their gates and dependencies (`services.rs`); the run with the gateway LAST and a reverse-order shutdown that drains interactions (`run.rs`); `--selftest` (graph built, services registered, nothing started). Also ported on the way, because the earlier milestones had missed them: the monitor's RCON probe, log activity and alert sink, verification, and the player-event timeline bridge. Parity 1792 of 1792 |
 | M10 | Deploy script, police systemd unit, rollback, documentation | done: `scripts/deploy-rust.sh` (release build with the build stamp, the selftest gate on the new binary before it replaces anything, an atomic swap, a restart only of a unit that runs this binary, the stamp read back from the journal); `rust/deploy/pavlov-bot-rust.service` for staging; `rust/DEPLOY.md` (what was and was not verified, the staging checklist with the `scan_keys.py` step, the cutover as an `ExecStart` drop-in, the rollback); `parity.py --strict` in the gate. **Next: the owner's staging run and cutover, then M11** |
 | M11 | Delete the C# code, after the owner confirms the Rust bot live | not started |
@@ -180,6 +180,13 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | `/license` | `remove` only | `give` and `remove`; a licence the save does not have is written when given | |
 | Finding a save | exact file name | exact name, else the one file matching ignoring case | the disk is case-sensitive and a name the bot holds can differ in case |
 | `/configure` wipe money | deleted every `*.txt` in `MODSAVE_PATH` | deletes only files that parse as a save | other mods' files and `ServerRoles` beside the saves are left alone |
+| The GWPD ladder | eight ranks from Cadet, `police*.txt` files in `FactionRoles`, sub-classes and `policespawn.txt` | seven ranks in `ServerRoles` (owner, 2026-11-18), lowest first `deputyfirstclass`, `corporal`, `sergeant`, `lieutenant`, `captain`, `undersheriff`, `sheriff`; no sub-classes and no spawn file (an empty spawn file name means none) | a `FACTIONS_PATH` ladder can still define both |
+| `/subclass` and `/subclasses` | always registered | registered only when some faction defines sub-classes | the default ladder has none, so they would only ever say so |
+| In-game menu access | RCON+ `GiveMenu` / `RemoveMenu` with a staff or high-staff bit code, pushed on join | the ServerRoles tier files `owner`, `manager`, `srstaff`, `staff`, `jrstaff` (`.txt`), one in-game name per line (owner, 2026-11-18) | the game reads the files; nothing is sent over RCON |
+| `/givemenu` | gave the RCON+ menu to a linked name | takes a `tier`; the name is MOVED onto that tier file and off the other four, through the roster lock and backup. Owners give any tier, admins `srstaff` and below and cannot move an `owner` or `manager` entry; mods none | success is reported only when the file was written |
+| `/stripmenu` | `RemoveMenu` over RCON | takes the bound name off all five tier files and drops the grant; an admin cannot strip an `owner` or `manager` entry | |
+| The menu panel and `/setrconroles` | a self-serve panel mapping Discord roles to RCON+ tiers | removed (owner, 2026-11-18), so the bot has 60 commands; `MENU_PANEL_CHANNEL` and `MENU_ROLE_*` still parse and log one startup warning that they do nothing | the `menu_roles` dataset name is kept |
+| Master names | `GiveMenu` on join, `RemoveMenu` / `RemoveAccessManager` on removal | put on `owner.txt` at start and on join beside `mods.txt`, the whitelists and the rosters; a removed master is taken off every tier file too | |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Stored key case: the C# reads stored property names case-INSENSITIVELY; the Rust models read
@@ -247,7 +254,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `/serverinfo` | Live server info - map, mode and who is online. | ServerInfoCommand.cs | ported |
 | `/serverswitch` | Which server | ServerSwitchCommand.cs | ported |
 | `/setpin` | Which server to lock | AdminCommands.cs | ported |
-| `/setrconroles` | Owner - Map Discord roles to RCON menu tiers | ConfigCommands.cs | ported |
+| `/setrconroles` | Owner - Map Discord roles to RCON menu tiers | ConfigCommands.cs | pending |
 | `/setroles` | Owner - Map Discord roles to the bot's permission tiers | ConfigCommands.cs | ported |
 | `/staff` | Admin - Staff activity over a period, busiest first | AnalyticsCommands.cs | ported |
 | `/staffactivity` | Admin - Audit one staff member's actions | StaffCommands.cs | ported |
@@ -300,7 +307,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `banlist-sync` | ported |
 | `modsave-sync` | ported |
 | `verify-panel` | ported |
-| `menu-panel` | ported |
+| `menu-panel` | pending |
 | `json-export` | ported |
 | `service-supervisor` | ported |
 
@@ -738,7 +745,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `DebugPassRegressionTests.cs` | 8 | ported |
 | `DefaultSubclassTests.cs` | 10 | ported |
 | `DetectorFailureTests.cs` | 11 | ported |
-| `DomainTests.cs` | 62 | ported |
+| `DomainTests.cs` | 62 | ported (7 dropped) |
 | `EvasionResponderTests.cs` | 16 | ported |
 | `EvasionScorerTests.cs` | 15 | ported |
 | `EventRecorderTests.cs` | 6 | ported |
@@ -748,7 +755,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `FactionRoleTests.cs` | 20 | ported |
 | `FactionSetTests.cs` | 12 | ported |
 | `FactionSourceTests.cs` | 10 | ported |
-| `FactionTests.cs` | 33 | ported |
+| `FactionTests.cs` | 33 | ported (1 dropped) |
 | `FeedBridgeTests.cs` | 11 | ported |
 | `FeedWebhookTests.cs` | 11 | ported |
 | `FirewallTests.cs` | 6 | ported |
@@ -775,7 +782,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `LogTailerLockingTests.cs` | 1 | ported |
 | `LogTailerTests.cs` | 16 | ported |
 | `LoreTests.cs` | 8 | ported |
-| `MasterAccessTests.cs` | 19 | ported |
+| `MasterAccessTests.cs` | 19 | ported (4 dropped) |
 | `MasterNamesConfigTests.cs` | 3 | ported |
 | `MasterPardonTests.cs` | 3 | ported |
 | `MasterServerListTests.cs` | 10 | ported |
@@ -806,7 +813,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RconFailureTests.cs` | 4 | ported |
 | `RconHealthTests.cs` | 6 | ported |
 | `RconLogConfirmationTests.cs` | 8 | ported |
-| `RconMenuTests.cs` | 7 | ported |
+| `RconMenuTests.cs` | 7 | ported (7 dropped) |
 | `RconResilienceTests.cs` | 6 | ported |
 | `RecentErrorsTests.cs` | 6 | ported |
 | `RejectedCommandTests.cs` | 4 | ported |

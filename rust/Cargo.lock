@@ -1054,6 +1054,7 @@ dependencies = [
  "chrono-tz",
  "fancy-regex",
  "indexmap",
+ "pavlov-core",
  "regex",
  "serde",
  "serde_json",

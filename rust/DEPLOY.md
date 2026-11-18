@@ -8,7 +8,34 @@ same `pavlov-bot` systemd unit. Getting there takes three steps, in this order:
    below.
 2. **Cutover.** Repoint `pavlov-bot`'s `ExecStart` at the Rust binary.
 3. **Rollback, if needed.** Repoint it back. The C# bot keeps working until M11 deletes it,
-   and M11 only happens after the owner confirms the Rust bot works live.
+   and M11 only happens after the owner confirms the Rust bot works live. **Once the game
+   server runs the ServerRoles and JSON-save mod, rollback is no longer data-safe**: see
+   [Rollback](#rollback).
+
+## The ServerRoles and JSON-save server (owner change, 2026-11-18)
+
+The Rust bot, and only the Rust bot, matches the server as it now is:
+
+- No RCON+. Menu access is the tier files in `<install>/Pavlov/Saved/ModSave/ServerRoles/`:
+  `owner.txt`, `manager.txt`, `srstaff.txt`, `staff.txt` and `jrstaff.txt`, one in-game name
+  per line.
+- The GWPD ranks are in the same folder: `sheriff.txt`, `undersheriff.txt`, `captain.txt`,
+  `lieutenant.txt`, `sergeant.txt`, `corporal.txt` and `deputyfirstclass.txt`. There are no
+  sub-classes and no spawn file.
+- Player saves are `<install>/Pavlov/Saved/ModSave/<playername>.json`. The bot changes only
+  `money`, `drivers_license`, `firearm_license` and `updated`.
+- The mod syncs in-game state to the save live, so the bot edits a save while the player is
+  online.
+
+Set both paths in `.env`. They are not derived from the install:
+
+```bash
+FACTION_ROLES_PATH=<install>/Pavlov/Saved/ModSave/ServerRoles
+MODSAVE_PATH=<install>/Pavlov/Saved/ModSave
+```
+
+`MENU_PANEL_CHANNEL` and `MENU_ROLE_*` do nothing now. Remove them, or leave them and accept
+one startup warning.
 
 ## What was and was not verified before this point
 
@@ -158,12 +185,20 @@ Check each item, and note any difference from the C# bot.
 **Factions**
 
 - [ ] `/whitelist add` and `remove` write the test server's roster file.
-- [ ] `/promotion`, `/demotion` and `/subclass` work.
+- [ ] `/promotion` and `/demotion` move the name between the ServerRoles rank files, and the
+  game shows the new rank.
+- [ ] `/subclass` and `/subclasses` are not registered (the ladder has no sub-classes).
 - [ ] The rank field autocompletes ranks. Player fields autocomplete names.
 
 **Economy**
 
-- [ ] `/givemoney` and `/adjustmoney` write the ledger file.
+- [ ] `/givemoney` and `/adjustmoney` write `<playername>.json`. Only `money` and `updated`
+  change. Every other field, `look` and `skin` included, is the same as before.
+- [ ] **With the player in game**, `/adjustmoney` lands, and the new balance shows in game
+  without a rejoin. This is the one thing the tests cannot prove: it depends on the mod
+  picking up the live edit. If it does not show, stop and report it. Do not cut over.
+- [ ] `/license give` and `/license remove` change `drivers_license` / `firearm_license`, and
+  the game honours it.
 - [ ] `/wages` shows payroll.
 
 **Police**
@@ -199,6 +234,14 @@ Check each item, and note any difference from the C# bot.
 - [ ] The panel posts.
 - [ ] Verify opens the form, and the request reaches the staff channel.
 - [ ] Accept grants the role.
+
+**Menus**
+
+- [ ] `/givemenu` with a tier puts the name on that tier file and takes it off the other four.
+  The player has that menu in game.
+- [ ] As an admin, `/givemenu` refuses `owner` and `manager`.
+- [ ] `/stripmenu` takes the name off every tier file, and the menu is gone in game.
+- [ ] A master name is on `owner.txt` after startup.
 
 **Access**
 
@@ -255,10 +298,15 @@ systemctl daemon-reload && systemctl restart pavlov-bot
 journalctl -u pavlov-bot -n 30      # the C# bot's own build line
 ```
 
-Both bots read and write the same files in the same shape, which `NodeCompatibilityTests`
-pins. Nothing needs converting in either direction. There is one difference, and it is
-harmless: the Rust bot writes non-ASCII text as UTF-8 where the C# escaped it. Both readers
-accept either.
+**After the server switch to ServerRoles and JSON saves, the C# bot is not a working
+rollback.** It reads `<name>.txt` saves that no longer exist, so money and licence commands
+fail. It sends RCON+ menu commands to a server without RCON+, and its police ladder names
+rank files that are gone. Roll back only to a server still on the old mod, or accept those
+features being down until you roll forward again.
+
+`bot.db` is still shared safely. Both bots read and write it in the same shape, which
+`NodeCompatibilityTests` pins. There is one difference, and it is harmless: the Rust bot
+writes non-ASCII text as UTF-8 where the C# escaped it. Both readers accept either.
 
 ## What is different on purpose
 

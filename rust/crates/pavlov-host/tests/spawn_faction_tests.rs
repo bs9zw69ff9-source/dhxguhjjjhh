@@ -74,7 +74,7 @@ fn nypd_still_has_its_ladder() {
     // NYPD is the GWPD now: looked up by its former name.
     let nypd = FactionRegistry::get(Some("NYPD")).unwrap();
     assert!(nypd.has_ranks());
-    assert_eq!(nypd.order.len(), 8);
+    assert_eq!(nypd.order.len(), 7, "the seven ServerRoles ranks");
 }
 
 #[test]

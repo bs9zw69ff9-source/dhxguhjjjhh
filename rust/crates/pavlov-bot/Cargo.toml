@@ -27,6 +27,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+pavlov-core = { path = "../pavlov-core", features = ["testing"] }
 tempfile.workspace = true
 
 [lints]

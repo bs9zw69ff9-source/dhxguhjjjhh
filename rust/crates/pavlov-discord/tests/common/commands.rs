@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pavlov_core::data::{MemoryBackend, SerializedStore};
-use pavlov_core::factions::FactionRegistry;
 use pavlov_core::time::SystemClock;
 use pavlov_discord::access::Access;
 use pavlov_discord::boards::Boards;
@@ -28,7 +27,7 @@ pub fn rosters(directory: Option<&Path>) -> Arc<RosterService> {
             directory.map(Path::to_path_buf),
             std::env::temp_dir().join("pavlov-roster-bak"),
         )
-        .with_factions(FactionRegistry::police().clone()),
+        .with_factions(pavlov_core::factions::testing::ladder().clone()),
     )
 }
 

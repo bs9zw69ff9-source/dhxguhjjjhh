@@ -1,6 +1,6 @@
 //! Port of `MasterAccessTests.cs`: master names in `mods.txt`, the whitelists and the rosters,
-//! the menu over RCON on join (asserted on the wire), and everything taken back from a name
-//! removed from `MASTER_NAMES`.
+//! the owner menu tier (`owner.txt`, which replaced the RCON+ menu grant), and everything taken
+//! back from a name removed from `MASTER_NAMES`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -13,17 +13,14 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use common::file_store;
 use pavlov_core::data::SerializedStore;
-use pavlov_core::factions::FactionRegistry;
+use pavlov_core::moderation::MenuTier;
 use pavlov_core::servers::installs::{log_path, whitelist_path};
 use pavlov_core::time::SystemClock;
 use pavlov_host::factions::RosterService;
 use pavlov_host::logs::PlayerJoined;
-use pavlov_host::metrics::MetricsRegistry;
-use pavlov_host::moderation::master_access::{grant_commands, mods_path};
+use pavlov_host::moderation::master_access::mods_path;
 use pavlov_host::moderation::{MasterAccess, MasterAccessParts, StoredMasterNames};
-use pavlov_host::registry::RconRegistry;
 use pavlov_host::server_labels::ServerLabels;
-use pavlov_rcon::testing::FakeRconServer;
 use pavlov_storage::datasets::MASTER_GRANTS;
 use pavlov_storage::game_files::GameFileGuard;
 use pavlov_storage::whitelist::WhitelistFile;
@@ -32,8 +29,6 @@ const MASTER: &str = "fki6";
 
 struct Fixture {
     root: tempfile::TempDir,
-    server: FakeRconServer,
-    rcon: Arc<RconRegistry>,
     labels: Arc<ServerLabels>,
     install: String,
     log: String,
@@ -52,27 +47,16 @@ impl Fixture {
         let labels = Arc::new(ServerLabels::default());
         labels.assign(vec![log.clone()]);
 
-        let server = FakeRconServer::start().await.unwrap();
-        let mut options = server.options();
-        options.read_cache_duration = Duration::ZERO;
-        options.max_attempts = 1;
-        let rcon = Arc::new(RconRegistry::with_system_clock(
-            &[options],
-            Duration::from_secs(60),
-            Arc::new(MetricsRegistry::default()),
-        ));
-
         let roster_dir = PathBuf::from(&install).join("Pavlov/Saved/Config/ModSave/FactionRoles");
         std::fs::create_dir_all(&roster_dir).unwrap();
         let rosters = Arc::new(
             RosterService::new(Some(roster_dir.clone()), root.path().join("roster_bak"))
-                .with_factions(FactionRegistry::police().clone()),
+                .with_factions(pavlov_core::factions::testing::ladder().clone()),
         );
 
         let access = MasterAccess::new(parts(
             &Pieces {
                 root: root.path(),
-                rcon: &rcon,
                 labels: &labels,
                 install: &install,
                 rosters: &rosters,
@@ -83,8 +67,6 @@ impl Fixture {
         ));
         Self {
             root,
-            server,
-            rcon,
             labels,
             install,
             log,
@@ -97,7 +79,6 @@ impl Fixture {
     fn pieces(&self) -> Pieces<'_> {
         Pieces {
             root: self.root.path(),
-            rcon: &self.rcon,
             labels: &self.labels,
             install: &self.install,
             rosters: &self.rosters,
@@ -127,7 +108,6 @@ impl Fixture {
                 )
                 .unwrap(),
             ),
-            rcon: Arc::clone(&self.rcon),
             servers: Arc::clone(&self.labels),
             installs: vec![self.install.clone()],
             files: self.files(),
@@ -161,15 +141,26 @@ impl Fixture {
         }
     }
 
-    /// Wait for the background grant to reach the fake server, then give anything more a
-    /// moment to prove it does not arrive.
-    async fn commands_after_grant(&self, expected: usize) -> Vec<String> {
+    /// Wait for the background grant to put `name` on the owner tier, or time out.
+    async fn wait_for_owner(&self, name: &str) -> bool {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while self.server.commands().len() < expected && Instant::now() < deadline {
+        while Instant::now() < deadline {
+            if self.on_owner(name) {
+                return true;
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        self.server.commands()
+        false
+    }
+
+    /// Give a background grant that should not happen a moment to prove it does not.
+    async fn settle(&self) {
+        self.access.stop(Duration::from_secs(5)).await;
+    }
+
+    fn on_owner(&self, name: &str) -> bool {
+        let path = self.roster_path(&MenuTier::Owner.file());
+        path.exists() && has(path, name)
     }
 
     fn roster_path(&self, file: &str) -> PathBuf {
@@ -191,7 +182,6 @@ impl Fixture {
 /// What every service in these tests is built from.
 struct Pieces<'a> {
     root: &'a std::path::Path,
-    rcon: &'a Arc<RconRegistry>,
     labels: &'a Arc<ServerLabels>,
     install: &'a str,
     rosters: &'a Arc<RosterService>,
@@ -213,7 +203,6 @@ fn parts(
             )
             .unwrap(),
         ),
-        rcon: Arc::clone(p.rcon),
         servers: Arc::clone(p.labels),
         installs: vec![p.install.to_owned()],
         files: Arc::new(WhitelistFile::new(
@@ -239,49 +228,61 @@ fn has(path: impl AsRef<std::path::Path>, name: &str) -> bool {
     lines(path).iter().any(|l| l == name)
 }
 
-#[test]
-fn the_grant_is_the_full_menu_with_no_bitcode() {
-    assert_eq!(grant_commands(MASTER), [format!("GiveMenu {MASTER}")]);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_master_joining_gets_the_full_menu_on_the_wire() {
-    let f = Fixture::new().await;
-    f.access.on_joined(&f.join(MASTER, None));
-
-    assert_eq!(
-        f.commands_after_grant(1).await,
-        [format!("GiveMenu {MASTER}")]
-    );
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn master_names_match_ignoring_case() {
     let f = Fixture::new().await;
     f.access.on_joined(&f.join("FKI6", None));
 
-    assert_eq!(f.commands_after_grant(1).await.len(), 1);
+    assert!(f.wait_for_owner("FKI6").await || f.wait_for_owner(MASTER).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_master_joining_is_put_on_the_owner_menu_tier() {
+    let f = Fixture::new().await;
+    f.access.on_joined(&f.join(MASTER, None));
+
+    assert!(f.wait_for_owner(MASTER).await);
+    assert!(has(f.mods(), MASTER));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn masters_are_put_on_the_owner_tier_and_its_other_names_kept() {
+    let f = Fixture::new().await;
+    let owner = f.roster_path(&MenuTier::Owner.file());
+    std::fs::write(&owner, "TheOwner\n").unwrap();
+
+    f.access.ensure_files().await;
+
+    assert_eq!(lines(&owner), ["TheOwner", MASTER]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_removed_master_is_taken_off_every_menu_tier() {
+    let f = Fixture::new().await;
+    let store = f.grant_store();
+    for tier in MenuTier::ALL {
+        std::fs::write(f.roster_path(&tier.file()), "OldAlt\nStaffer\n").unwrap();
+    }
+
+    f.run(&store, &[MASTER, "OldAlt"]).await;
+    f.run(&store, &[MASTER]).await;
+
+    for tier in MenuTier::ALL {
+        let path = f.roster_path(&tier.file());
+        assert!(!has(&path, "OldAlt"), "{}", tier.file());
+        assert!(has(&path, "Staffer"), "{}", tier.file());
+    }
+    assert!(f.on_owner(MASTER));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn anybody_else_joining_gets_nothing() {
     let f = Fixture::new().await;
     f.access.on_joined(&f.join("RandomPlayer", None));
+    f.settle().await;
 
-    assert!(f.commands_after_grant(0).await.is_empty());
     assert!(!PathBuf::from(f.mods()).exists());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_reconnect_flurry_grants_once() {
-    let f = Fixture::new().await;
-    for _ in 0..3 {
-        f.access.on_joined(&f.join(MASTER, None));
-    }
-
-    f.commands_after_grant(1).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(f.server.commands().len(), 1);
+    assert!(!f.on_owner("RandomPlayer"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -289,8 +290,10 @@ async fn a_join_on_a_log_that_is_not_a_server_sends_nothing() {
     let f = Fixture::new().await;
     f.access
         .on_joined(&f.join(MASTER, Some("/somewhere/else/Pavlov.log")));
+    f.settle().await;
 
-    assert!(f.commands_after_grant(0).await.is_empty());
+    assert!(!PathBuf::from(f.mods()).exists());
+    assert!(!f.on_owner(MASTER));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -420,24 +423,6 @@ async fn a_removed_master_loses_everything_it_was_given() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_removed_masters_live_menu_is_taken_on_the_wire() {
-    let f = Fixture::new().await;
-    let store = f.grant_store();
-    store
-        .write(MASTER_GRANTS, &vec!["OldAlt".to_owned()])
-        .await
-        .unwrap();
-
-    let after = f.build(Arc::clone(&store), &[], true);
-    after.start(None).await;
-    let commands = f.commands_after_grant(3).await; // in the background: startup is not held up
-
-    assert!(commands.iter().any(|c| c == "RemoveMenu OldAlt"));
-    assert!(commands.iter().any(|c| c == "RemoveAccessManager OldAlt"));
-    after.stop(Duration::from_secs(5)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn an_unrecorded_master_left_on_every_roster_is_purged() {
     // Being on every roster is the record: nobody but a master is ever put there.
     let f = Fixture::new().await;
@@ -506,5 +491,5 @@ async fn a_still_listed_master_is_left_alone() {
     f.run(&store, &[MASTER]).await;
 
     assert!(has(f.mods(), MASTER));
-    assert!(!f.server.commands().iter().any(|c| c.starts_with("Remove")));
+    assert!(f.on_owner(MASTER));
 }
