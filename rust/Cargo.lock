@@ -758,6 +758,7 @@ dependencies = [
  "pavlov-host",
  "pavlov-rcon",
  "pavlov-storage",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
