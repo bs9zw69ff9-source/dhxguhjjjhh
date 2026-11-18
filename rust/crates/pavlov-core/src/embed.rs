@@ -37,6 +37,8 @@ pub struct Embed {
     pub description: Option<String>,
     pub color: Option<u32>,
     pub author: Option<String>,
+    /// The author line's icon URL (a caller's avatar).
+    pub author_icon: Option<String>,
     pub fields: Vec<EmbedField>,
     pub footer: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
@@ -69,6 +71,12 @@ impl Embed {
     #[must_use]
     pub fn author(mut self, author: impl Into<String>) -> Self {
         self.author = Some(author.into());
+        self
+    }
+
+    #[must_use]
+    pub fn author_icon(mut self, url: impl Into<String>) -> Self {
+        self.author_icon = Some(url.into());
         self
     }
 
@@ -135,7 +143,11 @@ impl Embed {
             out.insert("color".into(), json!(color));
         }
         if let Some(author) = &self.author {
-            out.insert("author".into(), json!({ "name": author }));
+            let mut entry = json!({ "name": author });
+            if let Some(icon) = &self.author_icon {
+                entry["icon_url"] = json!(icon);
+            }
+            out.insert("author".into(), entry);
         }
         if !self.fields.is_empty() {
             out.insert(
