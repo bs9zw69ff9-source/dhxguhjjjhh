@@ -65,9 +65,9 @@ public sealed record BotOptions
     /// Commands this bot does not run, by name. Empty means every command.
     /// </summary>
     /// <remarks>
-    /// THE POINT IS ONE BINARY SERVING TWO RPs. A Fallout server has no use for /arrest,
-    /// /warrant or /bail, and leaving them in the picker for a moderator who can never use
-    /// them is clutter that reads as a half-finished bot.
+    /// A server that does not run the police RP has no use for /arrest, /warrant or /bail, and
+    /// leaving them in the picker for a moderator who can never use them is clutter that reads
+    /// as a half-finished bot.
     ///
     /// A LIST OF NAMES, NOT A PROFILE FLAG. This repo tried the flag once - RP_PROFILE, which
     /// branched the whole command surface on an enum - and reverted it in full. A name list is

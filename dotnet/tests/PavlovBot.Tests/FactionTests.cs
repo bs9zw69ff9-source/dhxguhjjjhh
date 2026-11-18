@@ -142,6 +142,28 @@ public class FactionRegistryTests
         Assert.Null(FactionRegistry.Get(null));
     }
 
+    /// <summary>
+    /// The police set is the only built-in one, and the old Fallout name is refused as removed.
+    /// </summary>
+    /// <remarks>
+    /// <c>default</c> and <c>builtin</c> used to mean the Fallout ladders; they now name the
+    /// only set there is. <c>fallout</c> resolves to nothing, so it can never quietly run the
+    /// police roster, and it is told apart from a typo so startup can say it was removed.
+    /// </remarks>
+    [Fact]
+    public void ThePoliceSetIsTheOnlyPresetAndFalloutIsRefusedAsRemoved()
+    {
+        Assert.Same(FactionRegistry.Police, FactionRegistry.Default);
+        foreach (var name in new[] { "police", "GWPD", "nypd", "default", "builtin", "built-in", " Police " })
+            Assert.Same(FactionRegistry.Police, FactionRegistry.Preset(name));
+        Assert.Equal(["police"], FactionRegistry.PresetNames);
+
+        Assert.Null(FactionRegistry.Preset("fallout"));
+        Assert.True(FactionRegistry.IsRemovedPreset(" Fallout "));
+        Assert.False(FactionRegistry.IsRemovedPreset("falout"));
+        Assert.False(FactionRegistry.IsRemovedPreset(null));
+    }
+
     [Fact]
     public void OnlyNypdHasSubclasses()
     {

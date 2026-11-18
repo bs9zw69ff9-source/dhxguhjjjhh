@@ -81,7 +81,7 @@ public sealed class PlayersCommand(RconRegistry rcon, Paged paged) : ISlashComma
         }
 
         var title = reported > 0
-            ? $"{Lore.Wastelanders(total)} {Lore.Say.Whereabouts}{(anyStale ? " (some data is stale)" : "")}"
+            ? $"{Lore.HeadCount(total)} {Lore.Say.Whereabouts}{(anyStale ? " (some data is stale)" : "")}"
             : Lore.Say.WhereaboutsTitle;
 
         /* PAGED, because a full server's roster can exceed an embed's limits and the board

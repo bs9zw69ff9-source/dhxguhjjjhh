@@ -131,6 +131,29 @@ mod faction_registry_tests {
     }
 
     #[test]
+    fn the_police_set_is_the_only_preset_and_fallout_is_refused_as_removed() {
+        assert!(std::ptr::eq(
+            FactionRegistry::police(),
+            FactionRegistry::default_set()
+        ));
+        for name in [
+            "police", "GWPD", "nypd", "default", "builtin", "built-in", " Police ",
+        ] {
+            let preset = FactionRegistry::preset(Some(name));
+            assert!(
+                preset.is_some_and(|p| std::ptr::eq(p, FactionRegistry::police())),
+                "{name}"
+            );
+        }
+        assert_eq!(FactionRegistry::PRESET_NAMES, ["police"]);
+
+        assert!(FactionRegistry::preset(Some("fallout")).is_none());
+        assert!(FactionRegistry::is_removed_preset(Some(" Fallout ")));
+        assert!(!FactionRegistry::is_removed_preset(Some("falout")));
+        assert!(!FactionRegistry::is_removed_preset(None));
+    }
+
+    #[test]
     fn only_nypd_has_subclasses() {
         assert!(nypd().has_subclass("Tactical Response Unit"));
         assert!(other().subclasses.is_empty());

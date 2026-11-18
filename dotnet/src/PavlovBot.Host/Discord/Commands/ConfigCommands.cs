@@ -53,7 +53,7 @@ public sealed class SetRolesCommand : ISlashCommand
 
         /* THE POLICE SLOT IS SHOWN ONLY WHEN IT DOES SOMETHING. RequiredAccess.Police is
            checked nowhere but PoliceCommands, so with those disabled the role grants nothing
-           and offering it on a Fallout bot is an option that lies. */
+           and offering it on a bot with them disabled is an option that lies. */
         var disabled = options.DisabledCommands.ToHashSet(StringComparer.OrdinalIgnoreCase);
         _police = PoliceCommandNames.All.Any(name => !disabled.Contains(name));
 

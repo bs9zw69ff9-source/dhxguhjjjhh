@@ -112,7 +112,7 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
 
                 logger.LogInformation("warrant issued | player=\"{Player}\" | by={By} | {Reason}", player, command.User.Username, reason);
 
-                await Reply(command, Theme.Warning($"{Lore.Bounty} {Lore.Say.WarrantIssued}",
+                await Reply(command, Theme.Warning($"{Lore.WarrantGlyph} {Lore.Say.WarrantIssued}",
                     $"**{Sanitize.Code(player)}** — {Sanitize.Code(reason)}")
                     .AddField("Issued by", command.User.Username, true)).ConfigureAwait(false);
                 break;
@@ -139,7 +139,7 @@ public sealed class WarrantCommand(SerializedStore store, Access access, Paged p
                     var list = all.GetValueOrDefault(player) ?? [];
                     await Reply(command, list.Count == 0
                         ? Theme.Success($"No {Lore.Warrants}", $"**{Sanitize.Code(player)}** is clean.")
-                        : Theme.Warning($"{Lore.Bounty} {list.Count} {Lore.Warrant}(s) on {Sanitize.Code(player)}",
+                        : Theme.Warning($"{Lore.WarrantGlyph} {list.Count} {Lore.Warrant}(s) on {Sanitize.Code(player)}",
                             string.Join("\n", list.Select((w, i) =>
                                 $"**{i + 1}.** {Sanitize.Code(w.Reason)} — {w.IssuedBy}, {Theme.Relative(w.At)}")))).ConfigureAwait(false);
                     return;
@@ -309,7 +309,7 @@ public sealed class ArrestCommand : ISlashCommand
 
         var lines = booking.Charges.Select(c => $"`{c.Code}` {c.Name} — {ChargeLine(c, rate)}");
 
-        var embed = Theme.Punishment($"{Lore.Irons} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
+        var embed = Theme.Punishment($"{Lore.JailGlyph} Booked — {Sanitize.Code(player)}", string.Join("\n", lines))
             .AddField("Sentence", booking.SentenceLabel(), true)
             .AddField("Bail", booking.BailLabel(Lore.Money), true)
             .AddField("Arresting officer", officer, true);

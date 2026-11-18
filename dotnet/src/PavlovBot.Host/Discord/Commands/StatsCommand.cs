@@ -98,7 +98,7 @@ public sealed class StatsCommand(
            not as "the bot has never seen this person", and the two need different answers. */
         if (!profile.Known)
         {
-            return Theme.Notice($"{Lore.Rads} {who}",
+            return Theme.Notice($"{Lore.Mark} {who}",
                 "Never seen on any server. Check the spelling - names are exactly as they are in game.");
         }
 
@@ -108,7 +108,7 @@ public sealed class StatsCommand(
               (profile.Faction.Rank is { Length: > 0 } rank ? $" — {Sanitize.Markdown(rank)}" : "")
             : "*unaffiliated*";
 
-        var embed = Theme.Notice($"{Lore.Rads} {who}", faction)
+        var embed = Theme.Notice($"{Lore.Mark} {who}", faction)
             .WithColor(profile.Activity.Online ? Theme.Green : Theme.Blue);
 
         embed.AddField("Playtime", Hours(profile.Activity.PlaytimeMinutes), inline: true);

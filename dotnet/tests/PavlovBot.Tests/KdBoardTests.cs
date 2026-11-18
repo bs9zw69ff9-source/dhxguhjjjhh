@@ -10,7 +10,7 @@ namespace PavlovBot.Tests;
 public class KdBoardTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
-    private static readonly FactionDefinition Enclave = FactionRegistry.Default.Get("Enclave")!;
+    private static readonly FactionDefinition Gwpd = FactionRegistry.Default.Get("GWPD")!;
 
     private const int Min = Boards.KdMinimumKills;
 
@@ -49,13 +49,13 @@ public class KdBoardTests
     [Fact]
     public void EachRowCarriesFactionRankAndPlaytime()
     {
-        var rank = Enclave.Order[^1];
+        var rank = Gwpd.Order[^1];
         var board = Board(
             [K("Soldier", Min + 50, 10), K("Drifter", Min + 30, 15)],
             new(StringComparer.OrdinalIgnoreCase) { ["soldier"] = new PlaytimeEntry("Soldier", 860, Now) },
-            new(StringComparer.OrdinalIgnoreCase) { ["Soldier"] = new Membership(Enclave, "Soldier", rank) });
+            new(StringComparer.OrdinalIgnoreCase) { ["Soldier"] = new Membership(Gwpd, "Soldier", rank) });
 
-        Assert.Contains($"Enclave {rank} · 14h 20m", board, StringComparison.Ordinal);
+        Assert.Contains($"GWPD {rank} · 14h 20m", board, StringComparison.Ordinal);
         Assert.Contains("No faction · no playtime", board, StringComparison.Ordinal);
     }
 

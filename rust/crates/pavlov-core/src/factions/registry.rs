@@ -72,22 +72,33 @@ impl FactionRegistry {
         &POLICE
     }
 
-    /// What a bot runs when nothing is configured. The C# default was the fallout set; with
-    /// fallout removed, it is the police set.
+    /// What a bot runs when nothing is configured: the police set, the only built-in one.
     #[must_use]
     pub fn default_set() -> &'static FactionSet {
         &POLICE
     }
 
     /// A built-in set by name, or `None` when the name is not one, so a typo is refused at
-    /// startup rather than quietly running the wrong factions. "fallout" is `None` here:
-    /// configuration reports it as the removed theme.
+    /// startup rather than quietly running the wrong factions. "fallout" is `None` too; see
+    /// [`FactionRegistry::is_removed_preset`].
     #[must_use]
     pub fn preset(name: Option<&str>) -> Option<&'static FactionSet> {
         match name?.trim().to_lowercase().as_str() {
             "police" | "gwpd" | "nypd" | "default" | "builtin" | "built-in" => Some(&POLICE),
             _ => None,
         }
+    }
+
+    /// The preset name that used to select the fallout ladders, refused by name.
+    pub const REMOVED_FALLOUT_NAME: &'static str = "fallout";
+
+    /// True when `name` asks for the fallout ladders, which were removed (2026-11-17).
+    ///
+    /// Its own check so the startup error can say "removed" instead of "unknown": a `.env`
+    /// that said fallout last week is not a typo.
+    #[must_use]
+    pub fn is_removed_preset(name: Option<&str>) -> bool {
+        name.is_some_and(|n| n.trim().eq_ignore_ascii_case(Self::REMOVED_FALLOUT_NAME))
     }
 
     /// One built-in faction by current or former name.

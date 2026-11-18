@@ -15,10 +15,10 @@ and ranks, a dollar economy, a wealth leaderboard, donator management,
 self-service RCON menus, and a layered owner/admin/mod/whitelist permission
 model — all behind slash commands.
 
-It runs two looks from one binary: `THEME=fallout` (the default: caps, bounties,
-the Mojave) or `THEME=police` (dollars, warrants, the GWPD). The theme brings its
-own factions unless `FACTION_SET` says otherwise. `BOT_NAME` overrides the name
-stamped on every embed.
+It is the GWPD's bot: dollars, warrants and the GWPD ladder. The fallout theme
+and its factions were removed on 2026-11-17, and `THEME=fallout` or
+`FACTION_SET=fallout` now stops the bot at startup with a message saying so.
+`BOT_NAME` overrides the name stamped on every embed.
 
 ## Requirements
 
@@ -91,7 +91,7 @@ for the full annotated list.
 - **Required:** `DISCORD_TOKEN`, `CLIENT_ID`, and the `RCON_*_1` trio.
 - **Optional:** servers 2–9, ModSave/economy paths, log/leaderboard channel IDs,
   role IDs, and:
-  - `THEME` - `fallout` (default) or `police`: the wording and embed colours
+  - `THEME` - `police` (the only theme, and the default): the wording and embed colours
   - `BOT_NAME` — display name stamped on every embed
   - `IPHUB_API_KEY` / `IPQS_API_KEY` / `PROXYCHECK_API_KEY` / `SENTINEL_API_KEY` — VPN/proxy detection
   - `GEOAPIFY_API_KEY` — geolocation and the location map on connect cards
@@ -134,10 +134,10 @@ locked.
 | Tier | Commands |
 |------|----------|
 | 🌐 Public | `/help` `/serverinfo` `/checkban` |
-| 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givecaps` |
+| 🛡️ Moderator | `/kick` `/flush` `/tempban` `/unban` `/announce` `/givemoney` |
 | ⚔️ Whitelist Leader | `/whitelist add\|remove` `/promotion` `/demotion` `/subclass` |
-| 🚔 Police Officer | `/warrant give\|remove\|check` `/arrest` `/backgroundcheck` `/license remove` (police theme) |
-| 🔒 Admin | `/permban` `/cleartempbans` `/givemenu` `/stripmenu` `/manual` `/adjustcaps` `/donator` `/staffactivity` `/staffleaderboard` |
+| 🚔 Police Officer | `/warrant give\|remove\|check` `/arrest` `/backgroundcheck` `/license remove` |
+| 🔒 Admin | `/permban` `/cleartempbans` `/givemenu` `/stripmenu` `/manual` `/adjustmoney` `/donator` `/staffactivity` `/staffleaderboard` |
 | 👑 Owner | `/setroles` `/setrconroles` `/configure` (control panel — incl. wipe money / wipe all player data) `/inspect` `/health` `/firewall block\|unblock\|status` `/stripmenuall` `/clearallbans` `/whitelist wipe` |
 
 Read-only `/whitelist list\|playtime` are public. `/setroles` and `/setrconroles` are
@@ -151,12 +151,12 @@ tier is unrestricted.
 (`whitelist_leader_role`) manages every whitelist, while a per-faction role
 such as **GWPD** (`gwpd_role`) manages only its own whitelist. Those per-faction
 options are **built from the factions this bot actually runs**, so a deployment
-using the Fallout set or `FACTIONS_PATH` gets one option per faction of its own
-(`ncr_role`, `legion_role`, …) instead. One role may manage several factions by naming it in more than one option.
+using `FACTIONS_PATH` gets one option per faction of its own instead. One role may manage several factions by naming it in more than one option.
 Mods, admins, and owners can manage any of them. A manager can
 `/promotion` / `/demotion` a member one rank up or down the faction's ladder, and
 `/subclass` assigns or removes a **sub-class** — an extra designation a member
-holds alongside their rank (NYPD ships with **Detective** and **Vice Officer**).
+holds alongside their rank (the GWPD ships with **Detective**, **Vice Officer**,
+**Tactical Response Unit** and **Narcotics Bureau**).
 New members join at the lowest rank; sub-classes survive promotions and are only
 cleared when the member leaves the whitelist.
 
@@ -174,8 +174,7 @@ given. Admins and owners can manage warrants too.
 `/license remove <player> <drivers|firearm|both>` revokes a license in the
 player's `modsave/<player>.txt` (`DriversLiscense` / `FirearmLiscense`, spelled as
 the mod spells them). Like a payout it is applied only while the player is
-offline, because the game rewrites that file from memory on its next save. Only
-the police theme offers it; the Fallout save files hold a bare balance.
+offline, because the game rewrites that file from memory on its next save.
 
 `/arrest <player>` opens an interactive booking: pick a penal-code section, then
 the charge(s) from it, with a running total for jail time and bail - add as many

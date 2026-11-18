@@ -2,7 +2,7 @@ PAVLOV VR DISCORD BOT: SUMMARY (as of 2026-11-16)
 
 WHAT IT IS
 - Pavlov VR Discord bot written in C# on .NET 9. Source is in dotnet/. It is the only bot in the repo (the Node bot was removed).
-- The bot: systemd service pavlov-bot, /root/pavlov-bot, THEME=police (dollars, warrants, the GWPD). The fallout bot was dropped (2026-11-17).
+- The bot: systemd service pavlov-bot, /root/pavlov-bot. One theme, police (dollars, warrants, the GWPD). The fallout bot and its theme were dropped (2026-11-17); THEME=fallout or FACTION_SET=fallout now stops startup with a message.
 - Layout: PavlovBot.Core (pure domain logic, portable), PavlovBot.Rcon (RCON client), PavlovBot.Host (Discord, storage, log tailing, Linux-only systemd/ufw control).
 - Build state: 2175 tests pass, TreatWarningsAsErrors on. Tests include a fake RCON server that records the exact bytes on the wire.
 - Data files: still the JSON files the Node bot wrote.

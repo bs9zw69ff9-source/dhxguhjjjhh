@@ -4,7 +4,6 @@ using PavlovBot.Core.Data;
 using PavlovBot.Core.Factions;
 using PavlovBot.Core.Penal;
 using PavlovBot.Core.Text;
-using PavlovBot.Host;
 using PavlovBot.Host.Configuration;
 using PavlovBot.Host.Discord;
 using PavlovBot.Host.Monitoring;
@@ -25,7 +24,7 @@ public sealed class SkinCollection
     public const string Name = "Process-wide skin";
 }
 
-/// <summary>THEME: the police bot says police things, and the Fallout bot says what it always did.</summary>
+/// <summary>THEME: the police bot says police things, and the removed Fallout skin is refused.</summary>
 [Collection(SkinCollection.Name)]
 public sealed class SkinTests : IDisposable
 {
@@ -54,25 +53,10 @@ public sealed class SkinTests : IDisposable
         }, new MetricsRegistry(), NullLogger<RconRegistry>.Instance));
 
     [Fact]
-    public void FalloutIsTheDefault() => Assert.Same(Skins.Fallout, Theme.Skin);
-
-    [Fact]
-    public void TheFalloutSkinSaysWhatItAlwaysSaid()
+    public void PoliceIsTheDefault()
     {
-        // Pinned, because the Fallout bot must not notice that skins exist.
-        Theme.Use(Skins.Fallout);
-
-        Assert.Equal("Mojave Authority", Theme.BrandName);
-        Assert.Equal("1,250 caps", Lore.Amount(1250));
-        Assert.Equal("☢️ Mojave Authority", Theme.Notice("x").Build().Footer!.Value.Text);
-        Assert.Equal("12 wastelanders", Lore.Wastelanders(12));
-        Assert.Equal("courier roaming the Mojave right now.", Lore.Roaming(1));
-        Assert.Equal("The 10 richest in the wasteland", Lore.RichestHeading(10));
-        Assert.Equal("✅ 📜 No open bounties", Boards().BuildWarrantBoard()!.Title);
-        Assert.Equal("Nobody is wanted in the Mojave right now.", Boards().BuildWarrantBoard()!.Description);
-        Assert.Equal("ℹ️ ⛓️ Most wanted in the Mojave", Boards().BuildArrestBoard()!.Title);
-        Assert.Equal("Bounties", Lore.WarrantsHeading);
-        Assert.Equal(new Discord.Color(0x1F, 0x8A, 0x4C), Theme.Green);
+        Assert.Same(Skins.Police, Theme.Skin);
+        Assert.Equal([Skins.Police], Skins.All);
     }
 
     [Fact]
@@ -83,7 +67,7 @@ public sealed class SkinTests : IDisposable
         Assert.Equal("GWPD", Theme.BrandName);
         Assert.Equal("🚔 GWPD", Theme.Notice("x").Build().Footer!.Value.Text);
         Assert.Equal("$1,250", Lore.Amount(1250));
-        Assert.Equal("12 players", Lore.Wastelanders(12));
+        Assert.Equal("12 players", Lore.HeadCount(12));
         Assert.Equal("Top 10 richest players", Lore.RichestHeading(10));
         Assert.Equal("✅ 🚨 No active warrants", Boards().BuildWarrantBoard()!.Title);
         Assert.Equal("Nobody is currently wanted.", Boards().BuildWarrantBoard()!.Description);
@@ -125,9 +109,6 @@ public sealed class SkinTests : IDisposable
     {
         Theme.Use(Skins.Police);
         Assert.Contains("Balance", PavlovBot.Host.Discord.Boards.CashTable([("Alice", 5)], 1000).Block, StringComparison.Ordinal);
-
-        Theme.Use(Skins.Fallout);
-        Assert.Contains("Caps", PavlovBot.Host.Discord.Boards.CashTable([("Alice", 5)], 1000).Block, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -143,7 +124,6 @@ public sealed class SkinTests : IDisposable
     [Theory]
     [InlineData("police", "police")]
     [InlineData(" POLICE ", "police")]
-    [InlineData("fallout", "fallout")]
     public void ASkinIsChosenByName(string setting, string expected) =>
         Assert.Equal(expected, Skins.Named(setting)!.Name);
 
@@ -152,6 +132,29 @@ public sealed class SkinTests : IDisposable
     [InlineData("")]
     [InlineData(null)]
     public void ANameThatIsNotASkinIsRefused(string? setting) => Assert.Null(Skins.Named(setting));
+
+    /// <summary>
+    /// THEME=fallout is refused as REMOVED, not as unknown.
+    /// </summary>
+    /// <remarks>
+    /// A .env that said fallout last week is not a typo, and the startup error has to say the
+    /// skin is gone. It must not resolve either: starting in the police skin anyway would put
+    /// the GWPD on a server that asked for something else.
+    /// </remarks>
+    [Theory]
+    [InlineData("fallout")]
+    [InlineData(" Fallout ")]
+    public void TheRemovedFalloutSkinIsRefusedByName(string setting)
+    {
+        Assert.Null(Skins.Named(setting));
+        Assert.True(Skins.IsRemoved(setting));
+    }
+
+    [Theory]
+    [InlineData("police")]
+    [InlineData("polcie")]
+    [InlineData(null)]
+    public void OnlyFalloutReadsAsRemoved(string? setting) => Assert.False(Skins.IsRemoved(setting));
 
     [Fact]
     public void ThemeIsReadFromTheEnvironment()
@@ -172,11 +175,11 @@ public sealed class SkinTests : IDisposable
         var ledger = new PavlovBot.Core.Economy.Ledger(new NoBalances());
         var audit = new PavlovBot.Host.Moderation.AuditLog(store);
         var access = new Access(store, [], []);
-        var logger = NullLogger<PavlovBot.Host.Discord.Commands.CapsCommand>.Instance;
+        var logger = NullLogger<PavlovBot.Host.Discord.Commands.MoneyCommand>.Instance;
 
         return (adjust
-            ? PavlovBot.Host.Discord.Commands.CapsCommand.Adjust(ledger, audit, access, logger)
-            : PavlovBot.Host.Discord.Commands.CapsCommand.Give(ledger, audit, access, logger)).Name;
+            ? PavlovBot.Host.Discord.Commands.MoneyCommand.Adjust(ledger, audit, access, logger)
+            : PavlovBot.Host.Discord.Commands.MoneyCommand.Give(ledger, audit, access, logger)).Name;
     }
 
     [Fact]
@@ -185,11 +188,6 @@ public sealed class SkinTests : IDisposable
         Theme.Use(Skins.Police);
         Assert.Equal("givemoney", MoneyCommand(adjust: false));
         Assert.Equal("adjustmoney", MoneyCommand(adjust: true));
-
-        // The Fallout bot keeps the names its staff already type.
-        Theme.Use(Skins.Fallout);
-        Assert.Equal("givecaps", MoneyCommand(adjust: false));
-        Assert.Equal("adjustcaps", MoneyCommand(adjust: true));
     }
 
     [Theory]
@@ -199,29 +197,15 @@ public sealed class SkinTests : IDisposable
         Assert.Equal(PavlovBot.Core.Events.EventCategory.Economy, PavlovBot.Core.Events.EventMapping.CategoryOf(name));
 
     [Fact]
-    public void EachThemeBringsItsOwnFactions()
-    {
-        /* THEME=police without FACTION_SET used to run the Fallout ladders, so /setroles on the
-           police bot offered NCR, Legion, Brotherhood and Enclave roles. */
-        Assert.Same(FactionRegistry.Police, FactionRegistry.Preset(Skins.Police.Factions));
-        Assert.Same(FactionRegistry.FalloutSet, FactionRegistry.Preset(Skins.Fallout.Factions));
-    }
+    public void TheDefaultFactionsAreThePolice() =>
+        Assert.Same(FactionRegistry.Police, FactionRegistry.Default);
 
     [Fact]
     public void NoFalloutFactionReachesThePoliceBot()
     {
         string[] fallout = ["NCR", "Legion", "Brotherhood of Steel", "Enclave"];
-        var police = FactionRegistry.Preset(Skins.Police.Factions)!;
 
-        Assert.Empty(police.Names.Intersect(fallout, StringComparer.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void ASkinFromTheOtherServerIsCaught()
-    {
-        Assert.True(Program.SkinAndFactionsDisagree(Skins.Police, FactionRegistry.FalloutSet));
-        Assert.True(Program.SkinAndFactionsDisagree(Skins.Fallout, FactionRegistry.Police));
-        Assert.False(Program.SkinAndFactionsDisagree(Skins.Police, FactionRegistry.Police));
-        Assert.False(Program.SkinAndFactionsDisagree(Skins.Fallout, FactionRegistry.FalloutSet));
+        Assert.Empty(FactionRegistry.Default.Names.Intersect(fallout, StringComparer.OrdinalIgnoreCase));
+        Assert.All(fallout, name => Assert.Null(FactionRegistry.Get(name)));
     }
 }

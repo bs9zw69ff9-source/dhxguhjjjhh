@@ -20,7 +20,7 @@ namespace PavlovBot.Host.Discord.Commands;
 ///
 /// Both go through <see cref="Ledger"/>, so concurrent payouts cannot double-spend.
 /// </remarks>
-public sealed class CapsCommand : ISlashCommand
+public sealed class MoneyCommand : ISlashCommand
 {
     private readonly Ledger _ledger;
     private readonly AuditLog _audit;
@@ -37,7 +37,7 @@ public sealed class CapsCommand : ISlashCommand
     /// </remarks>
     private readonly LedgerFileStore? _balances;
 
-    private CapsCommand(
+    private MoneyCommand(
         Ledger ledger, AuditLog audit, Access access, ILogger logger, string name, bool allowNegative,
         IBalanceStore? balances = null)
     {
@@ -50,10 +50,10 @@ public sealed class CapsCommand : ISlashCommand
         _balances = balances as LedgerFileStore;
     }
 
-    public static CapsCommand Give(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg, IBalanceStore? b = null) =>
+    public static MoneyCommand Give(Ledger l, AuditLog a, Access ac, ILogger<MoneyCommand> lg, IBalanceStore? b = null) =>
         new(l, a, ac, lg, Lore.Say.GiveMoneyCommand, allowNegative: false, balances: b);
 
-    public static CapsCommand Adjust(Ledger l, AuditLog a, Access ac, ILogger<CapsCommand> lg, IBalanceStore? b = null) =>
+    public static MoneyCommand Adjust(Ledger l, AuditLog a, Access ac, ILogger<MoneyCommand> lg, IBalanceStore? b = null) =>
         new(l, a, ac, lg, Lore.Say.AdjustMoneyCommand, allowNegative: true, balances: b);
 
     public string Name { get; }

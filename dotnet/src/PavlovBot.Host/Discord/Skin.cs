@@ -81,7 +81,7 @@ public sealed record Vocabulary
 
     // ---- nouns ----
 
-    /// <summary>Where all of this happens, as it reads mid-sentence: "the Mojave".</summary>
+    /// <summary>Where all of this happens, as it reads mid-sentence: "the city".</summary>
     public required string World { get; init; }
 
     public required Currency Money { get; init; }
@@ -96,7 +96,7 @@ public sealed record Vocabulary
     public required string RoamingOne { get; init; }
     public required string RoamingMany { get; init; }
 
-    /// <summary>"out in the Mojave" after a head count, and the title when there is no count.</summary>
+    /// <summary>"online" after a head count, and the title when there is no count.</summary>
     public required string Whereabouts { get; init; }
     public required string WhereaboutsTitle { get; init; }
 
@@ -143,9 +143,9 @@ public sealed record Vocabulary
     public required string MoneyMoved { get; init; }
 
     /// <summary>
-    /// The two money commands' NAMES. The one exception to "command names are the same in
-    /// every skin": a police server typing /givecaps is the Mojave leaking through the one
-    /// place staff see on every use. Read once, when the commands are built at startup.
+    /// The two money commands' NAMES, the one place a command name comes from the skin: the
+    /// currency is in the name, and staff see it on every use. Read once, when the commands
+    /// are built at startup.
     /// </summary>
     public required string GiveMoneyCommand { get; init; }
     public required string AdjustMoneyCommand { get; init; }
@@ -170,112 +170,19 @@ public sealed record Vocabulary
 /// <summary>One whole look: the words, the colours, and the name stamped on every embed.</summary>
 /// <param name="Name">What <c>THEME</c> is set to to choose it.</param>
 /// <param name="Brand">The footer name when <c>BOT_NAME</c> is not set.</param>
-/// <param name="Factions">
-/// The built-in faction set this skin belongs to, run when neither <c>FACTION_SET</c> nor
-/// <c>FACTIONS_PATH</c> says otherwise.
-/// </param>
-/// <param name="Licenses">
-/// Whether this world's save files carry driver's and firearm licenses, and so whether
-/// <c>/license</c> is offered at all.
-/// </param>
-/// <remarks>
-/// THE THEME PICKS ITS OWN FACTIONS because the two were separate settings and the gap
-/// between them showed up on a live server: <c>THEME=police</c> without <c>FACTION_SET</c>
-/// gave a police bot that offered NCR, Legion, Brotherhood and Enclave roles in /setroles.
-/// A startup warning had said so, and nobody reads a startup log to find out why a picker
-/// looks wrong. The explicit settings still win, for anybody who really means a mismatch.
-/// </remarks>
-public sealed record Skin(string Name, string Brand, Vocabulary Words, Palette Colors, string Factions, bool Licenses = false);
+public sealed record Skin(string Name, string Brand, Vocabulary Words, Palette Colors);
 
 /// <summary>
-/// The skins this bot ships, chosen per instance by <c>THEME</c>.
+/// The skin this bot ships, chosen by <c>THEME</c>.
 /// </summary>
 /// <remarks>
-/// ONE BINARY RUNS TWO SERVERS. The Fallout bot and the police bot are the same build with a
-/// different <c>.env</c>, so the look has to be configuration, the same way the factions
-/// (<c>FACTION_SET</c>) and the footer name (<c>BOT_NAME</c>) already are. Forking the repo to
-/// change forty strings would mean every fix landing twice.
-///
-/// FALLOUT IS THE DEFAULT and is exactly what the bot said before skins existed, so an
-/// instance with no <c>THEME</c> line notices nothing.
+/// ONE SKIN, THE POLICE ONE. The Fallout skin went with the Fallout bot (owner decision,
+/// 2026-11-17). The record stays because the words and the colours are data, read through
+/// <see cref="Lore"/> and <see cref="Theme"/>, and a table is easier to review than forty
+/// strings spread across the command files.
 /// </remarks>
 public static class Skins
 {
-    /// <summary>The Mojave: caps, bounties, exile. In its Christmas colours.</summary>
-    public static Skin Fallout { get; } = new("fallout", "Mojave Authority",
-        new Vocabulary
-        {
-            MoneyGlyph = "🧢",
-            Mark = "☢️",
-            WarrantGlyph = "📜",
-            JailGlyph = "⛓️",
-            StaffGlyph = "🎖️",
-
-            World = "the Mojave",
-            Money = Currency.Caps,
-            MoneyLabel = "Caps",
-            Person = "wastelander",
-            People = "wastelanders",
-            RoamingOne = "courier roaming the Mojave right now.",
-            RoamingMany = "couriers roaming the Mojave right now.",
-            Whereabouts = "out in the Mojave",
-            WhereaboutsTitle = "Out in the Mojave",
-            EmptyServer = "*nobody out there*",
-            Warrant = "bounty",
-            Warrants = "bounties",
-
-            RichestTitle = "Deepest pockets in the Mojave",
-            RichestHeading = "The {0} richest in the wasteland",
-            LedgersUnreadable = "The caps ledgers are unreadable.",
-            NoLedgers = "Nobody has a cap to their name yet.",
-            MostWantedTitle = "Most wanted in the Mojave",
-            NoArrests = "Nobody has done time yet.",
-            WarrantBoardTitle = "Open bounties",
-            NoWarrantsTitle = "No open bounties",
-            NobodyWanted = "Nobody is wanted in the Mojave right now.",
-            StaffBoardTitle = "Keeping the peace",
-
-            WarrantIssued = "Bounty posted",
-            BannedForGood = "Exiled from the Mojave",
-            BannedForAWhile = "Run out of the Mojave",
-            Banned = "Exiled",
-            BannedByTheServer = "Exiled by the server",
-            BanServed = "Sentence served",
-            BanLifted = "Exile lifted",
-            MayReturn = "may walk back in.",
-            Kicked = "Thrown out",
-
-            MoneyMoved = "Caps moved",
-            GiveMoneyCommand = "givecaps",
-            AdjustMoneyCommand = "adjustcaps",
-            HelpTitle = "Terminal — available commands",
-            ConnectTitle = "Dossier",
-            Arrived = "just walked into",
-            ConnectLog = "Arrival log",
-            VerifyTitle = "Check in at the gate",
-            VerifyReview = "A staff member looks over every arrival. Once you are cleared, the rest of the Mojave opens up.",
-            VerifyAlts = "One account per person — alts do not get through.",
-            Verified = "Cleared at the gate",
-        },
-        /* THE CHRISTMAS SKIN (holly green, red, snow white, gold) over the Pip-Boy meanings:
-           green is cleared, red is a ban, amber is a warning. */
-        new Palette(
-            Green: new Color(0x1F, 0x8A, 0x4C),       // holly green: success, online, cleared
-            Amber: new Color(0xDD, 0xA1, 0x1E),       // gold: warnings
-            Gold: new Color(0xF1, 0xDA, 0x94),        // champagne gold: caps, economy
-            Blue: new Color(0xF2, 0xEF, 0xE6),        // snow white: information
-            Sky: new Color(0xB5, 0xD9, 0xCD),         // frost: neutral accent
-            BanRed: new Color(0xD9, 0x30, 0x3F),      // Christmas red: bans, blocks, denied
-            ErrorRed: new Color(0xE8, 0x70, 0x7A),    // cranberry: errors, softer than a ban
-            Grey: new Color(0x8B, 0x94, 0x90),        // winter grey: disabled, void
-            Purple: new Color(0xA6, 0x3A, 0x5A),      // mulled wine
-            Pink: new Color(0xF4, 0xAE, 0xB6),        // blush
-            Teal: new Color(0x2E, 0x9C, 0x86),        // spruce
-            Orange: new Color(0xAD, 0x73, 0x26),      // antique gold
-            ServerUp: new Color(0x2E, 0x94, 0x55),    // the /serverinfo card, online
-            ServerDown: new Color(0xA3, 0x26, 0x36)), // the /serverinfo card, offline
-        Factions: "fallout");
-
     /// <summary>
     /// The city: dollars, warrants, bans, and the GWPD on every footer.
     /// </summary>
@@ -354,11 +261,12 @@ public static class Skins
             Teal: new Color(0x2D, 0xD4, 0xBF),
             Orange: new Color(0xFB, 0x92, 0x3C),
             ServerUp: new Color(0x3F, 0xA2, 0x5F),
-            ServerDown: new Color(0x9E, 0x3B, 0x2F)),
-        Factions: "police",
-        Licenses: true);
+            ServerDown: new Color(0x9E, 0x3B, 0x2F)));
 
-    public static IReadOnlyList<Skin> All { get; } = [Fallout, Police];
+    /// <summary>The THEME value that used to select the Fallout skin, refused by name.</summary>
+    public const string RemovedFalloutName = "fallout";
+
+    public static IReadOnlyList<Skin> All { get; } = [Police];
 
     /// <summary>Every name <c>THEME</c> accepts, for the error when it matches none.</summary>
     public static IReadOnlyList<string> Names { get; } = [.. All.Select(s => s.Name)];
@@ -368,8 +276,12 @@ public static class Skins
     /// </summary>
     /// <remarks>
     /// NULL RATHER THAN A FALLBACK, the same rule <c>FACTION_SET</c> follows: a typo is refused
-    /// at startup instead of quietly dressing the police bot in the Mojave.
+    /// at startup instead of quietly running a look nobody chose.
     /// </remarks>
     public static Skin? Named(string? name) =>
         All.FirstOrDefault(s => string.Equals(s.Name, name?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>True when <paramref name="name"/> asks for the Fallout skin, which was removed.</summary>
+    public static bool IsRemoved(string? name) =>
+        string.Equals(name?.Trim(), RemovedFalloutName, StringComparison.OrdinalIgnoreCase);
 }

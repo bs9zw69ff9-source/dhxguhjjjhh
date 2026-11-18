@@ -1,5 +1,4 @@
-//! Port of `PenalCodeTests.cs`. The C# formatted bail in caps (the removed fallout theme); these
-//! use dollars, so "85 caps" reads "$85". Every other expectation is unchanged.
+//! Port of `PenalCodeTests.cs`, bail quoted in dollars as the C# now does.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

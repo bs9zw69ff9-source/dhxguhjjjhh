@@ -26,16 +26,16 @@ public static class Theme
        CHOSEN ONCE, AT STARTUP, by THEME - before the gateway connects and before anything can
        build an embed. Nothing changes it afterwards; the field is volatile so a reader on any
        thread sees the skin startup chose rather than a stale default. */
-    private static volatile Skin _skin = Skins.Fallout;
+    private static volatile Skin _skin = Skins.Police;
 
-    /// <summary>The skin this instance runs. Fallout unless <c>THEME</c> says otherwise.</summary>
+    /// <summary>The skin this instance runs: the police one, the only one there is.</summary>
     public static Skin Skin => _skin;
 
     /// <summary>
     /// Dress the bot in <paramref name="skin"/>, and stamp its name unless BOT_NAME overrides it.
     /// </summary>
     /// <remarks>
-    /// THE BRAND IS RESET WITH IT, because a police skin stamping "Mojave Authority" on every
+    /// THE BRAND IS RESET WITH IT, because a skin stamping another skin's name on every
     /// footer is the half-applied theme this exists to prevent. Program sets
     /// <see cref="BrandName"/> from BOT_NAME AFTER this, so an explicit name still wins.
     /// </remarks>
@@ -71,7 +71,7 @@ public static class Theme
     public const string Up = "🟢";
     public const string Down = "🔴";
     /// <summary>Money, in this skin's glyph - see <see cref="Lore"/>.</summary>
-    public static string Money => Lore.Caps;
+    public static string Money => Lore.MoneyGlyph;
     public const string Rank = "🏅";
 
     /// <summary>A terminal rule, for the places that need a break rather than a heading.</summary>
@@ -87,7 +87,7 @@ public static class Theme
     /// sets the variable and waits for a change that never comes. <see cref="Brand"/> now
     /// stamps it, and Program wires the variable in.
     /// </remarks>
-    public static string BrandName { get; set; } = Skins.Fallout.Brand;
+    public static string BrandName { get; set; } = Skins.Police.Brand;
 
     // Discord's hard limits. Exceeding any one of them rejects the entire message.
     private const int MaxTitle = 256;
@@ -112,7 +112,7 @@ public static class Theme
     {
         if (string.IsNullOrEmpty(text)) return null;
 
-        var mark = $"{Lore.Rads} {BrandName}";
+        var mark = $"{Lore.Mark} {BrandName}";
         if (!text.StartsWith(mark, StringComparison.Ordinal)) return text;
 
         var rest = text[mark.Length..].TrimStart();
@@ -126,7 +126,7 @@ public static class Theme
 
         /* THE BRAND GOES ON EVERYTHING, which is what makes a wall of embeds read as one
            bot rather than thirty commands. The caller's footer keeps its place after it, so
-           "Mojave Authority • Updated 14:02 Eastern" is the shape every board and card
+           "GWPD • Updated 14:02 Eastern" is the shape every board and card
            shares. Composed from the argument, never from the footer already set, so branding
            an embed twice cannot stack the name up. */
         /* THE MARK GOES ON EVERYTHING. One glyph in the footer is what makes a wall of embeds
@@ -140,8 +140,8 @@ public static class Theme
         footer ??= FooterAfterBrand(embed.Footer?.Text);
 
         var stamp = footer is { Length: > 0 }
-            ? $"{Lore.Rads} {BrandName} {Dot} {footer}"
-            : $"{Lore.Rads} {BrandName}";
+            ? $"{Lore.Mark} {BrandName} {Dot} {footer}"
+            : $"{Lore.Mark} {BrandName}";
 
         if (stamp is { Length: > 0 }) embed.WithFooter(Truncate(stamp, 2048));
         embed.Timestamp = null;

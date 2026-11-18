@@ -20,7 +20,6 @@ ProfileRedactionTests = "ported"
 RiskScoringTests = "ported"
 
 [dropped]
-# Fallout: owner decision 2026-11-17, the fallout bot is dropped completely, deployment and
-# theme. The Rust bot is police-only. Tests that exercise a MECHANISM through fallout data
-# (sub-classes, ranks) are ported with police data instead and are not listed here.
-"FalloutPresetTests::*" = "fallout theme removed by owner decision (2026-11-17)"
+# Nothing is dropped at present. The fallout theme's tests (FalloutPresetTests) were deleted
+# from the C# with the theme itself (2026-11-17), and the tests that exercised a mechanism
+# through fallout data were moved onto police data there, so they port like any other.

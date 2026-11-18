@@ -23,9 +23,8 @@ public class RosterServiceTests : IDisposable
     {
         Directory.CreateDirectory(_directory);
         _backups = Path.Combine(_directory, "_bak");
-        /* THE POLICE LADDERS, NAMED. They stopped being the default when the Fallout server
-           became the only one this bot runs; these tests are about the police ladder,
-           so they ask for that set rather than whatever the default happens to be. */
+        /* THE POLICE LADDERS, NAMED. These tests are about the police ladder, so they ask for
+           that set rather than whatever the default happens to be. */
         _rosters = new RosterService(_directory, NullLogger<RosterService>.Instance, _backups,
             factions: FactionRegistry.Police);
     }

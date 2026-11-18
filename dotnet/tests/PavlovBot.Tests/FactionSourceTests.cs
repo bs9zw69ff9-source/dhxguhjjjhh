@@ -28,7 +28,7 @@ public class FactionSourceTests
     {
         // The whole point of the preset is that there is no file to point at, so the line
         // has to say where the factions came from instead of falling silent.
-        Assert.Contains("fallout", PavlovBot.Host.Program.FactionSource(null, "fallout"),
+        Assert.Contains("police", PavlovBot.Host.Program.FactionSource(null, "police"),
             StringComparison.Ordinal);
     }
 
@@ -42,10 +42,10 @@ public class FactionSourceTests
 
         try
         {
-            var described = PavlovBot.Host.Program.FactionSource(file, "fallout");
+            var described = PavlovBot.Host.Program.FactionSource(file, "police");
 
             Assert.Contains(file, described, StringComparison.Ordinal);
-            Assert.DoesNotContain("fallout", described, StringComparison.Ordinal);
+            Assert.DoesNotContain("police", described, StringComparison.Ordinal);
         }
         finally
         {
@@ -119,7 +119,7 @@ public class FactionSourceTests
 /// What happens when FACTIONS_PATH names a file that is not there.
 /// </summary>
 /// <remarks>
-/// THE FAILURE THIS COMES FROM. A themed clone moved off its faction file onto the built-in
+/// THE FAILURE THIS COMES FROM. A bot moved off its faction file onto a built-in
 /// set, deleted the file, and left the FACTIONS_PATH line in .env. The bot then refused to
 /// start - correct on its own terms, and invisible: a process that is not running registers
 /// no commands, so Discord kept serving the list from the last time it was alive and every
@@ -135,9 +135,9 @@ public class MissingFactionFileTests
            the ladders came from somewhere else entirely. */
         var absent = Path.Combine(Path.GetTempPath(), "pavlovbot-absent-" + Guid.NewGuid().ToString("N") + ".json");
 
-        var line = PavlovBot.Host.Program.FactionSource(absent, "fallout");
+        var line = PavlovBot.Host.Program.FactionSource(absent, "police");
 
-        Assert.Contains("fallout", line, StringComparison.Ordinal);
+        Assert.Contains("police", line, StringComparison.Ordinal);
         Assert.Contains("does not exist", line, StringComparison.Ordinal);
     }
 
@@ -146,19 +146,20 @@ public class MissingFactionFileTests
     {
         var absent = Path.Combine(Path.GetTempPath(), "pavlovbot-absent-" + Guid.NewGuid().ToString("N") + ".json");
 
-        Assert.True(PavlovBot.Host.Program.MayFallBackToSet(absent, "fallout"));
+        Assert.True(PavlovBot.Host.Program.MayFallBackToSet(absent, "police"));
     }
 
     [Fact]
     public void WithNoSetNamedItIsStillAFatalMisconfiguration()
     {
-        /* Nothing to fall back TO. Starting on the built-in police ladders would have a
-           Fallout bot writing policecadet.txt, which is worse than not starting. */
+        /* Nothing to fall back TO. Starting on the built-in police ladders would have a bot
+           meant for other ladders writing policecadet.txt, which is worse than not starting. */
         var absent = Path.Combine(Path.GetTempPath(), "pavlovbot-absent-" + Guid.NewGuid().ToString("N") + ".json");
 
         Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, null));
         Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, ""));
-        Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, "falout"));   // a typo is not a set
+        Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, "polcie"));   // a typo is not a set
+        Assert.False(PavlovBot.Host.Program.MayFallBackToSet(absent, "fallout"));  // nor is a removed one
     }
 
     [Fact]
@@ -171,7 +172,7 @@ public class MissingFactionFileTests
 
         try
         {
-            Assert.False(PavlovBot.Host.Program.MayFallBackToSet(present, "fallout"));
+            Assert.False(PavlovBot.Host.Program.MayFallBackToSet(present, "police"));
         }
         finally
         {

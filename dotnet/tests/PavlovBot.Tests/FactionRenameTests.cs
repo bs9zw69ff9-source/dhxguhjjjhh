@@ -140,7 +140,7 @@ public class FactionRenameTests
     [Fact]
     public async Task ABotWithNoRenamesWritesNothing()
     {
-        // The Fallout bot: no faction there was ever renamed, so no dataset is touched.
+        // Ladders of somebody's own with no former names: no dataset is touched.
         var store = Store();
         await store.WriteAsync(Datasets.FactionMembers, new Dictionary<string, FactionMember>
         {
@@ -148,7 +148,16 @@ public class FactionRenameTests
         });
         var before = store.ReadRaw(Datasets.FactionMembers);
 
-        Assert.Equal(0, await FactionRenames.CarryOverAsync(store, FactionRegistry.FalloutSet, NullLogger.Instance));
+        var unrenamed = FactionSet.Of([new FactionDefinition
+        {
+            Name = "Rangers",
+            Order = ["Recruit", "Ranger"],
+            Default = "Recruit",
+            SpawnFile = "rangerspawn.txt",
+            RankFiles = new Dictionary<string, string> { ["Recruit"] = "rangerrecruit.txt", ["Ranger"] = "ranger.txt" },
+        }]);
+
+        Assert.Equal(0, await FactionRenames.CarryOverAsync(store, unrenamed, NullLogger.Instance));
         Assert.Equal(before, store.ReadRaw(Datasets.FactionMembers));
         Assert.Null(store.ReadRaw(Datasets.Roles));
     }

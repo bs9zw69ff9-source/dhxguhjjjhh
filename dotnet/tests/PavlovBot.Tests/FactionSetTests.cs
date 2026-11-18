@@ -8,9 +8,9 @@ namespace PavlovBot.Tests;
 /// The faction roster as configuration, so one binary can serve more than one RP.
 /// </summary>
 /// <remarks>
-/// THE DEPLOYMENT THIS EXISTS FOR: a themed clone running beside the normal bot, against the
-/// SAME game server. That makes the file-name checks the important half - two factions
-/// sharing a roster file merge their members in game, and nothing downstream could notice.
+/// FACTIONS_PATH is for ladders that are somebody's own. The file-name checks are the
+/// important half - two factions sharing a roster file merge their members in game, and
+/// nothing downstream could notice.
 /// </remarks>
 public class FactionSetTests : IDisposable
 {
@@ -30,17 +30,11 @@ public class FactionSetTests : IDisposable
     [Fact]
     public void TheBuiltInSetIsTheDefaultAndIsValid()
     {
-        /* THE DEFAULT IS THE FALLOUT SET. It was the police one, which every themed
-           deployment then had to override - and forgetting that line was not an error but a
-           Fallout bot quietly writing policecadet.txt. If the default could not pass its own
+        /* THE DEFAULT IS THE POLICE SET, the only built-in one. If it could not pass its own
            validation, every bot would be one strict-mode change away from refusing to start. */
+        Assert.Same(FactionRegistry.Police, FactionRegistry.Default);
         Assert.Empty(FactionRegistry.Default.Problems());
-        Assert.Contains("Enclave", FactionRegistry.Default.Names, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(4, FactionRegistry.Default.All.Count);
-
-        // Still shipped, still valid, now chosen by name.
-        Assert.Empty(FactionRegistry.Police.Problems());
-        Assert.Contains("GWPD", FactionRegistry.Police.Names, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(["GWPD"], FactionRegistry.Default.Names);
     }
 
     // ---- loading ----
@@ -61,7 +55,7 @@ public class FactionSetTests : IDisposable
         Assert.Empty(loaded.Problems);
         Assert.NotNull(loaded.Set);
 
-        // REPLACES, not merges. A Fallout bot must not answer /whitelist add NYPD.
+        // REPLACES, not merges. A bot running its own ladders must not answer /whitelist add GWPD.
         Assert.Equal(["NCR"], loaded.Set!.Names);
 
         var ncr = loaded.Set.Get("NCR")!;
@@ -165,9 +159,9 @@ public class FactionSetTests : IDisposable
     [Fact]
     public void AMissingFileIsRefusedRatherThanFallingBackToTheBuiltIns()
     {
-        /* A path that was set and does not resolve is a typo. Falling back would start a
-           Fallout bot running the police roster - which looks exactly like the file being
-           ignored, because it is. */
+        /* A path that was set and does not resolve is a typo. Falling back would start a bot
+           meant for other ladders running the police roster - which looks exactly like the
+           file being ignored, because it is. */
         var loaded = FactionsFile.Load(Path.Combine(_directory, "nope.json"));
 
         Assert.Null(loaded.Set);
@@ -224,55 +218,6 @@ public class FactionSetTests : IDisposable
             """);
 
         Assert.Equal(0, FactionsFile.Load(path).IgnoredRankCaps);
-    }
-
-    // ---- the shipped template ----
-
-    /// <summary>
-    /// The Fallout example file in the repo actually loads.
-    /// </summary>
-    /// <remarks>
-    /// A template that does not parse is worse than no template: it is copied, it fails at
-    /// startup, and the person copying it has no reason to suspect the file they were given.
-    /// This is also what stops it rotting the next time the schema moves.
-    ///
-    /// THE FILE NAMES ARE CHECKED AGAINST THE BUILT-IN SET, because the deployment this was
-    /// written for runs both bots against ONE game server. The loader cannot see the other
-    /// bot's roster - a collision here would be found by a player who could not spawn.
-    /// </remarks>
-    [Fact]
-    public void TheShippedFalloutTemplateLoadsAndCannotCollideWithTheBuiltInRosters()
-    {
-        var path = Repository("factions.fallout.example.json");
-        Assert.True(File.Exists(path), $"The shipped template is missing: {path}");
-
-        var loaded = FactionsFile.Load(path);
-
-        Assert.Empty(loaded.Problems);
-        Assert.NotNull(loaded.Set);
-        Assert.Contains("NCR", loaded.Set!.Names, StringComparer.OrdinalIgnoreCase);
-
-        static IEnumerable<string> FilesOf(FactionSet set) => set.All.Values
-            .SelectMany(f => f.RankFiles.Values.Concat(f.Subclasses.Values).Append(f.SpawnFile));
-
-        // AGAINST THE POLICE LADDERS, which is the other set that could be running against
-        // one game install. The default IS this file's set now, so comparing with it would be
-        // comparing the file to itself.
-        var builtIn = FilesOf(FactionRegistry.Police).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var themed = FilesOf(loaded.Set).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        Assert.Empty(themed.Intersect(builtIn, StringComparer.OrdinalIgnoreCase));
-    }
-
-    /// <summary>Walk up from the test binary to the repository root.</summary>
-    private static string Repository(string file)
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, file)))
-            directory = directory.Parent;
-
-        return Path.Combine(directory?.FullName ?? AppContext.BaseDirectory, file);
     }
 
     public void Dispose()
