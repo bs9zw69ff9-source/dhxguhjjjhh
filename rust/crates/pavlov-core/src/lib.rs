@@ -14,6 +14,7 @@ pub mod factions;
 pub mod intelligence;
 pub mod json;
 pub mod licensing;
+pub mod logs;
 pub mod moderation;
 pub mod monitoring;
 pub mod penal;
