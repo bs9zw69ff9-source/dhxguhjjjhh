@@ -8,6 +8,7 @@
 # reason. Anything not ported and not listed here is simply not done yet.
 
 [files]
+AtomicFileTests = "ported"
 BanSpanOverflowTests = "ported"
 BanTests = "ported"
 ConfigurationTests = "ported"
@@ -31,6 +32,8 @@ RconResilienceTests = "ported"
 RiskScoringTests = "ported"
 ServerHealthTests = "ported"
 ServerListTests = "ported"
+SqliteStorageTests = "ported"
+StorageAndProtocolTests = "ported"
 VpnTests = "ported"
 VpnVerdictTests = "ported"
 
