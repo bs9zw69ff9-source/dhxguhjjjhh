@@ -56,7 +56,8 @@ pub fn severity_dot(severity: Severity) -> &'static str {
     }
 }
 
-fn state_name(state: HealthState) -> &'static str {
+#[must_use]
+pub fn state_name(state: HealthState) -> &'static str {
     match state {
         HealthState::Unknown => "UNKNOWN",
         HealthState::Online => "ONLINE",
@@ -76,24 +77,28 @@ fn rank(state: HealthState) -> u8 {
     }
 }
 
-fn ms(t: Duration) -> String {
+#[must_use]
+pub fn ms(t: Duration) -> String {
     format!(
         "{}ms",
         group_thousands(i64::try_from(t.as_millis()).unwrap_or(i64::MAX))
     )
 }
 
+#[must_use]
 #[allow(clippy::cast_precision_loss)]
-fn mb(bytes: u64) -> String {
+pub fn mb(bytes: u64) -> String {
     format!("{:.0} MB", bytes as f64 / 1_048_576.0)
 }
 
-fn cpu(u: &UnitStats) -> String {
+#[must_use]
+pub fn cpu(u: &UnitStats) -> String {
     u.cpu_percent
         .map_or_else(|| "—".into(), |c| format!("{c:.1}%"))
 }
 
-fn ram(u: &UnitStats) -> String {
+#[must_use]
+pub fn ram(u: &UnitStats) -> String {
     let Some(bytes) = u.memory_bytes else {
         return "—".into();
     };
@@ -103,7 +108,8 @@ fn ram(u: &UnitStats) -> String {
     }
 }
 
-fn span(d: Duration) -> String {
+#[must_use]
+pub fn span(d: Duration) -> String {
     humanize(chrono::TimeDelta::from_std(d).unwrap_or(chrono::TimeDelta::MAX))
 }
 
@@ -284,5 +290,21 @@ fn trim(detail: &str) -> String {
     } else {
         let cut: String = flat.chars().take(DETAIL_MAX - 1).collect();
         format!("{cut}…")
+    }
+}
+
+/// `🟢` or `🔴`.
+#[must_use]
+pub fn tick(ok: bool) -> &'static str {
+    if ok { "🟢" } else { "🔴" }
+}
+
+/// `🟢`, `🔴`, or `⚪` when it could not be asked.
+#[must_use]
+pub fn unknownable(state: Option<bool>) -> &'static str {
+    match state {
+        Some(true) => "🟢",
+        Some(false) => "🔴",
+        None => "⚪",
     }
 }
