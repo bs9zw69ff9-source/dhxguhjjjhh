@@ -4,3 +4,4 @@
 
 pub mod arrest;
 pub mod check_ban;
+pub mod subclass;
