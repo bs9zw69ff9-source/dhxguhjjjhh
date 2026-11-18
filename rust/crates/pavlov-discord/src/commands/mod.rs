@@ -19,6 +19,7 @@ pub mod guild_invites;
 pub mod license;
 pub mod membership_reply;
 pub mod monitor;
+pub mod owner;
 pub mod players;
 pub mod police;
 pub mod provision_server;
