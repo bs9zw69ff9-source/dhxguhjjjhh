@@ -77,3 +77,208 @@ pub fn parse_value(value: &str) -> (Option<String>, String) {
         None => (None, value.trim().to_owned()),
     }
 }
+
+use std::sync::Arc;
+
+use futures_util::future::BoxFuture;
+use pavlov_core::embed::Embed;
+use pavlov_core::factions::MembershipOutcome;
+use pavlov_core::skin::theme;
+use pavlov_core::text::Sanitize;
+use pavlov_core::text::case::eq_ignore_case;
+use pavlov_host::factions::FactionMembers;
+use pavlov_host::factions::roster::RosterService;
+
+use super::membership_reply;
+use crate::access::{Access, RequiredAccess};
+use crate::command::{Choice, CommandSpec, OptionKind, OptionSpec};
+use crate::interaction::Reply;
+use crate::slash::{CommandContext, CommandError, SlashCommand};
+
+/// `/subclass`: assign or remove a sub-class, BY DISCORD ACCOUNT like every command acting
+/// on an existing member (a misspelt Pavlov name reads as "not whitelisted", not as a typo).
+pub struct SubclassCommand {
+    pub rosters: Arc<RosterService>,
+    pub members: Arc<FactionMembers>,
+    pub access: Arc<Access>,
+}
+
+impl std::fmt::Debug for SubclassCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubclassCommand").finish_non_exhaustive()
+    }
+}
+
+async fn reply(context: &CommandContext<'_>, embed: Embed) -> Result<(), CommandError> {
+    context.reply(Reply::embed(embed.brand(None))).await
+}
+
+impl SubclassCommand {
+    async fn run(&self, context: &CommandContext<'_>) -> Result<(), CommandError> {
+        let invocation = context.invocation;
+        let caller = &invocation.caller;
+        // GATED BEFORE ANYTHING IS READ OR WRITTEN.
+        if !self.access.allows(RequiredAccess::FactionLeader, caller) {
+            let refusal = self
+                .access
+                .explain_refusal(caller, RequiredAccess::FactionLeader);
+            return reply(context, theme::denied("Not allowed", Some(&refusal))).await;
+        }
+        let (chosen_faction, subclass) = parse_value(invocation.string("subclass").unwrap_or(""));
+        let removing = invocation.boolean("remove").unwrap_or(false);
+        let Some(member) = invocation.id("member") else {
+            return reply(context, theme::failure("No member given", None)).await;
+        };
+        let Some(recorded) = self.members.of(member) else {
+            return reply(
+                context,
+                theme::failure(
+                    "No membership on record",
+                    Some(&format!(
+                        "<@{member}> has no faction recorded against their account. Re-add them with \
+                         `/whitelist add` to link their in-game name, then try again."
+                    )),
+                ),
+            )
+            .await;
+        };
+        let player = recorded.name;
+        let code = Sanitize::code(Some(&player));
+        // THE ROSTER FILE IS THE AUTHORITY: a stale entry is dropped on the way past.
+        let Some(membership) = self.rosters.find(&player) else {
+            self.members.forget(member).await?;
+            return reply(
+                context,
+                theme::failure(
+                    "Not whitelisted",
+                    Some(&format!(
+                        "<@{member}> is recorded as **{code}**, who is not on any roster. Sub-classes are additive \
+                         to a rank. The stale record has been cleared."
+                    )),
+                ),
+            )
+            .await;
+        };
+        if !self.access.can_manage(caller, &membership.faction) {
+            return reply(
+                context,
+                theme::denied(
+                    "Not your roster",
+                    Some(&format!(
+                        "You do not manage the **{}** whitelist.",
+                        membership.faction
+                    )),
+                ),
+            )
+            .await;
+        }
+        // Two factions can share a name: the choice says whose sub-class it is.
+        if let Some(chosen) = chosen_faction
+            .as_deref()
+            .filter(|c| !eq_ignore_case(c, &membership.faction))
+        {
+            return reply(
+                context,
+                theme::failure(
+                    "Wrong faction's sub-class",
+                    Some(&format!(
+                        "That is a **{chosen}** sub-class, and **{code}** is in **{}**. Pick the {} one.",
+                        membership.faction, membership.faction
+                    )),
+                ),
+            )
+            .await;
+        }
+        let Some(faction) = self
+            .rosters
+            .factions()
+            .get(Some(&membership.faction))
+            .cloned()
+        else {
+            return reply(context, theme::failure("That faction is gone", None)).await;
+        };
+        let decision = self
+            .rosters
+            .change_subclass(&faction, &player, &subclass, removing)
+            .await;
+        tracing::info!(action = if removing { "remove" } else { "assign" }, player = %player, subclass = %subclass, by = %invocation.username, outcome = ?decision.outcome, "subclass");
+        let embed = match decision.outcome {
+            MembershipOutcome::Allowed => theme::success(
+                if removing {
+                    "Sub-class removed"
+                } else {
+                    "Sub-class assigned"
+                },
+                Some(&format!(
+                    "**{code}** — {subclass}\nThey keep their rank of **{}**.",
+                    membership.rank
+                )),
+            ),
+            MembershipOutcome::AlreadyHasSubclass => theme::denied(
+                "They already hold one",
+                Some(&format!(
+                    "**{code}** is **{}**. A member may hold at most one sub-class.",
+                    decision.conflict.as_deref().unwrap_or("")
+                )),
+            ),
+            MembershipOutcome::NoSuchSubclass => theme::failure(
+                "Not a sub-class of that faction",
+                Some(&format!(
+                    "**{}** does not define `{}`.",
+                    faction.name,
+                    Sanitize::code(Some(&subclass))
+                )),
+            ),
+            MembershipOutcome::NoChange => theme::notice(
+                "Nothing to do",
+                Some(if removing {
+                    "They do not hold it."
+                } else {
+                    "They already hold it."
+                }),
+            ),
+            _ => membership_reply::fallback(&decision),
+        };
+        reply(context, embed).await
+    }
+}
+
+impl SlashCommand for SubclassCommand {
+    fn name(&self) -> &str {
+        "subclass"
+    }
+
+    fn build(&self) -> CommandSpec {
+        let choices = subclass_choices(self.rosters.factions());
+        if choices.len() > MAX_CHOICES {
+            let dropped: Vec<String> = choices
+                .iter()
+                .skip(MAX_CHOICES)
+                .map(SubclassChoice::label)
+                .collect();
+            tracing::warn!(count = choices.len(), max = MAX_CHOICES, dropped = %dropped.join(", "), "/subclass has more sub-classes than Discord allows choices; these are left off the picker");
+        }
+        let subclass = choices.iter().take(MAX_CHOICES).fold(
+            OptionSpec::new(OptionKind::String, "subclass", "Which sub-class").required(),
+            |option, choice| option.choice(Choice::string(choice.label(), choice.value())),
+        );
+        CommandSpec::new(
+            "subclass",
+            "Whitelist Leader - Assign or remove a sub-class",
+        )
+        .option(OptionSpec::new(OptionKind::User, "member", "The Discord account").required())
+        .option(subclass)
+        .option(OptionSpec::new(
+            OptionKind::Boolean,
+            "remove",
+            "Remove it instead of assigning",
+        ))
+    }
+
+    fn handle<'a>(
+        &'a self,
+        context: CommandContext<'a>,
+    ) -> BoxFuture<'a, Result<(), CommandError>> {
+        Box::pin(async move { self.run(&context).await })
+    }
+}
