@@ -747,6 +747,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pavlov-discord"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "indexmap",
+ "pavlov-config",
+ "pavlov-core",
+ "pavlov-host",
+ "pavlov-rcon",
+ "pavlov-storage",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pavlov-host"
 version = "0.1.0"
 dependencies = [

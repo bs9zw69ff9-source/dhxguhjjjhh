@@ -26,6 +26,7 @@ cargo test                # tests only
 | `crates/pavlov-config` | The `.env` grammar, the environment over it, and the typed options |
 | `crates/pavlov-rcon` | Pavlov's RCON protocol: one persistent, paced, self-healing session per server, and a byte-recording fake server (`testing` feature) |
 | `crates/pavlov-host` | Everything on the box but Discord: processes, systemd, the RCON registry, observability, the services |
+| `crates/pavlov-discord` | The Discord side: access, the commands, boards and feeds, over a Discord-agnostic caller; the gateway adapter is the only part that knows Discord's types |
 | `crates/pavlov-storage` | Where the data lives: SQLite and file backends, atomic writes that keep the game's ownership, the datasets |
 
 The remaining crates (`pavlov-discord`, `pavlov-bot`) are added as their milestones land; see
