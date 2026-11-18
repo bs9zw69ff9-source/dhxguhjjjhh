@@ -10,6 +10,7 @@
 [files]
 BanSpanOverflowTests = "ported"
 BanTests = "ported"
+DataLayerTests = "ported"
 DomainTests = "ported"
 EvasionScorerTests = "ported"
 FactionTests = "ported"

@@ -125,9 +125,158 @@ impl<'de> serde::Deserialize<'de> for IgnoreCaseSet {
     }
 }
 
+/// A string-keyed map compared like `Dictionary<string, V>(StringComparer.OrdinalIgnoreCase)`.
+///
+/// THE COMPARER LIVES IN THE TYPE, which is the whole point. The C# had to remember to call
+/// `SerializedStore.ReadMap` rather than `Read`, because JSON carries no comparer and a plain
+/// read handed back an ORDINAL dictionary the moment the row existed: an exemption filed as
+/// "Holosight1" stopped matching "holosight1", silently, on the enforcement path. Here a
+/// dataset read as an `IgnoreCaseMap` is case-insensitive whichever way it was read.
+///
+/// Like the C# indexer, [`insert`](Self::insert) keeps the FIRST spelling of a key and
+/// replaces its value, so a round trip preserves the stored spelling and order. Serialises as
+/// a JSON object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnoreCaseMap<V> {
+    entries: indexmap::IndexMap<String, (String, V)>,
+}
+
+impl<V> Default for IgnoreCaseMap<V> {
+    fn default() -> Self {
+        Self {
+            entries: indexmap::IndexMap::new(),
+        }
+    }
+}
+
+impl<V> IgnoreCaseMap<V> {
+    /// An empty map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set `key` to `value`, returning the value it replaced. An existing key keeps the
+    /// spelling it was first written with.
+    pub fn insert(&mut self, key: impl Into<String>, value: V) -> Option<V> {
+        let key = key.into();
+        match self.entries.entry(fold_case(&key)) {
+            indexmap::map::Entry::Occupied(mut slot) => {
+                Some(std::mem::replace(&mut slot.get_mut().1, value))
+            }
+            indexmap::map::Entry::Vacant(slot) => {
+                slot.insert((key, value));
+                None
+            }
+        }
+    }
+
+    /// The value under `key`, ignoring case.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&V> {
+        self.entries.get(&fold_case(key)).map(|(_, v)| v)
+    }
+
+    /// The value under `key`, ignoring case, for changing in place.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut V> {
+        self.entries.get_mut(&fold_case(key)).map(|(_, v)| v)
+    }
+
+    /// Whether a key equal to `key` (ignoring case) is present.
+    #[must_use]
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.entries.contains_key(&fold_case(key))
+    }
+
+    /// Remove the entry whose key equals `key` ignoring case, keeping the others in order.
+    pub fn remove(&mut self, key: &str) -> Option<V> {
+        self.entries.shift_remove(&fold_case(key)).map(|(_, v)| v)
+    }
+
+    /// The entries as `(spelling, value)`, in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
+        self.entries.values().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// The keys as first written, in insertion order.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.entries.values().map(|(k, _)| k.as_str())
+    }
+
+    /// The values, in insertion order.
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.entries.values().map(|(_, v)| v)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl<K: Into<String>, V> FromIterator<(K, V)> for IgnoreCaseMap<V> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut map = Self::new();
+        for (key, value) in iter {
+            map.insert(key, value);
+        }
+        map
+    }
+}
+
+impl<V: serde::Serialize> serde::Serialize for IgnoreCaseMap<V> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.iter())
+    }
+}
+
+impl<'de, V: serde::Deserialize<'de>> serde::Deserialize<'de> for IgnoreCaseMap<V> {
+    /// A JSON object; `null` reads as empty.
+    ///
+    /// KEYS THAT DIFFER ONLY BY CASE ARE MERGED: the first spelling, the last value. The C#
+    /// threw here instead (the copy into an `OrdinalIgnoreCase` dictionary rejects the
+    /// duplicate), and such a row is exactly what the old ordinal-read bug could leave behind,
+    /// so throwing turned one bad row into a dataset nothing could read.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let entries =
+            Option::<indexmap::IndexMap<String, V>>::deserialize(deserializer)?.unwrap_or_default();
+        Ok(entries.into_iter().collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ignore_case_map_keeps_the_first_spelling_and_takes_the_last_value() {
+        let mut map: IgnoreCaseMap<i32> = [("Holosight1", 1), ("bob", 2)].into_iter().collect();
+        assert_eq!(map.insert("HOLOSIGHT1", 3), Some(1));
+        assert_eq!(map.get("holosight1"), Some(&3));
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["Holosight1", "bob"]);
+        assert_eq!(
+            serde_json::to_string(&map).unwrap(),
+            r#"{"Holosight1":3,"bob":2}"#
+        );
+
+        let merged: IgnoreCaseMap<i32> =
+            serde_json::from_str(r#"{"Alice":1,"ALICE":2,"Bob":3}"#).unwrap();
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged.iter().next(), Some(("Alice", &2)));
+        assert!(
+            serde_json::from_str::<IgnoreCaseMap<i32>>("null")
+                .unwrap()
+                .is_empty()
+        );
+
+        assert_eq!(map.remove("BOB"), Some(2));
+        assert!(!map.contains_key("bob"));
+    }
 
     #[test]
     fn matches_dotnet_ordinal_ignore_case() {
