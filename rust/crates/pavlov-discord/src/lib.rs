@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod autocomplete;
 pub mod autopost;
 pub mod barred;
 pub mod boards;

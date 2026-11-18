@@ -3,6 +3,7 @@
 //! tests without a gateway.
 
 pub mod alts;
+pub mod analytics;
 pub mod arrest;
 pub mod check_ban;
 pub mod counts;

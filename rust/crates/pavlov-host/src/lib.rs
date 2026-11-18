@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod analytics;
 pub mod confirmations;
 pub mod crash_recovery;
 pub mod economy;
