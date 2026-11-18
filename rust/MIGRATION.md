@@ -54,6 +54,7 @@ cutover in M10, which the owner runs.
 | `pavlov-storage` | `Host/Storage`, `Host/Events/SqliteEventStore`, `Host/Economy/LedgerFileStore` |
 | `pavlov-host` | all of `Host` except `Discord/`: servers (systemd, ufw, provisioning, process running), the RCON registry, observability, logs, moderation, factions, economy, monitoring, VPN, verification, intelligence, the background service host. ONE crate rather than the planned host + services pair: the C# types reference each other across that line (map rotation needs the RCON registry, which needs the Pavlov.log confirmations and the metrics), and splitting them would mean trait seams that exist only to satisfy a crate boundary |
 | `pavlov-discord` | `Host/Discord` and its commands |
+| `pavlov-gateway` | `Host/Discord/DiscordGateway.cs` and `Gateway*.cs`: the serenity adapter |
 | `pavlov-bot` | `Host/Program.cs`: the binary |
 
 ## Facts the port must keep (verified in the C# source)
@@ -170,6 +171,8 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | Arrest confirm | C# raised a `Confirmed` event that `/arrest` subscribed to. Rust gives the picker and the command one shared `ArrestRecorder`, so there is no event to forget to subscribe; the recorded arrest is the same. |
 | `/botstats` process figures | C# showed the .NET working set, managed heap and GC counts. Rust shows resident memory, threads, uptime and CPU time read from `/proc/self` (there is no managed heap or GC to report); an unreadable `/proc` reads "unknown", never zero. |
 | A component handler failing | an exception, caught by the gateway and apologised for with a correlation id | handlers return nothing and answer their own errors; the router catches a PANIC, counts it and apologises the same way (`component_router`) | the order (bar list, stale-control reply, priming, handler) is now tested without a socket |
+| Rename rate limits | Discord.Net `RetryMode.AlwaysFail` makes a spent rename window throw at once | serenity's rate limiter always waits, so a rename is given 10 s (`RENAME_WAIT`) and a timeout reads as RateLimited | same outcome: `/counts` answers instead of spinning |
+| A board edit failing | a 404 OR Unknown Message re-posts | only Discord's Unknown Message (10008) re-posts; a 404 for a missing CHANNEL leaves the board alone | the C# rule's stated intent (only a resolved channel can report a missing message), without the extra channel fetch |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Stored key case: the C# reads stored property names case-INSENSITIVELY; the Rust models read
