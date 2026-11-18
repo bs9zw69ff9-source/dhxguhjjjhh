@@ -15,6 +15,7 @@ pub mod boards;
 pub mod caller;
 pub mod command;
 pub mod command_log;
+pub mod commands;
 pub mod component;
 pub mod direct_message_alerts;
 pub mod dispatcher;
