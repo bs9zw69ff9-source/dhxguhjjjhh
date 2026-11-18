@@ -35,6 +35,7 @@ pub mod queue;
 pub mod registry;
 pub mod server_labels;
 pub mod service_control;
+pub mod services;
 pub mod supervisor;
 pub mod timeline;
 pub mod vpn;
