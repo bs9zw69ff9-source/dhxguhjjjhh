@@ -22,5 +22,6 @@ pub mod set_roles;
 pub mod stats;
 pub mod subclass;
 pub mod test_alert;
+pub mod utility;
 pub mod whitelist;
 pub mod whitelist_command;

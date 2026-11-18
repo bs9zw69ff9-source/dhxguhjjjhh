@@ -14,6 +14,7 @@ pub mod autopost;
 pub mod barred;
 pub mod boards;
 pub mod caller;
+pub mod catalog;
 pub mod command;
 pub mod command_log;
 pub mod commands;
