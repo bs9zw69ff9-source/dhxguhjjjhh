@@ -170,7 +170,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     [Fact]
     public async Task MastersAreOnEveryWhitelist()
     {
-        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "policepatrolman.txt"), "PlayerOne\n");
         await File.WriteAllTextAsync(Whitelist, "# friends\nPlayerOne\n");
 
         await _access.EnsureFilesAsync(CancellationToken.None);
@@ -184,7 +184,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
         }
 
         // Existing members and hand-written lines are kept.
-        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "policepatrolman.txt")));
         var whitelist = await File.ReadAllLinesAsync(Whitelist);
         Assert.Equal(["# friends", "PlayerOne"], whitelist[..2]);
         Assert.Contains(Master, whitelist);
@@ -193,7 +193,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     [Fact]
     public async Task ARosterAlreadyHoldingTheMastersIsNotRewritten()
     {
-        var path = Path.Combine(_rosterDir, "ncrtrooper.txt");
+        var path = Path.Combine(_rosterDir, "policepatrolman.txt");
         await File.WriteAllTextAsync(path, "fki6\n");
         await _access.EnsureFilesAsync(CancellationToken.None);
         var written = File.GetLastWriteTimeUtc(path);
@@ -208,7 +208,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     [Fact]
     public async Task AJoinPutsAWipedMasterBackOnTheRosters()
     {
-        var path = Path.Combine(_rosterDir, "ncrtrooper.txt");
+        var path = Path.Combine(_rosterDir, "policepatrolman.txt");
         await File.WriteAllTextAsync(path, "PlayerOne\n");   // a wipe or hand edit dropped them
 
         await _access.GrantAsync(1, Master, CancellationToken.None);
@@ -247,7 +247,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
     {
         /* THE BUG. Dropping a name from .env only stopped the bot granting it again; the mods.txt
            line, the whitelist lines and every roster entry stayed behind. */
-        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "policepatrolman.txt"), "PlayerOne\n");
         var store = GrantStore();
 
         var before = Access(store, Master, "OldAlt", "KeptMaster");
@@ -269,7 +269,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
         }
 
         // Everybody else's lines are untouched.
-        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "policepatrolman.txt")));
         var recorded = store.Read(Datasets.MasterGrants, new List<string>());
         Assert.Contains("KeptMaster", recorded);
         Assert.DoesNotContain("OldAlt", recorded);
@@ -303,7 +303,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
         await File.WriteAllTextAsync(Whitelist, "OldMaster\nPlayerOne\n");
         foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
             await File.WriteAllTextAsync(Path.Combine(_rosterDir, file), "OldMaster\n");
-        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "OldMaster\nPlayerOne\n");
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "policepatrolman.txt"), "OldMaster\nPlayerOne\n");
 
         var access = Access(GrantStore(), Master);
         await access.StartAsync(CancellationToken.None);
@@ -313,7 +313,7 @@ public sealed class MasterAccessTests : IAsyncDisposable
         Assert.Equal(["PlayerOne", Master], (await File.ReadAllLinesAsync(Whitelist)).Where(l => l.Length > 0));
         foreach (var file in RosterService.RosterFilesOf(_rosters.Factions))
             Assert.DoesNotContain("OldMaster", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, file)));
-        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "policepatrolman.txt")));
         await access.DisposeAsync();
     }
 
@@ -346,13 +346,13 @@ public sealed class MasterAccessTests : IAsyncDisposable
     [Fact]
     public async Task AMemberOfOneFactionIsNeverTakenForALeftover()
     {
-        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "ncrtrooper.txt"), "PlayerOne\n");
+        await File.WriteAllTextAsync(Path.Combine(_rosterDir, "policepatrolman.txt"), "PlayerOne\n");
 
         var access = Access(GrantStore(), Master);
         await access.StartAsync(CancellationToken.None);
         await access.StopAsync(CancellationToken.None);
 
-        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "ncrtrooper.txt")));
+        Assert.Contains("PlayerOne", await File.ReadAllLinesAsync(Path.Combine(_rosterDir, "policepatrolman.txt")));
         await access.DisposeAsync();
     }
 

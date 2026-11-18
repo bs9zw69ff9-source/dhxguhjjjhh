@@ -132,210 +132,57 @@ public static class FactionRegistry
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The police ladder - the GWPD and nothing else. A preset, not the default any more.
+    /// The police ladder: the GWPD and nothing else. The only built-in set.
     /// </summary>
     /// <remarks>
-    /// THIS USED TO BE THE DEFAULT. The bot it was written for is gone: the Fallout server is
-    /// the only one this runs now, so the ladders nothing is configured for are that server's.
-    /// Kept whole and reachable as <c>FACTION_SET=police</c>, because deleting a working set
-    /// of ladders to express a deployment change would be throwing away data to make a point.
-    ///
     /// THE MAFIAS ARE GONE FROM IT. Gambino and Colombo sat beside the GWPD as spawn-only
     /// factions until the police bot dropped them. Their roster files were not touched:
-    /// gambinospawn.txt and colombospawn.txt stay on disk with whatever is in them, for the
-    /// same reason. A membership record still filed under either name reads as a faction that
-    /// is gone, which every lookup already handles.
+    /// gambinospawn.txt and colombospawn.txt stay on disk with whatever is in them. A
+    /// membership record still filed under either name reads as a faction that is gone, which
+    /// every lookup already handles.
+    ///
+    /// THE FALLOUT LADDERS ARE GONE TOO (owner decision, 2026-11-17), with the bot that ran
+    /// them. Their roster files are not deleted either; this bot simply stops writing them.
     /// </remarks>
     public static FactionSet Police { get; } = FactionSet.Of(All.Values);
 
-    /// <summary>
-    /// What a bot runs when nothing is configured: the Fallout ladders.
-    /// </summary>
-    /// <remarks>
-    /// THE DEFAULT IS THE SERVER THAT EXISTS. This was the police set, which every themed
-    /// deployment then had to override - and the cost of forgetting was not an error but a bot
-    /// quietly writing policecadet.txt on a Fallout server. One line in one .env stood between
-    /// working and silently wrong, and that line went missing more than once.
-    ///
-    /// The police ladders are still here as <see cref="Police"/>, chosen by name.
-    /// </remarks>
-    public static FactionSet Default => FalloutSet;
+    /// <summary>What a bot runs when neither FACTION_SET nor FACTIONS_PATH says otherwise.</summary>
+    public static FactionSet Default => Police;
 
-    /// <summary>
-    /// The Fallout set, built in so a themed server needs no configuration file.
-    /// </summary>
-    /// <remarks>
-    /// SHIPPED RATHER THAN CONFIGURED, and that is the whole point of it. The same ladders
-    /// lived in a JSON file every deployment had to keep by hand: editing it meant SSH, an
-    /// exact path, valid JSON, and a restart - for data that has not changed in months and is
-    /// the same on every server running this theme. A preset is one setting.
-    ///
-    /// THE BUILT-IN DEFAULT IS UNTOUCHED. One binary runs both bots, and the other one has no
-    /// FACTIONS_PATH at all and expects the GWPD. Replacing <see cref="All"/>
-    /// would have swapped the factions out from under it, which is a roster outage rather than
-    /// a rename. This is a second set, chosen by name.
-    ///
-    /// FACTIONS_PATH STILL WINS. Anybody running ladders that are not these keeps their file
-    /// and notices nothing.
-    ///
-    /// The file names match what a live install already has, so switching to this from the
-    /// equivalent JSON file changes nothing on disk - the same rosters, under the same names.
-    /// </remarks>
-    public static readonly FrozenDictionary<string, FactionDefinition> Fallout =
-        new Dictionary<string, FactionDefinition>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["NCR"] = new()
-            {
-                Name = "NCR",
-                Order = ["Recruit", "Trooper", "Corporal", "Sergeant", "Lieutenant", "Captain", "Colonel"],
-                Default = "Recruit",
-                SpawnFile = "ncrspawn.txt",
-                RankFiles = new Dictionary<string, string>
-                {
-                    ["Recruit"] = "ncrrecruit.txt",
-                    ["Trooper"] = "ncrtrooper.txt",
-                    ["Corporal"] = "ncrcorporal.txt",
-                    ["Sergeant"] = "ncrsergeant.txt",
-                    ["Lieutenant"] = "ncrlieutenant.txt",
-                    ["Captain"] = "ncrcaptain.txt",
-                    ["Colonel"] = "ncrcolonel.txt",
-                },
-                /* VETERAN RANGER KEEPS ncrranger.txt. It was called Ranger; renaming a
-                   sub-class must not repoint its file, because the file is what the game
-                   reads and everybody already in it would silently lose the access. */
-                Subclasses = new Dictionary<string, string>
-                {
-                    ["Veteran Ranger"] = "ncrranger.txt",
-                    ["Patrol Ranger"] = "ncrpatrolranger.txt",
-                    ["Heavy Trooper"] = "ncrheavy.txt",
-                    ["Boss"] = "ncrboss.txt",
-                },
-            },
-            ["Legion"] = new()
-            {
-                Name = "Legion",
-                Order = ["Recruit", "Prime", "Veteran", "Decanus", "Centurion", "Legate"],
-                Default = "Recruit",
-                SpawnFile = "legionspawn.txt",
-                RankFiles = new Dictionary<string, string>
-                {
-                    ["Recruit"] = "legionrecruit.txt",
-                    ["Prime"] = "legionprime.txt",
-                    ["Veteran"] = "legionveteran.txt",
-                    ["Decanus"] = "legiondecanus.txt",
-                    ["Centurion"] = "legioncenturion.txt",
-                    ["Legate"] = "legionlegate.txt",
-                },
-                /* File names are EXACT, as given: the game reads that directory by name, so the
-                   sub-class file has to be spelled the way the server config expects it, typo and
-                   all (legionassasin). The display label is the same word capitalised; it is what a
-                   Whitelist Leader picks in /subclass, and the bot creates each file empty on the
-                   next start via RosterService.EnsureRosterFiles. */
-                Subclasses = new Dictionary<string, string>
-                {
-                    ["Frumentarius"] = "legionfrumentarius.txt",
-                    ["Vex"] = "legionvex.txt",
-                    ["Praetorian"] = "legionpraetorian.txt",
-                    ["Slavemaster"] = "legionslavemaster.txt",
-                    ["Assasin"] = "legionassasin.txt",
-                    ["Explorer"] = "legionexplorer.txt",
-                },
-            },
-            ["Brotherhood of Steel"] = new()
-            {
-                Name = "Brotherhood of Steel",
-                Order = ["Initiate", "Knight", "Senior Knight", "Paladin", "Sentinel", "Elder"],
-                Default = "Initiate",
-                SpawnFile = "bosspawn.txt",
-                RankFiles = new Dictionary<string, string>
-                {
-                    ["Initiate"] = "bosinitiate.txt",
-                    ["Knight"] = "bosknight.txt",
-                    ["Senior Knight"] = "bosseniorknight.txt",
-                    ["Paladin"] = "bospaladin.txt",
-                    ["Sentinel"] = "bossentinel.txt",
-                    ["Elder"] = "boselder.txt",
-                },
-                /* SCRIBE IS GONE AND ITS FILE IS NOT. bosscribe.txt stays on disk with whatever
-                   is in it - the bot does not delete a game file to express a config change,
-                   and the game reads that directory whatever this set says. Nobody is removed
-                   from anything by this; the class simply stops being offered. */
-                Subclasses = new Dictionary<string, string>
-                {
-                    ["Recon"] = "bosrecon.txt",
-                    ["Purifier"] = "bospurifier.txt",
-                    ["Boss"] = "bosboss.txt",
-                    ["Assault"] = "bosassault.txt",
-                    ["Headhunter"] = "bosheadhunter.txt",
-                },
-            },
-            ["Enclave"] = new()
-            {
-                Name = "Enclave",
-                Order = ["Recruit", "Soldier", "Sergeant", "Master Sergeant", "Lieutenant", "Officer", "Colonel"],
-                Default = "Recruit",
-                SpawnFile = "enclavespawn.txt",
-                RankFiles = new Dictionary<string, string>
-                {
-                    ["Recruit"] = "enclaverecruit.txt",
-                    ["Soldier"] = "enclavesoldier.txt",
-                    ["Sergeant"] = "enclavesergeant.txt",
-                    ["Master Sergeant"] = "enclavemastersergeant.txt",
-                    ["Lieutenant"] = "enclavelieutenant.txt",
-                    ["Officer"] = "enclaveofficer.txt",
-                    ["Colonel"] = "enclavecolonel.txt",
-                },
-                /* RENAMING A SUB-CLASS MUST NOT REPOINT ITS FILE. The file is what the game
-                   reads; the name is only what staff type into /subclass. Aiming one of these
-                   at a different file takes the class away from everybody already listed in
-                   the old one, in game, while the command still reports success. */
-                Subclasses = new Dictionary<string, string>
-                {
-                    ["Hellfire"] = "enclavehellfire.txt",
-                    ["Demolition"] = "enclavedemolition.txt",
-                    ["Recon"] = "enclaverecon.txt",
-                    ["Boss"] = "enclaveboss.txt",
-                },
-            },
-        }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>The Fallout ladders as a set.</summary>
-    public static FactionSet FalloutSet { get; } = FactionSet.Of(Fallout.Values);
+    /// <summary>The preset name that used to select the Fallout ladders, refused by name.</summary>
+    public const string RemovedFalloutName = "fallout";
 
     /// <summary>
     /// A built-in set by name, or null when the name is not one.
     /// </summary>
     /// <remarks>
     /// Null rather than a fallback, so a typo in the setting is refused at startup instead of
-    /// quietly running the wrong factions - which is a themed server writing the other bot's
-    /// roster files.
+    /// quietly running the wrong factions. <c>default</c> and <c>builtin</c> used to mean the
+    /// Fallout ladders; they now mean the only built-in set there is, which is what the words
+    /// say. <c>fallout</c> is null like any other unknown name, and Program explains why.
     /// </remarks>
     public static FactionSet? Preset(string? name) => name?.Trim().ToLowerInvariant() switch
     {
-        "fallout" or "default" or "builtin" or "built-in" => FalloutSet,
-        "police" or "gwpd" or "nypd" => Police,
+        "police" or "gwpd" or "nypd" or "default" or "builtin" or "built-in" => Police,
         _ => null,
     };
 
     /// <summary>Every preset name, for the error message when one does not match.</summary>
-    public static IReadOnlyList<string> PresetNames { get; } = ["fallout", "police"];
-
-
+    public static IReadOnlyList<string> PresetNames { get; } = ["police"];
 
     /// <summary>
-    /// One faction by name, from either built-in set.
+    /// True when <paramref name="name"/> asks for the Fallout ladders, which were removed.
     /// </summary>
     /// <remarks>
-    /// BOTH SETS, because this is a lookup helper rather than an authority on what a bot is
-    /// running - that is the loaded <see cref="FactionSet"/>, which every caller with a real
-    /// question already holds. Searching the live ladders first and the police ones after
-    /// means neither a Fallout name nor an NYPD one comes back null for want of knowing which
-    /// preset to ask.
+    /// Its own check so the startup error can say "removed" instead of "unknown": somebody
+    /// with <c>FACTION_SET=fallout</c> in a .env that worked last week needs to be told the
+    /// set is gone, not that they made a typo.
     /// </remarks>
-    public static FactionDefinition? Get(string? faction) =>
-        faction is null ? null
-            : Fallout.TryGetValue(faction, out var themed) ? themed
-            : Police.Get(faction);
+    public static bool IsRemovedPreset(string? name) =>
+        string.Equals(name?.Trim(), RemovedFalloutName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>One faction by name (or former name) from the built-in set.</summary>
+    public static FactionDefinition? Get(string? faction) => faction is null ? null : Police.Get(faction);
 
     public static IReadOnlyCollection<string> Names => All.Keys;
 }

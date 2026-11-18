@@ -106,20 +106,29 @@ public static class Program
 
         var features = FeatureOptions.Bind(builder.Configuration);
 
-        /* THE SKIN, applied before anything can build an embed. THEME picks the words and
-           the colours; unset is the Fallout skin, which is what every instance said before
-           skins existed. A NAME THAT IS NOT A SKIN IS FATAL, the same rule as FACTION_SET:
-           quietly dressing the police bot in the Mojave because THEME said "polcie" is a
-           wrong bot, not a typo.
+        /* THE SKIN, applied before anything can build an embed. There is one, the police
+           skin, and unset is it. THEME is still read so an explicit value is checked: a name
+           that is not a skin is fatal, the same rule as FACTION_SET.
 
-           BOT_NAME AFTER IT, so an explicit name beats the skin's own. BOT_NAME has been
-           documented as "stamped on every embed" since the port and read by nothing;
-           Theme.Brand puts it in the footer of every one. Unset keeps the skin's name rather
-           than an empty stamp - a blank footer is not a skin, it is a bug that looks like a
-           skin. */
-        var skin = Discord.Skins.Fallout;
+           THEME=fallout GETS ITS OWN ERROR. The Fallout skin was removed with the Fallout bot
+           (owner decision, 2026-11-17), and somebody whose .env said fallout last week did
+           not make a typo. Starting anyway in the police skin would put the GWPD on a server
+           that asked for something else, and say nothing about why.
+
+           BOT_NAME AFTER IT, so an explicit name beats the skin's own. Unset keeps the skin's
+           name rather than an empty stamp - a blank footer is not a skin, it is a bug that
+           looks like a skin. */
+        var skin = Discord.Skins.Police;
         if (features.ThemeName is { Length: > 0 } themeName)
         {
+            if (Discord.Skins.IsRemoved(themeName))
+            {
+                await Console.Error.WriteLineAsync(
+                    $"THEME is \"{themeName}\", but the fallout theme was removed. " +
+                    $"Delete the THEME line, or set it to one of: {string.Join(", ", Discord.Skins.Names)}.").ConfigureAwait(false);
+                return 78;   // EX_CONFIG
+            }
+
             if (Discord.Skins.Named(themeName) is not { } named)
             {
                 await Console.Error.WriteLineAsync(
@@ -136,14 +145,9 @@ public static class Program
 
         /* THE FACTION SET, resolved before anything is registered because a bad one is a
            configuration error and belongs with the others - reported in full, then exit,
-           rather than surfacing as an empty picker three subsystems later.
-
-           UNSET IS THE THEME'S OWN SET: THEME=police runs the GWPD alone, and
-           no THEME at all runs the Fallout ladders, which is what every bot ran before. A theme
-           whose set is missing is a bug in Skins, not configuration, so it falls back to the
-           default rather than stopping. */
-        var factions = PavlovBot.Core.Factions.FactionRegistry.Preset(skin.Factions)
-                       ?? PavlovBot.Core.Factions.FactionRegistry.Default;
+           rather than surfacing as an empty picker three subsystems later. Unset is the
+           built-in GWPD set. */
+        var factions = PavlovBot.Core.Factions.FactionRegistry.Default;
 
         /* A NAMED SET, CHECKED BEFORE THE FILE and overridden by it. Keeping a JSON file by
            hand - SSH, an exact path, valid JSON, a restart - for ladders that do not change is
@@ -155,6 +159,15 @@ public static class Program
            roster files, which is a roster outage rather than a typo. */
         if (features.FactionSetName is { Length: > 0 } setName)
         {
+            if (PavlovBot.Core.Factions.FactionRegistry.IsRemovedPreset(setName))
+            {
+                await Console.Error.WriteLineAsync(
+                    $"FACTION_SET is \"{setName}\", but the fallout factions were removed. " +
+                    "Delete the FACTION_SET line to run the built-in GWPD set, or set FACTIONS_PATH " +
+                    "to load your own ladders from a file.").ConfigureAwait(false);
+                return 78;   // EX_CONFIG
+            }
+
             if (PavlovBot.Core.Factions.FactionRegistry.Preset(setName) is not { } preset)
             {
                 await Console.Error.WriteLineAsync(
@@ -714,18 +727,15 @@ public static class Program
             blacklist: sp.GetRequiredService<CommandBlacklist>()));
         builder.Services.AddSingleton<ISlashCommand, InspectCommand>();
         builder.Services.AddSingleton<ISlashCommand, SetRconRolesCommand>();
-        builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Give(
+        builder.Services.AddSingleton<ISlashCommand>(sp => MoneyCommand.Give(
             sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
-            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>(),
+            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<MoneyCommand>>(),
             sp.GetRequiredService<IBalanceStore>()));
-        builder.Services.AddSingleton<ISlashCommand>(sp => CapsCommand.Adjust(
+        builder.Services.AddSingleton<ISlashCommand>(sp => MoneyCommand.Adjust(
             sp.GetRequiredService<Ledger>(), sp.GetRequiredService<AuditLog>(),
-            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<CapsCommand>>(),
+            sp.GetRequiredService<Access>(), sp.GetRequiredService<ILogger<MoneyCommand>>(),
             sp.GetRequiredService<IBalanceStore>()));
-        /* ONLY WHERE THE SAVE FILES HAVE LICENSES. The Fallout mod writes a bare balance, so
-           /license there would be a command that can only ever say "no such license". */
-        if (skin.Licenses)
-            builder.Services.AddSingleton<ISlashCommand, LicenseCommand>();
+        builder.Services.AddSingleton<ISlashCommand, LicenseCommand>();
         builder.Services.AddSingleton<DiscordGateway>();
         builder.Services.AddSingleton<IAutoPostTarget>(sp => new GatewayAutoPostTarget(sp.GetRequiredService<DiscordGateway>(),
             sp.GetRequiredService<ILogger<GatewayAutoPostTarget>>()));
@@ -832,14 +842,13 @@ public static class Program
            debugged very differently. */
         foreach (var line in features.Describe()) logger.LogInformation("  {Feature}", line);
 
-        /* THE FACTION SET IS NAMED AT EVERY START. Two bots now run this binary against one
-           game server, and the failure that costs a roster is the clone quietly running the
-           built-in factions and writing the other bot's files. Printing the names is the
-           check that takes one glance; nothing else would say which set is loaded. */
+        /* THE FACTION SET IS NAMED AT EVERY START. The failure that costs a roster is a bot
+           quietly running different ladders from the ones somebody expects, and printing the
+           names is the check that takes one glance; nothing else would say which set is
+           loaded. */
         logger.LogInformation("  factions: {Count} from {Source} - {Names}",
             factions.Names.Count,
-            FactionSource(features.FactionsPath,
-                features.FactionSetName ?? (features.ThemeName is { Length: > 0 } ? skin.Factions : null)),
+            FactionSource(features.FactionsPath, features.FactionSetName),
             string.Join(", ", factions.Names));
 
         /* A RENAMED FACTION'S RECORDS FOLLOW IT, before anything can read them. NYPD is the
@@ -852,23 +861,10 @@ public static class Program
         logger.LogInformation("  theme: {Theme} (THEME), footer \"{Brand}\"",
             Discord.Theme.Skin.Name, Discord.Theme.BrandName);
 
-        /* A SKIN AND A FACTION SET FROM DIFFERENT SERVERS IS SAID OUT LOUD. The theme picks
-           its own set, so this only fires when FACTION_SET was set explicitly to the other
-           server's - the police skin over Fallout ladders, or the reverse. A warning, not a
-           refusal, because neither combination loses data; it just looks wrong to everybody
-           in the server. */
-        if (SkinAndFactionsDisagree(Discord.Theme.Skin, factions))
-        {
-            logger.LogWarning(
-                "THEME is {Theme} but the factions are {Names}, which belong to the other server. " +
-                "Set THEME and FACTION_SET to the same thing (both \"police\" or both \"fallout\")",
-                Discord.Theme.Skin.Name, string.Join(", ", factions.Names));
-        }
-
         /* THE SUB-CLASSES BY NAME, because the faction line above does not settle the question
            anybody actually asks after adding one: does THIS bot know about it?
 
-           A themed clone loads its ladders from a FILE that is copied to the box once and is
+           A FACTIONS_PATH bot loads its ladders from a FILE that is copied to the box once and is
            not touched by any deploy, so a sub-class added in the repo reaches the binary and
            never reaches that file. Every symptom of it is somewhere else - an empty picker, a
            command that "did not update", an hour blamed on Discord propagation - and none of
@@ -1444,17 +1440,6 @@ public static class Program
     internal static bool EnvFileTooOpen(UnixFileMode mode) =>
         (mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite |
                  UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0;
-
-    /// <summary>
-    /// True when the skin is one server's and the built-in factions are the other's.
-    /// </summary>
-    /// <remarks>
-    /// Only the two built-in sets are judged. A FACTIONS_PATH file is somebody's own ladders,
-    /// and there is nothing to say it does not belong with either skin.
-    /// </remarks>
-    internal static bool SkinAndFactionsDisagree(Discord.Skin skin, PavlovBot.Core.Factions.FactionSet factions) =>
-        (ReferenceEquals(skin, Discord.Skins.Police) && ReferenceEquals(factions, PavlovBot.Core.Factions.FactionRegistry.FalloutSet)) ||
-        (ReferenceEquals(skin, Discord.Skins.Fallout) && ReferenceEquals(factions, PavlovBot.Core.Factions.FactionRegistry.Police));
 
     internal static bool MayFallBackToSet(string? path, string? setName) =>
         path is { Length: > 0 } &&

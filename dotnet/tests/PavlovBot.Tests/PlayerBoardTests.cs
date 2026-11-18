@@ -71,7 +71,7 @@ public class PlayerBoardTests : IAsyncDisposable
         var board = PlayerBoard.Build(
         [
             Server("server2", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Alice", null)]),
-            Server("Mojave Outpost", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Bob", null)]),
+            Server("Downtown", TimeSpan.FromSeconds(5), players: [new BoardPlayer("Bob", null)]),
         ], DateTimeOffset.UtcNow);
 
         Assert.NotNull(board);
@@ -79,7 +79,7 @@ public class PlayerBoardTests : IAsyncDisposable
 
         Assert.Contains("Server 2 (1)", text, StringComparison.Ordinal);
         // A name somebody actually chose is left alone.
-        Assert.Contains("Mojave Outpost (1)", text, StringComparison.Ordinal);
+        Assert.Contains("Downtown (1)", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public class PlayerBoardTests : IAsyncDisposable
         Assert.Contains("no roster yet", text, StringComparison.Ordinal);
         Assert.Contains("the reply could not be parsed", text, StringComparison.Ordinal);
         // One online on the server that answered, NOT "nobody online" on the one that did not.
-        Assert.Contains("**1** *courier ", board!.Description, StringComparison.Ordinal);
+        Assert.Contains("**1** *player ", board!.Description, StringComparison.Ordinal);
         Assert.DoesNotContain("nobody online", text, StringComparison.Ordinal);
     }
 

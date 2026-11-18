@@ -287,7 +287,7 @@ public sealed class Boards(
            never appears. */
         if (rows.Count == 0)
         {
-            return Theme.Notice($"{Lore.Irons} {Lore.Say.MostWantedTitle}", Lore.Say.NoArrests)
+            return Theme.Notice($"{Lore.JailGlyph} {Lore.Say.MostWantedTitle}", Lore.Say.NoArrests)
                 .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
                 .Build();
         }
@@ -297,7 +297,7 @@ public sealed class Boards(
             $"`{i + 1,2}.` {Medal(i)} **{Sanitize.Code(r.Player)}** — {r.Minutes} min over {r.Count} arrest(s)\n" +
             $"{Theme.Bar(r.Minutes, top)}");
 
-        return Theme.Punishment($"{Lore.Irons} {Lore.Say.MostWantedTitle}", string.Join("\n", lines))
+        return Theme.Punishment($"{Lore.JailGlyph} {Lore.Say.MostWantedTitle}", string.Join("\n", lines))
             .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
             .Build();
     }
@@ -336,7 +336,7 @@ public sealed class Boards(
 
         if (rows.Count == 0)
         {
-            return Theme.Success($"{Lore.Bounty} {Lore.Say.NoWarrantsTitle}", Lore.Say.NobodyWanted)
+            return Theme.Success($"{Lore.WarrantGlyph} {Lore.Say.NoWarrantsTitle}", Lore.Say.NobodyWanted)
                 .Brand($"Updated {EasternTime.Stamp(DateTimeOffset.UtcNow)} Eastern")
                 .Build();
         }
@@ -347,7 +347,7 @@ public sealed class Boards(
 
         var total = warrants.Where(kv => kv.Value is { Count: > 0 }).Sum(kv => kv.Value.Count);
 
-        var embed = Theme.Punishment($"{Lore.Bounty} {Lore.Say.WarrantBoardTitle}", string.Join("\n", lines))
+        var embed = Theme.Punishment($"{Lore.WarrantGlyph} {Lore.Say.WarrantBoardTitle}", string.Join("\n", lines))
             .AddField("Wanted", rows.Count.ToString(CultureInfo.InvariantCulture), true)
             .AddField(Lore.WarrantsHeading, total.ToString(CultureInfo.InvariantCulture), true);
 
@@ -375,7 +375,7 @@ public sealed class Boards(
         var lines = rows.Select((r, i) =>
             $"`{i + 1,2}.` **{Sanitize.Code(r.Staff)}** — {r.Count} action(s), last {Theme.Relative(r.Last)}");
 
-        return Theme.Notice($"{Lore.Badge} {Lore.Say.StaffBoardTitle}", string.Join("\n", lines))
+        return Theme.Notice($"{Lore.StaffGlyph} {Lore.Say.StaffBoardTitle}", string.Join("\n", lines))
             .Brand($"{log.Count} recorded action(s)")
             .Build();
     }

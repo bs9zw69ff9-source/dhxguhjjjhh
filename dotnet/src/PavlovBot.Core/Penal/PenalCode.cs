@@ -282,7 +282,7 @@ public sealed record Booking(
         return parts.Count > 0 ? string.Join(" + ", parts) : "No jail time";
     }
 
-    /// <summary>"250 caps", "No bail - the sentence must be served", "Based on the associated charge".</summary>
+    /// <summary>"$250", "No bail - the sentence must be served", "Based on the associated charge".</summary>
     /// <param name="currency">
     /// How this server writes money. REQUIRED rather than defaulted, so a call site cannot
     /// quietly quote bail in a currency the rest of the screen does not use.

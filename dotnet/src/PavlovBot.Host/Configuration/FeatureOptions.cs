@@ -136,7 +136,8 @@ public sealed record FeatureOptions
     public string? BotName { get; init; }
 
     /// <summary>
-    /// Which look this instance wears: <c>fallout</c> (the default) or <c>police</c>. <c>THEME</c>.
+    /// Which look this instance wears. <c>THEME</c>: <c>police</c>, the only skin and the
+    /// default. <c>fallout</c> was removed and is refused at startup.
     /// </summary>
     /// <remarks>
     /// The words, the glyphs and the colours, together - see <c>Discord.Skins</c>. Separate from

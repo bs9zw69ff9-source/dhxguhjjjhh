@@ -167,7 +167,7 @@ public class KillStatsTests
     // ---- the card ----
 
     private static PlayerProfile Profile(
-        ProfileCombat? combat = null, string? faction = "NCR", string? rank = "Ranger",
+        ProfileCombat? combat = null, string? faction = "GWPD", string? rank = "Sergeant",
         long playtime = 125, long? balance = 1250, bool online = false) =>
         new(
             new ProfileIdentity("Courier6", "0002abc", []),
@@ -187,13 +187,13 @@ public class KillStatsTests
         var card = StatsCommand.Card(Profile(new ProfileCombat(10, 5, 1, Now))).Build();
         var text = card.Description + "\n" + string.Join("\n", card.Fields.Select(f => $"{f.Name}: {f.Value}"));
 
-        Assert.Contains("NCR", text, StringComparison.Ordinal);
-        Assert.Contains("Ranger", text, StringComparison.Ordinal);
+        Assert.Contains("GWPD", text, StringComparison.Ordinal);
+        Assert.Contains("Sergeant", text, StringComparison.Ordinal);
         Assert.Contains("2h 5m", text, StringComparison.Ordinal);
         Assert.Contains("2.00", text, StringComparison.Ordinal);
         Assert.Contains("10 / 5", text, StringComparison.Ordinal);
         Assert.Contains("(1 self)", text, StringComparison.Ordinal);
-        Assert.Contains("1,250 caps", text, StringComparison.Ordinal);
+        Assert.Contains("$1,250", text, StringComparison.Ordinal);
     }
 
     [Fact]

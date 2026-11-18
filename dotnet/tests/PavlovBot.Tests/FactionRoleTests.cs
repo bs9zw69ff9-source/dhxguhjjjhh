@@ -34,7 +34,7 @@ public class FactionRoleTests
     private const ulong LegacyMafiaRoleId = 800;
     private const ulong LegacyNypdRoleId = 801;
 
-    private static FactionSet Fallout => FactionSet.Of(
+    private static FactionSet TwoFactions => FactionSet.Of(
     [
         Faction("NCR", "ncr"),
         Faction("Legion", "legion"),
@@ -63,7 +63,7 @@ public class FactionRoleTests
     [Fact]
     public void AConfiguredFactionsRoleManagesOnlyThatFaction()
     {
-        var access = Build(Fallout, new RoleMap
+        var access = Build(TwoFactions, new RoleMap
         {
             FactionRoles = new Dictionary<string, ulong> { ["NCR"] = NcrRoleId },
         }, out _);
@@ -79,7 +79,7 @@ public class FactionRoleTests
     [Fact]
     public void AThemedBotHasPerFactionDelegationAtAll()
     {
-        var access = Build(Fallout, new RoleMap
+        var access = Build(TwoFactions, new RoleMap
         {
             FactionRoles = new Dictionary<string, ulong> { ["Legion"] = LegionRoleId },
         }, out _);
@@ -94,7 +94,7 @@ public class FactionRoleTests
     {
         // What the hardcoded "one role for both mafias" rule did, now something an admin
         // chooses by naming the same role twice rather than something the code decides.
-        var access = Build(Fallout, new RoleMap
+        var access = Build(TwoFactions, new RoleMap
         {
             FactionRoles = new Dictionary<string, ulong> { ["NCR"] = NcrRoleId, ["Legion"] = NcrRoleId },
         }, out _);
@@ -105,7 +105,7 @@ public class FactionRoleTests
     [Fact]
     public void AFactionNameIsMatchedCaseInsensitively()
     {
-        var access = Build(Fallout, new RoleMap
+        var access = Build(TwoFactions, new RoleMap
         {
             FactionRoles = new Dictionary<string, ulong> { ["ncr"] = NcrRoleId },
         }, out _);
@@ -161,7 +161,7 @@ public class FactionRoleTests
     {
         // The names they answer for do not exist here, and a themed bot must not report
         // managing a faction it has never heard of.
-        var access = Build(Fallout, new RoleMap { MafiaRole = LegacyMafiaRoleId, NypdRole = LegacyNypdRoleId }, out _);
+        var access = Build(TwoFactions, new RoleMap { MafiaRole = LegacyMafiaRoleId, NypdRole = LegacyNypdRoleId }, out _);
 
         Assert.Empty(access.ManageableFactions(new FakeMember(MemberId, LegacyMafiaRoleId, LegacyNypdRoleId)));
     }

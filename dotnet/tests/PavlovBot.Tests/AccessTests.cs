@@ -199,8 +199,7 @@ public class AccessTests
     {
         var access = Build(out _);
 
-        // Against the loaded set rather than a literal, so adding a faction does not fail
-        // this - and the default set is the Fallout one now.
+        // Against the loaded set rather than a literal, so adding a faction does not fail this.
         Assert.Equal(FactionRegistry.Default.Names.Count, access.ManageableFactions(new FakeMember(OwnerId)).Count);
         Assert.True(access.CanManage(new FakeUser(SuperOwnerId), FactionRegistry.Default.Names.First()));
         Assert.Empty(access.ManageableFactions(new FakeMember(StrangerId)));

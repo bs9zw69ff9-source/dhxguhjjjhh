@@ -285,8 +285,8 @@ public class BotOptionsTests
 
     /* ─── COMMANDS_DISABLED ──────────────────────────────────────────────────────────────
 
-       One binary, two RPs: the Fallout bot has no use for /arrest, /warrant or /bail, and
-       leaving them in the picker for a moderator who can never use them reads as a
+       A server that does not run the police RP has no use for /arrest, /warrant or /bail,
+       and leaving them in the picker for a moderator who can never use them reads as a
        half-finished bot.
 
        A LIST OF NAMES, NOT A PROFILE FLAG. This repo tried the flag once - RP_PROFILE - and
@@ -313,7 +313,7 @@ public class BotOptionsTests
     /// <remarks>
     /// "/arrest" is what somebody copies out of Discord. A list that silently failed to match
     /// it would leave the command enabled and look exactly like the setting being ignored -
-    /// which on a Fallout server means an /arrest nobody expects to exist.
+    /// which on a server without the police RP means an /arrest nobody expects to exist.
     /// </remarks>
     [Fact]
     public void ALeadingSlashIsAccepted()

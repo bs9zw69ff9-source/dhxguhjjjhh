@@ -21,7 +21,7 @@ namespace PavlovBot.Host.Factions;
 ///
 /// ONCE, AT STARTUP, AND IDEMPOTENT. After the first run there is nothing under the old name,
 /// every mutator vetoes, and nothing is written. An instance whose factions declare no former
-/// names - the Fallout bot - does not touch a single dataset.
+/// names (its own FACTIONS_PATH ladders) does not touch a single dataset.
 ///
 /// THE CURRENT NAME WINS A COLLISION. A delegated role already set under the new name was set
 /// deliberately, after the rename, and is kept over the one inherited from the old name.

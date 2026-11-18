@@ -141,17 +141,16 @@ public class SlashCommandValidationTests
         Assert.DoesNotContain(options, o => o.Name == "playerid");
 
         /* The sub-class picker is generated from the loaded set, so a new sub-class reaches
-           the command without anybody editing it. Hellfire is the proof - it was added to the
-           Enclave in the data alone.
+           the command without anybody editing it.
 
-           ASSERTED ON THE VALUE AND ITS ROUND TRIP. The value is "Enclave:Hellfire" and the
+           ASSERTED ON THE VALUE AND ITS ROUND TRIP. The value is "GWPD:Detective" and the
            handler parses the bare name back out - that is what HasSubclass matches and what
            the roster files are keyed on. Asserting on the label alone would pass while the
            value silently changed to something no roster knows. */
         var choices = Assert.Single(options, o => o.Name == "subclass").Choices;
-        Assert.Contains("Enclave:Hellfire", choices!.Select(c => c.Value?.ToString()), StringComparer.Ordinal);
-        Assert.Equal(("Enclave", "Hellfire"), SubclassCommand.ParseValue("Enclave:Hellfire"));
-        Assert.Contains("Enclave - Hellfire", choices!.Select(c => c.Name), StringComparer.Ordinal);
+        Assert.Contains("GWPD:Detective", choices!.Select(c => c.Value?.ToString()), StringComparer.Ordinal);
+        Assert.Equal(("GWPD", "Detective"), SubclassCommand.ParseValue("GWPD:Detective"));
+        Assert.Contains("GWPD - Detective", choices!.Select(c => c.Name), StringComparer.Ordinal);
     }
 
     // ---- the validator ----

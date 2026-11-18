@@ -297,13 +297,6 @@ public sealed class LicenseStoreTests : IDisposable
 public class LicenseCommandShapeTests
 {
     [Fact]
-    public void OnlyThePoliceWorldHasLicenses()
-    {
-        Assert.True(Skins.Police.Licenses);
-        Assert.False(Skins.Fallout.Licenses);
-    }
-
-    [Fact]
     public void ItIsLicenseRemoveWithAChoiceOfLicense()
     {
         var store = new LedgerFileStore(null);

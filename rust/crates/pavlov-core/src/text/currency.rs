@@ -4,9 +4,8 @@
 /// whatever the locale of the machine running the bot, because a figure on a receipt must
 /// not change shape between hosts.
 ///
-/// The C# type also carried a caps currency for the fallout theme. That theme was removed
-/// by the owner (2026-11-17), so only dollars are ported; the type stays general so a
-/// currency is still data, not a code path.
+/// Dollars only, as in the C#: the caps currency went with the fallout theme (2026-11-17).
+/// The type stays general so a currency is still data, not a code path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Currency {
     /// Written before the figure, e.g. `$`.

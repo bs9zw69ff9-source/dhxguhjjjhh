@@ -72,8 +72,9 @@ public static class FactionsFile
         if (!File.Exists(path))
         {
             /* NOT SILENTLY THE DEFAULT. A path that was set and does not resolve is a typo,
-               and falling back to the built-in factions would start a Fallout bot running the
-               police roster - which looks like the file being ignored, because it is. */
+               and falling back to the built-in factions would start a bot meant for other
+               ladders running the police roster - which looks like the file being ignored,
+               because it is. */
             return new FactionsFileResult(null, [$"{path} does not exist."]);
         }
 

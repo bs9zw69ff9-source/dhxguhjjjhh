@@ -66,7 +66,7 @@ public sealed class VerificationService(
 
     /// <summary>The panel embed. Posted and kept current by <see cref="AutoPost"/>.</summary>
     public Embed BuildPanel() =>
-        Theme.Success($"{Lore.Rads} {Lore.Say.VerifyTitle}",
+        Theme.Success($"{Lore.Mark} {Lore.Say.VerifyTitle}",
                 "Press **Verify** and enter your **exact** Pavlov in-game name.\n\n" +
                 $"{Lore.Say.VerifyReview}\n\n" +
                 Lore.Say.VerifyAlts)

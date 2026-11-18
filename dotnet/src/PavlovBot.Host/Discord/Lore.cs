@@ -9,19 +9,19 @@ namespace PavlovBot.Host.Discord;
 /// </summary>
 /// <remarks>
 /// The bot talks like it belongs on the server it is on. That is a real requirement rather
-/// than decoration - a bot that answers "Balance updated: $1,250" on a server whose currency
-/// is caps is reading off a different game, and so is one quoting caps to a police server.
+/// than decoration: a bot that answers in another server's currency is reading off a
+/// different game.
 ///
 /// WHAT BELONGS HERE: nouns, glyphs and flavour lines. What a thing is CALLED.
 ///
 /// WHAT DOES NOT: anything a person has to act on, and anything a machine reads. Command
 /// names, option names, error causes, stored data and log lines stay plain - somebody
 /// reading "the roster file could not be written" at two in the morning is not helped by
-/// being told the Followers have misplaced their ledger. The rule that keeps this honest is
+/// being told in character. The rule that keeps this honest is
 /// that flavour goes in the TITLE and the caption; the facts underneath stay in plain words.
 ///
 /// ONE PLACE, because the alternative is the theme drifting a synonym at a time across
-/// thirty command files until half the bot says caps and half says money. The words
+/// thirty command files until half the bot says one thing and half another. The words
 /// themselves are data in <see cref="Skins"/>; this is the one door they come through.
 /// </remarks>
 public static class Lore
@@ -30,20 +30,20 @@ public static class Lore
 
     // ---- glyphs ----
 
-    /// <summary>Currency: a bottle cap, or a bag of money.</summary>
-    public static string Caps => Words.MoneyGlyph;
+    /// <summary>Currency.</summary>
+    public static string MoneyGlyph => Words.MoneyGlyph;
 
     /// <summary>The skin's mark - brand stamps, the profile card, the bot's own voice.</summary>
-    public static string Rads => Words.Mark;
+    public static string Mark => Words.Mark;
 
     /// <summary>A posted warrant.</summary>
-    public static string Bounty => Words.WarrantGlyph;
+    public static string WarrantGlyph => Words.WarrantGlyph;
 
     /// <summary>Doing time.</summary>
-    public static string Irons => Words.JailGlyph;
+    public static string JailGlyph => Words.JailGlyph;
 
     /// <summary>Rank, service, keeping the peace.</summary>
-    public static string Badge => Words.StaffGlyph;
+    public static string StaffGlyph => Words.StaffGlyph;
 
     // ---- nouns ----
 
@@ -60,7 +60,7 @@ public static class Lore
     public static string Warrant => Words.Warrant;
     public static string Warrants => Words.Warrants;
 
-    /// <summary>The plural as a heading or a field name: "Bounties", "Warrants".</summary>
+    /// <summary>The plural as a heading or a field name: "Warrants".</summary>
     public static string WarrantsHeading =>
         Words.Warrants.Length == 0 ? "" : char.ToUpperInvariant(Words.Warrants[0]) + Words.Warrants[1..];
 
@@ -70,7 +70,7 @@ public static class Lore
     // ---- phrasing ----
 
     /// <summary>
-    /// An amount of money, the way this server counts it: "1,250 caps", "$1,250".
+    /// An amount of money, the way this server counts it: "$1,250".
     /// </summary>
     /// <remarks>
     /// THE ONE MONEY FORMATTER, shared with the bail label through <see cref="Currency"/>.
@@ -80,8 +80,8 @@ public static class Lore
     /// </remarks>
     public static string Amount(long amount) => Money.Format(amount);
 
-    /// <summary>"12 wastelanders", "1 player" - a head count that reads as prose.</summary>
-    public static string Wastelanders(int count) =>
+    /// <summary>"12 players", "1 player" - a head count that reads as prose.</summary>
+    public static string HeadCount(int count) =>
         count == 1 ? $"1 {Words.Person}" : $"{count.ToString("N0", CultureInfo.InvariantCulture)} {Words.People}";
 
     /// <summary>The caption under the player board, by head count.</summary>

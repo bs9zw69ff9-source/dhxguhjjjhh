@@ -23,13 +23,13 @@ public class LoreTests
             .Build());
 
     [Fact]
-    public void MoneyIsCountedInCaps() => Assert.Equal("1,250 caps", Lore.Amount(1250));
+    public void MoneyIsCountedInDollars() => Assert.Equal("$1,250", Lore.Amount(1250));
 
     [Fact]
     public void TheGameAndTheBotQuotePricesTheSameWay()
     {
         /* Core cannot see Host, so the bail label formats its own money. Two formatters for
-           one currency is how a booking ends up quoting dollars next to a balance in caps. */
+           one currency is how a booking ends up quoting one unit next to a balance in another. */
         var booking = PenalCode.Book(["PC 100"], 1.0);
 
         Assert.Equal(Lore.Amount(booking.Bail), booking.BailLabel(Lore.Money));
@@ -41,13 +41,13 @@ public class LoreTests
         var before = Theme.BrandName;
         try
         {
-            Theme.BrandName = "Mojave Authority";
+            Theme.BrandName = "GWPD Dispatch";
 
             var plain = new EmbedBuilder().WithTitle("x").Brand().Build();
             var withFooter = new EmbedBuilder().WithTitle("x").Brand("Updated 14:02 Eastern").Build();
 
-            Assert.Equal($"{Lore.Rads} Mojave Authority", plain.Footer!.Value.Text);
-            Assert.Equal($"{Lore.Rads} Mojave Authority • Updated 14:02 Eastern", withFooter.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Mark} GWPD Dispatch", plain.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Mark} GWPD Dispatch • Updated 14:02 Eastern", withFooter.Footer!.Value.Text);
         }
         finally
         {
@@ -62,12 +62,12 @@ public class LoreTests
         var before = Theme.BrandName;
         try
         {
-            Theme.BrandName = "Mojave Authority";
+            Theme.BrandName = "GWPD Dispatch";
 
             var embed = Theme.Notice("Title", "body").Brand("Updated 14:02 Eastern").Build();
 
             // Branded twice: the mark and the name each appear once, not twice.
-            Assert.Equal($"{Lore.Rads} Mojave Authority • Updated 14:02 Eastern", embed.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Mark} GWPD Dispatch • Updated 14:02 Eastern", embed.Footer!.Value.Text);
         }
         finally
         {
@@ -84,13 +84,13 @@ public class LoreTests
         var before = Theme.BrandName;
         try
         {
-            Theme.BrandName = "Mojave Authority";
+            Theme.BrandName = "GWPD Dispatch";
 
             var health = new EmbedBuilder().WithTitle("Health").WithFooter("build b625e1d").Brand().Build();
             var monitor = Theme.Notice("Server status", "body").WithFooter("3 server(s)").Brand().Build();
 
-            Assert.Equal($"{Lore.Rads} Mojave Authority • build b625e1d", health.Footer!.Value.Text);
-            Assert.Equal($"{Lore.Rads} Mojave Authority • 3 server(s)", monitor.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Mark} GWPD Dispatch • build b625e1d", health.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Mark} GWPD Dispatch • 3 server(s)", monitor.Footer!.Value.Text);
         }
         finally
         {
@@ -104,11 +104,11 @@ public class LoreTests
         var before = Theme.BrandName;
         try
         {
-            Theme.BrandName = "Mojave Authority";
+            Theme.BrandName = "GWPD Dispatch";
 
             var embed = new EmbedBuilder().WithTitle("x").WithFooter("build b625e1d").Brand().Brand().Build();
 
-            Assert.Equal($"{Lore.Rads} Mojave Authority • build b625e1d", embed.Footer!.Value.Text);
+            Assert.Equal($"{Lore.Mark} GWPD Dispatch • build b625e1d", embed.Footer!.Value.Text);
         }
         finally
         {
@@ -117,7 +117,6 @@ public class LoreTests
     }
 
     [Theory]
-    [InlineData("fallout")]
     [InlineData("police")]
     public void NoTwoColoursInThePaletteAreTheSame(string skin)
     {
