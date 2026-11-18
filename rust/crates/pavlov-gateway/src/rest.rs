@@ -513,3 +513,55 @@ impl pavlov_discord::monitor_alerts::AlertPoster for RestPoster {
         })
     }
 }
+
+/// Grants the verified role.
+pub struct RestRoles {
+    http: Arc<Http>,
+    cache: Arc<Cache>,
+}
+
+impl std::fmt::Debug for RestRoles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RestRoles")
+    }
+}
+
+impl RestRoles {
+    #[must_use]
+    pub fn new(http: Arc<Http>, cache: Arc<Cache>) -> Self {
+        Self { http, cache }
+    }
+}
+
+impl pavlov_discord::verification::RoleGranter for RestRoles {
+    fn grant(
+        &self,
+        guild_id: u64,
+        user_id: u64,
+        role_id: u64,
+    ) -> BoxFuture<'_, Result<String, pavlov_discord::verification::RoleGrantError>> {
+        use pavlov_discord::verification::RoleGrantError;
+        Box::pin(async move {
+            let guild = GuildId::new(guild_id);
+            let role = serenity::all::RoleId::new(role_id);
+            let name = self
+                .cache
+                .guild(guild)
+                .and_then(|g| g.roles.get(&role).map(|r| r.name.clone()));
+            let Some(name) = name else {
+                return Err(RoleGrantError::RoleMissing);
+            };
+            match self
+                .http
+                .add_member_role(guild, UserId::new(user_id), role, Some("verified"))
+                .await
+            {
+                Ok(()) => Ok(name),
+                Err(error) => match http_failure(&error) {
+                    Some((_, UNKNOWN_MEMBER)) => Err(RoleGrantError::MemberLeft),
+                    _ => Err(RoleGrantError::Failed(error.to_string())),
+                },
+            }
+        })
+    }
+}

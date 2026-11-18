@@ -88,6 +88,12 @@ impl DiscordClient {
         Arc::new(RestPoster::new(self.http()))
     }
 
+    /// Grants the verified role.
+    #[must_use]
+    pub fn roles(&self) -> Arc<dyn pavlov_discord::verification::RoleGranter> {
+        Arc::new(crate::rest::RestRoles::new(self.http(), self.cache()))
+    }
+
     #[must_use]
     pub fn renamer(&self) -> Arc<dyn ChannelRenamer> {
         Arc::new(RestRenamer::new(self.http()))

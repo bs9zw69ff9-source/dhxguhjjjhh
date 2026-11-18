@@ -38,3 +38,4 @@ pub mod registration;
 pub mod runner;
 pub mod slash;
 pub mod staff_log;
+pub mod verification;
