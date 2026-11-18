@@ -248,3 +248,132 @@ fn every_produced_name_matches_discords_rule() {
         );
     }
 }
+
+// ---- /setroles' options ----
+
+fn options(factions: &FactionSet, disabled: &[&str]) -> Vec<String> {
+    use pavlov_discord::slash::SlashCommand;
+    let store = Arc::new(SerializedStore::new(Arc::new(MemoryBackend::new())));
+    let access = Arc::new(
+        Access::new(Arc::clone(&store), [1], [2])
+            .unwrap()
+            .with_factions(factions.clone()),
+    );
+    let disabled: Vec<String> = disabled.iter().map(|d| (*d).to_owned()).collect();
+    let command = pavlov_discord::commands::set_roles::SetRolesCommand::new(
+        store, access, factions, &disabled,
+    );
+    command
+        .build()
+        .options
+        .into_iter()
+        .map(|o| o.name)
+        .collect()
+}
+
+fn is_discord_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+}
+
+fn distinct(names: &[String]) -> bool {
+    let folded: std::collections::HashSet<String> =
+        names.iter().map(|n| n.to_lowercase()).collect();
+    folded.len() == names.len()
+}
+
+#[test]
+fn a_themed_bot_is_offered_its_own_factions() {
+    let set = FactionSet::of([
+        faction("NCR", "ncr"),
+        faction("Legion", "legion"),
+        faction("Brotherhood of Steel", "bos"),
+        faction("Enclave", "enclave"),
+    ]);
+    let options = options(&set, &["arrest", "warrant", "backgroundcheck", "bail"]);
+    assert_eq!(
+        options,
+        [
+            "mod_role",
+            "admin_role",
+            "whitelist_leader_role",
+            "brotherhood_of_steel_role",
+            "enclave_role",
+            "legion_role",
+            "ncr_role"
+        ]
+    );
+    for gone in ["mafia_role", "nypd_role", "police_role"] {
+        assert!(!options.contains(&gone.to_owned()));
+    }
+}
+
+#[test]
+fn the_police_bot_is_offered_the_gwpd_not_the_nypd() {
+    let options = options(FactionRegistry::police(), &[]);
+    assert_eq!(
+        options,
+        [
+            "mod_role",
+            "admin_role",
+            "whitelist_leader_role",
+            "police_role",
+            "gwpd_role"
+        ]
+    );
+    for gone in ["nypd_role", "gambino_role", "colombo_role"] {
+        assert!(!options.contains(&gone.to_owned()));
+    }
+}
+
+#[test]
+fn the_built_in_bot_keeps_police_and_gains_an_option_per_faction() {
+    let options = options(FactionRegistry::default_set(), &[]);
+    assert!(options.contains(&"police_role".to_owned()));
+    for faction in FactionRegistry::default_set().names() {
+        assert!(
+            options.contains(&slug(Some(faction), "_role").unwrap()),
+            "{faction}"
+        );
+    }
+}
+
+#[test]
+fn the_police_slot_survives_until_every_police_command_is_gone() {
+    assert!(
+        options(FactionRegistry::default_set(), &["arrest"]).contains(&"police_role".to_owned())
+    );
+    assert!(
+        !options(
+            FactionRegistry::default_set(),
+            &["arrest", "warrant", "backgroundcheck", "bail"]
+        )
+        .contains(&"police_role".to_owned())
+    );
+}
+
+#[test]
+fn every_option_name_is_unique_and_within_discords_limits() {
+    let set = FactionSet::of([
+        faction("NCR", "ncr"),
+        faction("New California Republic Rangers Mojave", "rangers"),
+        faction("Caesar's Legion", "legion"),
+    ]);
+    let options = options(&set, &[]);
+    assert!(distinct(&options));
+    assert!(options.len() <= 25);
+    assert!(options.iter().all(|n| is_discord_name(n)), "{options:?}");
+}
+
+#[test]
+fn a_faction_that_cannot_be_named_is_dropped_rather_than_breaking_registration() {
+    let options = options(
+        &FactionSet::of([faction("NCR", "ncr"), faction("!!!", "x")]),
+        &[],
+    );
+    assert!(options.contains(&"ncr_role".to_owned()));
+    assert!(distinct(&options));
+    assert!(options.iter().all(|n| is_discord_name(n)), "{options:?}");
+}
