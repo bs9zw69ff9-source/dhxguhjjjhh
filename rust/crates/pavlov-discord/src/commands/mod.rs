@@ -26,6 +26,7 @@ pub mod provision_server;
 pub mod rank_change;
 pub mod rotate_map;
 pub mod server_info;
+pub mod server_lookup;
 pub mod server_switch;
 pub mod set_roles;
 pub mod staff;
