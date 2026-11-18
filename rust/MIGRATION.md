@@ -17,7 +17,7 @@ summarised here so the checklist stands on its own.
 | M4 | `pavlov-storage`: SQLite kv and events, files, atomic writes, game files | done: atomic writes (owner and mode carried over), the file and SQLite key-value backends, the dataset names and seeds, the SQLite timeline, the real disk probe, the game-file rules and `IGNORE_PATHS`, the whitelist editor, the ledger file store, the cross-install ModSave sync, and the stored shapes (Node ban list, arrests, the role map, account and flag rows). The game ban file (`ServerBanFile`), the IP-flag and VPN-cache datasets port with the moderation and VPN services in M6 |
 | M5 | `pavlov-host`: systemd, ufw, provisioning, delete, switch, supervisor, crash recovery | done: the process runner (process-group kill on a deadline or a dropped caller, both pipes drained, stdin closed), `ServiceControl`, the metrics and health registries, the RCON registry, the log confirmations, server labels, player notices and the switch warnings, map rotation, crash recovery, the provisioner (every step, both checklists, delete, the kept player data, the bot supervisor; driven end to end against a recording runner and a fake RCON server), ufw, the layout gate, the HTTP seam and the master server list. Left for the Discord layer: the `/provisionserver` option shape and the player-count channel's offline name |
 | M6 | the rest of `pavlov-host` (merged with the planned `pavlov-services`, see the crate map): moderation, factions, economy, logs, monitoring, VPN, verification, the 30 services | done (the Discord-facing remainder moves to M7/M8): VPN screening (the resilient JSON client, the five detectors, the geolocators and their chain, the screening service with its snapshot cache and single-flight, the static map); bans (the server ban file with import-before-export across every server and the tombstones, the ban service's enforce/unban/sweep/reconcile/lift/expiry by name, the master names, pardons and exemptions); IP tracking (accounts, confirmed and guessed addresses, the flags with their legacy read-through, deferred flags, manual blocks on the certain pairing, split kill records, RCON+ result lines) and the ban firewall; the timeline recorder, the feed webhooks (plain HTTP, queued drop-oldest, a status per feed), the audit log, security alerts and the evasion responder |; the VPN responder and its auto-ban wiring, the feed bridge (log events to webhooks, screening and bans), kill stats, and the presentation data in `pavlov-core` (skin, lore, theme, `EmbedBudget`, the connection card, the `/stats` card); the log tailer (rotation by size and by header, held partial lines and split UTF-8, the backfill cap, discovery), the Stats.log service with name resolution, and the leave, kill-line, kill-block and RCON-embed tests; warnings (decay window, escalation on the crossing, remove by id, standings); the roster service (per-file gates, the write guard, backups, spawn files, hold-ranks, wipes, startup file creation), the member index and the rank restorer; master access (files, rosters and the join grant on the wire; removed masters revoked); payroll (accrue on duty, bank on leaving, carried seconds, stale-roster refusal), the pure confirmed-online rule, and faction renames re-filed at startup; the service registry (dependency order, bounded never-reentered ticks, overruns, deterministic stop, braked revival, health); recent command errors by correlation id, the `/health` errors field, component ids (moved to pavlov-core), and the roster-refresh failure wording; the server monitor, its 25-hour history and the live board; the loopback metrics and health endpoint |
-| M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher); the bar list and its refusal at dispatch, the command log, the command runner (log, bar, defer, prime, slots, budget, error id); the autoposter and the boards (cash, most wanted, warrants, staff, live players, K/D); player-count voice channels; the staff log by channel (mod, ban, police, arrest) |
+| M7 | `pavlov-discord` core: gateway, dispatcher, access, theme, registration, boards, feeds | in progress: the crate, a Discord-agnostic `Caller`, access (owners by id, roles, the staff guild, refusals), option-name slugs; the command framework (spec model and validation, invocation and responder, the `SlashCommand` trait, `COMMANDS_DISABLED` per subcommand, the dispatcher); the bar list and its refusal at dispatch, the command log, the command runner (log, bar, defer, prime, slots, budget, error id); the autoposter and the boards (cash, most wanted, warrants, staff, live players, K/D); player-count voice channels; the staff log by channel (mod, ban, police, arrest); security alerts by DM, the guild directory and invite pages, the staff menu bitcodes |
 | M8 | The 57 slash commands | not started |
 | M9 | `pavlov-bot` composition root and `--selftest` | not started |
 | M10 | Deploy script, police systemd unit, rollback, documentation | not started |
@@ -159,6 +159,8 @@ tests, so it ran nowhere. Removed from the C# and from the Rust port, with its t
 | Cash board ties | `List.Sort`, unstable: equal balances can swap between cycles | equal balances ordered by name | the board does not shuffle |
 | Board components on an edit | `null` leaves a plain message | an empty list; the adapter sends no components for it | same: a plain board stays plain |
 | Unban title in the staff log channel | `Theme.Success($"{Ok} {kind}")`, so the check mark appears twice | once | the C# doubled it by accident |
+| A security alert sink that fails | an exception, caught by `SecurityAlerts` | a panic, caught by `SecurityAlerts` (`catch_unwind`) | same: the ban the caller is issuing is never lost |
+| `/guildinvites` first page | a full page, then the expiry line prefixed (could pass 4,096) | packed short enough to hold the prefix | the first page always fits |
 | Autocomplete-tag stripping | hand-written pattern kept in step with `NameLabels` by a test | pattern built from `NameLabels::ALL` | the two cannot drift |
 
 Stored key case: the C# reads stored property names case-INSENSITIVELY; the Rust models read
@@ -729,7 +731,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `FirewallTests.cs` | 6 | ported |
 | `GameFileGuardTests.cs` | 9 | ported |
 | `GeoLocatorTests.cs` | 10 | ported |
-| `GuildInvitesTests.cs` | 7 | 0/7 |
+| `GuildInvitesTests.cs` | 7 | ported |
 | `HealthErrorTests.cs` | 8 | ported |
 | `HoldAllRanksTests.cs` | 6 | ported |
 | `HoldRanksEndToEndTests.cs` | 8 | ported |
@@ -781,7 +783,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RconFailureTests.cs` | 4 | 0/4 |
 | `RconHealthTests.cs` | 6 | ported |
 | `RconLogConfirmationTests.cs` | 8 | ported |
-| `RconMenuTests.cs` | 7 | 0/7 |
+| `RconMenuTests.cs` | 7 | ported |
 | `RconResilienceTests.cs` | 6 | ported |
 | `RecentErrorsTests.cs` | 6 | ported |
 | `RejectedCommandTests.cs` | 4 | ported |
@@ -795,7 +797,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `RosterRefreshFailureTests.cs` | 3 | ported |
 | `RosterServiceTests.cs` | 43 | ported |
 | `RotateMapTests.cs` | 49 | 47/49 |
-| `SecurityAlertTests.cs` | 17 | 4/17 |
+| `SecurityAlertTests.cs` | 17 | ported |
 | `SelfTestGraphTests.cs` | 1 | 0/1 |
 | `SentenceCapTests.cs` | 16 | 0/16 |
 | `ServerBanFileTests.cs` | 20 | ported |
@@ -804,7 +806,7 @@ _Generated by `rust/tools/inventory.py` from the C# source. Do not edit by hand;
 | `ServerMonitorTests.cs` | 10 | ported |
 | `ServiceRegistryTests.cs` | 23 | ported |
 | `ServiceRestartBrakeTests.cs` | 3 | ported |
-| `SkinTests.cs` | 15 | 12/15 |
+| `SkinTests.cs` | 15 | ported |
 | `SlashCommandValidationTests.cs` | 10 | 7/10 |
 | `SpawnFactionTests.cs` | 14 | 0/14 |
 | `SqliteStorageTests.cs` | 10 | ported |
