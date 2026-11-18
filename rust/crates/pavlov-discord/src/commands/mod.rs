@@ -31,6 +31,7 @@ pub mod staff;
 pub mod stats;
 pub mod subclass;
 pub mod test_alert;
+pub mod tester;
 pub mod utility;
 pub mod warn;
 pub mod whitelist;
