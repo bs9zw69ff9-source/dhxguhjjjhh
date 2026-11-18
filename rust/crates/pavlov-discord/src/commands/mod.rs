@@ -6,6 +6,7 @@ pub mod arrest;
 pub mod check_ban;
 pub mod license;
 pub mod membership_reply;
+pub mod provision_server;
 pub mod rank_change;
 pub mod set_roles;
 pub mod subclass;
