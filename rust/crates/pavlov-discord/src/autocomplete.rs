@@ -169,3 +169,47 @@ impl PlayerAutocomplete {
         }
     }
 }
+
+/// One autocomplete request as it arrived.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AutocompleteRequest {
+    pub user_id: u64,
+    pub username: String,
+    /// The focused option's name.
+    pub focused: String,
+    /// What has been typed in it so far.
+    pub typed: String,
+    /// The `faction` option BESIDE the focused one, when the request carries it: Discord sends
+    /// the whole half-filled (sub)command, which is the only way a dependent list is built.
+    pub faction: Option<String>,
+}
+
+/// Answer one autocomplete request (C# `DiscordGateway.OnAutocomplete`). A barred user gets
+/// nothing, not even the names of who is online. A failed answer is logged at debug and not
+/// retried: the spinner closes on its own and the moderator types the name by hand.
+pub async fn answer(
+    request: &AutocompleteRequest,
+    blacklist: Option<&pavlov_host::moderation::CommandBlacklist>,
+    metrics: &pavlov_host::metrics::MetricsRegistry,
+    suggester: &dyn crate::interaction::Suggester,
+    suggest: impl FnOnce(&str, &str, Option<&str>) -> Vec<Choice>,
+) {
+    if let Some(blacklist) = blacklist
+        && crate::barred::refuse_if_barred(
+            blacklist,
+            request.user_id,
+            &request.username,
+            crate::barred::Asker::Autocomplete(suggester),
+            "autocomplete",
+            metrics,
+        )
+        .await
+    {
+        return;
+    }
+    let mut choices = suggest(&request.focused, &request.typed, request.faction.as_deref());
+    choices.truncate(MAX_CHOICES);
+    if let Err(error) = suggester.suggest(choices).await {
+        tracing::debug!(%error, "autocomplete failed");
+    }
+}
