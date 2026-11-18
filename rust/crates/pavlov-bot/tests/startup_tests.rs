@@ -163,3 +163,19 @@ fn root_plugins_and_missing_owners_are_each_warned_about() {
     );
     assert!(said.iter().any(|w| w.contains("MASTER_NAMES")));
 }
+
+#[test]
+fn the_retired_menu_panel_settings_are_named_as_doing_nothing() {
+    let said = warnings(
+        &features(&[
+            ("MENU_PANEL_CHANNEL", "5"),
+            ("OWNER_IDS", "1"),
+            ("MASTER_NAMES", "m"),
+        ]),
+        &Environment::default(),
+    );
+    assert!(
+        said.iter().any(|w| w.contains("MENU_PANEL_CHANNEL")),
+        "{said:?}"
+    );
+}

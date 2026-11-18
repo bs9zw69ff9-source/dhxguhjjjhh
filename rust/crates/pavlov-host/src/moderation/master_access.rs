@@ -1,13 +1,14 @@
-//! Master names: on every `mods.txt`, whitelist and roster, and given the full menu over RCON
-//! when they join (C# `Moderation/MasterAccess.cs`).
+//! Master names: on every `mods.txt`, whitelist and roster, and on the `owner` menu tier
+//! (`ServerRoles/owner.txt`), re-checked when they join (C# `Moderation/MasterAccess.cs`; the
+//! RCON+ `GiveMenu` on join was replaced by the tier file on 2026-11-18).
 //!
 //! A name REMOVED from `MASTER_NAMES` loses everything it was given, at the next start: the
-//! files, the rosters and a live session's menu. Dropping the name used to only stop new
-//! grants. The grants are recorded (`master_grants`), and a name on every roster counts as a
-//! grant too, since nobody but a master is ever put there.
+//! files, the rosters and every menu tier. Dropping the name used to only stop new grants. The
+//! grants are recorded (`master_grants`), and a name on every roster counts as a grant too,
+//! since nobody but a master is ever put there.
 //!
-//! Grants and session revokes run in the background, so a server that is down cannot hold up
-//! startup or the log pipeline for its RCON timeouts. [`MasterAccess::stop`] waits for them.
+//! Join grants run in the background, after a short delay, so a burst of joins cannot hold up
+//! the log pipeline. [`MasterAccess::stop`] waits for them.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -15,6 +16,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use pavlov_core::data::SerializedStore;
+use pavlov_core::moderation::MenuTier;
 use pavlov_core::servers::installs::whitelist_path;
 use pavlov_core::text::Sanitize;
 use pavlov_core::text::case::{IgnoreCaseSet, fold_case};
@@ -27,9 +29,7 @@ use tokio::task::JoinSet;
 use super::{MasterNames, StoredMasterNames};
 use crate::factions::RosterService;
 use crate::logs::{IpTrackingService, PlayerJoined};
-use crate::registry::RconRegistry;
 use crate::server_labels::ServerLabels;
-use crate::service_control::rcon_name_for;
 
 /// How long after a join the grant is sent: the game is not ready for it the moment they connect.
 pub const DEFAULT_GRANT_DELAY: Duration = Duration::from_secs(8);
@@ -45,31 +45,10 @@ pub fn mods_path(install_root: &str) -> String {
     )
 }
 
-/// What a master is given on join: the full menu, no bitcode.
-#[must_use]
-pub fn grant_commands(player: &str) -> Vec<String> {
-    vec![format!("GiveMenu {player}")]
-}
-
-/// What takes a menu back (C# `RconMenu.Revoke`). High staff also lose mod and access manager.
-#[must_use]
-pub fn revoke_commands(player: &str, was_high_staff: bool) -> Vec<String> {
-    if was_high_staff {
-        vec![
-            format!("RemoveMenu {player}"),
-            format!("RemoveMod {player}"),
-            format!("RemoveAccessManager {player}"),
-        ]
-    } else {
-        vec![format!("RemoveMenu {player}")]
-    }
-}
-
 /// What the service is wired to. `rosters` and `store` are optional: without a store nothing
 /// is recorded, so nothing can be revoked.
 pub struct MasterAccessParts {
     pub masters: Arc<StoredMasterNames>,
-    pub rcon: Arc<RconRegistry>,
     pub servers: Arc<ServerLabels>,
     pub installs: Vec<String>,
     pub files: Arc<WhitelistFile>,
@@ -167,10 +146,6 @@ impl MasterAccess {
         }
     }
 
-    fn stopped(&self) -> bool {
-        *self.stopping.borrow()
-    }
-
     /// Take back what every former master was given. The record is rewritten as the current
     /// masters plus any revoke that did not finish, so that one is retried next start.
     pub async fn revoke_removed(self: &Arc<Self>) {
@@ -233,32 +208,24 @@ impl MasterAccess {
                 tracing::warn!(name = %entry, files = %failed.join(", "), "could not take a former master off the rosters");
             }
         }
-        // A live session keeps its menu until it ends, so it is taken now too, in the background.
-        let target = Sanitize::id(Some(name));
-        if !target.is_empty() {
-            let access = Arc::clone(self);
-            self.track(async move { access.revoke_sessions(&target).await });
+        if let Some(rosters) = self.rosters() {
+            for tier in MenuTier::ALL {
+                if rosters
+                    .remove_names(&tier.file(), std::slice::from_ref(&entry))
+                    .await
+                    .is_none()
+                {
+                    complete = false;
+                    tracing::warn!(name = %entry, file = %tier.file(), "could not take a former master off a menu tier");
+                }
+            }
         }
         tracing::warn!(
             name = %entry,
             partial = !complete,
-            "MASTER REMOVED - no longer in MASTER_NAMES; mods.txt, whitelists, rosters and RCON+ access revoked"
+            "MASTER REMOVED - no longer in MASTER_NAMES; mods.txt, whitelists, rosters and menu tiers revoked"
         );
         complete
-    }
-
-    async fn revoke_sessions(&self, target: &str) {
-        for server in self.parts.rcon.servers() {
-            for line in revoke_commands(target, true) {
-                if self.stopped() {
-                    return;
-                }
-                // Refusals (not online) are expected.
-                if let Err(error) = self.parts.rcon.send(&server, &line).await {
-                    tracing::debug!(%line, %server, %error, "revoke line not accepted");
-                }
-            }
-        }
     }
 
     /// Every current master in every install's `mods.txt` and whitelist, and on every roster.
@@ -299,6 +266,17 @@ impl MasterAccess {
         }
         if !failed.is_empty() {
             tracing::warn!(files = %failed.join(", "), "could not put the master names on some rosters");
+        }
+        // The full in-game menu: the owner tier.
+        let owner = MenuTier::Owner.file();
+        match rosters.add_names(&owner, &entries).await {
+            Some(0) => {}
+            Some(added) => {
+                tracing::info!(added, file = %owner, "added master names to the owner menu")
+            }
+            None => {
+                tracing::warn!(file = %owner, "could not put the master names on the owner menu")
+            }
         }
     }
 
@@ -347,33 +325,16 @@ impl MasterAccess {
             .filter(|id| !id.is_empty())
     }
 
-    /// Put the master back in that server's files and the rosters, then send the grant. How
-    /// many grant lines the server accepted.
-    pub async fn grant(&self, number: usize, name: &str) -> usize {
+    /// Put the master back in that server's files, the rosters and the owner menu tier.
+    pub async fn grant(&self, number: usize, name: &str) {
         if let Some(install) = number
             .checked_sub(1)
             .and_then(|i| self.parts.installs.get(i))
         {
             self.ensure_install_files(install, name).await;
         }
-        // Every master: the rosters are shared, and the join name is the RCON-safe form.
+        // Every master: the rosters and tiers are shared, and the join name is the safe form.
         self.ensure_rosters(&self.masters()).await;
-
-        let server = rcon_name_for(i32::try_from(number).unwrap_or(i32::MAX));
-        if self.parts.rcon.client(&server).is_none() {
-            tracing::warn!(%name, number, "a master joined a server with no RCON configured - no grant sent");
-            return 0;
-        }
-        let lines = grant_commands(name);
-        let mut accepted = 0;
-        for line in &lines {
-            // Each line on its own: one refusal must not cost the rest.
-            match self.parts.rcon.send_verified(&server, line).await {
-                Ok(_) => accepted += 1,
-                Err(error) => tracing::warn!(%line, %server, %error, "master grant line failed"),
-            }
-        }
-        tracing::info!(%name, %server, accepted, total = lines.len(), "master grant sent");
-        accepted
+        tracing::info!(%name, number, "master access re-checked on join");
     }
 }

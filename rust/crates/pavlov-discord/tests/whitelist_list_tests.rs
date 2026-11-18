@@ -2,13 +2,15 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pavlov_core::factions::{FactionDefinition, FactionRegistry};
+use pavlov_core::factions::FactionDefinition;
 use pavlov_core::text::case::IgnoreCaseMap;
 use pavlov_discord::commands::whitelist::{roster_lines, subclass_lines};
 use pavlov_host::factions::roster::Membership;
 
 fn gwpd() -> &'static FactionDefinition {
-    FactionRegistry::default_set().get(Some("GWPD")).unwrap()
+    pavlov_core::factions::testing::ladder()
+        .get(Some("GWPD"))
+        .unwrap()
 }
 
 fn at(player: &str, rank: &str) -> Membership {

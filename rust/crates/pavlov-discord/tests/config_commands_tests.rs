@@ -1,5 +1,5 @@
-//! `/donator`, `/suspendrank` and `/setrconroles` against real roster files. (The C# has no
-//! test file for these three.)
+//! `/donator` and `/suspendrank` against real roster files. (The C# has no test file for these;
+//! `/setrconroles` was removed with the RCON+ menu panel.)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -7,42 +7,17 @@ mod common;
 
 use std::sync::Arc;
 
-use pavlov_config::{Config, FeatureOptions};
-use pavlov_core::factions::FactionRegistry;
-use pavlov_core::moderation::MenuRoleMap;
-use pavlov_core::servers::DetectedServer;
-use pavlov_core::servers::HostProbe;
 use pavlov_core::text::case::IgnoreCaseMap;
 use pavlov_core::time::SystemClock;
 use pavlov_discord::caller::Caller;
 use pavlov_discord::command::OptionKind;
-use pavlov_discord::commands::config::{
-    DONATOR_ROSTER, DonatorCommand, SuspendRankCommand, mapping,
-};
+use pavlov_discord::commands::config::{DONATOR_ROSTER, DonatorCommand, SuspendRankCommand};
 use pavlov_discord::interaction::{Invocation, InvokedOption, OptionValue};
 use pavlov_discord::paged::Paged;
 use pavlov_discord::slash::{CommandContext, SlashCommand};
 use pavlov_host::factions::rank_restorer::RankSuspension;
 
 const OWNER: u64 = 1;
-
-/// A box with no Pavlov installs, as the test machine is.
-struct EmptyBox;
-impl HostProbe for EmptyBox {
-    fn systemd_servers(&self) -> Vec<DetectedServer> {
-        Vec::new()
-    }
-    fn installs_beside(&self, _: &str, _: &str) -> std::io::Result<Vec<String>> {
-        Ok(Vec::new())
-    }
-    fn directory_exists(&self, _: &str) -> bool {
-        false
-    }
-}
-
-fn features(pairs: &[(&str, &str)]) -> FeatureOptions {
-    FeatureOptions::bind(&Config::from_pairs(pairs.iter().copied()), &EmptyBox)
-}
 
 fn text(name: &str, value: &str) -> InvokedOption {
     InvokedOption::value(name, OptionKind::String, OptionValue::String(value.into()))
@@ -87,7 +62,7 @@ async fn adding_a_donator_writes_the_roster_and_the_record() {
 #[tokio::test]
 async fn a_suspension_is_recorded_and_the_rank_pulled() {
     let dir = tempfile::tempdir().unwrap();
-    let faction = FactionRegistry::police()
+    let faction = pavlov_core::factions::testing::ladder()
         .all()
         .find(|f| f.has_ranks())
         .cloned()
@@ -141,30 +116,4 @@ async fn a_bad_duration_or_unknown_member_changes_nothing() {
         .with(text("time", "1h"));
     assert!(run(&command, &unknown).await.contains("Not whitelisted"));
     assert!(store.read_raw("rank_suspensions").unwrap().is_none());
-}
-
-#[test]
-fn the_mapping_shows_what_is_in_force_env_included() {
-    let with_env = features(&[("MENU_ROLE_STAFF", "222")]);
-    let embed = mapping(
-        MenuRoleMap {
-            high_staff: Some(111),
-            ..MenuRoleMap::default()
-        },
-        &with_env,
-        false,
-    );
-    assert_eq!(embed.field_named("High staff").unwrap().value, "<@&111>");
-    assert_eq!(
-        embed.field_named("Staff").unwrap().value,
-        "<@&222> *(from .env)*"
-    );
-    assert_eq!(embed.field_named("Blacklist").unwrap().value, "*not set*");
-    let nobody = mapping(MenuRoleMap::default(), &features(&[]), false);
-    assert!(
-        nobody
-            .fields
-            .iter()
-            .any(|f| f.name.ends_with("Nobody qualifies"))
-    );
 }

@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use pavlov_core::component_id::ComponentId;
 use pavlov_core::moderation::{MenuClaimAction, MenuLink};
 use pavlov_core::penal::{CHARGES, PenalCode};
-use pavlov_discord::prefixes::{ALL, ARREST_BOOKING, CONFIG_PANEL, MENU_PANEL, PAGED};
+use pavlov_discord::prefixes::{ALL, ARREST_BOOKING, CONFIG_PANEL, PAGED, VERIFY};
 
 #[test]
 fn every_arrest_control_round_trips_its_custom_id() {
@@ -22,10 +22,13 @@ fn every_arrest_control_round_trips_its_custom_id() {
 
 #[test]
 fn the_arrest_and_menu_prefixes_do_not_collide() {
-    assert_ne!(ARREST_BOOKING, MENU_PANEL);
+    // The RCON+ menu panel's prefix went with the panel (2026-11-18); the menu-adjacent one
+    // left is verification's.
+    assert_ne!(ARREST_BOOKING, VERIFY);
     assert_ne!(ARREST_BOOKING, PAGED);
-    assert_ne!(MENU_PANEL, PAGED);
-    assert_ne!(MENU_PANEL, CONFIG_PANEL);
+    assert_ne!(VERIFY, PAGED);
+    assert_ne!(VERIFY, CONFIG_PANEL);
+    assert!(!ALL.contains(&"menu"));
     // And across the whole table, which is what the router relies on.
     let distinct: HashSet<&str> = ALL.iter().copied().collect();
     assert_eq!(distinct.len(), ALL.len());

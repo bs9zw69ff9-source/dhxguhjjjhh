@@ -53,15 +53,21 @@ fn faction(name: &str, former: &[&str]) -> FactionDefinition {
 
 #[test]
 fn the_police_are_the_gwpd() {
-    let names: Vec<&str> = FactionRegistry::police().names().collect();
+    let names: Vec<&str> = pavlov_core::factions::testing::ladder().names().collect();
     assert_eq!(names, ["GWPD"]);
-    assert!(FactionRegistry::police().problems().is_empty());
+    assert!(
+        pavlov_core::factions::testing::ladder()
+            .problems()
+            .is_empty()
+    );
 }
 
 #[test]
 fn only_the_name_moved_not_the_files() {
     // Repointing a roster file takes the rank away, in game, from everybody listed in it.
-    let gwpd = FactionRegistry::police().get(Some("GWPD")).unwrap();
+    let gwpd = pavlov_core::factions::testing::ladder()
+        .get(Some("GWPD"))
+        .unwrap();
 
     assert_eq!(gwpd.spawn_file, "policespawn.txt");
     assert_eq!(gwpd.rank_files["Cadet"], "policecadet.txt");
@@ -73,16 +79,28 @@ fn only_the_name_moved_not_the_files() {
 fn the_old_name_still_finds_the_faction() {
     for name in ["NYPD", "nypd", "GWPD"] {
         assert_eq!(
-            FactionRegistry::police().get(Some(name)).unwrap().name,
+            pavlov_core::factions::testing::ladder()
+                .get(Some(name))
+                .unwrap()
+                .name,
             "GWPD"
         );
-        assert_eq!(FactionRegistry::get(Some(name)).unwrap().name, "GWPD");
+        assert_eq!(
+            pavlov_core::factions::testing::faction(Some(name))
+                .unwrap()
+                .name,
+            "GWPD"
+        );
     }
 }
 
 #[test]
 fn the_old_name_is_never_listed() {
-    assert!(!FactionRegistry::police().names().any(|n| n == "NYPD"));
+    assert!(
+        !pavlov_core::factions::testing::ladder()
+            .names()
+            .any(|n| n == "NYPD")
+    );
 }
 
 #[test]
@@ -137,7 +155,10 @@ async fn records_under_the_old_name_are_refiled() {
     payroll.previous.insert("NYPD", vec!["Officer".into()]);
     store.write(PAYROLL_STATE, &payroll).await.unwrap();
 
-    assert_eq!(carry_over(&store, FactionRegistry::police()).await, 4);
+    assert_eq!(
+        carry_over(&store, pavlov_core::factions::testing::ladder()).await,
+        4
+    );
 
     let index = FactionMembers::new(Arc::clone(&store));
     assert_eq!(index.of(1).unwrap().faction, "GWPD");
@@ -163,8 +184,14 @@ async fn the_second_run_changes_nothing() {
     let members: MemberIndex = IndexMap::from([("1".to_owned(), member("NYPD", "Officer"))]);
     store.write(FACTION_MEMBERS, &members).await.unwrap();
 
-    assert_eq!(carry_over(&store, FactionRegistry::police()).await, 1);
-    assert_eq!(carry_over(&store, FactionRegistry::police()).await, 0);
+    assert_eq!(
+        carry_over(&store, pavlov_core::factions::testing::ladder()).await,
+        1
+    );
+    assert_eq!(
+        carry_over(&store, pavlov_core::factions::testing::ladder()).await,
+        0
+    );
 }
 
 #[tokio::test]
@@ -199,7 +226,7 @@ fn a_role_already_set_under_the_new_name_is_kept() {
     map.insert("NYPD", 1_u64);
     map.insert("GWPD", 2_u64);
     let mut renames = Renames::new();
-    for (old, now) in FactionRegistry::police().renames() {
+    for (old, now) in pavlov_core::factions::testing::ladder().renames() {
         renames.insert(old, now);
     }
 

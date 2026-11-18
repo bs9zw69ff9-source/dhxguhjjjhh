@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use indexmap::IndexMap;
-use pavlov_core::factions::{FactionDefinition, FactionRegistry, FactionSet};
+use pavlov_core::factions::{FactionDefinition, FactionSet};
 use pavlov_discord::commands::subclass::{MAX_CHOICES, parse_value, subclass_choices};
 
 fn faction(name: &str, subclasses: &[&str]) -> FactionDefinition {
@@ -86,7 +86,7 @@ fn a_bare_name_from_an_old_registration_still_parses() {
 
 #[test]
 fn every_choice_fits_discords_limits() {
-    let choices = subclass_choices(FactionRegistry::default_set());
+    let choices = subclass_choices(pavlov_core::factions::testing::ladder());
     assert!((1..=MAX_CHOICES).contains(&choices.len()));
     for choice in &choices {
         assert!((1..=100).contains(&choice.label().chars().count()));

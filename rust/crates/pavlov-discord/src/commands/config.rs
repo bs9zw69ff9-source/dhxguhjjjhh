@@ -1,26 +1,23 @@
-//! `/donator`, `/suspendrank` and `/setrconroles` (C# `ConfigCommands.cs`; `/setroles` has its
-//! own file).
+//! `/donator` and `/suspendrank` (C# `ConfigCommands.cs`; `/setroles` has its own file).
+//! `/setrconroles` went with the RCON+ menu panel it configured (owner, 2026-11-18).
 //!
 //! - AN UNREADABLE ROSTER IS NOT EMPTY: a donator list "updated" from nothing wipes everyone.
 //! - A SUSPENSION IS RECORDED BEFORE THE RANK IS PULLED, and the write's result is CHECKED:
 //!   the other order strips a rank with nothing saying how to give it back.
-//! - `/setrconroles` changes only what was supplied and SHOWS WHAT IS IN FORCE, `.env` included.
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use futures_util::future::BoxFuture;
-use pavlov_config::FeatureOptions;
 use pavlov_core::data::SerializedStore;
 use pavlov_core::embed::Embed;
-use pavlov_core::moderation::MenuRoleMap;
 use pavlov_core::skin::{police, theme};
 use pavlov_core::text::Sanitize;
 use pavlov_core::text::case::{IgnoreCaseMap, eq_ignore_case};
 use pavlov_core::time::{Clock, EasternTime};
 use pavlov_host::factions::RosterService;
 use pavlov_host::factions::rank_restorer::RankSuspension;
-use pavlov_storage::datasets::{DONATOR_SUSPEND, MENU_ROLES, RANK_SUSPENSIONS};
+use pavlov_storage::datasets::{DONATOR_SUSPEND, RANK_SUSPENSIONS};
 use serde::{Deserialize, Serialize};
 
 use crate::access::{Access, RequiredAccess};
@@ -365,123 +362,6 @@ impl SlashCommand for SuspendRankCommand {
                 }
             };
             context.reply(Reply::embed(embed.brand(None))).await
-        })
-    }
-}
-
-// ---- /setrconroles ----
-
-pub struct SetRconRolesCommand {
-    pub store: Arc<SerializedStore>,
-    pub features: Arc<FeatureOptions>,
-    pub access: Arc<Access>,
-}
-
-impl std::fmt::Debug for SetRconRolesCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SetRconRolesCommand")
-            .finish_non_exhaustive()
-    }
-}
-
-fn show(effective: Option<u64>, stored: Option<u64>) -> String {
-    match (effective, stored) {
-        (None, _) => "*not set*".into(),
-        (Some(id), None) => format!("<@&{id}> *(from .env)*"),
-        (Some(id), Some(_)) => format!("<@&{id}>"),
-    }
-}
-
-/// The mapping as it is IN FORCE: `stored` over the `.env` tiers.
-#[must_use]
-pub fn mapping(stored: MenuRoleMap, features: &FeatureOptions, changing: bool) -> Embed {
-    let map = stored.over(
-        features.menu_role_high_staff,
-        features.menu_role_staff,
-        features.menu_role_blacklist,
-    );
-    let mut embed = theme::notice(
-        "RCON menu roles",
-        Some(if changing {
-            "Updated. A member gets the menu of their **highest** role below."
-        } else {
-            "Current mapping. Pass a role option to change it."
-        }),
-    )
-    .field("High staff", show(map.high_staff, stored.high_staff), true)
-    .field("Staff", show(map.staff, stored.staff), true)
-    .field("Blacklist", show(map.blacklist, stored.blacklist), true);
-    if !map.any() {
-        embed = embed.field(
-            format!("{} Nobody qualifies", theme::WARN),
-            "Neither staff tier is mapped, so the menu panel refuses everyone. Set at least one.",
-            false,
-        );
-    }
-    embed.brand(Some("Priority: high staff beats staff"))
-}
-
-impl SlashCommand for SetRconRolesCommand {
-    fn name(&self) -> &str {
-        "setrconroles"
-    }
-
-    fn build(&self) -> CommandSpec {
-        CommandSpec::new(
-            "setrconroles",
-            "Owner - Map Discord roles to RCON menu tiers",
-        )
-        .option(OptionSpec::new(
-            OptionKind::Role,
-            "high_staff_role",
-            "Gets the high-staff menu",
-        ))
-        .option(OptionSpec::new(
-            OptionKind::Role,
-            "staff_role",
-            "Gets the staff menu",
-        ))
-        .option(OptionSpec::new(
-            OptionKind::Role,
-            "blacklist_role",
-            "Revokes menu access outright",
-        ))
-    }
-
-    fn handle<'a>(
-        &'a self,
-        context: CommandContext<'a>,
-    ) -> BoxFuture<'a, Result<(), CommandError>> {
-        Box::pin(async move {
-            let invocation = context.invocation;
-            // OWNER, not Admin: the menu tiers grant in-game staff powers on every server.
-            if let Some(refusal) = refuse(&self.access, &invocation.caller, RequiredAccess::Owner) {
-                return context.reply(Reply::embed(refusal.brand(None))).await;
-            }
-            let (high, staff, blacklist) = (
-                invocation.id("high_staff_role"),
-                invocation.id("staff_role"),
-                invocation.id("blacklist_role"),
-            );
-            let changing = high.is_some() || staff.is_some() || blacklist.is_some();
-            // ONLY WHAT WAS SUPPLIED: naming one must not clear another.
-            let updated = self
-                .store
-                .update(MENU_ROLES, MenuRoleMap::default, |current: MenuRoleMap| {
-                    Some(MenuRoleMap {
-                        high_staff: high.or(current.high_staff),
-                        staff: staff.or(current.staff),
-                        blacklist: blacklist.or(current.blacklist),
-                    })
-                })
-                .await?;
-            if changing {
-                tracing::info!(by = %invocation.username, "setrconroles");
-            }
-            let stored = updated.value;
-            context
-                .reply(Reply::embed(mapping(stored, &self.features, changing)))
-                .await
         })
     }
 }

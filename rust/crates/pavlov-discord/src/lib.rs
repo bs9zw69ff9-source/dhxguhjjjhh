@@ -33,7 +33,6 @@ pub mod player_count;
 pub mod post;
 pub mod prefixes;
 pub mod rcon_failure;
-pub mod rcon_menu;
 pub mod registration;
 pub mod runner;
 pub mod slash;

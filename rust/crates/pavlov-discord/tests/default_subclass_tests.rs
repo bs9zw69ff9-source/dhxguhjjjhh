@@ -3,7 +3,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pavlov_core::factions::{FactionDefinition, FactionRegistry, MembershipOutcome};
+use pavlov_core::factions::{FactionDefinition, MembershipOutcome};
 use pavlov_core::text::case::eq_ignore_case;
 use pavlov_discord::commands::subclass::subclass_choices;
 use pavlov_host::factions::RosterService;
@@ -14,13 +14,16 @@ struct Rig {
 }
 
 fn gwpd() -> &'static FactionDefinition {
-    FactionRegistry::default_set().get(Some("GWPD")).unwrap()
+    pavlov_core::factions::testing::ladder()
+        .get(Some("GWPD"))
+        .unwrap()
 }
 
 impl Rig {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let rosters = RosterService::new(Some(dir.path().to_path_buf()), dir.path().join("_bak"));
+        let rosters = RosterService::new(Some(dir.path().to_path_buf()), dir.path().join("_bak"))
+            .with_factions(pavlov_core::factions::testing::ladder().clone());
         Self { dir, rosters }
     }
 
@@ -177,7 +180,7 @@ async fn a_subclass_the_faction_does_not_define_is_refused() {
 
 #[test]
 fn every_subclass_appears_in_the_picker_labelled_with_its_faction() {
-    let choices = subclass_choices(FactionRegistry::default_set());
+    let choices = subclass_choices(pavlov_core::factions::testing::ladder());
     let gwpd: Vec<String> = choices
         .iter()
         .filter(|c| c.faction == "GWPD")

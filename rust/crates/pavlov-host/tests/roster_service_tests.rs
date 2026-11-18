@@ -9,12 +9,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use indexmap::IndexMap;
 use pavlov_core::data::RosterWriteGuard;
-use pavlov_core::factions::{FactionDefinition, FactionRegistry, FactionSet, MembershipOutcome};
+use pavlov_core::factions::{FactionDefinition, FactionSet, MembershipOutcome};
 use pavlov_host::factions::RosterService;
 use pavlov_storage::game_files::GameFileGuard;
 
 fn nypd() -> FactionDefinition {
-    FactionRegistry::get(Some("NYPD")).unwrap().clone()
+    pavlov_core::factions::testing::faction(Some("NYPD"))
+        .unwrap()
+        .clone()
 }
 
 /// A faction with no ladder: one nominal rank, one file that is also the spawn file.
@@ -47,7 +49,8 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let rosters = Self::service(dir.path()).with_factions(FactionRegistry::police().clone());
+        let rosters = Self::service(dir.path())
+            .with_factions(pavlov_core::factions::testing::ladder().clone());
         Self { dir, rosters }
     }
 
@@ -314,7 +317,7 @@ async fn the_roster_lists_every_member_once() {
 #[test]
 fn an_unconfigured_directory_disables_everything_safely() {
     let disabled = RosterService::new(None, PathBuf::from("/nonexistent/_bak"))
-        .with_factions(FactionRegistry::police().clone());
+        .with_factions(pavlov_core::factions::testing::ladder().clone());
     assert!(!disabled.enabled());
     assert!(disabled.read("policecadet.txt").is_none());
 }

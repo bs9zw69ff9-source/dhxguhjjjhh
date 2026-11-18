@@ -19,7 +19,12 @@ sha2.workspace = true
 # "sync" only: async locks with no runtime attached, so the crate stays free of I/O.
 tokio = { workspace = true, features = ["sync"] }
 
+[features]
+# Test fixtures other crates' tests share (`factions::testing`). Never enabled by the binary.
+testing = []
+
 [dev-dependencies]
+pavlov-core = { path = ".", features = ["testing"] }
 sha2.workspace = true
 tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros", "time"] }
 

@@ -8,6 +8,8 @@ mod activity;
 mod definition;
 mod membership;
 mod registry;
+#[cfg(feature = "testing")]
+pub mod testing;
 
 pub use activity::{FactionActivity, FactionReport, InactiveMember, MemberActivity};
 pub use definition::{FactionDefinition, FactionSet};

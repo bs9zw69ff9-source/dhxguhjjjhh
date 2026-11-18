@@ -5,11 +5,13 @@
 
 use std::sync::Arc;
 
-use pavlov_core::factions::{FactionDefinition, FactionRegistry};
+use pavlov_core::factions::FactionDefinition;
 use pavlov_host::factions::RosterService;
 
 fn nypd() -> FactionDefinition {
-    FactionRegistry::get(Some("NYPD")).unwrap().clone()
+    pavlov_core::factions::testing::faction(Some("NYPD"))
+        .unwrap()
+        .clone()
 }
 
 struct Fixture {
@@ -26,7 +28,7 @@ impl Fixture {
     fn service(&self, holding: bool) -> RosterService {
         let service =
             RosterService::new(Some(self.dir.path().to_path_buf()), self.dir.path().into())
-                .with_factions(FactionRegistry::police().clone());
+                .with_factions(pavlov_core::factions::testing::ladder().clone());
         if holding {
             service.with_holds_all_ranks(Arc::new(|_| true))
         } else {

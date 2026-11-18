@@ -612,31 +612,6 @@ pub fn register(graph: &Graph) -> Result<(), RegistryError> {
         }))?;
     }
 
-    if graph.menu_panel.enabled() {
-        let autopost = Arc::clone(&graph.autopost);
-        let channel = features.menu_panel_channel;
-        registry.register(every(
-            "menu-panel",
-            Duration::from_secs(600),
-            work(move || {
-                let autopost = Arc::clone(&autopost);
-                async move {
-                    let mut reply = pavlov_discord::commands::menu::MenuPanel::panel();
-                    let embed = reply.embeds.pop();
-                    autopost
-                        .post(
-                            "menupanel",
-                            channel,
-                            async move { Ok::<_, String>(embed) },
-                            reply.components,
-                        )
-                        .await;
-                    Ok(())
-                }
-            }),
-        ))?;
-    }
-
     let backend = Arc::clone(&graph.backend);
     let store = Arc::clone(&graph.store);
     let data = options.data_directory.clone();
