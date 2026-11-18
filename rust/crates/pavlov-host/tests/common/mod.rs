@@ -77,6 +77,7 @@ type Answer = Box<
 pub struct FakeHttp {
     pub requests: Mutex<Vec<pavlov_host::http::HttpRequest>>,
     answer: Answer,
+    hang: bool,
 }
 
 impl FakeHttp {
@@ -92,7 +93,25 @@ impl FakeHttp {
         Self {
             requests: Mutex::new(Vec::new()),
             answer: Box::new(answer),
+            hang: false,
         }
+    }
+
+    /// Never answers: the caller has to give up.
+    pub fn hanging() -> Self {
+        Self {
+            hang: true,
+            ..Self::canned(200, "")
+        }
+    }
+
+    /// Always this response.
+    pub fn responding(response: pavlov_host::http::HttpResponse) -> Self {
+        Self::new(move |_| Ok(response.clone()))
+    }
+
+    pub fn last_url(&self) -> Option<String> {
+        self.requests.lock().unwrap().last().map(|r| r.url.clone())
     }
 
     /// Always this status and body.
@@ -122,6 +141,9 @@ impl pavlov_host::http::HttpClient for FakeHttp {
     ) -> BoxFuture<'_, Result<pavlov_host::http::HttpResponse, pavlov_host::http::HttpError>> {
         let answer = (self.answer)(&request);
         self.requests.lock().unwrap().push(request);
+        if self.hang {
+            return Box::pin(futures_util::future::pending());
+        }
         Box::pin(async move { answer })
     }
 }

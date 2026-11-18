@@ -28,3 +28,4 @@ pub mod registry;
 pub mod server_labels;
 pub mod service_control;
 pub mod supervisor;
+pub mod vpn;

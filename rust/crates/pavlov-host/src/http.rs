@@ -80,23 +80,58 @@ impl HttpRequest {
     }
 }
 
-/// The answer: any status, the raw body (an image is not text), and its declared type.
+/// The answer: any status, its headers (names lower-cased), and the raw body (an image is not
+/// text).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse {
     pub status: u16,
-    pub content_type: Option<String>,
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
 impl HttpResponse {
-    /// A text answer with no declared type.
+    /// A text answer with no headers.
     #[must_use]
     pub fn new(status: u16, body: impl Into<String>) -> Self {
+        Self::bytes(status, body.into().into_bytes())
+    }
+
+    /// A binary answer with no headers.
+    #[must_use]
+    pub fn bytes(status: u16, body: Vec<u8>) -> Self {
         Self {
             status,
-            content_type: None,
-            body: body.into().into_bytes(),
+            headers: Vec::new(),
+            body,
         }
+    }
+
+    #[must_use]
+    pub fn with_header(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.headers.push((name.to_ascii_lowercase(), value.into()));
+        self
+    }
+
+    /// The first header of this name, compared case-insensitively.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The media type alone (`image/png` from `image/png; charset=binary`).
+    #[must_use]
+    pub fn media_type(&self) -> Option<&str> {
+        self.header("content-type")
+            .map(|v| v.split(';').next().unwrap_or_default().trim())
+            .filter(|v| !v.is_empty())
+    }
+
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
     }
 
     /// The body as text; invalid UTF-8 is replaced, never an error.
@@ -104,11 +139,37 @@ impl HttpResponse {
     pub fn text(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.body)
     }
+}
 
-    #[must_use]
-    pub fn is_success(&self) -> bool {
-        (200..300).contains(&self.status)
+/// `Uri.EscapeDataString`: everything but RFC 3986's unreserved characters, percent-encoded.
+#[must_use]
+pub fn escape_data_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
     }
+    out
+}
+
+/// The host of an absolute URL, lower-cased, without user info or port; the whole text when
+/// it is not one.
+#[must_use]
+pub fn host_of(url: &str) -> String {
+    let Some((_, rest)) = url.split_once("://") else {
+        return url.to_ascii_lowercase();
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if let Some(bracketed) = host.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or(bracketed)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    host.to_ascii_lowercase()
 }
 
 /// Why no answer arrived.
@@ -172,11 +233,11 @@ impl ReqwestClient {
         }
         let mut response = builder.send().await.map_err(describe)?;
         let status = response.status().as_u16();
-        let content_type = response
+        let headers: Vec<(String, String)> = response
             .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
+            .collect();
         let mut body = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(describe)? {
             if body.len() + chunk.len() > request.max_body {
@@ -186,7 +247,7 @@ impl ReqwestClient {
         }
         Ok(HttpResponse {
             status,
-            content_type,
+            headers,
             body,
         })
     }
