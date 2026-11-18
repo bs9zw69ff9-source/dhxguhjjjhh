@@ -39,6 +39,7 @@ pub mod provisioner;
 pub mod queue;
 pub mod recent_errors;
 pub mod registry;
+pub mod self_stats;
 pub mod server_labels;
 pub mod service_control;
 pub mod services;
