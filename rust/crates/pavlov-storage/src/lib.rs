@@ -17,6 +17,8 @@ mod event_store;
 mod file_backend;
 pub mod game_files;
 pub mod installs;
+pub mod ledger_store;
+pub mod mod_save_sync;
 pub mod ownership;
 mod sqlite_backend;
 pub mod whitelist;
