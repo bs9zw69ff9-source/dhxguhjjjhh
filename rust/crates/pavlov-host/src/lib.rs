@@ -14,6 +14,7 @@
 
 pub mod confirmations;
 pub mod crash_recovery;
+pub mod feeds;
 pub mod firewall;
 pub mod handlers;
 pub mod health;
@@ -27,8 +28,10 @@ pub mod notice;
 pub mod preserved;
 pub mod process;
 pub mod provisioner;
+pub mod queue;
 pub mod registry;
 pub mod server_labels;
 pub mod service_control;
 pub mod supervisor;
+pub mod timeline;
 pub mod vpn;

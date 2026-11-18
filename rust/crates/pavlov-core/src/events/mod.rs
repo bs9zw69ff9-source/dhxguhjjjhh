@@ -4,7 +4,7 @@
 //! this is meant to be read during an argument about a ban. There is no update path, by design;
 //! the only thing that removes a row is retention.
 
-mod mapping;
+pub mod mapping;
 
 pub use mapping::{category_of, is_automated, kind_of};
 
