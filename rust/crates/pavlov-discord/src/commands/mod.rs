@@ -2,6 +2,7 @@
 //! what it renders and decides - alongside the command itself, so the rendering is pinned by
 //! tests without a gateway.
 
+pub mod admin;
 pub mod alts;
 pub mod analytics;
 pub mod arrest;
