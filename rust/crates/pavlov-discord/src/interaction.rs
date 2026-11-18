@@ -332,4 +332,7 @@ pub trait ComponentResponder: Send + Sync {
     fn update(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>>;
     /// Answer with a new message.
     fn respond(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// Edit the message again after [`update`](Self::update) acknowledged it, for work that
+    /// outlasts Discord's three seconds.
+    fn edit_original(&self, reply: Reply) -> BoxFuture<'_, Result<(), DiscordError>>;
 }

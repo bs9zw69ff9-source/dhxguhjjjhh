@@ -104,4 +104,5 @@ impl Suggester for RecordingSuggester {
         Box::pin(async { Ok(()) })
     }
 }
+pub mod commands;
 pub mod directory;
