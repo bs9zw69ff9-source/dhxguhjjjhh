@@ -42,6 +42,8 @@ pub enum Role {
 /// What interactions are handed to, set once the composition root has built it (after the
 /// client exists, because the commands need the client's REST handle and cache).
 pub struct Wiring {
+    /// What this application registers.
+    pub role: Role,
     pub runner: Arc<CommandRunner>,
     pub router: Arc<ComponentRouter>,
     pub suggest: Suggest,
@@ -77,24 +79,25 @@ impl HandlerState {
     }
 }
 
-/// The handler.
+/// The handler. Its role and everything it forwards to arrive with the [`Wiring`].
 pub struct Handler {
-    role: Role,
     state: Arc<HandlerState>,
 }
 
 impl std::fmt::Debug for Handler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Handler")
-            .field("role", &self.role)
-            .finish_non_exhaustive()
+        f.debug_struct("Handler").finish_non_exhaustive()
     }
 }
 
 impl Handler {
     #[must_use]
-    pub fn new(role: Role, state: Arc<HandlerState>) -> Self {
-        Self { role, state }
+    pub fn new(state: Arc<HandlerState>) -> Self {
+        Self { state }
+    }
+
+    fn role(&self) -> Option<&Role> {
+        self.state.wiring.get().map(|w| &w.role)
     }
 
     fn guild_name(cache: &Cache, guild: &UnavailableGuild) -> String {
@@ -106,7 +109,11 @@ impl Handler {
 
     async fn register(&self, ctx: &Context) {
         let registry = RestRegistry::new(Arc::clone(&ctx.http), Arc::clone(&self.state.guilds));
-        match &self.role {
+        let Some(role) = self.role() else {
+            tracing::error!("READY arrived before the gateway was wired; nothing registered");
+            return;
+        };
+        match role {
             Role::Main { settings, commands } => {
                 match register_main(&registry, commands, *settings).await {
                     Ok(scope) => {
@@ -169,7 +176,10 @@ impl EventHandler for Handler {
             return; // READY's registration covers it.
         }
         let registry = RestRegistry::new(Arc::clone(&ctx.http), Arc::clone(&self.state.guilds));
-        match &self.role {
+        let Some(role) = self.role() else {
+            return;
+        };
+        match role {
             Role::Main { settings, commands } => {
                 let Some(scope) = self.state.scope() else {
                     return;
