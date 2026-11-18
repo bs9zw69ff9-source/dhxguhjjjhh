@@ -3,9 +3,13 @@
 
 pub mod feed_bridge;
 pub mod ip_tracking;
+pub mod stats_log_service;
+pub mod tailer;
 
 pub use feed_bridge::{FeedBridge, FeedBridgeParts};
 pub use ip_tracking::{FlaggedJoin, IpTrackingService, PlayerConfirmed, PlayerJoined, RconLogged};
+pub use stats_log_service::{NameResolver, StatsLogService};
+pub use tailer::LogTailer;
 
 /// One line of one server's log.
 #[derive(Debug, Clone, PartialEq, Eq)]
