@@ -160,6 +160,7 @@ impl Session {
                     100,
                 )),
                 default: false,
+                emoji: None,
             })
             .collect();
         if options.is_empty() {
@@ -168,6 +169,7 @@ impl Session {
                 value: "-none-".into(),
                 description: None,
                 default: false,
+                emoji: None,
             });
         }
         let placeholder = match &self.selected {

@@ -48,6 +48,8 @@ pub struct SelectOption {
     pub value: String,
     pub description: Option<String>,
     pub default: bool,
+    /// A unicode emoji shown beside the label.
+    pub emoji: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

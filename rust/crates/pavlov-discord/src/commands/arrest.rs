@@ -271,6 +271,7 @@ impl Open {
                 value: trim(n, MAX_LABEL),
                 description: None,
                 default: false,
+                emoji: None,
             })
             .collect();
         if players.is_empty() {
@@ -279,6 +280,7 @@ impl Open {
                 value: NOBODY_ONLINE.into(),
                 description: None,
                 default: false,
+                emoji: None,
             });
         }
         let mut rows = vec![
@@ -300,6 +302,7 @@ impl Open {
                         value: number.to_string(),
                         description: Some(format!("{count} charges")),
                         default: false,
+                        emoji: None,
                     })
                     .collect(),
                 min_values: 1,
@@ -318,6 +321,7 @@ impl Open {
                         MAX_LABEL,
                     )),
                     default: false,
+                    emoji: None,
                 })
                 .collect();
             let max = u8::try_from(options.len()).unwrap_or(25);
