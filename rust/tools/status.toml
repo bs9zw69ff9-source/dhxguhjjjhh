@@ -22,6 +22,7 @@ MasterNamesConfigTests = "ported"
 PenalCodeTests = "ported"
 ProfileRedactionTests = "ported"
 RiskScoringTests = "ported"
+ServerHealthTests = "ported"
 
 [dropped]
 # Nothing is dropped at present. The fallout theme's tests (FalloutPresetTests) were deleted

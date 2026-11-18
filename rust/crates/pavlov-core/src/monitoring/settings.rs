@@ -57,3 +57,28 @@ impl Default for MonitorSettings {
         }
     }
 }
+
+impl MonitorSettings {
+    /// The band a latency falls in. A failed probe has no latency and is UNKNOWN here.
+    #[must_use]
+    pub fn band_of(&self, latency: Option<Duration>) -> super::LatencyBand {
+        use super::LatencyBand;
+        match latency {
+            None => LatencyBand::Unknown,
+            Some(l) if l >= self.latency_critical => LatencyBand::Critical,
+            Some(l) if l >= self.latency_warn => LatencyBand::Degraded,
+            Some(_) => LatencyBand::Healthy,
+        }
+    }
+
+    /// Exponential back-off for reconnect attempt `attempt` (1-based): `2^(attempt-1)` times
+    /// the base, clamped to the maximum, computed in floating point so a high attempt cannot
+    /// overflow.
+    #[must_use]
+    pub fn backoff_for(&self, attempt: u32) -> Duration {
+        let attempt = attempt.max(1);
+        let exponent = i32::try_from((attempt - 1).min(30)).unwrap_or(30);
+        let scaled = self.retry_base_delay.as_secs_f64() * 2f64.powi(exponent);
+        Duration::from_secs_f64(scaled.min(self.retry_max_delay.as_secs_f64()))
+    }
+}
