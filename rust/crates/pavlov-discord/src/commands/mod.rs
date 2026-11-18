@@ -9,6 +9,7 @@ pub mod arrest;
 pub mod bans;
 pub mod check_ban;
 pub mod config;
+pub mod config_panel;
 pub mod counts;
 pub mod delete_server;
 pub mod economy;
