@@ -488,3 +488,28 @@ impl CommandRegistry for RestRegistry {
         })
     }
 }
+
+impl pavlov_discord::monitor_alerts::AlertPoster for RestPoster {
+    fn post_alert(
+        &self,
+        channel_id: u64,
+        role: Option<u64>,
+        embed: Embed,
+    ) -> BoxFuture<'_, Result<(), DiscordError>> {
+        Box::pin(async move {
+            let mut message = convert::channel_message(&embed, &[]);
+            if let Some(role) = role {
+                // Exactly this role may be pinged; nothing else in the message can.
+                message = message.content(format!("<@&{role}>")).allowed_mentions(
+                    serenity::all::CreateAllowedMentions::new()
+                        .roles(vec![serenity::all::RoleId::new(role)]),
+                );
+            }
+            ChannelId::new(channel_id)
+                .send_message(&*self.http, message)
+                .await
+                .map(|_| ())
+                .map_err(|e| discord_error(&e))
+        })
+    }
+}

@@ -25,6 +25,7 @@ pub mod dispatcher;
 pub mod guild_directory;
 pub mod home_guild;
 pub mod interaction;
+pub mod monitor_alerts;
 pub mod option_name;
 pub mod paged;
 pub mod player_board;
