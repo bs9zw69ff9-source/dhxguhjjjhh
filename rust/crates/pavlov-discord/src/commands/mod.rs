@@ -8,6 +8,7 @@ pub mod analytics;
 pub mod arrest;
 pub mod bans;
 pub mod check_ban;
+pub mod config;
 pub mod counts;
 pub mod economy;
 pub mod errors;
