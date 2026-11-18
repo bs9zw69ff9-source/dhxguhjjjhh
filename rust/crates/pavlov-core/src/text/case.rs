@@ -14,6 +14,21 @@ fn simple_upper(c: char) -> char {
     }
 }
 
+/// .NET `ToLowerInvariant`: the simple (one-to-one) lower-case mapping, so "İ" stays one
+/// character where Rust's full `to_lowercase` would make it two.
+#[must_use]
+pub fn to_lower_invariant(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let mut lower = c.to_lowercase();
+            match (lower.next(), lower.next()) {
+                (Some(l), None) => l,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
 /// `string.Equals(a, b, StringComparison.OrdinalIgnoreCase)`.
 #[must_use]
 pub fn eq_ignore_case(a: &str, b: &str) -> bool {
@@ -34,6 +49,12 @@ pub fn fold_case(s: &str) -> String {
 #[must_use]
 pub fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     fold_case(haystack).contains(&fold_case(needle))
+}
+
+/// `string.Compare(a, b, StringComparison.OrdinalIgnoreCase)`, as an ordering.
+#[must_use]
+pub fn cmp_ignore_case(a: &str, b: &str) -> std::cmp::Ordering {
+    a.chars().map(simple_upper).cmp(b.chars().map(simple_upper))
 }
 
 /// `haystack.StartsWith(needle, StringComparison.OrdinalIgnoreCase)`.

@@ -43,7 +43,8 @@ pub fn timestamp_from_value(value: &Value) -> Option<DateTime<Utc>> {
 
 /// ISO 8601 as .NET's `DateTimeOffset.TryParse` with `AssumeUniversal` reads it: with or
 /// without an offset, with or without fractional seconds, `T` or a space between date and time.
-fn parse_iso(text: &str) -> Option<DateTime<Utc>> {
+#[must_use]
+pub fn parse_iso(text: &str) -> Option<DateTime<Utc>> {
     if let Ok(at) = DateTime::parse_from_rfc3339(text) {
         return Some(at.with_timezone(&Utc));
     }
