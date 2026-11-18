@@ -9,7 +9,9 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod autopost;
 pub mod barred;
+pub mod boards;
 pub mod caller;
 pub mod command;
 pub mod command_log;
@@ -17,6 +19,7 @@ pub mod component;
 pub mod dispatcher;
 pub mod interaction;
 pub mod option_name;
+pub mod player_board;
 pub mod post;
 pub mod runner;
 pub mod slash;
