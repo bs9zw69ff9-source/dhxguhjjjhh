@@ -12,7 +12,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod confirmations;
+pub mod crash_recovery;
 pub mod health;
 pub mod metrics;
+pub mod notice;
 pub mod process;
+pub mod registry;
+pub mod server_labels;
 pub mod service_control;
