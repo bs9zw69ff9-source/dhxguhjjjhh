@@ -354,4 +354,9 @@ pub trait ComponentResponder: Send + Sync {
     /// Open a modal. Only on an interaction NOT yet acknowledged: a modal cannot open on one.
     fn show_modal(&self, modal: crate::component::Modal)
     -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// Acknowledge with a NEW reply to come ("thinking..."), for work past three seconds; the
+    /// answer then goes through [`followup`](Self::followup).
+    fn defer_reply(&self, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
+    /// Another message after the interaction was acknowledged.
+    fn followup(&self, reply: Reply, ephemeral: bool) -> BoxFuture<'_, Result<(), DiscordError>>;
 }

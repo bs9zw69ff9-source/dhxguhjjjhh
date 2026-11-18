@@ -303,6 +303,12 @@ impl ComponentResponder for Component {
     ) -> BoxFuture<'_, Result<(), DiscordError>> {
         async { Ok(()) }.boxed()
     }
+    fn defer_reply(&self, _: bool) -> BoxFuture<'_, Result<(), DiscordError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn followup(&self, _: Reply, _: bool) -> BoxFuture<'_, Result<(), DiscordError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 fn custom_id(rows: &[ActionRow], index: usize) -> String {
