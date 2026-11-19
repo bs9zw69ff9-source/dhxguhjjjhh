@@ -11,7 +11,7 @@ use std::sync::Arc;
 use chrono::{TimeDelta, Utc};
 use common::file_store;
 use pavlov_core::data::{MemoryBackend, SerializedStore};
-use pavlov_core::time::SystemClock;
+use pavlov_core::time::{ManualClock, SystemClock};
 use pavlov_host::moderation::audit::MAX_ENTRIES;
 use pavlov_host::moderation::{AuditLog, ModAction};
 use pavlov_storage::datasets::MOD_LOG;
@@ -19,6 +19,16 @@ use pavlov_storage::datasets::MOD_LOG;
 fn audit() -> (tempfile::TempDir, AuditLog) {
     let dir = tempfile::tempdir().unwrap();
     let log = AuditLog::new(file_store(dir.path()), Arc::new(SystemClock));
+    (dir, log)
+}
+
+/// An audit log on a stopped clock, so every entry it records shares one timestamp. The
+/// same-millisecond tests used the real clock and relied on 20 file-backed writes landing
+/// inside one millisecond, which a slow or busy disk (a CI runner) does not do; their guard
+/// then failed a run that had tested nothing.
+fn stopped_audit() -> (tempfile::TempDir, AuditLog) {
+    let dir = tempfile::tempdir().unwrap();
+    let log = AuditLog::new(file_store(dir.path()), Arc::new(ManualClock::at_now()));
     (dir, log)
 }
 
@@ -56,7 +66,7 @@ fn ties(times: impl Iterator<Item = chrono::DateTime<Utc>>, count: usize) -> boo
 
 #[tokio::test]
 async fn actions_in_the_same_millisecond_still_read_newest_first() {
-    let (_dir, audit) = audit();
+    let (_dir, audit) = stopped_audit();
     for i in 0..20 {
         audit
             .record("kick", "Dana", &format!("Player{i}"), None)
@@ -79,7 +89,7 @@ async fn actions_in_the_same_millisecond_still_read_newest_first() {
 
 #[tokio::test]
 async fn against_a_player_is_also_newest_first_within_a_millisecond() {
-    let (_dir, audit) = audit();
+    let (_dir, audit) = stopped_audit();
     for i in 0..20 {
         audit
             .record("kick", &format!("Mod{i}"), "Alice", None)
