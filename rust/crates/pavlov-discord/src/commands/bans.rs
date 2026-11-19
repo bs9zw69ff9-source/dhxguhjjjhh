@@ -24,8 +24,11 @@ use pavlov_core::time::{BanDurations, Clock, EasternTime};
 use pavlov_host::logs::ip_tracking::IpTrackingService;
 use pavlov_host::moderation::bans::BanService;
 use pavlov_host::moderation::master_names::StoredMasterNames;
-use pavlov_host::moderation::{AuditLog, BanFileLookup, BanFileStatus, ServerBanFile};
+use pavlov_host::moderation::{
+    AuditLog, BanFileLookup, BanFileStatus, EnforcementResult, ServerBanFile,
+};
 use pavlov_storage::datasets::TEMP_BANS;
+use pavlov_storage::ledger_store::SaveBanWrite;
 
 use crate::access::{Access, RequiredAccess};
 use crate::caller::Caller;
@@ -250,19 +253,7 @@ impl BanParts {
         )
         .field("Length", length, true)
         .field("Issued by", username.to_owned(), true);
-        if !enforcement.landed() {
-            embed = embed.field(
-                format!("{} Not enforced", theme::WARN),
-                "The record was saved but no server accepted the command. The sweep will retry.",
-                false,
-            );
-        } else if enforcement.servers < self.bans.server_count() {
-            embed = embed.field(
-                format!("{} Partially enforced", theme::WARN),
-                format!("{} server(s) accepted it.", enforcement.servers),
-                false,
-            );
-        }
+        embed = with_enforcement(embed, &enforcement);
         if flags.is_some_and(|f| f.pending) {
             embed = embed.field(
                 "Address not yet known",
@@ -454,52 +445,66 @@ impl UnbanCommand {
             .load_bans()
             .into_iter()
             .find(|b| BanRules::same_player(Some(&b.player_id), Some(&player)));
+        let listed = p.ban_file.find(&player).await;
         let Some(existing) = existing else {
-            // NO RECORD IS NOT "NOT BANNED": an in-game ban can live only in the server's file.
-            let listed = p.ban_file.find(&player).await;
-            let Some(entry) = listed.entry.clone() else {
-                return Ok(theme::notice(
-                    "No ban to lift",
-                    Some(&not_banned(&player, describe_ban_file(&listed).as_deref())),
-                ));
-            };
-            let account = p.tracking.account_by_name(&player);
-            p.bans
-                .lift(&player, account.as_ref().map(|a| a.id.as_str()))
-                .await;
-            p.audit
-                .record(
-                    "unban",
-                    username,
-                    &player,
+            // NO RECORD IS NOT "NOT BANNED": a ban can live only in their save (written in
+            // game or by hand), or only in the server's own blacklist.txt.
+            if let Some(in_save) = p.bans.save_ban(&player) {
+                let account = p.tracking.account_by_name(&player);
+                let result = p
+                    .bans
+                    .lift(&player, account.as_ref().map(|a| a.id.as_str()))
+                    .await;
+                p.audit
+                    .record(
+                        "unban",
+                        username,
+                        &player,
+                        Some(&format!("Cleared from their save - {}", in_save.reason)),
+                    )
+                    .await?;
+                let mut embed = theme::success(
+                    "Ban cleared from their save",
                     Some(&format!(
-                        "Removed from the server's ban file - {}",
-                        entry.reason
+                        "**{}** had no record with this bot, but their save held a ban. It is cleared.",
+                        Sanitize::code(Some(&player))
                     )),
                 )
-                .await?;
-            let embed = theme::success(
-                "Removed from the server's ban file",
-                Some(&format!(
-                    "**{}** had no record with this bot. The server's own ban file listed them, and that entry is now \
-                     gone.",
-                    Sanitize::code(Some(&player))
-                )),
-            )
-            .field(
-                "Was",
-                format!(
-                    "{} — {}",
-                    Sanitize::code(Some(&Sanitize::redact_private(Some(&entry.reason)))),
-                    Sanitize::code(Some(&entry.unban))
-                ),
-                false,
-            )
-            .field("File", format!("`{}`", Sanitize::code(Some(listed.path.as_deref().unwrap_or("unknown")))), false)
-            .field("Lifted by", username.to_owned(), true);
-            return Ok(self
-                .pardon_if_master(caller, username, &player, embed)
-                .await);
+                .field(
+                    "Was",
+                    format!(
+                        "{} — {}",
+                        Sanitize::code(Some(&Sanitize::redact_private(Some(&in_save.reason)))),
+                        if in_save.unban_date.is_empty() {
+                            "Permanent".to_owned()
+                        } else {
+                            format!("until {}", Sanitize::code(Some(&in_save.unban_date)))
+                        }
+                    ),
+                    false,
+                )
+                .field("Lifted by", username.to_owned(), true);
+                embed = with_lift_problems(embed, &result, &listed);
+                return Ok(self
+                    .pardon_if_master(caller, username, &player, embed)
+                    .await);
+            }
+            if listed.listed() {
+                return Ok(theme::notice(
+                    "Listed in blacklist.txt only",
+                    Some(&format!(
+                        "**{}** has no ban with this bot or in their save, but the server's own `blacklist.txt` lists them, \
+                         and the game refuses them for that. The bot no longer edits that file: remove their entry by hand in \
+                         `{}`.",
+                        Sanitize::code(Some(&player)),
+                        Sanitize::code(Some(listed.path.as_deref().unwrap_or("blacklist.txt")))
+                    )),
+                ));
+            }
+            return Ok(theme::notice(
+                "No ban to lift",
+                Some(&not_banned(&player, describe_ban_file(&listed).as_deref())),
+            ));
         };
         // THE HIERARCHY: without it any mod quietly unbans whoever the owner banned.
         let actor = p.access.tier_of(caller);
@@ -539,17 +544,88 @@ impl UnbanCommand {
             false,
         )
         .field("Lifted by", username.to_owned(), true);
-        if !result.landed() {
-            embed = embed.field(
-                format!("{} Not lifted on the server", theme::WARN),
-                "The record was removed but no server accepted the Unban. They may still be natively banned.",
-                false,
-            );
-        }
+        embed = with_lift_problems(embed, &result, &listed);
         Ok(self
             .pardon_if_master(caller, username, &player, embed)
             .await)
     }
+}
+
+/// Why a ban is not (yet) in force in the player's save, when it is not. Every caller that bans
+/// shows the same words.
+#[must_use]
+pub fn enforcement_problem(result: &EnforcementResult) -> Option<(String, String)> {
+    match &result.save {
+        Some(SaveBanWrite::NoSave) => Some((
+            "No save yet".into(),
+            "They have never joined, so there is no save to write the ban into. They are kicked whenever they are \
+             seen, and the ban is written the moment the game creates their save."
+                .into(),
+        )),
+        Some(SaveBanWrite::Refused(reason)) => Some((
+            format!("{} Not written to their save", theme::WARN),
+            format!(
+                "{}. The record is saved and they were kicked; the sweep retries every 30 seconds.",
+                Sanitize::code(Some(reason))
+            ),
+        )),
+        None => Some((
+            format!("{} Not enforced", theme::WARN),
+            "MODSAVE_PATH is not set, so there is no save to write the ban into. It is recorded, and they are \
+             kicked whenever they are seen."
+                .into(),
+        )),
+        Some(_) => None,
+    }
+}
+
+fn with_enforcement(embed: Embed, result: &EnforcementResult) -> Embed {
+    match enforcement_problem(result) {
+        Some((title, body)) => embed.field(title, body, false),
+        None => embed,
+    }
+}
+
+/// What could still keep a lifted player out: a save the lift could not clear, or an entry in
+/// the server's `blacklist.txt`, which the bot no longer edits.
+fn with_lift_problems(
+    mut embed: Embed,
+    result: &EnforcementResult,
+    listed: &BanFileLookup,
+) -> Embed {
+    match &result.save {
+        Some(SaveBanWrite::Refused(reason)) => {
+            embed = embed.field(
+                format!("{} Not cleared from their save", theme::WARN),
+                format!(
+                    "The record is removed, but their save still holds the ban: {}. The game will keep refusing them \
+                     until it is cleared.",
+                    Sanitize::code(Some(reason))
+                ),
+                false,
+            );
+        }
+        None => {
+            embed = embed.field(
+                format!("{} No save written", theme::WARN),
+                "MODSAVE_PATH is not set, so there is no save to clear. Only the record was removed.",
+                false,
+            );
+        }
+        Some(_) => {}
+    }
+    if listed.listed() {
+        embed = embed.field(
+            format!("{} Still in blacklist.txt", theme::WARN),
+            format!(
+                "The server's own `blacklist.txt` lists them, and the game refuses them for that. The bot no longer \
+                 edits that file: remove their entry by hand in `{}`.",
+                Sanitize::code(Some(listed.path.as_deref().unwrap_or("blacklist.txt")))
+            ),
+            false,
+        );
+    }
+    embed
 }
 
 impl SlashCommand for UnbanCommand {
@@ -600,8 +676,8 @@ impl std::fmt::Debug for CheckBanCommand {
 pub fn ban_origin(moderator: Option<&str>) -> &'static str {
     match moderator {
         Some("in-game") => {
-            "The game's own ban file, not this bot - so the reason above may be old. `/unban` takes them out of the \
-             file as well as the store."
+            "Found in their save, set in game or by hand rather than by this bot, and recorded here. It is lifted \
+             when its date is reached, and `/unban` clears it from the save."
         }
         Some("auto") => {
             "This bot, automatically - VPN screening or ban evasion. The reason above says which. Nobody typed it."

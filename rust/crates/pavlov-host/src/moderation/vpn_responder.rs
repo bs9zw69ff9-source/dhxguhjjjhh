@@ -279,7 +279,7 @@ impl VpnResponder {
             tracing::error!(player, %error, "could not write the VPN ban to the audit log");
         }
         self.count("banned", stage);
-        tracing::warn!(player, ip = %record.ip, stage, servers = enforcement.servers, reason = %reason, "VPN AUTO-BANNED");
+        tracing::warn!(player, ip = %record.ip, stage, kicked_on = enforcement.servers, save = enforcement.summary(), reason = %reason, "VPN AUTO-BANNED");
         self.post(&format!(
             "[VPN BAN] {}  |  {reason}",
             Sanitize::message(Some(player))
@@ -288,7 +288,7 @@ impl VpnResponder {
             player,
             record,
             stage,
-            &format!("Banned permanently on {} server(s).", enforcement.servers),
+            &format!("Banned permanently: {}.", enforcement.summary()),
             unique_id,
         )
         .await;

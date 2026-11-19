@@ -1,5 +1,6 @@
 //! Port of `BlacklistEndToEndTests.cs`: an owner's blacklist entry, a join from the game log,
-//! and the ban and kick that reach the wire.
+//! and the ban written into the player's save plus the kick that reaches the wire. No RCON
+//! `Ban` is sent (owner, 2026-11-19: bans live in the save).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -20,6 +21,8 @@ use pavlov_host::moderation::{AuditLog, BanService, EvasionResponder, StoredMast
 use pavlov_host::registry::RconRegistry;
 use pavlov_rcon::testing::FakeRconServer;
 use pavlov_storage::datasets::TEMP_BANS;
+use pavlov_storage::game_files::GameFileGuard;
+use pavlov_storage::ledger_store::LedgerFileStore;
 
 const LOG: &str = "server1.log";
 const ADDRESS: &str = "203.0.113.5";
@@ -32,7 +35,7 @@ const LOGIN: &str =
 const CLOSE: &str = "[2026.09.29-12.40.00:000]LogNet: UChannel::Close: UniqueId: EOS:0002abc RemoteAddr: 203.0.113.5:7777";
 
 struct Rig {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     server: FakeRconServer,
     store: Arc<SerializedStore>,
     tracking: Arc<IpTrackingService>,
@@ -65,12 +68,26 @@ impl Rig {
             Arc::clone(&metrics),
             clock.clone(),
         ));
-        let bans = Arc::new(BanService::new(
-            rcon,
-            Arc::clone(&store),
-            Arc::clone(&masters) as _,
-            clock.clone(),
-        ));
+        // Evader has played before, so the game has made their save.
+        let modsave = dir.path().join("ModSave");
+        std::fs::create_dir_all(&modsave).unwrap();
+        std::fs::write(
+            modsave.join("Evader.json"),
+            "{\n\t\"name\": \"Evader\",\n\t\"money\": 0\n}\n",
+        )
+        .unwrap();
+        let bans = Arc::new(
+            BanService::new(
+                rcon,
+                Arc::clone(&store),
+                Arc::clone(&masters) as _,
+                clock.clone(),
+            )
+            .with_saves(Arc::new(LedgerFileStore::new(
+                Some(modsave),
+                Arc::new(GameFileGuard::none()),
+            ))),
+        );
         let responder = EvasionResponder::attach(
             Arc::clone(&tracking),
             bans,
@@ -92,7 +109,7 @@ impl Rig {
             OwnerActionParts::default(),
         );
         Self {
-            _dir: dir,
+            dir,
             server,
             store,
             tracking,
@@ -124,10 +141,21 @@ impl Rig {
         bans.into_iter().next().unwrap()
     }
 
-    fn assert_removed_on_the_wire(&self) {
+    fn banned_in_save(&self) -> bool {
+        let text = std::fs::read_to_string(self.dir.path().join("ModSave/Evader.json")).unwrap();
+        let save: serde_json::Value = serde_json::from_str(&text).unwrap();
+        save["ban"]["banned"].as_bool() == Some(true)
+    }
+
+    /// Banned in their save and kicked, with no RCON ban.
+    fn assert_removed(&self) {
         let commands = self.server.commands();
-        assert!(commands.contains(&"Ban Evader".to_owned()), "{commands:?}");
+        assert!(self.banned_in_save(), "the ban is not in their save");
         assert!(commands.contains(&"Kick Evader".to_owned()), "{commands:?}");
+        assert!(
+            !commands.iter().any(|c| c.starts_with("Ban ")),
+            "{commands:?}"
+        );
     }
 }
 
@@ -138,7 +166,7 @@ async fn a_blacklisted_address_is_banned_when_it_joins() {
 
     r.feed(&[ACCEPT, LOGIN]).await;
 
-    r.assert_removed_on_the_wire();
+    r.assert_removed();
     let ban = r.the_ban();
     assert_eq!(ban.player_id, "Evader");
     assert!(ban.permanent);
@@ -157,11 +185,12 @@ async fn on_a_busy_server_a_blacklisted_address_is_banned_on_the_line_that_confi
     r.actions.blacklist(ADDRESS).await;
 
     r.feed(&[ACCEPT, OTHER_ACCEPT, LOGIN]).await;
-    assert!(!r.server.commands().contains(&"Ban Evader".to_owned()));
+    assert!(!r.banned_in_save());
+    assert!(!r.server.commands().contains(&"Kick Evader".to_owned()));
 
     r.feed(&[CLOSE]).await;
 
-    r.assert_removed_on_the_wire();
+    r.assert_removed();
     assert_eq!(r.the_ban().player_id, "Evader");
 }
 
@@ -172,7 +201,7 @@ async fn a_blacklisted_username_is_banned_when_it_joins() {
 
     r.feed(&[LOGIN]).await;
 
-    r.assert_removed_on_the_wire();
+    r.assert_removed();
     assert!(
         r.the_ban()
             .reason
@@ -189,6 +218,7 @@ async fn somebody_not_on_the_blacklist_is_left_alone() {
 
     r.feed(&[ACCEPT, LOGIN, CLOSE]).await;
 
-    assert!(!r.server.commands().iter().any(|c| c.starts_with("Ban ")));
+    assert!(!r.server.commands().iter().any(|c| c.starts_with("Kick ")));
+    assert!(!r.banned_in_save());
     assert!(r.bans().is_empty());
 }

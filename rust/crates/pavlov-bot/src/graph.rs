@@ -69,9 +69,9 @@ use pavlov_host::master_list::MasterServerList;
 use pavlov_host::metrics::MetricsRegistry;
 use pavlov_host::moderation::owner_actions::{LiftBan, OwnerActionParts, OwnerActions};
 use pavlov_host::moderation::{
-    AuditLog, BanFileExport, BanFirewall, BanService, CommandBlacklist, EvasionResponder,
-    MasterAccess, MasterAccessParts, SecurityAlerts, ServerBanFile, StoredMasterNames,
-    VpnResponder, WarningService,
+    AuditLog, BanFirewall, BanService, CommandBlacklist, EvasionResponder, MasterAccess,
+    MasterAccessParts, SecurityAlerts, ServerBanFile, StoredMasterNames, VpnResponder,
+    WarningService,
 };
 use pavlov_host::monitoring::{
     MonitorBoard, MonitorHistory, MonitorParts, RconServerProbe, ServerMonitor, log_activity,
@@ -378,13 +378,15 @@ pub fn build(
     let resolve_tracking = Arc::clone(&tracking);
     let ban_file = Arc::new(ServerBanFile::new(
         features.ban_file_paths.clone(),
-        Arc::clone(&store),
-        Arc::clone(&clock),
         Some(Arc::new(move |id: &str| {
             resolve_tracking
                 .account(id)
                 .and_then(|a| a.names.first().cloned())
         })),
+    ));
+    // The player saves: balances and licences, and since 2026-11-19 the bans.
+    let ledger_files = Arc::new(LedgerFileStore::new(
+        features.ledger_directory.as_deref().map(PathBuf::from),
         Arc::clone(&guard),
     ));
     let bans = Arc::new(
@@ -395,7 +397,7 @@ pub fn build(
             Arc::clone(&clock),
         )
         .with_evidence(tracking.clone())
-        .with_ban_file(ban_file.clone() as Arc<dyn BanFileExport>),
+        .with_saves(Arc::clone(&ledger_files)),
     );
     let mod_save_sync = Arc::new(
         ModSaveSync::new(
@@ -512,10 +514,6 @@ pub fn build(
     player_events::attach(&tracking, Arc::clone(&timeline));
     let analytics = Arc::new(AnalyticsService::new(Arc::clone(&events)));
 
-    let ledger_files = Arc::new(LedgerFileStore::new(
-        features.ledger_directory.as_deref().map(PathBuf::from),
-        Arc::clone(&guard),
-    ));
     let balances: Arc<dyn BalanceStore> = ledger_files.clone();
     let ledger = Arc::new(SharedLedger::new(balances.clone()));
     let autopost = Arc::new(pavlov_discord::autopost::AutoPost::new(

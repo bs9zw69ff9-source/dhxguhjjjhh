@@ -228,6 +228,8 @@ pub fn register(graph: &Graph) -> Result<(), RegistryError> {
         work(move || {
             let bans = Arc::clone(&expiring);
             async move {
+                // Learn first, so a ban set in a save whose date has passed is lifted this tick.
+                bans.learn_from_saves().await;
                 bans.process_expired().await;
                 Ok(())
             }
@@ -295,18 +297,6 @@ pub fn register(graph: &Graph) -> Result<(), RegistryError> {
             }),
         ),
         "player-cache",
-    ))?;
-    let reconciling = Arc::clone(&bans);
-    registry.register(every(
-        "ban-reconcile",
-        features.ban_reconcile_interval,
-        work(move || {
-            let bans = Arc::clone(&reconciling);
-            async move {
-                bans.reconcile(false).await;
-                Ok(())
-            }
-        }),
     ))?;
 
     if graph.payroll.enabled() {
@@ -559,18 +549,6 @@ pub fn register(graph: &Graph) -> Result<(), RegistryError> {
             }
         }),
     ))?;
-
-    if graph.ban_file.enabled() {
-        let file = Arc::clone(&graph.ban_file);
-        registry.register(every(
-            "banlist-sync",
-            Duration::from_secs(300),
-            work(move || {
-                let file = Arc::clone(&file);
-                async move { file.sync().await.map_err(TickError::new) }
-            }),
-        ))?;
-    }
 
     if graph.mod_save_sync.can_sync() {
         let sync = Arc::clone(&graph.mod_save_sync);

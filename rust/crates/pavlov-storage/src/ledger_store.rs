@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use pavlov_core::economy::BalanceStore;
 use pavlov_core::licensing::License;
-use pavlov_core::sync::{PlayerSave, UPDATED_FORMAT};
+use pavlov_core::sync::{PlayerSave, SaveBan, UPDATED_FORMAT};
 use pavlov_core::text::case::{eq_ignore_case, fold_case};
 
 use crate::atomic_file;
@@ -62,6 +62,28 @@ enum EditOutcome {
     Unchanged,
     Written,
     Failed,
+}
+
+/// How writing (or lifting) a ban in a save went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveBanWrite {
+    /// The save now says what was asked.
+    Written,
+    /// It already did; nothing was rewritten.
+    AlreadySo,
+    /// The player has no save yet: the game creates it the first time they join. The bot
+    /// never creates one, so the ban waits for the file (and the player is kicked meanwhile).
+    NoSave,
+    /// The gate refused or the write failed; the reason says which.
+    Refused(String),
+}
+
+impl SaveBanWrite {
+    /// The save says what was asked, now or already.
+    #[must_use]
+    pub fn holds(&self) -> bool {
+        matches!(self, Self::Written | Self::AlreadySo)
+    }
 }
 
 /// The local time `updated` is stamped with.
@@ -256,6 +278,36 @@ impl LedgerFileStore {
     #[must_use]
     pub fn give_licenses(&self, player_id: &str, licenses: &[License]) -> LicenseChange {
         self.set_licenses(player_id, licenses, true)
+    }
+
+    /// Write `ban` into the player's save, or lift it (`None`), touching nothing else.
+    #[must_use]
+    pub fn set_ban(&self, player_id: &str, ban: Option<&SaveBan>) -> SaveBanWrite {
+        let missing = self.path_for(player_id).is_some_and(|path| {
+            !path.exists() && self.directory.as_ref().is_some_and(|d| d.is_dir())
+        });
+        if missing {
+            return SaveBanWrite::NoSave;
+        }
+        if let Some(refused) = self.gate(player_id) {
+            return SaveBanWrite::Refused(refused);
+        }
+        match self.edit(player_id, |save| save.with_ban(ban)) {
+            EditOutcome::Written => SaveBanWrite::Written,
+            EditOutcome::Unchanged => SaveBanWrite::AlreadySo,
+            EditOutcome::Unreadable => SaveBanWrite::Refused(UNRECOGNISED.to_owned()),
+            EditOutcome::Refused | EditOutcome::Failed => SaveBanWrite::Refused(
+                self.path_for(player_id)
+                    .and_then(|p| self.guard.problem(Some(&p.to_string_lossy())))
+                    .unwrap_or_else(|| "the save file did not accept the write".into()),
+            ),
+        }
+    }
+
+    /// The ban a player's save holds, `None` when it holds none or cannot be read.
+    #[must_use]
+    pub fn ban(&self, player_id: &str) -> Option<SaveBan> {
+        read_save(&self.path_for(player_id)?)?.ban()
     }
 
     fn edit(

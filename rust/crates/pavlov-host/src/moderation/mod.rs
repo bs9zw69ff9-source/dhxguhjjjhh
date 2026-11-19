@@ -20,7 +20,7 @@ pub use alerts::{
 pub use audit::{AuditLog, ModAction, StaffLogSink};
 pub use ban_file::{BanFileEntry, BanFileLookup, BanFileStatus, ServerBanFile};
 pub use ban_firewall::{BanFirewall, BanFirewallPass, FirewalledBan};
-pub use bans::{BanEvidence, BanFileExport, BanService, EnforcementResult, MasterNames};
+pub use bans::{BanEvidence, BanService, EnforcementResult, MasterNames, save_ban_for};
 pub use command_blacklist::{BarOutcome, BarResult, BarredUser, CommandBlacklist};
 pub use evasion::{AutoBanOutcome, EvasionResponder};
 pub use master_access::{MasterAccess, MasterAccessParts};

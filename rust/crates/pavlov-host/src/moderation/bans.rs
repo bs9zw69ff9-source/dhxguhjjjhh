@@ -1,46 +1,160 @@
 //! Issuing, enforcing and lifting bans (C# `Moderation/BanService.cs`).
 //!
-//! THE NAME IS THE TARGET. Shack's Ban, Kick and Unban act on the display name; the account
-//! id is accepted on the wire and removes nobody. Every ban the bot issues, the sweep, the
-//! reconcile, the ban file and every lift therefore name the same thing by construction. The
-//! id is bookkeeping for evasion flags and evidence, and a fallback only when no name exists.
+//! A BAN LIVES IN THE PLAYER'S SAVE (owner, 2026-11-19): `<ModSave>/<name>.json` gets
+//! `"ban": { "banned": true, "reason": ..., "unban_date": "MM/DD/YY" }` (blank date:
+//! permanent), and the mod refuses them. The bot sends NO RCON `Ban` or `Unban` and never
+//! writes `blacklist.txt` any more; entries already in that file are left alone.
+//!
+//! - A player with no save yet (never joined) cannot be written: they are kicked on sight,
+//!   and the sweep writes the ban the moment the game has created their file.
+//! - The sweep re-writes every active ban that is not in its save. The mod rewrites an online
+//!   player's save from memory, so a ban written while they were in game can be lost; this
+//!   is what puts it back.
+//! - `bot.db` (`temp_bans`) stays the record of who is banned, why, and until when; the save
+//!   is where it is enforced. Lifting (by /unban or expiry) clears the save's block.
+//!
+//! THE NAME IS THE TARGET. The save is `<name>.json` and Shack's Kick acts on the display
+//! name, so every ban, kick and lift names the same thing by construction. The account id is
+//! bookkeeping for evasion flags and evidence, and a kick fallback only when no name exists.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
 use futures_util::future::{BoxFuture, join_all};
 use pavlov_core::data::SerializedStore;
-use pavlov_core::json::Stamp;
 use pavlov_core::moderation::{BanRecord, BanRules};
+use pavlov_core::sync::{SaveBan, UNBAN_DATE_FORMAT, parse_unban_date};
 use pavlov_core::text::Sanitize;
-use pavlov_core::text::case::{IgnoreCaseMap, IgnoreCaseSet};
+use pavlov_core::text::case::IgnoreCaseSet;
 use pavlov_core::time::Clock;
-use pavlov_rcon::RconError;
-use pavlov_storage::datasets::{BAN_RECONCILE_STATE, TEMP_BANS, UNBAN_TOMBSTONES};
-use serde::{Deserialize, Serialize};
+use pavlov_storage::datasets::TEMP_BANS;
+use pavlov_storage::ledger_store::{LedgerFileStore, SaveBanWrite, all_saves};
 
 use crate::registry::RconRegistry;
 
 /// After a lift: long enough for anything lingering (a flag, a stale roster) to clear.
 pub const LIFT_EXEMPTION: Duration = Duration::from_secs(60 * 60);
-/// Native bans persist on the game server across bot restarts; re-issuing them all on every
-/// start is only load.
-pub const RECONCILE_MINIMUM_INTERVAL: TimeDelta = TimeDelta::minutes(30);
-const RECONCILE_PACING: Duration = Duration::from_millis(400);
+/// The reason written into a save when the record carries none.
+const NO_REASON: &str = "No reason given";
+/// Who a ban learned from a save is filed under: set in game or by hand, not by this bot.
+pub const LEARNED_MODERATOR: &str = "in-game";
 
-/// How many servers accepted, and the identifier actually sent.
+/// The moment a save's `unban_date` is reached: the start of that day, server local time.
+/// `None` for a blank or unreadable date.
+#[must_use]
+pub fn unban_moment(unban_date: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::TimeZone;
+    let day = parse_unban_date(unban_date)?;
+    let midnight = day.and_hms_opt(0, 0, 0)?;
+    chrono::Local
+        .from_local_datetime(&midnight)
+        .earliest()
+        .map(|local| local.with_timezone(&chrono::Utc))
+}
+
+/// The record a ban found only in a save is learned as. A date that does not parse is kept as
+/// PERMANENT with the value noted, because a guessed length frees somebody early or holds them
+/// too long, and the note is there for staff to fix.
+#[must_use]
+pub fn learned_record(
+    player: &str,
+    ban: &SaveBan,
+    now: chrono::DateTime<chrono::Utc>,
+) -> BanRecord {
+    let expires = unban_moment(&ban.unban_date);
+    let blank = ban.unban_date.trim().is_empty();
+    let mut reason = if ban.reason.trim().is_empty() {
+        NO_REASON.to_owned()
+    } else {
+        ban.reason.trim().to_owned()
+    };
+    if expires.is_none() && !blank {
+        reason = format!("{reason} [unreadable unban_date: {}]", ban.unban_date);
+    }
+    BanRecord {
+        reason: Some(reason),
+        moderator: Some(LEARNED_MODERATOR.into()),
+        at: Some(now),
+        expires,
+        permanent: expires.is_none(),
+        duration_label: Some(if expires.is_some() {
+            format!("until {}", ban.unban_date.trim())
+        } else {
+            "Permanent".into()
+        }),
+        ..BanRecord::for_player(player)
+    }
+}
+
+/// What a ban, kick or lift did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnforcementResult {
+    /// Servers that accepted the kick (0 when no kick was sent).
     pub servers: usize,
+    /// The name kicked, after sanitising.
     pub target: Option<String>,
+    /// Whether this was a ban or a lift, which only takes effect in the save. A plain kick
+    /// is not.
+    pub writes_save: bool,
+    /// The save write, for a ban or a lift. `None` when none was asked for, or no ModSave
+    /// directory is configured.
+    pub save: Option<SaveBanWrite>,
 }
 
 impl EnforcementResult {
+    /// It took effect: the save holds the ban (or the lift), or, for a plain kick, a server
+    /// accepted it. A ban whose save could not be written has NOT landed, kick or no kick.
     #[must_use]
     pub fn landed(&self) -> bool {
-        self.servers > 0
+        if self.writes_save {
+            self.save.as_ref().is_some_and(SaveBanWrite::holds)
+        } else {
+            self.servers > 0
+        }
+    }
+
+    /// Where a ban stands, in a few words, for feeds, alerts and short replies.
+    #[must_use]
+    pub fn summary(&self) -> &'static str {
+        match &self.save {
+            Some(save) if save.holds() => "written to their save",
+            Some(SaveBanWrite::NoSave) => {
+                "no save yet - kicked, and written when the game creates their save"
+            }
+            Some(_) => "NOT written to their save - kicked; the sweep retries every 30 seconds",
+            None => "recorded only - MODSAVE_PATH is not set, so there is no save to write",
+        }
+    }
+
+    /// The ban waits for the game to create the player's save; they are kicked meanwhile.
+    #[must_use]
+    pub fn pending(&self) -> bool {
+        self.save == Some(SaveBanWrite::NoSave)
+    }
+}
+
+/// The ban block a record is written into a save as. The date is the server's local date the
+/// ban ends on, in the mod's `MM/DD/YY`; blank is permanent. The field holds no time, so a
+/// ban shorter than a day is lifted by the bot at its exact time, not by the date.
+#[must_use]
+pub fn save_ban_for(ban: &BanRecord) -> SaveBan {
+    let unban_date = match (ban.permanent, ban.expires) {
+        (false, Some(expires)) => expires
+            .with_timezone(&chrono::Local)
+            .format(UNBAN_DATE_FORMAT)
+            .to_string(),
+        _ => String::new(),
+    };
+    SaveBan {
+        reason: ban
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+            .unwrap_or(NO_REASON)
+            .to_owned(),
+        unban_date,
     }
 }
 
@@ -52,22 +166,10 @@ pub trait MasterNames: Send + Sync {
     fn exempt<'a>(&'a self, name: &'a str, duration: Option<Duration>) -> BoxFuture<'a, ()>;
 }
 
-/// Rewriting the game's ban file (C# `IBanFileExport`). `Err` is a failure to rewrite.
-pub trait BanFileExport: Send + Sync {
-    fn export(&self) -> BoxFuture<'_, Result<usize, String>>;
-}
-
 /// The evasion flags a ban created (C# `IBanEvidence`).
 pub trait BanEvidence: Send + Sync {
     fn account_id_for(&self, name: &str) -> Option<String>;
     fn clear_flags<'a>(&'a self, account_id: &'a str) -> BoxFuture<'a, Result<(), String>>;
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-struct ReconcileState {
-    #[serde(with = "pavlov_core::json::epoch_ms_opt")]
-    last_run: Option<DateTime<Utc>>,
 }
 
 fn summarise(reply: &str) -> String {
@@ -86,7 +188,8 @@ pub struct BanService {
     masters: Arc<dyn MasterNames>,
     clock: Arc<dyn Clock>,
     evidence: Option<Arc<dyn BanEvidence>>,
-    ban_file: Option<Arc<dyn BanFileExport>>,
+    /// Where bans are written. Without it, a ban is only recorded and kicked.
+    saves: Option<Arc<LedgerFileStore>>,
 }
 
 impl std::fmt::Debug for BanService {
@@ -109,7 +212,7 @@ impl BanService {
             masters,
             clock,
             evidence: None,
-            ban_file: None,
+            saves: None,
         }
     }
 
@@ -119,9 +222,10 @@ impl BanService {
         self
     }
 
+    /// The ModSave store bans are written into.
     #[must_use]
-    pub fn with_ban_file(mut self, ban_file: Arc<dyn BanFileExport>) -> Self {
-        self.ban_file = Some(ban_file);
+    pub fn with_saves(mut self, saves: Arc<LedgerFileStore>) -> Self {
+        self.saves = Some(saves);
         self
     }
 
@@ -185,8 +289,67 @@ impl BanService {
         Some(target)
     }
 
-    /// Ban and/or kick on every server at once. Only a VERIFIED ban counts as enforced: a
-    /// refusal used to count as served, so a ban the server turned down was reported applied.
+    /// The ban `name`'s save holds right now, whoever wrote it (the bot, the mod, or a hand
+    /// edit). `None` when it holds none or no ModSave directory is configured.
+    #[must_use]
+    pub fn save_ban(&self, name: &str) -> Option<SaveBan> {
+        self.saves.as_ref()?.ban(name)
+    }
+
+    /// Whether bans can be written at all (a ModSave directory is configured).
+    #[must_use]
+    pub fn writes_saves(&self) -> bool {
+        self.saves.as_ref().is_some_and(|s| s.directory().is_some())
+    }
+
+    /// The newest active record for `name`.
+    fn active_record(&self, name: &str) -> Option<BanRecord> {
+        self.active_bans()
+            .into_iter()
+            .filter(|b| BanRules::same_player(Some(&b.player_id), Some(name)))
+            .max_by_key(|b| b.at)
+    }
+
+    /// Write `ban` into its player's save (logged when something changed or failed).
+    fn write_ban(&self, ban: &BanRecord) -> Option<SaveBanWrite> {
+        let saves = self.saves.as_ref()?;
+        let outcome = saves.set_ban(&ban.player_id, Some(&save_ban_for(ban)));
+        match &outcome {
+            SaveBanWrite::Written => {
+                tracing::info!(player = %ban.player_id, "ban written to their save");
+            }
+            SaveBanWrite::Refused(reason) => {
+                tracing::error!(player = %ban.player_id, reason, "ban NOT written to their save - the game will not refuse them");
+            }
+            SaveBanWrite::AlreadySo | SaveBanWrite::NoSave => {}
+        }
+        Some(outcome)
+    }
+
+    /// `Kick <target>` on every server; the number that accepted. Not verified: a refused kick
+    /// means they are not on that server.
+    async fn kick_everywhere(&self, target: &str) -> usize {
+        let command = format!("Kick {target}");
+        let accepted = AtomicUsize::new(0);
+        join_all(self.rcon.servers().iter().map(|server| {
+            let (command, accepted) = (&command, &accepted);
+            async move {
+                match self.rcon.send(server, command).await {
+                    Ok(reply) => {
+                        accepted.fetch_add(1, Ordering::SeqCst);
+                        tracing::info!(server, command, reply = %summarise(&reply), "sent");
+                    }
+                    Err(error) => tracing::warn!(server, command, %error, "FAILED"),
+                }
+            }
+        }))
+        .await;
+        accepted.into_inner()
+    }
+
+    /// Ban (write the active record into their save) and/or kick on every server. With no
+    /// save to write yet, they are kicked whatever `kick` says: that is the only way to keep
+    /// them out until the game creates the file.
     pub async fn hard_enforce(
         &self,
         name: &str,
@@ -194,92 +357,40 @@ impl BanService {
         ban: bool,
         kick: bool,
     ) -> EnforcementResult {
-        let Some(target) = Self::target(name, unique_id, "enforce") else {
-            return EnforcementResult {
-                servers: 0,
-                target: None,
-            };
-        };
-        let mut verbs = Vec::new();
-        if ban {
-            verbs.push(format!("Ban {target}"));
-        }
-        if kick {
-            verbs.push(format!("Kick {target}"));
-        }
-        if verbs.is_empty() {
-            return EnforcementResult {
-                servers: 0,
-                target: Some(target),
-            };
-        }
-        let accepted = AtomicUsize::new(0);
-        let servers = self.rcon.servers();
-        join_all(servers.iter().map(|server| {
-            let (verbs, accepted) = (&verbs, &accepted);
-            async move {
-                let mut served = false;
-                for command in verbs {
-                    let is_ban = command.starts_with("Ban ");
-                    // The kick is not verified: a refused kick means they are not on that server.
-                    let reply = if is_ban {
-                        self.rcon.send_verified(server, command).await
-                    } else {
-                        self.rcon.send(server, command).await
-                    };
-                    match reply {
-                        Ok(reply) => {
-                            if !ban || is_ban {
-                                served = true;
-                            }
-                            tracing::info!(server, command, reply = %summarise(&reply), "sent");
-                        }
-                        Err(error) => tracing::warn!(server, command, %error, "FAILED"),
-                    }
-                }
-                if served {
-                    accepted.fetch_add(1, Ordering::SeqCst);
+        let target = Self::target(name, unique_id, "enforce");
+        let save = if ban {
+            match self.active_record(name) {
+                Some(record) => self.write_ban(&record),
+                None => {
+                    tracing::error!(
+                        name,
+                        "asked to enforce a ban with no active record - nothing to write"
+                    );
+                    Some(SaveBanWrite::Refused(
+                        "there is no active ban record".into(),
+                    ))
                 }
             }
-        }))
-        .await;
-        let accepted = accepted.into_inner();
-        if accepted == 0 {
-            tracing::error!(target = %target, total = servers.len(), "ENFORCE FAILED - accepted by no server; the player is NOT removed");
-        }
-        EnforcementResult {
-            servers: accepted,
-            target: Some(target),
-        }
-    }
-
-    /// `Unban <name>` on every server, verified.
-    pub async fn unban_everywhere(&self, name: &str, unique_id: Option<&str>) -> EnforcementResult {
-        let Some(target) = Self::target(name, unique_id, "unban") else {
-            return EnforcementResult {
-                servers: 0,
-                target: None,
-            };
+        } else {
+            None
         };
-        let mut accepted = 0;
-        for server in self.rcon.servers() {
-            match self
-                .rcon
-                .send_verified(&server, &format!("Unban {target}"))
-                .await
-            {
-                Ok(_) => {
-                    accepted += 1;
-                    tracing::info!(target = %target, server, "unban accepted");
-                }
-                Err(error) => {
-                    tracing::error!(target = %target, server, %error, "unban FAILED - they may still be natively banned there")
-                }
-            }
+        let must_kick = kick || save == Some(SaveBanWrite::NoSave);
+        let servers = match (&target, must_kick) {
+            (Some(target), true) => self.kick_everywhere(target).await,
+            _ => 0,
+        };
+        if save == Some(SaveBanWrite::NoSave) {
+            tracing::warn!(
+                name,
+                kicked_on = servers,
+                "no save yet - kicked; the ban is written once the game creates their file"
+            );
         }
         EnforcementResult {
-            servers: accepted,
-            target: Some(target),
+            servers,
+            target,
+            writes_save: ban,
+            save,
         }
     }
 
@@ -289,13 +400,17 @@ impl BanService {
             || self.masters.is_exempt(name)
     }
 
-    /// Remove every online player who matches an active ban. The number removed.
+    /// Keep every active ban in force: write any that its save does not hold (a pending ban
+    /// whose file now exists, or one the game overwrote), and kick every banned player who is
+    /// online. The number kicked.
     pub async fn enforce_sweep(&self) -> usize {
-        let banned: IgnoreCaseSet = self
-            .active_bans()
-            .into_iter()
-            .map(|b| b.player_id)
-            .collect();
+        let active = self.active_bans();
+        for ban in &active {
+            if !self.untouchable(&ban.player_id) {
+                let _ = self.write_ban(ban);
+            }
+        }
+        let banned: IgnoreCaseSet = active.into_iter().map(|b| b.player_id).collect();
         let mut handled = IgnoreCaseSet::default();
         let mut removed = 0;
         for server in self.rcon.servers() {
@@ -309,9 +424,10 @@ impl BanService {
                 }
                 let uid = (!player.unique_id.is_empty()).then_some(player.unique_id.as_str());
                 tracing::warn!(name = %name, uid = uid.unwrap_or("unknown"), server, "ENFORCING - online but matches a ban record");
-                let result = self.hard_enforce(&name, uid, true, true).await;
-                tracing::info!(name = %name, servers = result.servers, landed = result.landed(), "sweep result");
-                if result.landed() {
+                let Some(target) = Self::target(&name, uid, "kick") else {
+                    continue;
+                };
+                if self.kick_everywhere(&target).await > 0 {
                     removed += 1;
                 }
             }
@@ -319,92 +435,32 @@ impl BanService {
         removed
     }
 
-    /// Re-issue every active ban to every server, at most every 30 minutes unless forced.
-    /// The number of bans reconciled.
-    pub async fn reconcile(&self, force: bool) -> usize {
-        let now = self.clock.now();
-        let state: ReconcileState = self
-            .store
-            .read(BAN_RECONCILE_STATE, ReconcileState::default())
-            .unwrap_or_default();
-        if let (false, Some(last)) = (force, state.last_run)
-            && now - last < RECONCILE_MINIMUM_INTERVAL
-        {
-            tracing::info!(
-                minutes_ago = (now - last).num_minutes(),
-                "skipped ban reconcile - native bans persist on the server on their own"
-            );
-            return 0;
-        }
-        let servers = self.rcon.servers();
-        let (mut reconciled, mut applied) = (0_usize, 0_usize);
-        for ban in self.active_bans() {
-            let name = Sanitize::id(Some(&ban.player_id));
-            if name.is_empty() || self.untouchable(&ban.player_id) {
-                continue;
-            }
-            // Re-verified at ISSUE time, not from the snapshot: a lift mid-run must win.
-            let still = self
-                .active_bans()
-                .iter()
-                .any(|b| BanRules::same_player(Some(&b.player_id), Some(&ban.player_id)));
-            if !still {
-                continue;
-            }
-            for server in &servers {
-                // THE REPLY IS THE ANSWER: a refusal reaches nobody unless it is logged.
-                match self
-                    .rcon
-                    .send_verified(server, &format!("Ban {name}"))
-                    .await
-                {
-                    Ok(_) => applied += 1,
-                    Err(RconError::Rejected { reply, .. }) => {
-                        tracing::error!(name = %name, server, reply = %reply, "ban REFUSED - they are NOT banned there")
-                    }
-                    Err(error) => {
-                        tracing::error!(name = %name, server, %error, "ban FAILED - they may NOT be banned there")
-                    }
-                }
-            }
-            reconciled += 1;
-            tokio::time::sleep(RECONCILE_PACING).await;
-        }
-        if let Err(error) = self
-            .store
-            .write(
-                BAN_RECONCILE_STATE,
-                &ReconcileState {
-                    last_run: Some(self.clock.now()),
-                },
-            )
-            .await
-        {
-            tracing::warn!(%error, "could not record the reconcile time");
-        }
-        if reconciled > 0 {
-            let attempts = reconciled * servers.len();
-            tracing::info!(
-                reconciled,
-                servers = servers.len(),
-                applied,
-                attempts,
-                "reconciled active bans"
-            );
-            if applied < attempts {
-                tracing::warn!(
-                    missed = attempts - applied,
-                    "ban commands were refused or failed - those players are NOT banned"
+    /// End a ban: the ONE path both /unban and expiry take, so they do the same things - clear
+    /// the ban from their save, remove every record, clear the evasion flags, exempt briefly.
+    ///
+    /// THE SAVE IS CLEARED FIRST. [`learn_from_saves`](Self::learn_from_saves) records any
+    /// banned save without a record, so removing the record first left a window in which a
+    /// lifted ban was learned straight back.
+    pub async fn lift(&self, name: &str, unique_id: Option<&str>) -> EnforcementResult {
+        // No save means nothing in a file holds the ban: as lifted as it gets.
+        let save = self
+            .saves
+            .as_ref()
+            .map(|saves| match saves.set_ban(name, None) {
+                SaveBanWrite::NoSave => SaveBanWrite::AlreadySo,
+                other => other,
+            });
+        match &save {
+            Some(SaveBanWrite::Written) => tracing::info!(name, "ban cleared from their save"),
+            Some(SaveBanWrite::Refused(reason)) => {
+                tracing::error!(
+                    name,
+                    reason,
+                    "the ban could NOT be cleared from their save - the game may still refuse them"
                 );
             }
+            _ => {}
         }
-        reconciled
-    }
-
-    /// End a ban: the ONE path both /unban and expiry take, so they do the same four things -
-    /// remove every record, clear the evasion flags, exempt briefly, and stop it coming back
-    /// (a tombstone for the importer, a rewritten file for the game).
-    pub async fn lift(&self, name: &str, unique_id: Option<&str>) -> EnforcementResult {
         if let Err(error) = self
             .store
             .update(TEMP_BANS, Vec::new, |mut bans: Vec<BanRecord>| {
@@ -431,32 +487,75 @@ impl BanService {
 
         self.masters.exempt(name, Some(LIFT_EXEMPTION)).await;
 
-        let now = self.clock.now();
-        if let Err(error) = self
-            .store
-            .update(
-                UNBAN_TOMBSTONES,
-                IgnoreCaseMap::default,
-                |mut t: IgnoreCaseMap<Stamp>| {
-                    t.insert(name.trim(), Stamp(now));
-                    Some(t)
-                },
-            )
-            .await
+        EnforcementResult {
+            servers: 0,
+            target: Self::target(name, account.as_deref(), "lift"),
+            writes_save: true,
+            save,
+        }
+    }
+
+    /// The knowledge base: record every ban a save holds that the store does not know (set in
+    /// game, or by hand), so `/banlist` and `/checkban` show it and expiry lifts it once its
+    /// date is reached. The number learned. A master is never learned: automation never bans
+    /// one.
+    pub async fn learn_from_saves(&self) -> usize {
+        let Some(directory) = self
+            .saves
+            .as_ref()
+            .and_then(|s| s.directory())
+            .map(ToOwned::to_owned)
+        else {
+            return 0;
+        };
+        let found = match tokio::task::spawn_blocking(move || {
+            all_saves(&directory)
+                .into_iter()
+                .filter_map(|(stem, _, save)| save.ban().map(|ban| (stem, ban)))
+                .collect::<Vec<_>>()
+        })
+        .await
         {
-            tracing::error!(name, %error, "could not record the unban tombstone - the importer may resurrect this ban");
-        }
-
-        let result = self.unban_everywhere(name, account.as_deref()).await;
-
-        if let Some(ban_file) = &self.ban_file {
-            /* NEVER fatal, and the tombstone is why that is safe: the record is gone and the
-            unban was sent; the game may keep refusing them until the next sync. */
-            if let Err(error) = ban_file.export().await {
-                tracing::error!(name, %error, "lifted the ban but could not rewrite the game's ban file - the server may refuse them until the next banlist sync");
+            Ok(found) => found,
+            Err(error) => {
+                tracing::error!(%error, "could not scan the saves for bans");
+                return 0;
             }
+        };
+        let found: Vec<(String, SaveBan)> = found
+            .into_iter()
+            .filter(|(player, _)| !self.untouchable(player))
+            .collect();
+        if found.is_empty() {
+            return 0;
         }
-        result
+        let now = self.clock.now();
+        let mut learned: Vec<String> = Vec::new();
+        let written = self
+            .store
+            .update(TEMP_BANS, Vec::new, |mut bans: Vec<BanRecord>| {
+                for (player, ban) in &found {
+                    // Re-checked inside the update: a lift or a ban racing this wins.
+                    if bans
+                        .iter()
+                        .any(|b| BanRules::same_player(Some(&b.player_id), Some(player)))
+                    {
+                        continue;
+                    }
+                    bans.push(learned_record(player, ban, now));
+                    learned.push(player.clone());
+                }
+                (!learned.is_empty()).then_some(bans)
+            })
+            .await;
+        if let Err(error) = written {
+            tracing::error!(%error, "could not record the bans found in saves");
+            return 0;
+        }
+        for player in &learned {
+            tracing::info!(player, "recorded a ban found only in their save");
+        }
+        learned.len()
     }
 
     /// Lift every expired temp ban through [`lift`](Self::lift). The bans lifted.

@@ -199,7 +199,8 @@ impl WarnCommand {
             player,
             hours,
             active = outcome.active,
-            servers = enforcement.servers,
+            kicked_on = enforcement.servers,
+            save = enforcement.summary(),
             "warning escalation banned"
         );
         Ok(if enforcement.landed() {
@@ -209,8 +210,9 @@ impl WarnCommand {
             )
         } else {
             format!(
-                "{hours}h ban recorded at {ESCALATION_THRESHOLD} warnings, but NO server accepted it. The sweep will \
-                 retry."
+                "{hours}h ban recorded at {ESCALATION_THRESHOLD} warnings, expiring {}: {}.",
+                theme::relative(expires),
+                enforcement.summary()
             )
         })
     }
