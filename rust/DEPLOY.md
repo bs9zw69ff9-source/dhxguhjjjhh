@@ -1,16 +1,21 @@
-# Deploying the Rust bot
+# Deploying the bot
 
-The Rust bot replaces the C# bot **in place**: same `.env`, same `bot.db`, same game files,
-same `pavlov-bot` systemd unit. Getting there takes three steps, in this order:
+The bot is the Rust binary `rust-out/pavlov-bot`, run by the systemd unit `pavlov-bot`. The C#
+bot it replaced was removed from the repository on 2026-11-19, so there is no second bot to
+fall back to: rolling back means deploying an earlier commit of this one.
 
-1. **Staging.** The Rust bot runs beside the live C# bot. It uses a second Discord application,
-   a test guild, one test Pavlov server and a *copy* of the data. Work through the checklist
-   below.
-2. **Cutover.** Repoint `pavlov-bot`'s `ExecStart` at the Rust binary.
-3. **Rollback, if needed.** Repoint it back. The C# bot keeps working until M11 deletes it,
-   and M11 only happens after the owner confirms the Rust bot works live. **Once the game
-   server runs the ServerRoles and JSON-save mod, rollback is no longer data-safe**: see
-   [Rollback](#rollback).
+Day to day, one command on the VPS:
+
+```bash
+cd /root/pavlov-bot && bash scripts/deploy.sh
+```
+
+It resets the checkout to `main`, builds, runs the selftest against the live `.env`, swaps the
+binary only if that passes, restarts `pavlov-bot` and checks the journal reports the new build.
+
+**If `pavlov-bot` still runs the old C# binary** (its `ExecStart` is `dotnet-out/PavlovBot`),
+`deploy.sh` refuses to restart it and says so. Do the [Cutover](#cutover) once, then deploy as
+above.
 
 ## The ServerRoles and JSON-save server (owner change, 2026-11-18)
 
@@ -41,7 +46,8 @@ one startup warning.
 
 Verified in CI and in the development container:
 
-- every one of the 1,792 C# tests, ported and passing (`python3 rust/tools/parity.py --strict`)
+- every one of the 1,792 C# tests ported (1,754) or dropped with a reason (38), checked by a
+  parity tool that was retired with the C# bot
 - clippy with warnings as errors
 - the release build
 - `pavlov-bot --selftest` against a minimal `.env`
@@ -253,18 +259,6 @@ Check each item, and note any difference from the C# bot.
 - [ ] `systemctl stop pavlov-bot-rust` exits within a few seconds.
 - [ ] `journalctl` ends with `stopped`.
 
-### 6. The data still reads in C#
-
-Rollback depends on the C# bot reading whatever the Rust bot wrote. Check it on the staging
-copy:
-
-```bash
-systemctl stop pavlov-bot-rust
-cd /root/pavlov-bot-staging && bash scripts/deploy-csharp.sh   # builds and runs the C# selftest here
-```
-
-The selftest must pass against the staging data the Rust bot has been writing.
-
 ## Cutover
 
 Only after the checklist passes.
@@ -286,27 +280,28 @@ journalctl -fu pavlov-bot
 If `pavlov-bot`'s existing unit sets `WorkingDirectory` to something other than
 `/root/pavlov-bot`, adjust both paths. Check with `systemctl cat pavlov-bot`.
 
-After the cutover, deploy with `bash scripts/deploy-rust.sh --start --unit pavlov-bot`.
-`scripts/deploy.sh` still builds the C# bot. It will refuse to restart a unit that runs a
-different binary, so it cannot silently swap the Rust bot out. M11 makes it build Rust.
+After the cutover, deploy with `bash scripts/deploy.sh`. It builds the Rust bot and restarts
+`pavlov-bot` through `scripts/deploy-rust.sh --start --unit pavlov-bot`.
+
+A leftover `dotnet-out/` folder from the C# bot does nothing once the unit runs the Rust
+binary. Delete it when you like: `rm -rf /root/pavlov-bot/dotnet-out`.
 
 ## Rollback
 
+The C# bot is gone from the repository, and it was not a working rollback anyway once the
+server moved to ServerRoles and JSON saves: it read `<name>.txt` saves that no longer exist and
+sent RCON+ commands to a server without RCON+.
+
+Rolling back means an earlier commit of the Rust bot:
+
 ```bash
-rm /etc/systemd/system/pavlov-bot.service.d/rust.conf
-systemctl daemon-reload && systemctl restart pavlov-bot
-journalctl -u pavlov-bot -n 30      # the C# bot's own build line
+bash scripts/deploy.sh <older-sha>    # checked out detached, built, selftested, restarted
+bash scripts/deploy.sh main           # back to the trunk afterwards
 ```
 
-**After the server switch to ServerRoles and JSON saves, the C# bot is not a working
-rollback.** It reads `<name>.txt` saves that no longer exist, so money and licence commands
-fail. It sends RCON+ menu commands to a server without RCON+, and its police ladder names
-rank files that are gone. Roll back only to a server still on the old mod, or accept those
-features being down until you roll forward again.
-
-`bot.db` is still shared safely. Both bots read and write it in the same shape, which
-`NodeCompatibilityTests` pins. There is one difference, and it is harmless: the Rust bot
-writes non-ASCII text as UTF-8 where the C# escaped it. Both readers accept either.
+Do not go back past 1760d55, the first commit that matches the ServerRoles and JSON-save
+server. `bot.db` is unaffected either way: every version reads and writes it in the same shape,
+which `node_compatibility_tests` pins.
 
 ## What is different on purpose
 

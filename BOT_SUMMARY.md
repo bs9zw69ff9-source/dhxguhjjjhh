@@ -1,12 +1,12 @@
-PAVLOV VR DISCORD BOT: SUMMARY (as of 2026-11-16)
+PAVLOV VR DISCORD BOT: SUMMARY (as of 2026-11-19)
 
 WHAT IT IS
-- Pavlov VR Discord bot written in C# on .NET 9. Source is in dotnet/. It is the only bot in the repo (the Node bot was removed).
-- The bot: systemd service pavlov-bot, /root/pavlov-bot. One theme, police (dollars, warrants, the GWPD). The fallout bot and its theme were dropped (2026-11-17); THEME=fallout or FACTION_SET=fallout now stops startup with a message.
-- Layout: PavlovBot.Core (pure domain logic, portable), PavlovBot.Rcon (RCON client), PavlovBot.Host (Discord, storage, log tailing, Linux-only systemd/ufw control).
-- Build state: 2175 tests pass, TreatWarningsAsErrors on. Tests include a fake RCON server that records the exact bytes on the wire.
-- Data files: still the JSON files the Node bot wrote.
-- Not verified against a live Pavlov server or Discord from this environment.
+- Pavlov VR Discord bot written in Rust. Source is in rust/, one binary built to rust-out/pavlov-bot. It is the only bot in the repo: the Node bot and then the C#/.NET bot were removed (C# on 2026-11-19).
+- The bot: systemd service pavlov-bot, /root/pavlov-bot. One theme, police (dollars, warrants, the GWPD). THEME=fallout or FACTION_SET=fallout stops startup with a message.
+- Layout: eight crates. pavlov-core (pure domain logic, portable), pavlov-config, pavlov-rcon (RCON client), pavlov-storage, pavlov-host (Linux-only systemd/ufw control and the services), pavlov-discord, pavlov-gateway (serenity adapter), pavlov-bot (the binary).
+- Build state: 2100 tests pass, clippy with warnings as errors. Tests include a fake RCON server that records the exact bytes on the wire.
+- Game files: the ServerRoles folder (GWPD rank files and the menu tier files owner/manager/srstaff/staff/jrstaff) and <playername>.json saves in ModSave. No RCON+.
+- Data files: still the JSON shapes the Node bot wrote.
 
 HOW IT TALKS TO THE GAME
 - RCON: one persistent serialised session per server, commands paced 100 ms apart, reads coalesced, failures never cached. 1 to 3 servers, RCON triples in .env.
@@ -19,14 +19,8 @@ FEATURES
 - Boards and feeds: auto-posted leaderboards, K/D and playtime boards, player list, player-count voice channels; webhook feeds for joins, connects, kills and money; connect cards with geolocation.
 - Monitoring: server monitoring with alerts, /health, crash recovery, metrics endpoint (/health, /healthz, /ready; off unless METRICS_PORT is set).
 
-SLASH COMMANDS (57)
-- Public: /help /stats /players /serverinfo /server /checkban /banlist
-- Mod: /kick /tempban /unban /warn /announce /flush /rotatemap /alts /counts /feeds /suspendrank /monitor
-- Admin: /permban /givemenu /stripmenu /donator /staff /staffactivity /staffleaderboard /unlinkname
-- Police and RP: /arrest /warrant /backgroundcheck /bail /license /wages /whitelist /subclass /factionstats
-- Owner, servers: /provisionserver /deleteserver /serverswitch /setpin /removepin /manual /configure
-- Owner, diagnostics: /inspect /iplookup /vpncheck /health /errors /botstats /testalert
-- Owner, access: /firewall /setroles /setrconroles /guildinvites /testmode /tester
+SLASH COMMANDS (58, from --selftest)
+/adjustmoney /alts /announce /arrest /backgroundcheck /bail /banlist /botstats /checkban /configure /counts /deleteserver /demotion /donator /errors /factionstats /feeds /firewall /flush /givemenu /givemoney /guildinvites /health /help /inspect /iplookup /kick /license /manual /monitor /permban /players /promotion /provisionserver /removepin /rotatemap /server /serverinfo /serverswitch /setpin /setroles /staff /staffactivity /staffleaderboard /stats /stripmenu /suspendrank /tempban /testalert /tester /testmode /unban /unlinkname /vpncheck /wages /warn /warrant /whitelist
 - Destructive bulk actions live under /configure and need the operation name typed back exactly.
 
 CHANGES FROM THIS SESSION (merged #237 to #243, NOT DEPLOYED)
@@ -52,4 +46,4 @@ KNOWN COSTS AND OPEN ITEMS
 - Rocky and RHEL are not supported by provisioning.
 - Engine.ini is often missing at provision time, so that step usually reports it did nothing.
 - VPS still to do: deploy, run remove-antiddos.sh, install CrowdSec, run migrate-from-docker.sh, remove the old pavlov-shack-server container and image, then /provisionserver for slots 1, 2, 3.
-- README.md, dotnet/README.md and ARCHITECTURE.md are out of date (still describe the Node bot).
+- ARCHITECTURE.md describes the removed Node bot and is kept only as history.

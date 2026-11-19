@@ -1,7 +1,7 @@
 //! Port of `LicenseTests.cs`, the `LicenseStoreTests` half, over the JSON saves
 //! (`<name>.json`, owner change 2026-11-18): licences and money written through the one store
 //! that knows when a save may be touched. The C#'s text-shape, bare-save and online-gate tests
-//! are dropped with that behaviour (see status.toml); the tests after them are new.
+//! are dropped with that behaviour (see rust/MIGRATION.md); the tests after them are new.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

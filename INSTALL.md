@@ -11,26 +11,15 @@ Pavlov's files from disk. Do not try to run it on Windows or macOS.
 
 ```bash
 apt-get update
-apt-get install -y git curl ca-certificates libicu-dev
+apt-get install -y git curl ca-certificates build-essential
 ```
 
-**`libicu-dev` is not optional.** The bot keeps timestamps in `America/New_York`,
-so it is built with globalization enabled and needs ICU at runtime. A minimal
-server image often ships without it, and .NET then dies before `Main` with
-"Couldn't find a valid ICU package installed on the system" — which reads like a
-build failure and is not one.
+`build-essential` is for the build: the bot bundles SQLite and its TLS library, and both
+compile a little C. The binary it produces links only glibc, so nothing else is needed at
+runtime. There is no Node.js, pm2 or .NET any more.
 
-**Node.js is still required**, for pm2 only. The Node *bot* was removed; the
-process manager it ran under was not, and nothing else knows how to start this.
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-npm install -g pm2
-```
-
-Disk: budget **~2 GB**. The .NET SDK is ~600 MB, the NuGet cache it fills on the
-first build ~400 MB, and the self-contained publish output ~150 MB.
+Disk: budget **~2 GB**. The Rust toolchain and the build cache take ~1.5 GB, the binary a few
+tens of MB.
 
 ---
 
@@ -40,7 +29,8 @@ At <https://discord.com/developers/applications>:
 
 1. **New Application**, then **Bot** → **Reset Token**. Copy it — this is
    `DISCORD_TOKEN` and it is shown once.
-2. Copy the **Application ID** from General Information. This is `CLIENT_ID`.
+2. Copy the **Application ID** from General Information. The bot reads it from Discord
+   itself, so `CLIENT_ID` in `.env` is optional; it is only needed for the invite URL below.
 3. **OAuth2 → URL Generator**: scopes `bot` and `applications.commands`.
    Permissions: Send Messages, Embed Links, Attach Files, Read Message History,
    Manage Roles (for verification), Manage Channels (for the player-count voice
@@ -74,7 +64,6 @@ cp .env.example .env
 
 ```bash
 DISCORD_TOKEN=          # from step 2
-CLIENT_ID=              # from step 2
 RCON_HOST_1=127.0.0.1
 RCON_PORT_1=9100
 RCON_PASSWORD_1=        # from your Pavlov RconSettings.txt
@@ -103,8 +92,8 @@ place where a wrong value makes a command report success and change nothing:
 
 ```bash
 PAVLOV_BASE_1=/home/steam/pavlovserver
-MODSAVE_PATH=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave
-FACTION_ROLES_PATH=/home/steam/pavlovserver/Pavlov/Saved/Config/ModSave/FactionRoles
+MODSAVE_PATH=/home/steam/pavlovserver/Pavlov/Saved/ModSave
+FACTION_ROLES_PATH=/home/steam/pavlovserver/Pavlov/Saved/ModSave/ServerRoles
 BLACKLIST_PATH=           # the game's own blacklist file; blank uses
                           # <PAVLOV_BASE_1>/Pavlov/Saved/Config/blacklist.txt
 ```
@@ -117,8 +106,10 @@ building a tree the game never reads is worse than a refusal that says so.
 
 ## 4. Run it as its own user, not root
 
-A bot running as root turns any bug in it - or in Discord.Net - into full control
-of the box. It logs a warning at startup when it is root. Everything except
+The shipped unit (`rust/deploy/pavlov-bot.service`) runs as root, by owner decision, because
+the bot runs `systemctl`, `ufw` and the provisioner itself. If you would rather not, change
+`User=` in the unit and do the following. A bot running as root turns any bug in it into full
+control of the box. It logs a warning at startup when it is root. Everything except
 `/provisionserver` and `/deleteserver` works unprivileged.
 
 ```bash
@@ -205,13 +196,13 @@ A leftover `docker:` prefix in `PAVLOV_UNITS` is ignored, so each server keeps i
 ## 5. Build and verify
 
 ```bash
-bash scripts/deploy-csharp.sh --install-sdk
+bash scripts/deploy-rust.sh --install-rust
 ```
 
-This fetches the .NET SDK into `$HOME/.dotnet` (no root needed), publishes
-self-contained, and then runs `--selftest`, which **builds the entire object
-graph and exits without connecting to anything**. If the configuration is wrong
-it prints every problem at once and changes nothing.
+This installs a Rust toolchain into `$HOME/.cargo` (no root needed), builds the release binary
+into `rust-out/pavlov-bot`, and then runs `--selftest`, which **builds the entire object graph
+and exits without connecting to anything**. If the configuration is wrong it prints every
+problem at once and changes nothing.
 
 Fix whatever it lists and run it again. Nothing has started yet.
 
@@ -220,43 +211,37 @@ Fix whatever it lists and run it again. Nothing has started yet.
 ## 6. Start it
 
 ```bash
-bash scripts/deploy-csharp.sh --start
-pm2 save
-pm2 startup        # then run the command it prints, so it survives a reboot
+cp rust/deploy/pavlov-bot.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable pavlov-bot
+bash scripts/deploy-rust.sh --start --unit pavlov-bot
 ```
 
-The script stamps the git commit into the binary and then **checks the running
-process reports that same build**. That is not a formality: a deploy that quietly
-leaves the old process running is indistinguishable from a fix that does not
-work, and pm2's `start` on an already-running app does nothing while printing
-success.
+If you cloned somewhere other than `/root/pavlov-bot`, edit `WorkingDirectory` and `ExecStart`
+in the unit first.
+
+The script stamps the git commit into the binary and then **checks the running process
+reports that same build** in the journal. That is not a formality: a deploy that quietly
+leaves the old process running is indistinguishable from a fix that does not work.
 
 ---
 
 ## 7. Confirm it actually came up
 
 ```bash
-pm2 logs pavlov-bot-cs --lines 60
+journalctl -u pavlov-bot -n 80 --no-pager
 ```
 
-The startup summary names every subsystem and says why each one is off. Read it
-rather than assuming — it is the fastest way to catch a path typo:
+The startup summary names every subsystem and says why each one is off. Read it rather than
+assuming: it is the fastest way to catch a path typo. Then find the command registration line:
 
 ```
-whitelists: /home/steam/.../FactionRoles     <- on
-economy: off (MODSAVE_PATH not set)          <- off, and why
-payroll: off (PAYROLL_AMOUNT not set)
+registered commands in guild ...                              <- GUILD_ID set, instant
+registered global commands; propagation can take up to an hour  <- no GUILD_ID
 ```
 
-Then check the command registration line:
-
-```
-Registered N command(s) in guild <name>          <- GUILD_ID set, instant
-Registered N global command(s) - propagation...  <- no GUILD_ID, up to an hour
-```
-
-In Discord, `/health` is the end-to-end proof: it reports RCON connectivity per
-server and the build id it is running.
+In Discord, `/health` is the end-to-end proof: it reports RCON connectivity per server and the
+build it is running.
 
 ---
 
@@ -266,9 +251,8 @@ server and the build id it is running.
 bash scripts/deploy.sh
 ```
 
-Pulls `main`, resets the working tree, rebuilds, re-runs the selftest, restarts,
-and verifies the build stamp. `.env`, `bot.db` and everything else git-ignored
-survive the reset untouched.
+Pulls `main`, resets the working tree, rebuilds, re-runs the selftest, restarts, and verifies
+the build stamp. `.env`, `bot.db` and everything else git-ignored survive the reset untouched.
 
 Roll back to an earlier commit by naming it:
 
@@ -283,8 +267,8 @@ bash scripts/deploy.sh <older-sha>
 `bot.db` is the source of truth; the JSON files beside it are a readable export.
 Both live in `DATA_DIR` (default `data/` under the directory the bot runs in).
 `scripts/backup.sh` handles offsite via rclone — see `scripts/backup.env.example`.
-Set `BOT_DIR` to the directory the bot runs in (its pm2 cwd): the script used to
-look for `bot.db` in the repo root, which is not where the C# bot keeps it.
+The script reads the directory the bot runs in from the `pavlov-bot` unit's
+`WorkingDirectory`; set `BOT_DIR` only if systemd cannot tell it.
 Keep a copy of `.env` somewhere safe yourself; the script deliberately does not
 upload secrets.
 

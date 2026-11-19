@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# The Rust port's merge gate. Every milestone runs this, and nothing merges unless it
-# passes in full. Run from anywhere:  bash rust/tools/gate.sh
+# The merge gate. Nothing merges unless it passes in full, and CI runs the same script.
+# Run from anywhere:  bash rust/tools/gate.sh
 #
-# Warnings are errors (clippy -D warnings), the same bar the C# holds with
-# TreatWarningsAsErrors. parity.py fails if a C# test file marked "ported" in
-# tools/status.toml is missing any of its tests in Rust, and (--strict, since M10) if ANY C#
-# test is neither ported nor listed as dropped with a reason.
+# Warnings are errors (clippy -D warnings). The test-parity step against the C# suite ended
+# when the C# bot was removed (2026-11-19): every C# test had been ported or dropped with a
+# reason, and the record of that is rust/MIGRATION.md and git history.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,8 +34,5 @@ cargo test --workspace --all-features
 
 step "cargo build --release"
 cargo build --release --workspace
-
-step "test parity with the C# suite (strict)"
-python3 tools/parity.py --strict
 
 printf '\nGate passed.\n'

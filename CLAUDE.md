@@ -133,42 +133,40 @@ real person, not a corporate assistant.
 
 ## One bot
 
-The C# bot under `dotnet/` is the whole of it. There was a Node bot at the repo root kept as
-a rollback target; it was removed once C# had taken over.
+The Rust bot under `rust/` is the whole of it. Two earlier implementations are gone: the Node
+bot (removed once C# took over) and the C#/.NET bot it was ported from (removed 2026-11-19,
+after the port). `rust/MIGRATION.md` keeps the port's decisions and every intentional
+behaviour difference from the C#.
 
-Its history is still worth reading. Several bugs found in this repo were PORT GAPS - things
-the Node bot did that the C# port silently did not, including the `Notify` target and police
-log routing, neither of which announced itself as missing. `git log` before the removal
-commit is the record of what the old bot did, and it is the first place to look when a
-feature "used to work".
+Their history is still worth reading. Several bugs found in this repo were PORT GAPS - things
+an older bot did that its successor silently did not, including the `Notify` target and
+police log routing, neither of which announced itself as missing. `git log` before each
+removal is the record of what the old bot did, and it is the first place to look when a
+feature "used to work". The last commit with the C# tree is 1760d55.
 
-`NodeCompatibilityTests` and the dataset names in `Storage/Datasets.cs` are deliberately
-kept: the JSON files the Node bot wrote are still the files the C# bot reads on a live
-server, so that shape is a live contract, not history.
+`node_compatibility_tests` and the dataset names in `pavlov-storage/src/datasets.rs` are
+deliberately kept: the JSON files the Node bot wrote are still the files the bot reads on a
+live server, so that shape is a live contract, not history.
 
 ## Build and test
 
 ```bash
-dotnet build -c Release            # from dotnet/
-dotnet test  -c Release --no-build
+cd rust
+bash tools/gate.sh        # fmt, clippy -D warnings, the whole suite, release build
 ```
 
-No .NET SDK is preinstalled in web sessions. Install with:
+CI runs the same script. No Rust toolchain may be preinstalled in a web session; install
+stable 1.85+ with rustup. Disk is tight: build with `CARGO_INCREMENTAL=0`, and delete
+`rust/target/debug/{incremental,deps,build,.fingerprint}` if it fills.
 
-```bash
-curl -sSL -o dotnet-install.sh https://dot.net/v1/dotnet-install.sh
-bash dotnet-install.sh --channel 9.0 --install-dir "$HOME/.dotnet"
-export PATH="$HOME/.dotnet:$PATH"
-```
-
-Run the suite before claiming a fix works. `TreatWarningsAsErrors` is on, so a warning is a
-build failure.
+Run the gate before claiming a fix works. Clippy runs with `-D warnings` and denies
+`unwrap`, `expect` and `panic` outside tests, so a warning is a build failure.
 
 ## "Cross-platform when possible" does not apply to the host layer
 
-`PavlovBot.Host` shells out to `systemctl`, `ufw`, and Linux paths by design
-(`Servers/ServiceControl.cs`, `Servers/ProcessRunner.cs`). It is Linux-only and should stay
-that way. `PavlovBot.Core` is pure domain logic and is portable; keep it that way.
+`pavlov-host` shells out to `systemctl`, `ufw`, and Linux paths by design
+(`service_control.rs`, `process.rs`). It is Linux-only and should stay that way.
+`pavlov-core` is pure domain logic and is portable; keep it that way.
 
 ## Em dashes in code are a separate question
 
@@ -179,8 +177,8 @@ through existing embed text changing punctuation unless asked.
 ## Verify against the wire, not the format string
 
 RCON bugs in this repo have repeatedly been the gap between what the code reads like and what
-the server actually receives. `dotnet/tests/PavlovBot.Tests/FakeRconServer.cs` records the
-exact command bytes. Assert against it.
+the server actually receives. The fake server in `pavlov-rcon/src/testing.rs` (the `testing`
+feature) records the exact command bytes. Assert against it.
 
 ## Merge without being asked
 
@@ -191,7 +189,7 @@ real time on this repo more than once.
 Squash merge, into `main`, which is what `scripts/deploy.sh` deploys.
 
 WHAT THIS DOES NOT RELAX. The build must succeed and the whole suite must pass before the
-push, every time. `TreatWarningsAsErrors` is on. Merging automatically means the gate
+push, every time. Warnings are errors. Merging automatically means the gate
 before it carries the entire weight, so a red or unrun suite is a reason to stop and say
 so, not something to merge past and mention afterwards.
 

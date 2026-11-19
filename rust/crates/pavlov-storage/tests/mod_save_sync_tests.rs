@@ -1,6 +1,6 @@
 //! Port of `ModSaveSyncTests.cs`: the sweep across installs, on real directories, over the JSON
 //! player saves (`<name>.json`). The C#'s online-guard, RCON+ skip and join fast-path tests
-//! are dropped with the behaviour (owner, 2026-11-18; see status.toml).
+//! are dropped with the behaviour (owner, 2026-11-18; see rust/MIGRATION.md).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

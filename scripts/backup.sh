@@ -10,7 +10,7 @@
 # WHICH DATABASE. The bot keeps bot.db in DATA_DIR, which defaults to data/ under
 # the directory it RUNS in - the WorkingDirectory of the systemd unit pavlov-bot -
 # not necessarily the repo. BOT_DIR defaults to that directory, read from systemd.
-# This script used to back up <repo>/bot.db, a file the C# bot never writes: if a
+# This script used to back up <repo>/bot.db, a file the bot never writes: if a
 # Node-era copy was still sitting there, every hourly backup "succeeded" while
 # saving stale data.
 #

@@ -1,0 +1,30 @@
+# The production unit for a FRESH install (INSTALL.md, step 6). A box that already has a
+# pavlov-bot unit keeps it; repoint its ExecStart instead (rust/DEPLOY.md, "Cutover").
+#
+# Install:
+#   cp rust/deploy/pavlov-bot.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now pavlov-bot
+#
+# scripts/deploy.sh restarts this unit only when its ExecStart is this checkout's
+# rust-out/pavlov-bot, so keep both paths in step with where the repository is cloned.
+
+[Unit]
+Description=Pavlov Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/pavlov-bot
+ExecStart=/root/pavlov-bot/rust-out/pavlov-bot
+# Root by owner decision: the bot runs systemctl, ufw and the provisioner itself.
+User=root
+Restart=on-failure
+RestartSec=5
+# SIGTERM drains in-flight interactions, stops the services in reverse and flushes kill stats.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
