@@ -1,31 +1,99 @@
-# The bot's merge gate, on every push: fmt, clippy with warnings as errors, the whole test
-# suite, the release build, and the selftest. It runs rust/tools/gate.sh, the same script a
-# contributor runs locally, so the two cannot drift apart.
+# CI for the bot, which is the Rust workspace under rust/ (the C# bot was removed in #326).
+#
+# One job, the merge gate on a pinned toolchain. Each check runs as its own named step, so the
+# log says which one failed, and then rust/tools/gate.sh runs unchanged, exactly as a
+# contributor runs it locally. The gate repeats the earlier checks (with --all-features, and
+# adding its .gitignore check) against the warm target directory, so the repeat costs little
+# compilation.
+#
+# This workflow builds and tests only. It holds no secrets, deploys nothing and talks to no
+# Discord or Pavlov server: RCON is tested against an in-process fake, and the selftest builds
+# the object graph without connecting.
 name: tests
+
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+# Read the code, nothing else. No job here needs to write to the repository.
+permissions:
+  contents: read
+
+# A new push to a branch or PR supersedes the run in progress for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental caches are useless on a fresh runner and bloat the saved cache.
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
 
 jobs:
   rust:
-    name: Rust
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
-      - run: bash rust/tools/gate.sh
-        env:
-          CARGO_INCREMENTAL: "0"
-
-      # Proves the whole object graph builds and the configuration binds. It catches a broken
-      # wiring that no unit test can see, because nothing else constructs the real graph.
-      - name: selftest
+    name: Rust gate (fmt, clippy, tests, release build, gate.sh, selftest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # Pinned, so a new stable release cannot turn CI red on its own (a new clippy lint is
+      # the usual way). Raise it deliberately, in its own PR.
+      RUSTUP_TOOLCHAIN: "1.97.0"
+    defaults:
+      run:
         working-directory: rust
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
         run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustc --version
+          cargo --version
+          cargo clippy --version
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: rust-${{ runner.os }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-${{ env.RUSTUP_TOOLCHAIN }}-
+
+      - name: Fetch dependencies (Cargo.lock must be up to date)
+        run: cargo fetch --locked
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo test (whole workspace)
+        run: cargo test --workspace --locked
+
+      - name: cargo build --release -p pavlov-bot
+        run: cargo build --release --locked -p pavlov-bot
+
+      - name: rust/tools/gate.sh
+        run: bash tools/gate.sh
+
+      # Proves the whole object graph builds and the configuration binds. It catches broken
+      # wiring that no unit test can see, because nothing else constructs the real graph.
+      # It runs in a scratch directory, with a throwaway .env that holds no real credential.
+      - name: selftest
+        run: |
+          bin="$PWD/target/release/pavlov-bot"
+          dir="$RUNNER_TEMP/selftest"
+          mkdir -p "$dir"
+          cd "$dir"
           printf 'DISCORD_TOKEN=ci-not-a-real-token\nRCON_HOST_1=127.0.0.1\nRCON_PORT_1=9100\nRCON_PASSWORD_1=ci\nMASTER_NAMES=ci\n' > .env
-          ./target/release/pavlov-bot --selftest
+          timeout 120 "$bin" --selftest
