@@ -115,3 +115,140 @@ fn the_output_is_deterministically_ordered() {
     let rels: Vec<&str> = copies.iter().map(|c| c.rel_path.as_str()).collect();
     assert_eq!(rels, ["a.txt", "b.txt"]);
 }
+
+// ---- Deletes propagate from the last sweep's manifest (owner, 2026-11-19) ----
+
+use pavlov_core::sync::{ModSaveDelete, ModSaveManifest, deletions};
+
+fn manifest(entries: &[(&str, &[(&str, i64)])]) -> ModSaveManifest {
+    entries
+        .iter()
+        .map(|(root, files)| {
+            (
+                (*root).to_owned(),
+                files.iter().map(|(r, m)| ((*r).to_owned(), *m)).collect(),
+            )
+        })
+        .collect()
+}
+
+fn deletes(installs: &[ModSaveSnapshot], previous: &ModSaveManifest) -> Vec<ModSaveDelete> {
+    deletions(installs, previous, None, DEFAULT_TOLERANCE_MS)
+}
+
+#[test]
+fn a_file_deleted_in_one_install_is_deleted_in_the_others() {
+    let previous = manifest(&[
+        ("/a", &[("Bob.json", 5_000)]),
+        ("/b", &[("Bob.json", 5_000)]),
+        ("/c", &[("Bob.json", 5_000)]),
+    ]);
+    let a = install("/a", &[]);
+    let b = install("/b", &[("Bob.json", 5_000)]);
+    let c = install("/c", &[("Bob.json", 5_000)]);
+
+    assert_eq!(
+        deletes(&[a, b, c], &previous),
+        [
+            ModSaveDelete {
+                rel_path: "Bob.json".into(),
+                root: "/b".into(),
+                modified_unix_ms: 5_000
+            },
+            ModSaveDelete {
+                rel_path: "Bob.json".into(),
+                root: "/c".into(),
+                modified_unix_ms: 5_000
+            },
+        ]
+    );
+}
+
+#[test]
+fn without_history_a_missing_file_is_never_a_delete() {
+    let a = install("/a", &[]);
+    let b = install("/b", &[("Bob.json", 5_000)]);
+
+    assert!(deletes(&[a, b], &ModSaveManifest::new()).is_empty());
+}
+
+#[test]
+fn a_new_install_with_no_record_cannot_delete_anything() {
+    let previous = manifest(&[("/a", &[("Bob.json", 5_000)])]);
+    let a = install("/a", &[("Bob.json", 5_000)]);
+    let fresh = install("/fresh", &[]);
+
+    assert!(deletes(&[a, fresh], &previous).is_empty());
+}
+
+#[test]
+fn an_edit_after_the_delete_wins_and_nothing_is_deleted() {
+    let previous = manifest(&[
+        ("/a", &[("Bob.json", 5_000)]),
+        ("/b", &[("Bob.json", 5_000)]),
+    ]);
+    let a = install("/a", &[]);
+    let b = install("/b", &[("Bob.json", 5_000 + DEFAULT_TOLERANCE_MS + 1)]);
+
+    assert!(deletes(&[a.clone(), b.clone()], &previous).is_empty());
+    // ...and newest-wins then copies the edit back into the install that deleted it.
+    assert_eq!(plan(&[a, b]).len(), 1);
+}
+
+#[test]
+fn a_change_inside_the_tolerance_still_counts_as_untouched() {
+    let previous = manifest(&[
+        ("/a", &[("Bob.json", 5_000)]),
+        ("/b", &[("Bob.json", 5_000)]),
+    ]);
+    let a = install("/a", &[]);
+    let b = install("/b", &[("Bob.json", 5_000 + DEFAULT_TOLERANCE_MS)]);
+
+    assert_eq!(deletes(&[a, b], &previous).len(), 1);
+}
+
+#[test]
+fn a_copy_that_appeared_since_the_last_sweep_is_kept() {
+    let previous = manifest(&[("/a", &[("Bob.json", 5_000)]), ("/b", &[])]);
+    let a = install("/a", &[]);
+    let b = install("/b", &[("Bob.json", 9_000)]);
+
+    assert!(deletes(&[a, b], &previous).is_empty());
+}
+
+#[test]
+fn an_install_that_sits_the_sweep_out_deletes_nothing() {
+    // /a held the file and is not passed in (its ModSave could not be listed).
+    let previous = manifest(&[
+        ("/a", &[("Bob.json", 5_000)]),
+        ("/b", &[("Bob.json", 5_000)]),
+        ("/c", &[("Bob.json", 5_000)]),
+    ]);
+    let b = install("/b", &[("Bob.json", 5_000)]);
+    let c = install("/c", &[("Bob.json", 5_000)]);
+
+    assert!(deletes(&[b, c], &previous).is_empty());
+}
+
+#[test]
+fn skipped_paths_are_never_deleted() {
+    let previous = manifest(&[
+        ("/a", &[("keep/Bob.json", 5_000)]),
+        ("/b", &[("keep/Bob.json", 5_000)]),
+    ]);
+    let a = install("/a", &[]);
+    let b = install("/b", &[("keep/Bob.json", 5_000)]);
+    let skip = |rel: &str| rel.starts_with("keep/");
+
+    assert!(deletions(&[a, b], &previous, Some(&skip), DEFAULT_TOLERANCE_MS).is_empty());
+}
+
+#[test]
+fn a_file_gone_everywhere_needs_no_delete() {
+    let previous = manifest(&[
+        ("/a", &[("Bob.json", 5_000)]),
+        ("/b", &[("Bob.json", 5_000)]),
+    ]);
+
+    assert!(deletes(&[install("/a", &[]), install("/b", &[])], &previous).is_empty());
+}

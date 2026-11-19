@@ -268,3 +268,151 @@ fn a_wipe_from_the_bots_own_roster_folder_still_goes_out() {
 
     assert_eq!(read(&rosters(&two).join("gambinospawn.txt")), "");
 }
+
+// ---- Deletes propagate (owner, 2026-11-19: "I cleared the modsave files and it reverted") ----
+
+use std::sync::Arc;
+
+use pavlov_core::data::{KeyValueBackend, MemoryBackend};
+
+fn remembering(installs: &[&str], state: &Arc<MemoryBackend>) -> ModSaveSync {
+    sync(installs, None, true).with_state(Arc::clone(state) as Arc<dyn KeyValueBackend>)
+}
+
+#[test]
+fn a_save_deleted_in_one_install_is_deleted_in_the_others_and_stays_gone() {
+    let b = Box_::new();
+    let (one, two, three) = (b.install("a"), b.install("b"), b.install("c"));
+    for install in [&one, &two, &three] {
+        write_ledger(install, "Bob", "500", -60);
+    }
+    write_ledger(&one, "Alice", "10", -60);
+    let state = Arc::new(MemoryBackend::new());
+    let sync = remembering(&[&one, &two, &three], &state);
+    let _ = sync.sweep(); // converges Alice and records what each install holds
+
+    fs::remove_file(ledger_path(&one, "Bob")).unwrap();
+    let _ = sync.sweep();
+
+    for install in [&one, &two, &three] {
+        assert!(
+            !ledger_path(install, "Bob").exists(),
+            "{install} still has Bob"
+        );
+        assert_eq!(money(&ledger_path(install, "Alice")), "10");
+    }
+    let _ = sync.sweep();
+    assert!(!ledger_path(&one, "Bob").exists(), "the delete was undone");
+}
+
+#[test]
+fn clearing_every_save_in_one_install_clears_them_everywhere() {
+    let b = Box_::new();
+    let (one, two) = (b.install("a"), b.install("b"));
+    for player in ["Alice", "Bob", "Carol"] {
+        write_ledger(&one, player, "100", -60);
+        write_ledger(&two, player, "100", -60);
+    }
+    let state = Arc::new(MemoryBackend::new());
+    let sync = remembering(&[&one, &two], &state);
+    let _ = sync.sweep();
+
+    for player in ["Alice", "Bob", "Carol"] {
+        fs::remove_file(ledger_path(&one, player)).unwrap();
+    }
+    let _ = sync.sweep();
+
+    assert_eq!(fs::read_dir(mod_save_path(&two)).unwrap().count(), 0);
+}
+
+#[test]
+fn the_record_survives_a_restart() {
+    let b = Box_::new();
+    let (one, two) = (b.install("a"), b.install("b"));
+    write_ledger(&one, "Bob", "500", -60);
+    write_ledger(&two, "Bob", "500", -60);
+    let state = Arc::new(MemoryBackend::new());
+    let _ = remembering(&[&one, &two], &state).sweep();
+
+    // The bot is down while the save is deleted; a new process reads the stored record.
+    fs::remove_file(ledger_path(&two, "Bob")).unwrap();
+    let _ = remembering(&[&one, &two], &state).sweep();
+
+    assert!(!ledger_path(&one, "Bob").exists());
+}
+
+#[test]
+fn without_a_record_a_deleted_save_is_still_copied_back() {
+    let b = Box_::new();
+    let (one, two) = (b.install("a"), b.install("b"));
+    write_ledger(&one, "Bob", "500", -60);
+    write_ledger(&two, "Bob", "500", -60);
+    let sync = sync(&[&one, &two], None, true);
+    let _ = sync.sweep();
+
+    fs::remove_file(ledger_path(&one, "Bob")).unwrap();
+    let _ = sync.sweep();
+
+    assert_eq!(money(&ledger_path(&one, "Bob")), "500");
+}
+
+#[test]
+fn a_save_the_game_wrote_after_the_delete_comes_back() {
+    let b = Box_::new();
+    let (one, two) = (b.install("a"), b.install("b"));
+    write_ledger(&one, "Bob", "500", -60);
+    write_ledger(&two, "Bob", "500", -60);
+    let state = Arc::new(MemoryBackend::new());
+    let sync = remembering(&[&one, &two], &state);
+    let _ = sync.sweep();
+
+    fs::remove_file(ledger_path(&one, "Bob")).unwrap();
+    write_ledger(&two, "Bob", "750", 0); // Bob rejoined server two and the game saved him
+    let _ = sync.sweep();
+
+    assert_eq!(money(&ledger_path(&one, "Bob")), "750");
+    assert_eq!(money(&ledger_path(&two, "Bob")), "750");
+}
+
+#[test]
+fn a_missing_modsave_folder_deletes_nothing_and_returns_as_a_new_install() {
+    let b = Box_::new();
+    let (one, two) = (b.install("a"), b.install("b"));
+    write_ledger(&one, "Bob", "500", -60);
+    write_ledger(&two, "Bob", "500", -60);
+    let state = Arc::new(MemoryBackend::new());
+    let sync = remembering(&[&one, &two], &state);
+    let _ = sync.sweep();
+
+    // Server two is reprovisioned: its ModSave goes away, then comes back empty.
+    fs::remove_dir_all(mod_save_path(&two)).unwrap();
+    let _ = sync.sweep();
+    assert_eq!(money(&ledger_path(&one, "Bob")), "500");
+
+    fs::create_dir_all(mod_save_path(&two)).unwrap();
+    let _ = sync.sweep();
+
+    assert_eq!(money(&ledger_path(&one, "Bob")), "500");
+    assert_eq!(money(&ledger_path(&two, "Bob")), "500");
+}
+
+#[test]
+fn a_tampered_record_cannot_delete_outside_modsave() {
+    let b = Box_::new();
+    let (one, two) = (b.install("a"), b.install("b"));
+    let outside = b.root.path().join("outside.json");
+    fs::write(&outside, "keep").unwrap();
+    let state = Arc::new(MemoryBackend::new());
+    state.seed(
+        pavlov_storage::datasets::MODSAVE_SYNC_STATE,
+        &format!(
+            r#"{{"{one}":{{"../../../outside.json":1}},"{two}":{{}}}}"#,
+            one = one.replace('\\', "\\\\"),
+            two = two.replace('\\', "\\\\"),
+        ),
+    );
+
+    let _ = remembering(&[&one, &two], &state).sweep();
+
+    assert_eq!(read(&outside), "keep");
+}

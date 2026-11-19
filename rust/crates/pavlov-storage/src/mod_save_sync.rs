@@ -11,18 +11,37 @@
 //!
 //! The menu tier lists in `ServerRoles` mirror like any other file: they are plain whitelists
 //! now that RCON+ is gone, and the roster guard keeps an empty one from wiping a filled one.
+//!
+//! DELETES PROPAGATE (owner, 2026-11-19). After every sweep the files each install holds are
+//! recorded in the bot's store ([`MODSAVE_SYNC_STATE`]); the next sweep deletes, everywhere,
+//! a file one install had and lost, unless another copy changed since (see
+//! `pavlov_core::sync::deletions`). Deleted copies are removed outright, by owner choice: there
+//! is no trash folder. Two guards keep that from spreading an accident:
+//!
+//! - An install whose ModSave folder is missing or unreadable still RECEIVES files (that is how
+//!   a fresh server gets its folder), but its record is ignored and dropped, so it deletes
+//!   nothing: a reprovisioned server comes back as a new install, not as a mass delete.
+//! - A file is deleted only while it still has the modified time it was planned with, so a
+//!   save the game rewrote mid-sweep is kept, and wins on the next one.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use pavlov_core::data::KeyValueBackend;
 use pavlov_core::servers::installs::mod_save_path;
 use pavlov_core::sync::ledger_file::would_wipe_balance;
-use pavlov_core::sync::{DEFAULT_TOLERANCE_MS, ModSaveSnapshot, candidates};
+use pavlov_core::sync::{
+    DEFAULT_TOLERANCE_MS, ModSaveDelete, ModSaveManifest, ModSaveSnapshot, candidates, deletions,
+};
 use pavlov_core::text::case::{contains_ignore_case, starts_with_ignore_case};
 
 use crate::atomic_file;
+use crate::datasets::MODSAVE_SYNC_STATE;
 use crate::game_files::{config_path, create_owned_like_parent, inside_install};
 
 /// The sync across a box's installs.
@@ -32,6 +51,9 @@ pub struct ModSaveSync {
     skip: Vec<String>,
     /// The roster folder the bot edits, relative to ModSave with a trailing `/`, and its install.
     roster: Option<(String, String)>,
+    /// Where the last sweep's [`ModSaveManifest`] is kept. Without one, deletes cannot be told
+    /// from absence, so none propagate (the old copy-only behaviour).
+    state: Option<Arc<dyn KeyValueBackend>>,
 }
 
 impl std::fmt::Debug for ModSaveSync {
@@ -66,8 +88,10 @@ fn set_modified(path: &Path, unix_ms: i64) -> std::io::Result<()> {
 }
 
 /// Every file under `root` (not `.tmp` writes in flight), as forward-slashed relative paths to
-/// their modified time. A tree that cannot be listed contributes nothing.
-fn list_tree(root: &Path) -> HashMap<String, i64> {
+/// their modified time. `None` when `root` itself cannot be listed (missing or unreadable): that
+/// is "this install is not here", which must never read as "every file was deleted".
+fn list_tree(root: &Path) -> Option<HashMap<String, i64>> {
+    fs::read_dir(root).ok()?;
     let mut files = HashMap::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -94,7 +118,16 @@ fn list_tree(root: &Path) -> HashMap<String, i64> {
             files.insert(rel.join("/"), modified);
         }
     }
-    files
+    Some(files)
+}
+
+/// A relative path made of plain names only: no `..`, no root, no prefix. Every path deleted
+/// comes from a listing, but the check holds even if the stored manifest were tampered with.
+fn plain_relative(rel: &str) -> bool {
+    !rel.is_empty()
+        && Path::new(rel)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
 fn read_text(path: &Path) -> Option<String> {
@@ -145,7 +178,15 @@ impl ModSaveSync {
             enabled,
             skip,
             roster,
+            state: None,
         }
+    }
+
+    /// Remember each sweep's result in `state`, so deletes propagate. The bot passes its store.
+    #[must_use]
+    pub fn with_state(mut self, state: Arc<dyn KeyValueBackend>) -> Self {
+        self.state = Some(state);
+        self
     }
 
     #[must_use]
@@ -163,22 +204,124 @@ impl ModSaveSync {
         self.skip.iter().any(|term| contains_ignore_case(rel, term))
     }
 
-    /// One pass over every install: how many files were copied. Blocking file I/O.
+    /// Every install's ModSave as it is now, and the roots whose ModSave could not be listed.
+    /// Those take part as empty, so they receive files, but they are never a source of
+    /// deletes (see [`Self::sweep`]).
+    fn snapshots(&self) -> (Vec<ModSaveSnapshot>, HashSet<String>) {
+        let mut absent = HashSet::new();
+        let snapshots = self
+            .installs
+            .iter()
+            .map(|root| {
+                let files = list_tree(Path::new(&mod_save_path(root))).unwrap_or_else(|| {
+                    absent.insert(root.clone());
+                    HashMap::new()
+                });
+                ModSaveSnapshot {
+                    root: root.clone(),
+                    files,
+                }
+            })
+            .collect();
+        (snapshots, absent)
+    }
+
+    /// The manifest the last sweep recorded. Unreadable reads as empty, which only means no
+    /// delete propagates this sweep: the safe direction.
+    fn load_manifest(&self) -> ModSaveManifest {
+        let Some(state) = &self.state else {
+            return ModSaveManifest::new();
+        };
+        match state.read(MODSAVE_SYNC_STATE) {
+            Ok(None) => ModSaveManifest::new(),
+            Ok(Some(raw)) => serde_json::from_str(&raw).unwrap_or_else(|error| {
+                tracing::warn!(%error, "ModSave sync state is unreadable; no deletes propagate until it is rewritten");
+                ModSaveManifest::new()
+            }),
+            Err(error) => {
+                tracing::warn!(%error, "ModSave sync state could not be read; no deletes propagate this sweep");
+                ModSaveManifest::new()
+            }
+        }
+    }
+
+    /// Record what every listable install holds now. An install that still cannot be listed is
+    /// left out, so it comes back as a new install rather than as a mass delete.
+    fn save_manifest(&self, previous: &ModSaveManifest) {
+        let Some(state) = &self.state else {
+            return;
+        };
+        let (snapshots, absent) = self.snapshots();
+        let now: ModSaveManifest = snapshots
+            .into_iter()
+            .filter(|s| !absent.contains(&s.root))
+            .map(|s| (s.root, s.files.into_iter().collect()))
+            .collect();
+        if &now == previous {
+            return;
+        }
+        let written = serde_json::to_string(&now)
+            .map_err(std::io::Error::other)
+            .and_then(|json| state.write(MODSAVE_SYNC_STATE, &json));
+        if let Err(error) = written {
+            tracing::warn!(%error, "ModSave sync state could not be saved; a delete made before the next save will not propagate");
+        }
+    }
+
+    /// Delete one planned copy, only if it is still the file that was planned.
+    fn delete_mirrored(&self, delete: &ModSaveDelete) -> bool {
+        if !plain_relative(&delete.rel_path) {
+            tracing::warn!(rel = %delete.rel_path, "ModSave sync refused to delete a path that is not a plain relative path");
+            return false;
+        }
+        let path = Path::new(&mod_save_path(&delete.root)).join(&delete.rel_path);
+        if modified_unix_ms(&path) != Some(delete.modified_unix_ms) {
+            tracing::info!(path = %path.display(), "ModSave sync kept a file that changed while it was being deleted");
+            return false;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                tracing::info!(rel = %delete.rel_path, install = folder_name(&delete.root), "ModSave sync deleted a file another install deleted");
+                true
+            }
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "ModSave sync could not delete");
+                false
+            }
+        }
+    }
+
+    /// One pass over every install: how many files were copied. Deletions are logged. Blocking
+    /// file I/O.
     #[must_use]
     pub fn sweep(&self) -> usize {
         if !self.can_sync() {
             return 0;
         }
-        let snapshots: Vec<ModSaveSnapshot> = self
-            .installs
-            .iter()
-            .map(|root| ModSaveSnapshot {
-                root: root.clone(),
-                files: list_tree(Path::new(&mod_save_path(root))),
-            })
-            .collect();
+        let (snapshots, absent) = self.snapshots();
+        let previous = self.load_manifest();
         let skip = |rel: &str| self.skipped(rel);
-        let planned = candidates(&snapshots, Some(&skip), DEFAULT_TOLERANCE_MS);
+
+        // An install with no listable ModSave lost nothing on purpose: its record must not
+        // read every file it held as deleted.
+        let mut history = previous.clone();
+        history.retain(|root, _| !absent.contains(root));
+        let planned_deletes = deletions(&snapshots, &history, Some(&skip), DEFAULT_TOLERANCE_MS);
+        let deleted_paths: HashSet<&str> = planned_deletes
+            .iter()
+            .map(|d| d.rel_path.as_str())
+            .collect();
+        let deleted = planned_deletes
+            .iter()
+            .filter(|delete| self.delete_mirrored(delete))
+            .count();
+        if deleted > 0 {
+            tracing::info!(deleted, "ModSave sync propagated deletions");
+        }
+
+        // A path being deleted is not also copied back from a copy that survived its delete.
+        let skip_or_deleted = |rel: &str| self.skipped(rel) || deleted_paths.contains(rel);
+        let planned = candidates(&snapshots, Some(&skip_or_deleted), DEFAULT_TOLERANCE_MS);
 
         // Grouped by source so its content is read once.
         let mut by_source: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
@@ -219,6 +362,7 @@ impl ModSaveSync {
                 "ModSave sync propagated files"
             );
         }
+        self.save_manifest(&previous);
         copied
     }
 
