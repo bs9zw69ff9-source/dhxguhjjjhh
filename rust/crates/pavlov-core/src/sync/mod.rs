@@ -8,5 +8,8 @@ pub mod ledger_file;
 mod planner;
 mod player_save;
 
-pub use planner::{DEFAULT_TOLERANCE_MS, ModSaveCopy, ModSaveSnapshot, candidates};
+pub use planner::{
+    DEFAULT_TOLERANCE_MS, ModSaveCopy, ModSaveDelete, ModSaveManifest, ModSaveSnapshot, candidates,
+    deletions,
+};
 pub use player_save::{MONEY, PlayerSave, UPDATED, UPDATED_FORMAT};

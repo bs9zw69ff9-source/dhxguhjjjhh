@@ -55,6 +55,9 @@ pub const AUTO_ROTATE: &str = "autorotate";
 pub const SERVER_STATS: &str = "server_stats";
 pub const AUTOPOST_STATE: &str = "autopost_state";
 pub const UPDATE_LOG_STATE: &str = "update_log_state";
+/// What each install's ModSave held after the last sync sweep, so a deleted file can be told
+/// from one never there. Not seeded: absent means "no history yet", and nothing is deleted.
+pub const MODSAVE_SYNC_STATE: &str = "modsave_sync_state";
 
 /// Dataset -> the JSON an empty one contains, in the C# table's order.
 pub const SEEDS: &[(&str, &str)] = &[

@@ -397,12 +397,15 @@ pub fn build(
         .with_evidence(tracking.clone())
         .with_ban_file(ban_file.clone() as Arc<dyn BanFileExport>),
     );
-    let mod_save_sync = Arc::new(ModSaveSync::new(
-        installs.clone(),
-        features.mod_save_sync,
-        &features.mod_save_sync_skip_extra,
-        features.roster_directory.as_deref(),
-    ));
+    let mod_save_sync = Arc::new(
+        ModSaveSync::new(
+            installs.clone(),
+            features.mod_save_sync,
+            &features.mod_save_sync_skip_extra,
+            features.roster_directory.as_deref(),
+        )
+        .with_state(Arc::clone(&backend) as Arc<dyn KeyValueBackend>),
+    );
     let tailer = Arc::new(LogTailer::new(MAX_BACKFILL));
     let log_paths = tailer::discover(features.log_paths.as_deref(), &installs);
     let labels = Arc::new(ServerLabels::default());
