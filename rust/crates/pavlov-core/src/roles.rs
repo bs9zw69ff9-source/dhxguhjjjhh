@@ -60,10 +60,10 @@ impl RoleMap {
             }
         }
         for (faction, legacy) in [("Gambino", "gambinoRoleId"), ("Colombo", "colomboRoleId")] {
-            if let Some(role) = id(root.get(legacy)) {
-                if !faction_roles.contains_key(faction) {
-                    faction_roles.insert(faction, role);
-                }
+            if let Some(role) = id(root.get(legacy))
+                && !faction_roles.contains_key(faction)
+            {
+                faction_roles.insert(faction, role);
             }
         }
         Self {

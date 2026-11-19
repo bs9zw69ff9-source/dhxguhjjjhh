@@ -190,10 +190,10 @@ impl BanParts {
             ));
         }
         // A master owner banning somebody they pardoned ends the pardon.
-        if tier == StaffTier::MasterOwner {
-            if let Err(error) = self.masters.clear_pardon(&name).await {
-                tracing::error!(player = %name, %error, "could not clear a master pardon");
-            }
+        if tier == StaffTier::MasterOwner
+            && let Err(error) = self.masters.clear_pardon(&name).await
+        {
+            tracing::error!(player = %name, %error, "could not clear a master pardon");
         }
         let account_id = account.as_ref().map(|a| a.id.as_str());
         let enforcement = self.bans.hard_enforce(&name, account_id, true, true).await;

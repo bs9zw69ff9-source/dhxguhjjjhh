@@ -145,10 +145,10 @@ impl HealthRegistry {
         let (check, critical) = {
             let checks = self.lock();
             let entry = checks.get(&name)?;
-            if let Some((cached, at)) = &entry.cached {
-                if at.elapsed() < self.cache_duration {
-                    return Some(cached.clone());
-                }
+            if let Some((cached, at)) = &entry.cached
+                && at.elapsed() < self.cache_duration
+            {
+                return Some(cached.clone());
             }
             (Arc::clone(&entry.check), entry.critical)
         };

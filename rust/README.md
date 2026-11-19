@@ -7,7 +7,7 @@ decisions and every intentional behaviour difference from the C# are in
 
 ## Build and test
 
-Needs stable Rust 1.85 or newer (`rustup` from https://rustup.rs).
+Needs stable Rust 1.88 or newer (`rustup` from https://rustup.rs).
 
 ```bash
 cd rust

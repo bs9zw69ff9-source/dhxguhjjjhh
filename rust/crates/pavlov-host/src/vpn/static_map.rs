@@ -74,11 +74,11 @@ impl StaticMap {
             return None;
         }
         // An error page served as 200 would upload to Discord as a broken "map".
-        if let Some(media) = response.media_type() {
-            if !media.to_ascii_lowercase().starts_with("image/") {
-                tracing::warn!(media, "map render returned something that is not an image");
-                return None;
-            }
+        if let Some(media) = response.media_type()
+            && !media.to_ascii_lowercase().starts_with("image/")
+        {
+            tracing::warn!(media, "map render returned something that is not an image");
+            return None;
         }
         (!response.body.is_empty() && response.body.len() <= MAX_BYTES).then_some(response.body)
     }

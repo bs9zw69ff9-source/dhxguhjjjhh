@@ -106,10 +106,10 @@ pub fn create_owned_like_parent(directory: &Path) -> io::Result<()> {
                 Err(e)
             }
         })?;
-        if let Some((uid, gid)) = owner {
-            if let Err(error) = ownership::set(&level, Some(uid), Some(gid)) {
-                tracing::warn!(path = %level.display(), %error, "could not give a new directory to the game's owner");
-            }
+        if let Some((uid, gid)) = owner
+            && let Err(error) = ownership::set(&level, Some(uid), Some(gid))
+        {
+            tracing::warn!(path = %level.display(), %error, "could not give a new directory to the game's owner");
         }
     }
     Ok(())

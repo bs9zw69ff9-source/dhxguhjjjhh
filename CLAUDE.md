@@ -156,7 +156,7 @@ bash tools/gate.sh        # fmt, clippy -D warnings, the whole suite, release bu
 ```
 
 CI runs the same script. No Rust toolchain may be preinstalled in a web session; install
-stable 1.85+ with rustup. Disk is tight: build with `CARGO_INCREMENTAL=0`, and delete
+stable 1.88+ with rustup. Disk is tight: build with `CARGO_INCREMENTAL=0`, and delete
 `rust/target/debug/{incremental,deps,build,.fingerprint}` if it fills.
 
 Run the gate before claiming a fix works. Clippy runs with `-D warnings` and denies

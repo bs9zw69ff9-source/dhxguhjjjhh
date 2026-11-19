@@ -508,10 +508,10 @@ impl ServiceRegistry {
             // A loop that panicked outside a tick is already over; nothing to wait for.
             let _ = handle.await;
         }
-        if let Some(on_stop) = &record.definition.on_stop {
-            if let Err(error) = contained(on_stop()).await {
-                tracing::warn!(service = name, %error, "service stop handler failed");
-            }
+        if let Some(on_stop) = &record.definition.on_stop
+            && let Err(error) = contained(on_stop()).await
+        {
+            tracing::warn!(service = name, %error, "service stop handler failed");
         }
         {
             let mut counters = record.counters();
@@ -646,22 +646,22 @@ impl ServiceRegistry {
                 status = HealthStatus::Degraded;
                 detail = Some(format!("{consecutive} consecutive tick failures"));
             }
-            if state == ServiceState::Running {
-                if let Some(check) = &record.definition.health_check {
-                    match AssertUnwindSafe(check()).catch_unwind().await {
-                        Ok(Ok(result)) if result.status != HealthStatus::Healthy => {
-                            status = result.status;
-                            detail = result.detail.or(detail);
-                        }
-                        Ok(Ok(_)) => {}
-                        Ok(Err(error)) => {
-                            status = HealthStatus::Unhealthy;
-                            detail = Some(error.message);
-                        }
-                        Err(panic) => {
-                            status = HealthStatus::Unhealthy;
-                            detail = Some(panic_message(&*panic));
-                        }
+            if state == ServiceState::Running
+                && let Some(check) = &record.definition.health_check
+            {
+                match AssertUnwindSafe(check()).catch_unwind().await {
+                    Ok(Ok(result)) if result.status != HealthStatus::Healthy => {
+                        status = result.status;
+                        detail = result.detail.or(detail);
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => {
+                        status = HealthStatus::Unhealthy;
+                        detail = Some(error.message);
+                    }
+                    Err(panic) => {
+                        status = HealthStatus::Unhealthy;
+                        detail = Some(panic_message(&*panic));
                     }
                 }
             }

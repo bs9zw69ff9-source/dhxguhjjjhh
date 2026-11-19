@@ -199,10 +199,10 @@ impl MetricsRegistry {
             series: BTreeMap::new(),
         });
         // First caller with real help text wins; later ones do not clobber it with the name.
-        if let Some(help) = help {
-            if metric.help == name {
-                help.clone_into(&mut metric.help);
-            }
+        if let Some(help) = help
+            && metric.help == name
+        {
+            help.clone_into(&mut metric.help);
         }
         let key = labels.key();
         if !metric.series.contains_key(&key) {

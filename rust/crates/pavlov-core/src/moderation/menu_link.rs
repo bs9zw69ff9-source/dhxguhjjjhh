@@ -76,14 +76,14 @@ impl MenuLink {
         }
 
         // The reverse direction: two Discord accounts must not converge on one in-game name.
-        if let Some(owner) = owner_id {
-            if owner != self_id {
-                return MenuClaimDecision {
-                    action: MenuClaimAction::Taken,
-                    bound_name: None,
-                    owner_id: Some(owner.to_owned()),
-                };
-            }
+        if let Some(owner) = owner_id
+            && owner != self_id
+        {
+            return MenuClaimDecision {
+                action: MenuClaimAction::Taken,
+                bound_name: None,
+                owner_id: Some(owner.to_owned()),
+            };
         }
 
         if holds_menu && !bound.is_empty() && want == bound {

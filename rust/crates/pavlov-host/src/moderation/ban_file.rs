@@ -387,12 +387,11 @@ impl ServerBanFile {
                     known.insert(player.clone());
                     known.insert(entry.name.clone());
                     // Either identity's tombstone counts: staff type the name they can see.
-                    if let Some(when) = lifted_at(&lifted, &entry.name, &player) {
-                        if now - when < TOMBSTONE_LIFE {
+                    if let Some(when) = lifted_at(&lifted, &entry.name, &player)
+                        && now - when < TOMBSTONE_LIFE {
                             tracing::info!(player = %player, "not re-importing a ban that was deliberately lifted - use the ban commands to ban them again");
                             continue;
                         }
-                    }
                     // NO TIME LEFT MEANS EXPIRED, NOT FOREVER.
                     if denotes_elapsed(Some(&entry.unban)) {
                         tracing::info!(name = %entry.name, unban = %entry.unban, "skipping an in-game ban whose time has already elapsed");

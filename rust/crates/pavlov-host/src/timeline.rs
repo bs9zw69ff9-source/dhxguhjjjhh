@@ -108,13 +108,13 @@ impl EventRecorder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        if let Some(task) = task {
-            if tokio::time::timeout(SHUTDOWN_GRACE, task).await.is_err() {
-                tracing::warn!(
-                    queued = self.queue.len(),
-                    "the timeline writer did not finish within 5s - queued events may be lost"
-                );
-            }
+        if let Some(task) = task
+            && tokio::time::timeout(SHUTDOWN_GRACE, task).await.is_err()
+        {
+            tracing::warn!(
+                queued = self.queue.len(),
+                "the timeline writer did not finish within 5s - queued events may be lost"
+            );
         }
         if self.dropped() > 0 {
             tracing::warn!(

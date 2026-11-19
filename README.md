@@ -16,7 +16,7 @@ then C#/.NET; both were removed, and git history holds them.
 ## Requirements
 
 - Linux (Ubuntu or Debian, x86-64). The bot shells out to `systemctl` and `ufw` by design.
-- Stable Rust 1.85+ to build. `scripts/deploy.sh --install-rust` installs it into `~/.cargo`.
+- Stable Rust 1.88+ to build. `scripts/deploy.sh --install-rust` installs it into `~/.cargo`.
 - One to three Pavlov servers with RCON enabled.
 - A Discord application and bot token.
 

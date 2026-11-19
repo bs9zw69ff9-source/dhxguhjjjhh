@@ -190,10 +190,10 @@ impl VpnScreeningService {
     /// no lock across a decode.
     #[must_use]
     pub fn load_cache(&self) -> Arc<VpnCache> {
-        if let Some((at, snapshot)) = lock(&self.snapshot).as_ref() {
-            if at.elapsed() < SNAPSHOT_TTL {
-                return Arc::clone(snapshot);
-            }
+        if let Some((at, snapshot)) = lock(&self.snapshot).as_ref()
+            && at.elapsed() < SNAPSHOT_TTL
+        {
+            return Arc::clone(snapshot);
         }
         match self.store.read::<VpnCache>(VPN_CHECKS, IndexMap::new()) {
             Ok(fresh) => {

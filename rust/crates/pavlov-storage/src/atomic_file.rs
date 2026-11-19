@@ -134,19 +134,18 @@ fn carry_metadata(path: &Path, temp: &Path) -> io::Result<()> {
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf))
     };
-    if let Some(reference) = reference {
-        if let (Ok(owner), Ok(mine)) = (ownership::get(&reference), ownership::get(temp)) {
-            if let Some(plan) = plan(ownership::is_privileged(), owner, mine) {
-                match ownership::set(temp, plan.uid, Some(plan.gid)) {
-                    Ok(()) if plan.group_write => mode |= GROUP_READ_WRITE,
-                    Ok(()) => {}
-                    Err(error) => tracing::warn!(
-                        path = %path.display(),
-                        %error,
-                        "could not give the replaced file back to its owner; the game may not be able to save it"
-                    ),
-                }
-            }
+    if let Some(reference) = reference
+        && let (Ok(owner), Ok(mine)) = (ownership::get(&reference), ownership::get(temp))
+        && let Some(plan) = plan(ownership::is_privileged(), owner, mine)
+    {
+        match ownership::set(temp, plan.uid, Some(plan.gid)) {
+            Ok(()) if plan.group_write => mode |= GROUP_READ_WRITE,
+            Ok(()) => {}
+            Err(error) => tracing::warn!(
+                path = %path.display(),
+                %error,
+                "could not give the replaced file back to its owner; the game may not be able to save it"
+            ),
         }
     }
     fs::set_permissions(temp, Permissions::from_mode(mode))
