@@ -1142,15 +1142,15 @@ impl ServerProvisioner {
 
         run.start(&format!("removing {}…", unit_path.display()))
             .await;
-        if unit_path.exists() {
-            if let Err(error) = fs::remove_file(&unit_path) {
-                run.fail(&format!(
-                    "could not remove {}: {error}",
-                    unit_path.display()
-                ))
-                .await;
-                return run.abort().await;
-            }
+        if unit_path.exists()
+            && let Err(error) = fs::remove_file(&unit_path)
+        {
+            run.fail(&format!(
+                "could not remove {}: {error}",
+                unit_path.display()
+            ))
+            .await;
+            return run.abort().await;
         }
         let reload = self
             .run(

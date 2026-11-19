@@ -336,12 +336,14 @@ impl ServerHealth {
 
         // A sudden drop while RCON still answers (this is the success path), so it is a real
         // drop, not the count going dark in an outage.
-        if let (Some(prev), Some(prev_at)) = (self.prev_players, self.prev_players_at) {
-            if prev > 0 && probe.at - prev_at <= span(settings.player_anomaly_window) && prev > now
-            {
-                let dropped = prev - now;
-                if f64::from(dropped) / f64::from(prev) >= settings.player_anomaly_drop_fraction {
-                    signals.push(if now == 0 {
+        if let (Some(prev), Some(prev_at)) = (self.prev_players, self.prev_players_at)
+            && prev > 0
+            && probe.at - prev_at <= span(settings.player_anomaly_window)
+            && prev > now
+        {
+            let dropped = prev - now;
+            if f64::from(dropped) / f64::from(prev) >= settings.player_anomaly_drop_fraction {
+                signals.push(if now == 0 {
                         MonitorSignal::new(
                             SignalKind::PlayerCountZero,
                             Severity::Warning,
@@ -356,7 +358,6 @@ impl ServerHealth {
                             format!("Players dropped sharply, {prev} to {now}, while RCON stayed up."),
                         )
                     });
-                }
             }
         }
 
@@ -470,7 +471,7 @@ impl ServerHealth {
         let checks_while_offline = self.checks_while_offline + 1;
         if !intentional
             && settings.escalation_every > 0
-            && checks_while_offline % settings.escalation_every == 0
+            && checks_while_offline.is_multiple_of(settings.escalation_every)
         {
             let down_for = self
                 .outage_start

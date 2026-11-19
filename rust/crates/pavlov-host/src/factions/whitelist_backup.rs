@@ -143,14 +143,14 @@ impl WhitelistBackup {
             saved_at: self.clock.now().timestamp_millis(),
             files: Some(files),
         };
-        if snapshot.names() == 0 {
-            if let Some(existing) = self.current().filter(|e| e.names() > 0) {
-                return Ok(WhitelistBackupResult::refused(format!(
-                    "Not saved: every roster is empty, and saving would replace the snapshot from {} UTC holding **{}** name(s). Load it first if the rosters were wiped.",
-                    existing.at().format("%Y-%m-%d %H:%M"),
-                    existing.names()
-                )));
-            }
+        if snapshot.names() == 0
+            && let Some(existing) = self.current().filter(|e| e.names() > 0)
+        {
+            return Ok(WhitelistBackupResult::refused(format!(
+                "Not saved: every roster is empty, and saving would replace the snapshot from {} UTC holding **{}** name(s). Load it first if the rosters were wiped.",
+                existing.at().format("%Y-%m-%d %H:%M"),
+                existing.names()
+            )));
         }
         self.store.write(FACTION_BACKUP, &snapshot).await?;
         tracing::info!(

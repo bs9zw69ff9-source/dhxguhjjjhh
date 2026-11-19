@@ -1,0 +1,12 @@
+# Keeps the SHA-pinned actions in .github/workflows current. Dependabot updates the pinned
+# commit and the version comment beside it together, in one PR, which CI then checks like
+# any other. Cargo dependencies are deliberately not listed: they move with Cargo.lock in
+# reviewed PRs, not on a schedule.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "CI"

@@ -460,12 +460,11 @@ impl IpTrackingService {
             let mut flush = None;
             let mut partial = partials.remove(file);
             // A second Killer or Killed line means a new block: emit the old one as it is.
-            if let Some(old) = &partial {
-                if (kill.killer.is_some() && old.killer.is_some())
-                    || (kill.killed.is_some() && old.killed.is_some())
-                {
-                    flush = partial.take().filter(|p| p.killed.is_some());
-                }
+            if let Some(old) = &partial
+                && ((kill.killer.is_some() && old.killer.is_some())
+                    || (kill.killed.is_some() && old.killed.is_some()))
+            {
+                flush = partial.take().filter(|p| p.killed.is_some());
             }
             let merged = match partial {
                 Some(p) => KillEvent {
@@ -514,17 +513,16 @@ impl IpTrackingService {
                         account.names.retain(|n| !eq_ignore_case(n, name));
                         account.names.insert(0, name.to_owned());
                     }
-                    if let Some(ip) = confirmed_ip {
-                        if !account.confirmed_ips.iter().any(|i| i == ip) {
-                            account.confirmed_ips.push(ip.to_owned());
-                        }
+                    if let Some(ip) = confirmed_ip
+                        && !account.confirmed_ips.iter().any(|i| i == ip)
+                    {
+                        account.confirmed_ips.push(ip.to_owned());
                     }
-                    if let Some(ip) = guessed_ip {
-                        if !account.confirmed_ips.iter().any(|i| i == ip)
-                            && !account.guessed_ips.iter().any(|i| i == ip)
-                        {
-                            account.guessed_ips.push(ip.to_owned());
-                        }
+                    if let Some(ip) = guessed_ip
+                        && !account.confirmed_ips.iter().any(|i| i == ip)
+                        && !account.guessed_ips.iter().any(|i| i == ip)
+                    {
+                        account.guessed_ips.push(ip.to_owned());
                     }
                     // A confirmed guess leaves the guess list: one address, one confidence.
                     let confirmed = account.confirmed_ips.clone();

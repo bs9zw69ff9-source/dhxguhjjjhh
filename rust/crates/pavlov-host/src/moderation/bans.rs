@@ -327,14 +327,14 @@ impl BanService {
             .store
             .read(BAN_RECONCILE_STATE, ReconcileState::default())
             .unwrap_or_default();
-        if let (false, Some(last)) = (force, state.last_run) {
-            if now - last < RECONCILE_MINIMUM_INTERVAL {
-                tracing::info!(
-                    minutes_ago = (now - last).num_minutes(),
-                    "skipped ban reconcile - native bans persist on the server on their own"
-                );
-                return 0;
-            }
+        if let (false, Some(last)) = (force, state.last_run)
+            && now - last < RECONCILE_MINIMUM_INTERVAL
+        {
+            tracing::info!(
+                minutes_ago = (now - last).num_minutes(),
+                "skipped ban reconcile - native bans persist on the server on their own"
+            );
+            return 0;
         }
         let servers = self.rcon.servers();
         let (mut reconciled, mut applied) = (0_usize, 0_usize);

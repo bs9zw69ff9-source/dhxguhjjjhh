@@ -148,23 +148,23 @@ impl FlagMatching {
                 return FlagVerdict::of(FlagMatch::Ip, format!("blacklisted ip {ip}"), false);
             }
         }
-        if let Some(id) = account_id.filter(|s| !s.is_empty()) {
-            if flags.ids.contains(id) {
-                return FlagVerdict::of(
-                    FlagMatch::AccountId,
-                    format!("blacklisted account {id}"),
-                    false,
-                );
-            }
+        if let Some(id) = account_id.filter(|s| !s.is_empty())
+            && flags.ids.contains(id)
+        {
+            return FlagVerdict::of(
+                FlagMatch::AccountId,
+                format!("blacklisted account {id}"),
+                false,
+            );
         }
-        if let Some(name) = name.filter(|s| !s.is_empty()) {
-            if flags.names.contains(name) {
-                return FlagVerdict::of(
-                    FlagMatch::Name,
-                    format!("blacklisted username {name}"),
-                    true,
-                );
-            }
+        if let Some(name) = name.filter(|s| !s.is_empty())
+            && flags.names.contains(name)
+        {
+            return FlagVerdict::of(
+                FlagMatch::Name,
+                format!("blacklisted username {name}"),
+                true,
+            );
         }
         FlagVerdict::clean()
     }

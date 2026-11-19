@@ -284,10 +284,10 @@ impl ModSaveSync {
                 .collect::<Vec<_>>()
                 .join(", ")
         )];
-        if let Some(path) = mod_save_setting.filter(|p| !p.is_empty()) {
-            if !inside_install(path, &self.installs) {
-                lines.push(format!("WARNING: MODSAVE_PATH ({path}) is not inside any install, so balance writes are not mirrored out. Point it inside one of the installs above"));
-            }
+        if let Some(path) = mod_save_setting.filter(|p| !p.is_empty())
+            && !inside_install(path, &self.installs)
+        {
+            lines.push(format!("WARNING: MODSAVE_PATH ({path}) is not inside any install, so balance writes are not mirrored out. Point it inside one of the installs above"));
         }
         for root in &self.installs {
             let dir = PathBuf::from(mod_save_path(root));

@@ -93,14 +93,14 @@ pub fn check(
     }
 
     // ---- server key (optional) ----
-    if let Some(key) = spec.server_key() {
-        if !is_valid_server_key(Some(key)) {
-            problems.push(
-                "The server key must be 1-128 characters from letters, digits and _-.!@%^*+=/: only \
+    if let Some(key) = spec.server_key()
+        && !is_valid_server_key(Some(key))
+    {
+        problems.push(
+            "The server key must be 1-128 characters from letters, digits and _-.!@%^*+=/: only \
                  (no spaces, quotes or #), so it is safe to write unquoted into Game.ini."
-                    .into(),
-            );
-        }
+                .into(),
+        );
     }
 
     // ---- game password (optional) ----

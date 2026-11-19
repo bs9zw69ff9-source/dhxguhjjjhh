@@ -117,10 +117,10 @@ pub fn rename_keys<T: Clone>(map: &mut IgnoreCaseMap<T>, renames: &Renames) -> u
         .filter_map(|k| renames.get(k).map(|now| (k.to_owned(), now.clone())))
         .collect();
     for (old, now) in &former {
-        if let Some(value) = map.remove(old) {
-            if !map.contains_key(now) {
-                map.insert(now.clone(), value);
-            }
+        if let Some(value) = map.remove(old)
+            && !map.contains_key(now)
+        {
+            map.insert(now.clone(), value);
         }
     }
     former.len()

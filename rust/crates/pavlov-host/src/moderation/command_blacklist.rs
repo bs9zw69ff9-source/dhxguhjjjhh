@@ -160,10 +160,8 @@ impl CommandBlacklist {
         }
         // THE STALE UN-BAR GOES FIRST: it outranks the list, so adding the id while it stood
         // would report success and bar nobody.
-        if unbarred {
-            if let Some(error) = self.change(USER_UNBARRED, |ids| remove(ids, &id)).await {
-                return BarResult::failed(error);
-            }
+        if unbarred && let Some(error) = self.change(USER_UNBARRED, |ids| remove(ids, &id)).await {
+            return BarResult::failed(error);
         }
         match self.change(USER_BLACKLIST, |ids| add(ids, &id)).await {
             None => BarResult::of(BarOutcome::Barred),
@@ -178,10 +176,10 @@ impl CommandBlacklist {
         }
         let id = user_id.to_string();
         let from_environment = self.configured.contains(&id);
-        if from_environment {
-            if let Some(error) = self.change(USER_UNBARRED, |ids| add(ids, &id)).await {
-                return BarResult::failed(error);
-            }
+        if from_environment
+            && let Some(error) = self.change(USER_UNBARRED, |ids| add(ids, &id)).await
+        {
+            return BarResult::failed(error);
         }
         match self.change(USER_BLACKLIST, |ids| remove(ids, &id)).await {
             Some(error) if !from_environment => BarResult::failed(error),

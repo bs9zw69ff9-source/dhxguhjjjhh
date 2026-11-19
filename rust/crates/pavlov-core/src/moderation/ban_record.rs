@@ -179,13 +179,12 @@ impl BanRules {
     ) -> Option<&'a BanRecord> {
         let real: Vec<&BanRecord> = bans.iter().filter(|b| Self::is_real_ban(Some(b))).collect();
 
-        if let Some(uid) = unique_id.filter(|u| !u.is_empty()) {
-            if let Some(by_account) = real
+        if let Some(uid) = unique_id.filter(|u| !u.is_empty())
+            && let Some(by_account) = real
                 .iter()
                 .find(|b| eos_id_of(&b.player_id).is_some_and(|eos| eq_ignore_case(&eos, uid)))
-            {
-                return Some(by_account);
-            }
+        {
+            return Some(by_account);
         }
 
         let mut related: HashSet<String> = HashSet::from([fold_case(name)]);

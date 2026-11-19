@@ -101,10 +101,10 @@ impl SqliteKeyValueBackend {
     }
 
     fn read_locked(inner: &mut Inner, key: &str) -> io::Result<Option<String>> {
-        if let Some((data, at)) = inner.cache.get(key) {
-            if at.elapsed() <= CACHE_TTL {
-                return Ok(Some(data.clone()));
-            }
+        if let Some((data, at)) = inner.cache.get(key)
+            && at.elapsed() <= CACHE_TTL
+        {
+            return Ok(Some(data.clone()));
         }
         let data: Option<String> = inner
             .connection

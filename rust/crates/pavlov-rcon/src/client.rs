@@ -203,10 +203,10 @@ impl RconClient {
 
         let key = command.trim();
         let folded = fold_case(key);
-        if let Some(hit) = lock(&self.inner.read_cache).get(&folded) {
-            if hit.at.elapsed() < self.inner.options.read_cache_duration {
-                return Ok(hit.value.clone());
-            }
+        if let Some(hit) = lock(&self.inner.read_cache).get(&folded)
+            && hit.at.elapsed() < self.inner.options.read_cache_duration
+        {
+            return Ok(hit.value.clone());
         }
         self.coalesced(key, folded).await
     }

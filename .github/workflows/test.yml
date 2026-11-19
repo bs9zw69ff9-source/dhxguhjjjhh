@@ -1,10 +1,13 @@
 # CI for the bot, which is the Rust workspace under rust/ (the C# bot was removed in #326).
 #
-# One job, the merge gate on a pinned toolchain. Each check runs as its own named step, so the
-# log says which one failed, and then rust/tools/gate.sh runs unchanged, exactly as a
-# contributor runs it locally. The gate repeats the earlier checks (with --all-features, and
-# adding its .gitignore check) against the warm target directory, so the repeat costs little
-# compilation.
+# Two jobs, both required:
+#
+#   rust   the merge gate on a pinned toolchain. Each check runs as its own named step, so the
+#          log says which one failed, and then rust/tools/gate.sh runs unchanged, exactly as a
+#          contributor runs it locally. The gate repeats the earlier checks (with
+#          --all-features, and adding its .gitignore check) against the warm target
+#          directory, so the repeat costs little compilation.
+#   msrv   `cargo check` on the oldest toolchain rust/Cargo.toml claims (rust-version).
 #
 # This workflow builds and tests only. It holds no secrets, deploys nothing and talks to no
 # Discord or Pavlov server: RCON is tested against an in-process fake, and the selftest builds
@@ -97,3 +100,55 @@ jobs:
           cd "$dir"
           printf 'DISCORD_TOKEN=ci-not-a-real-token\nRCON_HOST_1=127.0.0.1\nRCON_PORT_1=9100\nRCON_PASSWORD_1=ci\nMASTER_NAMES=ci\n' > .env
           timeout 120 "$bin" --selftest
+
+  msrv:
+    name: Minimum Rust version (rust-version in Cargo.toml)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # The oldest toolchain rust/Cargo.toml claims. The VPS builds with whatever toolchain it
+      # has, and scripts/deploy-rust.sh refuses one older than this, so the claim must be true.
+      # Keep equal to rust-version in rust/Cargo.toml and MIN_RUST_MINOR in deploy-rust.sh.
+      RUSTUP_TOOLCHAIN: "1.88.0"
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUSTUP_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustc --version
+
+      - name: The declared minimum matches this job and deploy-rust.sh
+        run: |
+          declared="$(sed -n -E 's/^rust-version = "([0-9.]+)"/\1/p' Cargo.toml)"
+          script_minor="$(sed -n -E 's/^MIN_RUST_MINOR=([0-9]+).*/\1/p' ../scripts/deploy-rust.sh)"
+          echo "Cargo.toml rust-version: $declared; deploy-rust.sh minimum: 1.$script_minor; this job: $RUSTUP_TOOLCHAIN"
+          case "$RUSTUP_TOOLCHAIN" in
+            "$declared"|"$declared".*) ;;
+            *) echo "::error::rust/Cargo.toml says rust-version $declared but this job runs $RUSTUP_TOOLCHAIN"; exit 1 ;;
+          esac
+          if [ "1.$script_minor" != "$declared" ]; then
+            echo "::error::scripts/deploy-rust.sh accepts 1.$script_minor+ but rust/Cargo.toml says $declared"
+            exit 1
+          fi
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: rust-msrv-${{ runner.os }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            rust-msrv-${{ runner.os }}-${{ env.RUSTUP_TOOLCHAIN }}-
+
+      - name: cargo check on the minimum toolchain
+        run: cargo check --workspace --all-targets --all-features --locked

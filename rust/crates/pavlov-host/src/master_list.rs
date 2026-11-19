@@ -107,16 +107,12 @@ impl MasterServerList {
 
     /// The list: cached inside the window unless `force`.
     pub async fn get(&self, force: bool) -> Snapshot {
-        if !force {
-            if let Some(snapshot) = self.fresh() {
-                return snapshot;
-            }
+        if !force && let Some(snapshot) = self.fresh() {
+            return snapshot;
         }
         let _flight = self.gate.lock().await;
-        if !force {
-            if let Some(snapshot) = self.fresh() {
-                return snapshot;
-            }
+        if !force && let Some(snapshot) = self.fresh() {
+            return snapshot;
         }
         let Some(fetched) = self.fetch().await else {
             return self.stale();

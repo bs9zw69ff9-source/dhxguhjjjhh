@@ -45,12 +45,11 @@ fn counted(actions: &[&ModAction]) -> Vec<usize> {
     for (index, action) in actions.iter().enumerate() {
         if label(&action.action).is_some() || is_in(&AUTOMATED, &action.action) {
             standing.push(index);
-        } else if eq_ignore_case(&action.action, MANUAL_UNBAN) || is_in(&RELEASES, &action.action) {
-            if let Some(ended) = standing.pop() {
-                if !is_in(&RELEASES, &action.action) {
-                    lifted[ended] = true;
-                }
-            }
+        } else if (eq_ignore_case(&action.action, MANUAL_UNBAN) || is_in(&RELEASES, &action.action))
+            && let Some(ended) = standing.pop()
+            && !is_in(&RELEASES, &action.action)
+        {
+            lifted[ended] = true;
         }
     }
     (0..actions.len())

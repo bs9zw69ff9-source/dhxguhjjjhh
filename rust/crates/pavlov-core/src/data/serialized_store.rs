@@ -357,10 +357,8 @@ impl SerializedStore {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(key.to_owned());
         // Outside the lock, so a hook that asks the store anything cannot deadlock it.
-        if newly {
-            if let Some(hook) = &self.on_unreadable {
-                hook(key);
-            }
+        if newly && let Some(hook) = &self.on_unreadable {
+            hook(key);
         }
         Ok(Loaded::Unreadable)
     }

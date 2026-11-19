@@ -37,7 +37,7 @@ done
 OUT="./rust-out"
 BIN="$OUT/pavlov-bot"
 NEW="$BIN.new"
-MIN_RUST_MINOR=85   # rust/Cargo.toml rust-version = "1.85"
+MIN_RUST_MINOR=88   # rust/Cargo.toml rust-version = "1.88" (let-chains need it)
 
 rust_is_new_enough() {
   local minor

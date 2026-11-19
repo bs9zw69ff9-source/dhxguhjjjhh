@@ -566,13 +566,12 @@ impl FeedWebhooks {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        if let Some(mut task) = task {
-            if tokio::time::timeout(Duration::from_secs(5), &mut task)
+        if let Some(mut task) = task
+            && tokio::time::timeout(Duration::from_secs(5), &mut task)
                 .await
                 .is_err()
-            {
-                task.abort();
-            }
+        {
+            task.abort();
         }
     }
 }
