@@ -23,6 +23,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# THE WHOLE SCRIPT IS ONE FUNCTION, CALLED ON THE LAST LINE. Bash reads a script as it runs
+# it, and the checkout below replaces this very file. Before this was a function, bash went
+# on executing the OLD copy from its open file after the checkout, so a deploy that changed
+# deploy.sh ran half of each (2026-11-19: it called the deleted deploy-csharp.sh). A function
+# is parsed whole before it starts, and a changed copy is re-executed after the checkout.
+main() {
+
 # Overridable without editing the script, so a branch rename does not mean editing
 # a file on the box: DEPLOY_BRANCH=main bash scripts/deploy.sh
 #
@@ -39,8 +46,11 @@ BRANCH="${DEPLOY_BRANCH:-main}"
 START=true
 RUST_ARGS=()
 
+CHECKED_OUT=false
 for arg in "$@"; do
   case "$arg" in
+    # Internal: set when this script re-executes itself after the checkout changed it.
+    --checked-out) CHECKED_OUT=true ;;
     --no-start)    START=false ;;
     # Accepted and ignored: it is what the default does now, and muscle memory
     # and any existing cron entry should keep working rather than erroring.
@@ -57,6 +67,19 @@ done
 # from the day it was written and never supported it: `git fetch origin <sha>`
 # fails with "couldn't find remote ref", because a sha is not a remote ref. The
 # one command you reach for in an outage was the one that did not work.
+if [ "$CHECKED_OUT" != true ]; then
+check_out "$@"
+fi
+build_and_restart
+}
+
+# Fetch, check out and clean, then re-execute the checked-out deploy.sh if it differs from
+# the one running. Re-executing only a copy that knows --checked-out keeps a rollback to an
+# older commit working: that copy cannot skip the fetch, so the running one carries on.
+check_out() {
+local before
+before="$(git hash-object scripts/deploy.sh)"
+
 echo "Fetching ..."
 if git fetch origin "$BRANCH" 2>/dev/null; then
   :
@@ -89,11 +112,22 @@ else
   exit 2
 fi
 
-# "Exactly match the branch" has to include files the branch does not have. A source
-# file deleted upstream is still on disk after a reset and is still what `require`
-# resolves, so the bot keeps running code that is no longer in the repo. Ignored
-# state (.env, bot.db and the rest) is untouched: no -x.
-git clean -fd
+# "Exactly match the branch" has to include files the branch does not have: a source file
+# deleted upstream is still on disk after a checkout and still gets built. ONLY THE SOURCE
+# TREES ARE CLEANED. A bare `git clean -fd` once deleted 16 JSON exports from data/, because
+# .gitignore named datasets one by one and newer ones were missing (2026-11-19; bot.db, the
+# real store, was ignored and survived). Runtime state lives outside these paths, and no -x,
+# so ignored files inside them (rust/target, .env) are untouched.
+git clean -fd -- rust scripts .github
+
+if [ "$(git hash-object scripts/deploy.sh)" != "$before" ] \
+   && grep -q -- '--checked-out)' scripts/deploy.sh; then
+  echo "deploy.sh changed in this checkout; running the new copy ..."
+  exec bash scripts/deploy.sh --checked-out "$@"
+fi
+}
+
+build_and_restart() {
 
 # ---- the bot: the systemd unit pavlov-bot -----------------------------------
 # deploy-rust.sh builds, runs the selftest against this .env, and swaps the binary
@@ -115,3 +149,7 @@ echo "Deployed $(git log --oneline -1)"
 if [ "$START" = true ]; then
   echo "Confirm in Discord: /health shows 'build $(git rev-parse --short HEAD)' in its footer."
 fi
+}
+
+main "$@"
+exit $?
