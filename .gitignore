@@ -1,6 +1,11 @@
 node_modules/
 .env
 
+# The bot's data directory (DATA_DIR, default data/): bot.db and the JSON exports beside it.
+# Ignored whole, not dataset by dataset: a list by name misses every new dataset, and
+# deploy.sh's clean then treats its export as a stray file.
+/data/
+
 # SQLite database (bot.db) + WAL sidecars — runtime state
 bot.db
 bot.db-wal
