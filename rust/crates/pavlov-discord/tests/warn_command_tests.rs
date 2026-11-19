@@ -138,11 +138,15 @@ async fn the_third_warning_records_a_ban_and_enforces_it() {
     assert_eq!(bans.len(), 1);
     assert_eq!(bans[0].player_id, "Griefer");
     assert!(!bans[0].permanent && bans[0].expires.is_some());
+    // No ModSave is configured here, so the ban is recorded and Griefer kicked, and the reply
+    // says it could not be written rather than claiming it landed.
+    let commands = rig.fake.commands();
+    assert!(commands.iter().any(|c| c == "Kick Griefer"), "{commands:?}");
     assert!(
-        rig.fake.commands().iter().any(|c| c == "Ban Griefer"),
-        "{:?}",
-        rig.fake.commands()
+        !commands.iter().any(|c| c.starts_with("Ban ")),
+        "{commands:?}"
     );
+    assert!(third.contains("MODSAVE_PATH"), "{third}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

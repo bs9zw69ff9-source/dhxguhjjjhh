@@ -7,8 +7,8 @@
 //!   "pf_version": 1, "updated": "2026-11-18 15:44" }
 //! ```
 //!
-//! - THE BOT OWNS THREE FIELDS AND STAMPS A FOURTH: `money`, `drivers_license`,
-//!   `firearm_license`, and `updated` on every edit. Everything else (`look`, `face`, `skin`,
+//! - THE BOT OWNS FOUR FIELDS AND STAMPS A FIFTH: `money`, `drivers_license`,
+//!   `firearm_license`, the `ban` block, and `updated` on every edit. Everything else (`look`, `face`, `skin`,
 //!   `name`, `pf_version`, and whatever a later version of the mod adds) is kept exactly as
 //!   read, in the order read.
 //! - A FILE WITHOUT A WHOLE-NUMBER `money` IS NOT A SAVE. It is refused, never rewritten: the
@@ -26,6 +26,24 @@ pub const MONEY: &str = "money";
 pub const UPDATED: &str = "updated";
 /// How `updated` is written (the mod's own format, local time, minutes).
 pub const UPDATED_FORMAT: &str = "%Y-%m-%d %H:%M";
+
+/// The ban block (owner, 2026-11-19: bans live in the save, not in RCON or blacklist.txt):
+/// `"ban": { "banned": true, "reason": "...", "unban_date": "11/20/26" }`.
+pub const BAN: &str = "ban";
+const BANNED: &str = "banned";
+const BAN_REASON: &str = "reason";
+const UNBAN_DATE: &str = "unban_date";
+/// How `unban_date` is written: the mod's format, a local date with no time. Blank is
+/// permanent.
+pub const UNBAN_DATE_FORMAT: &str = "%m/%d/%y";
+
+/// A ban as the save holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveBan {
+    pub reason: String,
+    /// [`UNBAN_DATE_FORMAT`], or empty for a permanent ban.
+    pub unban_date: String,
+}
 
 /// One player's save.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +96,64 @@ impl PlayerSave {
         let mut edited = self.clone();
         edited.fields.insert(key.to_owned(), Value::Bool(held));
         edited
+    }
+
+    /// The ban the save holds, or `None` when it holds none (no block, or `banned` not true).
+    #[must_use]
+    pub fn ban(&self) -> Option<SaveBan> {
+        let block = self.fields.get(BAN)?.as_object()?;
+        if block.get(BANNED).and_then(Value::as_bool) != Some(true) {
+            return None;
+        }
+        let text = |key: &str| {
+            block
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Some(SaveBan {
+            reason: text(BAN_REASON),
+            unban_date: text(UNBAN_DATE),
+        })
+    }
+
+    /// Whether the save's ban block is already exactly the lifted shape the bot writes.
+    fn ban_is_clear(&self) -> bool {
+        self.fields
+            .get(BAN)
+            .and_then(Value::as_object)
+            .is_some_and(|block| {
+                block.get(BANNED) == Some(&Value::Bool(false))
+                    && block.get(BAN_REASON) == Some(&Value::String(String::new()))
+                    && block.get(UNBAN_DATE) == Some(&Value::String(String::new()))
+            })
+    }
+
+    /// This save with `ban` set (`Some`) or lifted (`None`: `banned` false, the reason and date
+    /// blanked). `None` when that is what the save already says, so an unchanged file is not
+    /// rewritten. Any other key the mod keeps inside the block is left as it was.
+    #[must_use]
+    pub fn with_ban(&self, ban: Option<&SaveBan>) -> Option<Self> {
+        match ban {
+            Some(wanted) if self.ban().as_ref() == Some(wanted) => return None,
+            None if self.ban_is_clear() => return None,
+            _ => {}
+        }
+        let mut edited = self.clone();
+        let mut block = match self.fields.get(BAN) {
+            Some(Value::Object(existing)) => existing.clone(),
+            _ => Map::new(),
+        };
+        let (banned, reason, date) = match ban {
+            Some(b) => (true, b.reason.clone(), b.unban_date.clone()),
+            None => (false, String::new(), String::new()),
+        };
+        block.insert(BANNED.to_owned(), Value::Bool(banned));
+        block.insert(BAN_REASON.to_owned(), Value::String(reason));
+        block.insert(UNBAN_DATE.to_owned(), Value::String(date));
+        edited.fields.insert(BAN.to_owned(), Value::Object(block));
+        Some(edited)
     }
 
     /// This save with `updated` set to `stamp` (already formatted with [`UPDATED_FORMAT`]).

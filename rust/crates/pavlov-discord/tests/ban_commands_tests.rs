@@ -1,6 +1,6 @@
-//! `/tempban`, `/permban`, `/unban` and `/checkban` end to end: the record, the wire, the
-//! hierarchy and the server's own ban file. (The C# covers these through BanService and the
-//! ban-file tests; this pins the command layer.)
+//! `/tempban`, `/permban`, `/unban` and `/checkban` end to end: the record, the player's save
+//! (where a ban is enforced since 2026-11-19), the kick on the wire, the hierarchy, and the
+//! server's own `blacklist.txt`, which the bot reads but never edits.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -22,12 +22,13 @@ use pavlov_discord::interaction::{Invocation, InvokedOption, OptionValue};
 use pavlov_discord::slash::{CommandContext, SlashCommand};
 use pavlov_host::logs::ip_tracking::IpTrackingService;
 use pavlov_host::metrics::MetricsRegistry;
-use pavlov_host::moderation::bans::{BanFileExport, BanService};
+use pavlov_host::moderation::bans::BanService;
 use pavlov_host::moderation::master_names::StoredMasterNames;
 use pavlov_host::moderation::{AuditLog, ServerBanFile};
 use pavlov_host::registry::RconRegistry;
 use pavlov_rcon::testing::FakeRconServer;
 use pavlov_storage::game_files::GameFileGuard;
+use pavlov_storage::ledger_store::LedgerFileStore;
 
 const OWNER: u64 = 3;
 
@@ -37,11 +38,31 @@ struct Rig {
     store: Arc<SerializedStore>,
     parts: Arc<BanParts>,
     ban_path: std::path::PathBuf,
+    modsave: std::path::PathBuf,
+}
+
+impl Rig {
+    /// A save as the game creates it on a player's first join.
+    fn joined(&self, player: &str) {
+        std::fs::write(
+            self.modsave.join(format!("{player}.json")),
+            format!("{{\n\t\"name\": \"{player}\",\n\t\"money\": 100,\n\t\"ban\": {{ \"banned\": false, \"reason\": \"\", \"unban_date\": \"\" }}\n}}\n"),
+        )
+        .unwrap();
+    }
+
+    fn banned_in_save(&self, player: &str) -> bool {
+        let text = std::fs::read_to_string(self.modsave.join(format!("{player}.json"))).unwrap();
+        let save: serde_json::Value = serde_json::from_str(&text).unwrap();
+        save["ban"]["banned"].as_bool().unwrap()
+    }
 }
 
 async fn rig() -> Rig {
     let dir = tempfile::tempdir().unwrap();
     let ban_path = dir.path().join("blacklist.txt");
+    let modsave = dir.path().join("ModSave");
+    std::fs::create_dir_all(&modsave).unwrap();
     let fake = FakeRconServer::start().await.unwrap();
     let mut options = fake.options();
     options.name = "server1".into();
@@ -60,12 +81,13 @@ async fn rig() -> Rig {
         StoredMasterNames::new([OwnerGuard::MASTER_NAME], Arc::clone(&store), clock.clone())
             .unwrap(),
     );
-    // Wired as the composition root wires it: the lift rewrites the server's file.
+    // Wired as the composition root wires it: bans go into the saves, the file is only read.
     let ban_file = Arc::new(ServerBanFile::new(
         vec![ban_path.to_string_lossy().into_owned()],
-        Arc::clone(&store),
-        clock.clone(),
         None,
+    ));
+    let saves = Arc::new(LedgerFileStore::new(
+        Some(modsave.clone()),
         Arc::new(GameFileGuard::none()),
     ));
     let bans = BanService::new(
@@ -74,7 +96,7 @@ async fn rig() -> Rig {
         masters.clone(),
         clock.clone(),
     )
-    .with_ban_file(ban_file.clone() as Arc<dyn BanFileExport>);
+    .with_saves(saves);
     let parts = Arc::new(BanParts {
         bans: Arc::new(bans),
         tracking: Arc::new(IpTrackingService::new(
@@ -95,6 +117,7 @@ async fn rig() -> Rig {
         store,
         parts,
         ban_path,
+        modsave,
     }
 }
 
@@ -117,6 +140,7 @@ async fn run(command: &dyn SlashCommand, invocation: &Invocation) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempban_records_then_enforces_with_a_length() {
     let rig = rig().await;
+    rig.joined("Griefer");
     let command = TempBanCommand {
         parts: Arc::clone(&rig.parts),
     };
@@ -130,11 +154,54 @@ async fn tempban_records_then_enforces_with_a_length() {
     assert_eq!(bans.len(), 1);
     assert!(!bans[0].permanent && bans[0].expires.is_some());
     assert_eq!(bans[0].tier, Some(StaffTier::Owner));
+    assert!(rig.banned_in_save("Griefer"));
+    let commands = rig.fake.commands();
+    assert!(commands.iter().any(|c| c == "Kick Griefer"), "{commands:?}");
     assert!(
-        rig.fake.commands().iter().any(|c| c == "Ban Griefer"),
-        "{:?}",
-        rig.fake.commands()
+        !commands.iter().any(|c| c.starts_with("Ban ")),
+        "no RCON ban any more: {commands:?}"
     );
+    assert!(!reply.contains("No save yet"), "{reply}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ban_on_a_player_with_no_save_says_it_waits_and_kicks() {
+    let rig = rig().await;
+    let command = TempBanCommand {
+        parts: Arc::clone(&rig.parts),
+    };
+    let invocation = Invocation::new("tempban", Caller::user(OWNER))
+        .with(text("playerid", "NeverJoined"))
+        .with(text("reason", "alt"))
+        .with(text("duration", "1d"));
+
+    let reply = run(&command, &invocation).await;
+
+    assert!(reply.contains("No save yet"), "{reply}");
+    assert!(rig.fake.commands().iter().any(|c| c == "Kick NeverJoined"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unban_clears_a_ban_held_only_in_the_save() {
+    let rig = rig().await;
+    rig.joined("Banned");
+    let saves = LedgerFileStore::new(Some(rig.modsave.clone()), Arc::new(GameFileGuard::none()));
+    let in_game = pavlov_core::sync::SaveBan {
+        reason: "set in game".into(),
+        unban_date: String::new(),
+    };
+    assert!(saves.set_ban("Banned", Some(&in_game)).holds());
+
+    let reply = run(
+        &UnbanCommand {
+            parts: Arc::clone(&rig.parts),
+        },
+        &Invocation::new("unban", Caller::user(OWNER)).with(text("playerid", "Banned")),
+    )
+    .await;
+
+    assert!(reply.contains("Ban cleared from their save"), "{reply}");
+    assert!(!rig.banned_in_save("Banned"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -177,7 +244,7 @@ async fn a_ban_above_your_tier_cannot_be_lifted() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn unban_lifts_a_ban_that_lives_only_in_the_servers_file() {
+async fn unban_never_edits_blacklist_txt_and_says_to_do_it_by_hand() {
     let rig = rig().await;
     std::fs::write(
         &rig.ban_path,
@@ -202,14 +269,13 @@ async fn unban_lifts_a_ban_that_lives_only_in_the_servers_file() {
         &Invocation::new("unban", Caller::user(OWNER)).with(text("playerid", "Ghost")),
     )
     .await;
+    assert!(reply.contains("Listed in blacklist.txt only"), "{reply}");
+    assert!(reply.contains("by hand"), "{reply}");
     assert!(
-        reply.contains("Removed from the server's ban file"),
-        "{reply}"
-    );
-    assert!(
-        !std::fs::read_to_string(&rig.ban_path)
+        std::fs::read_to_string(&rig.ban_path)
             .unwrap()
-            .contains("Ghost")
+            .contains("Ghost"),
+        "the file is left alone"
     );
 }
 

@@ -178,7 +178,7 @@ Check each item, and note any difference from the C# bot.
 
 **Bans**
 
-- [ ] `/tempban` a test account: it is kicked, and the test server's ban file lists it.
+- [ ] `/tempban` a test account that has joined before: it is kicked, its save's `ban` block says `banned: true` with the reason and the `MM/DD/YY` date, and it cannot rejoin. `/unban` it: the block is cleared and it can.
 - [ ] `/checkban` shows the ban.
 - [ ] `/unban` clears both the record and the file.
 - [ ] `/banlist` lists it while active.

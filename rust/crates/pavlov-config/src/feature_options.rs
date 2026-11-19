@@ -52,9 +52,9 @@ pub struct FeatureOptions {
     pub systemctl_sudo: Option<bool>,
     /// The first of [`ban_file_paths`](Self::ban_file_paths), for anything that names one file.
     pub ban_file_path: Option<String>,
-    /// Every install's `Config/blacklist.txt`, so a ban or unban reaches all of them; exactly
-    /// `BLACKLIST_PATH` when that is set; empty with `BLACKLIST_SYNC=false`, which is how a
-    /// second bot sharing an install keeps its hands off the file.
+    /// Every install's `Config/blacklist.txt`, READ ONLY since 2026-11-19 (bans live in the
+    /// player's save), so `/checkban` and `/unban` can say a player is still listed; exactly
+    /// `BLACKLIST_PATH` when that is set; empty with `BLACKLIST_SYNC=false`.
     pub ban_file_paths: Vec<String>,
     /// Every Pavlov install root on the box.
     pub install_roots: Vec<String>,
@@ -156,7 +156,6 @@ pub struct FeatureOptions {
     pub leaderboard_interval: Duration,
     pub ban_sweep_interval: Duration,
     pub ban_expiry_interval: Duration,
-    pub ban_reconcile_interval: Duration,
 
     pub monitoring_enabled: bool,
     pub monitor_alert_channel: Option<u64>,
@@ -314,7 +313,6 @@ impl FeatureOptions {
             ),
             ban_sweep_interval: Duration::from_secs(30),
             ban_expiry_interval: Duration::from_secs(60),
-            ban_reconcile_interval: Duration::from_secs(5 * 60),
 
             monitoring_enabled: optional_flag(config, "MONITORING") != Some(false),
             monitor_alert_channel: snowflake(config, "MONITOR_ALERT_CHANNEL"),

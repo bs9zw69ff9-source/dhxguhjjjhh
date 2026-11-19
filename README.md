@@ -1,8 +1,8 @@
 # Pavlov RP Moderation Bot
 
 A Discord bot for **Pavlov VR** RP servers, written in Rust. It drives one to three game servers
-over RCON and adds native bans and kicks with a reason and duration picker, ban-evasion and
-VPN/proxy detection with optional ufw blocking, the GWPD whitelist ladder, in-game menu tiers,
+over RCON and adds bans (written into the player's save) and kicks with a reason and duration
+picker, ban-evasion and VPN/proxy detection with optional ufw blocking, the GWPD whitelist ladder, in-game menu tiers,
 a dollar economy, police RP (warrants, arrests, bail, licences), boards and feeds, and server
 monitoring, all behind slash commands.
 

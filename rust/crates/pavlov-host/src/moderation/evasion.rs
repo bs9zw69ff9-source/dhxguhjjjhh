@@ -235,7 +235,7 @@ impl EvasionResponder {
             1.0,
             Some("Auto-bans issued for a flagged join"),
         );
-        tracing::warn!(name = %name, account = %join.account_id, servers = enforcement.servers, reason = %reason, "AUTO-BANNED");
+        tracing::warn!(name = %name, account = %join.account_id, kicked_on = enforcement.servers, save = enforcement.summary(), reason = %reason, "AUTO-BANNED");
         // Beside the join it responded to, where staff watch joins. Which list the flag came
         // from changes the answer to "why was this person banned".
         self.feeds.post(
