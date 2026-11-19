@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build, verify and (optionally) restart the RUST bot. The C# bot and scripts/deploy.sh are
-# untouched: until the cutover in rust/DEPLOY.md this only ever replaces rust-out/pavlov-bot.
+# Build, verify and (optionally) restart the bot. scripts/deploy.sh calls this after it has
+# reset the checkout to the branch; run it directly to rebuild without pulling.
 #
 #   bash scripts/deploy-rust.sh                        # build + selftest, change nothing running
 #   bash scripts/deploy-rust.sh --start                # ... then restart the unit (default
 #                                                      #     pavlov-bot-rust, the staging unit)
-#   bash scripts/deploy-rust.sh --start --unit pavlov-bot   # after the cutover
+#   bash scripts/deploy-rust.sh --start --unit pavlov-bot   # production
 #   bash scripts/deploy-rust.sh --install-rust         # ... fetching a Rust toolchain if absent
 #
 # THE SELFTEST GATE IS THE POINT. The new binary is built to rust-out/pavlov-bot.new and runs

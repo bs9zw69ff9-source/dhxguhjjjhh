@@ -84,7 +84,8 @@ package.json.deployed
 # not source. These were tracked by accident.
 faction_file_bak/
 
-# C# publish output and pm2 logs
+# Build output. dotnet-out/ is the removed C# bot's publish folder; it stays ignored so a
+# leftover copy on a server is neither committed nor deleted by deploy.sh's git clean.
 dotnet-out/
 rust-out/
 /logs/

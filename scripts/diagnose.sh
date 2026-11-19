@@ -41,7 +41,7 @@ echo "branch:    $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 echo "dirty:     $(test -n "$(git status --porcelain 2>/dev/null)" && echo yes || echo no)"
 
 line "published binary"
-BIN="dotnet-out/PavlovBot"
+BIN="rust-out/pavlov-bot"
 if [ -f "$BIN" ]; then
   echo "built:     $(date -r "$BIN" '+%Y-%m-%d %H:%M:%S %Z')"
   echo "commit:    $(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S %Z' 2>/dev/null)"
@@ -66,7 +66,7 @@ fi
 line "which binary it is running, and from where"
 # TWO PATHS, TWO JOBS, and confusing them is invisible: the repo holds the build,
 # the bot's working directory holds its .env, its data and its logs. A unit whose
-# ExecStart is NOT this checkout's dotnet-out is running a binary no deploy here
+# ExecStart is NOT this checkout's rust-out is running a binary no deploy here
 # ever replaces - the one failure mode that survives every other check here.
 if have_unit; then
   exec_start="$(systemctl show -p ExecStart --value "$BOT_UNIT" 2>/dev/null || true)"
@@ -84,7 +84,7 @@ fi
 line "what the bot loaded at startup"
 if have_unit && command -v journalctl >/dev/null 2>&1; then
   journalctl -u "$BOT_UNIT" -n 400 --no-pager 2>/dev/null \
-    | grep -E "factions:|rank\(s\), sub-classes:|Registered .* command|Whitelist bot|FACTIONS_PATH|FACTION_SET|roster files:|Pavlov log|Tailing .* Pavlov log|CANNOT READ|Kill stats: recorded|staff roles" \
+    | grep -iE "build=|factions|registered .*command|whitelist bot|FACTIONS_PATH|FACTION_SET|roster|Pavlov log|CANNOT READ|kill stats|staff roles|MALFORMED" \
     | tail -15
 else
   echo "(no journal for $BOT_UNIT - check the bot's own log output for the 'factions:' line)"

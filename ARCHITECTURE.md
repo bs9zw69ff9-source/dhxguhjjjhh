@@ -1,14 +1,11 @@
 # Architecture (Node bot - historical)
 
-> **This describes the Node.js bot, which has been removed.** The running bot is the C#
-> solution under [`dotnet/`](dotnet/); see [`dotnet/README.md`](dotnet/README.md) for its
-> layout. Kept because the Node bot's design is still the reference for the data formats
-> the C# bot reads, and `git log` before its removal is where to look when a feature "used
-> to work".
->
-> The Rust port's architecture (eight crates, Discord behind trait seams, the graph built
-> by hand in the C# start order) is in [`rust/README.md`](rust/README.md) and
-> [`rust/MIGRATION.md`](rust/MIGRATION.md).
+> **This describes the Node.js bot, which has been removed**, and so has the C#/.NET bot that
+> replaced it. The running bot is the Rust workspace under [`rust/`](rust/); its crate layout
+> is in [`rust/README.md`](rust/README.md) and the port's decisions in
+> [`rust/MIGRATION.md`](rust/MIGRATION.md). Kept because the Node bot's design is still the
+> reference for the data formats the bot reads, and `git log` before its removal is where to
+> look when a feature "used to work".
 
 How the bot was put together, and how to add to it.
 

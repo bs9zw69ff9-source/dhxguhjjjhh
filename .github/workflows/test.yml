@@ -1,35 +1,31 @@
-# The C# suite, on every push.
-#
-# There was a second job here for the Node bot, which was kept as a rollback
-# target and tested so that it stayed one. The Node bot has been removed now that
-# C# has taken over, so there is one bot and one suite.
+# The bot's merge gate, on every push: fmt, clippy with warnings as errors, the whole test
+# suite, the release build, and the selftest. It runs rust/tools/gate.sh, the same script a
+# contributor runs locally, so the two cannot drift apart.
 name: tests
 on:
   push:
   pull_request:
 
 jobs:
-  csharp:
-    name: C#
+  rust:
+    name: Rust
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dotnet
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          dotnet-version: "9.0.x"
-      - run: dotnet restore
-      # FullAnalysis=true turns on the code-style and AOT/trim analyzers here, on every PR -
-      # they are off for local and deploy builds to keep those fast (see dotnet/Directory.Build.props).
-      - run: dotnet build -c Release --no-restore -p:FullAnalysis=true
-      - run: dotnet test -c Release --no-build
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: bash rust/tools/gate.sh
+        env:
+          CARGO_INCREMENTAL: "0"
 
-      # Proves the whole object graph resolves and the configuration binds. It
-      # catches a broken DI registration, which a unit test cannot see because
-      # nothing else constructs the real graph.
+      # Proves the whole object graph builds and the configuration binds. It catches a broken
+      # wiring that no unit test can see, because nothing else constructs the real graph.
       - name: selftest
+        working-directory: rust
         run: |
           printf 'DISCORD_TOKEN=ci-not-a-real-token\nRCON_HOST_1=127.0.0.1\nRCON_PORT_1=9100\nRCON_PASSWORD_1=ci\nMASTER_NAMES=ci\n' > .env
-          dotnet run --project src/PavlovBot.Host -c Release --no-build -- --selftest
+          ./target/release/pavlov-bot --selftest

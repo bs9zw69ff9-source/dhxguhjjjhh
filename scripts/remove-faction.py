@@ -9,7 +9,7 @@ IT FINDS THE FILE ITSELF, because the alternative was a shell one-liner to dig
 FACTIONS_PATH out of .env, and that one-liner got the path wrong - which is the
 exact failure this whole tool exists to stop. FACTIONS_PATH is resolved the way
 the BOT resolves it, using dotenv 16's grammar as ported in
-DotEnvConfiguration.cs: `export` prefixes ignored, `KEY=value` and `KEY: value`
+rust/crates/pavlov-config/src/dotenv.rs: `export` prefixes ignored, `KEY=value` and `KEY: value`
 both bind, quotes stripped, an unquoted value ending at the first `#`, and the
 last assignment of a key winning. A real environment variable beats the file,
 as it does for the bot. A relative path resolves against the directory holding
@@ -37,7 +37,7 @@ import sys
 import time
 
 
-# dotenv 16's LINE regex, the same one DotEnvConfiguration.cs mirrors. Kept as one
+# dotenv 16's LINE regex, the same one rust/crates/pavlov-config/src/dotenv.rs mirrors. Kept as one
 # expression so the correspondence to the bot's parser stays checkable.
 _LINE = re.compile(
     r"""^\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)"""
