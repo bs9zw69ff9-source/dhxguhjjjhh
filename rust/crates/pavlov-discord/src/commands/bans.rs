@@ -676,8 +676,8 @@ impl std::fmt::Debug for CheckBanCommand {
 pub fn ban_origin(moderator: Option<&str>) -> &'static str {
     match moderator {
         Some("in-game") => {
-            "The game's own ban file, not this bot - so the reason above may be old. `/unban` takes them out of the \
-             file as well as the store."
+            "Found in their save, set in game or by hand rather than by this bot, and recorded here. It is lifted \
+             when its date is reached, and `/unban` clears it from the save."
         }
         Some("auto") => {
             "This bot, automatically - VPN screening or ban evasion. The reason above says which. Nobody typed it."

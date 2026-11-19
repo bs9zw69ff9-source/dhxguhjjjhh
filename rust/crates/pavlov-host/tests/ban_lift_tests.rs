@@ -20,9 +20,10 @@ use common::file_store;
 use futures_util::future::BoxFuture;
 use pavlov_core::data::SerializedStore;
 use pavlov_core::moderation::BanRecord;
-use pavlov_core::sync::UNBAN_DATE_FORMAT;
+use pavlov_core::sync::{SaveBan, UNBAN_DATE_FORMAT};
 use pavlov_core::time::SystemClock;
 use pavlov_host::metrics::MetricsRegistry;
+use pavlov_host::moderation::bans::{LEARNED_MODERATOR, unban_moment};
 use pavlov_host::moderation::{BanEvidence, BanService, MasterNames};
 use pavlov_host::registry::RconRegistry;
 use pavlov_rcon::testing::FakeRconServer;
@@ -523,4 +524,137 @@ async fn the_sweep_kicks_a_banned_player_who_is_online_and_spares_a_protected_on
     assert!(ban_block(&f.save(NAME)).0);
     assert!(!ban_block(&f.save("Owner")).0);
     f.assert_no_rcon_ban();
+}
+
+// ---- The knowledge base: bans found only in a save (owner, 2026-11-19) ----
+
+impl Fixture {
+    /// A ban set in game or by hand: in the save, with no record in the bot.
+    fn ban_in_save(&self, player: &str, reason: &str, unban_date: &str) {
+        self.write_save(player);
+        let ban = SaveBan {
+            reason: reason.into(),
+            unban_date: unban_date.into(),
+        };
+        assert!(self.saves().set_ban(player, Some(&ban)).holds());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ban_set_only_in_a_save_is_recorded_with_its_reason_and_date() {
+    let f = Fixture::new().await;
+    let tomorrow = local_date(Utc::now() + TimeDelta::days(2));
+    f.ban_in_save(NAME, "set in game", &tomorrow);
+
+    assert_eq!(f.default_service().learn_from_saves().await, 1);
+
+    let ban = f.bans().pop().unwrap();
+    assert_eq!(ban.player_id, NAME);
+    assert_eq!(ban.reason.as_deref(), Some("set in game"));
+    assert_eq!(ban.moderator.as_deref(), Some(LEARNED_MODERATOR));
+    assert!(!ban.permanent);
+    assert_eq!(ban.expires, unban_moment(&tomorrow));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blank_date_is_learned_as_permanent() {
+    let f = Fixture::new().await;
+    f.ban_in_save(NAME, "for good", "");
+
+    f.default_service().learn_from_saves().await;
+
+    let ban = f.bans().pop().unwrap();
+    assert!(ban.permanent);
+    assert_eq!(ban.expires, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_bot_lifts_a_saved_ban_once_its_date_is_reached() {
+    // The date does not lift anything server side; the bot does, on the expiry tick.
+    let f = Fixture::new().await;
+    let yesterday = local_date(Utc::now() - TimeDelta::days(1));
+    f.ban_in_save(NAME, "served", &yesterday);
+    let service = f.default_service();
+
+    service.learn_from_saves().await;
+    let lifted = service.process_expired().await;
+
+    assert_eq!(lifted.len(), 1);
+    assert!(f.bans().is_empty());
+    assert_eq!(
+        ban_block(&f.save(NAME)),
+        (false, String::new(), String::new())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lifted_ban_is_not_learned_back() {
+    let f = Fixture::new().await;
+    f.ban_in_save(NAME, "set in game", "");
+    let service = f.default_service();
+    service.learn_from_saves().await;
+
+    service.lift(NAME, None).await;
+
+    assert_eq!(service.learn_from_saves().await, 0);
+    assert!(f.bans().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_known_ban_is_not_recorded_twice() {
+    let f = Fixture::new().await;
+    f.write_save(NAME);
+    f.seed(permanent_ban(NAME, "by a moderator")).await;
+    let service = f.default_service();
+    service.hard_enforce(NAME, None, true, true).await;
+
+    assert_eq!(service.learn_from_saves().await, 0);
+    assert_eq!(f.bans().len(), 1);
+    assert_eq!(f.bans()[0].reason.as_deref(), Some("by a moderator"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_date_is_kept_permanent_with_the_value_noted() {
+    let f = Fixture::new().await;
+    f.ban_in_save(NAME, "odd", "next tuesday");
+
+    f.default_service().learn_from_saves().await;
+
+    let ban = f.bans().pop().unwrap();
+    assert!(ban.permanent);
+    assert!(
+        ban.reason
+            .unwrap()
+            .contains("[unreadable unban_date: next tuesday]"),
+        "staff can see what the save said"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_masters_save_ban_is_never_learned() {
+    struct Master;
+    impl MasterNames for Master {
+        fn is_master(&self, name: &str) -> bool {
+            name == NAME
+        }
+        fn is_exempt(&self, _: &str) -> bool {
+            false
+        }
+        fn is_protected(&self, _: &str) -> bool {
+            false
+        }
+        fn exempt<'a>(&'a self, _: &'a str, _: Option<Duration>) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+    }
+    let f = Fixture::new().await;
+    f.ban_in_save(NAME, "x", "");
+
+    assert_eq!(
+        f.build(Arc::new(Master), Arc::default())
+            .learn_from_saves()
+            .await,
+        0
+    );
+    assert!(f.bans().is_empty());
 }

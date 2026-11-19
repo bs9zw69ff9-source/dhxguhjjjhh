@@ -228,6 +228,8 @@ pub fn register(graph: &Graph) -> Result<(), RegistryError> {
         work(move || {
             let bans = Arc::clone(&expiring);
             async move {
+                // Learn first, so a ban set in a save whose date has passed is lifted this tick.
+                bans.learn_from_saves().await;
                 bans.process_expired().await;
                 Ok(())
             }

@@ -300,7 +300,7 @@ async fn checkban_says_not_banned_plainly_when_the_file_agrees() {
 
 #[test]
 fn the_moderator_field_is_explained() {
-    assert!(ban_origin(Some("in-game")).contains("game's own ban file"));
+    assert!(ban_origin(Some("in-game")).contains("Found in their save"));
     assert!(ban_origin(Some("auto")).contains("Nobody typed it"));
     assert!(ban_origin(Some("mod1")).contains("A moderator"));
 }

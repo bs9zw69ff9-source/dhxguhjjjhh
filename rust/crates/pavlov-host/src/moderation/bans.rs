@@ -24,12 +24,12 @@ use std::time::Duration;
 use futures_util::future::{BoxFuture, join_all};
 use pavlov_core::data::SerializedStore;
 use pavlov_core::moderation::{BanRecord, BanRules};
-use pavlov_core::sync::{SaveBan, UNBAN_DATE_FORMAT};
+use pavlov_core::sync::{SaveBan, UNBAN_DATE_FORMAT, parse_unban_date};
 use pavlov_core::text::Sanitize;
 use pavlov_core::text::case::IgnoreCaseSet;
 use pavlov_core::time::Clock;
 use pavlov_storage::datasets::TEMP_BANS;
-use pavlov_storage::ledger_store::{LedgerFileStore, SaveBanWrite};
+use pavlov_storage::ledger_store::{LedgerFileStore, SaveBanWrite, all_saves};
 
 use crate::registry::RconRegistry;
 
@@ -37,6 +37,55 @@ use crate::registry::RconRegistry;
 pub const LIFT_EXEMPTION: Duration = Duration::from_secs(60 * 60);
 /// The reason written into a save when the record carries none.
 const NO_REASON: &str = "No reason given";
+/// Who a ban learned from a save is filed under: set in game or by hand, not by this bot.
+pub const LEARNED_MODERATOR: &str = "in-game";
+
+/// The moment a save's `unban_date` is reached: the start of that day, server local time.
+/// `None` for a blank or unreadable date.
+#[must_use]
+pub fn unban_moment(unban_date: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::TimeZone;
+    let day = parse_unban_date(unban_date)?;
+    let midnight = day.and_hms_opt(0, 0, 0)?;
+    chrono::Local
+        .from_local_datetime(&midnight)
+        .earliest()
+        .map(|local| local.with_timezone(&chrono::Utc))
+}
+
+/// The record a ban found only in a save is learned as. A date that does not parse is kept as
+/// PERMANENT with the value noted, because a guessed length frees somebody early or holds them
+/// too long, and the note is there for staff to fix.
+#[must_use]
+pub fn learned_record(
+    player: &str,
+    ban: &SaveBan,
+    now: chrono::DateTime<chrono::Utc>,
+) -> BanRecord {
+    let expires = unban_moment(&ban.unban_date);
+    let blank = ban.unban_date.trim().is_empty();
+    let mut reason = if ban.reason.trim().is_empty() {
+        NO_REASON.to_owned()
+    } else {
+        ban.reason.trim().to_owned()
+    };
+    if expires.is_none() && !blank {
+        reason = format!("{reason} [unreadable unban_date: {}]", ban.unban_date);
+    }
+    BanRecord {
+        reason: Some(reason),
+        moderator: Some(LEARNED_MODERATOR.into()),
+        at: Some(now),
+        expires,
+        permanent: expires.is_none(),
+        duration_label: Some(if expires.is_some() {
+            format!("until {}", ban.unban_date.trim())
+        } else {
+            "Permanent".into()
+        }),
+        ..BanRecord::for_player(player)
+    }
+}
 
 /// What a ban, kick or lift did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,9 +435,32 @@ impl BanService {
         removed
     }
 
-    /// End a ban: the ONE path both /unban and expiry take, so they do the same things - remove
-    /// every record, clear the evasion flags, exempt briefly, and clear the ban from their save.
+    /// End a ban: the ONE path both /unban and expiry take, so they do the same things - clear
+    /// the ban from their save, remove every record, clear the evasion flags, exempt briefly.
+    ///
+    /// THE SAVE IS CLEARED FIRST. [`learn_from_saves`](Self::learn_from_saves) records any
+    /// banned save without a record, so removing the record first left a window in which a
+    /// lifted ban was learned straight back.
     pub async fn lift(&self, name: &str, unique_id: Option<&str>) -> EnforcementResult {
+        // No save means nothing in a file holds the ban: as lifted as it gets.
+        let save = self
+            .saves
+            .as_ref()
+            .map(|saves| match saves.set_ban(name, None) {
+                SaveBanWrite::NoSave => SaveBanWrite::AlreadySo,
+                other => other,
+            });
+        match &save {
+            Some(SaveBanWrite::Written) => tracing::info!(name, "ban cleared from their save"),
+            Some(SaveBanWrite::Refused(reason)) => {
+                tracing::error!(
+                    name,
+                    reason,
+                    "the ban could NOT be cleared from their save - the game may still refuse them"
+                );
+            }
+            _ => {}
+        }
         if let Err(error) = self
             .store
             .update(TEMP_BANS, Vec::new, |mut bans: Vec<BanRecord>| {
@@ -415,31 +487,75 @@ impl BanService {
 
         self.masters.exempt(name, Some(LIFT_EXEMPTION)).await;
 
-        // No save means nothing in a file holds the ban: as lifted as it gets.
-        let save = self
-            .saves
-            .as_ref()
-            .map(|saves| match saves.set_ban(name, None) {
-                SaveBanWrite::NoSave => SaveBanWrite::AlreadySo,
-                other => other,
-            });
-        match &save {
-            Some(SaveBanWrite::Written) => tracing::info!(name, "ban cleared from their save"),
-            Some(SaveBanWrite::Refused(reason)) => {
-                tracing::error!(
-                    name,
-                    reason,
-                    "the ban could NOT be cleared from their save - the game may still refuse them"
-                );
-            }
-            _ => {}
-        }
         EnforcementResult {
             servers: 0,
             target: Self::target(name, account.as_deref(), "lift"),
             writes_save: true,
             save,
         }
+    }
+
+    /// The knowledge base: record every ban a save holds that the store does not know (set in
+    /// game, or by hand), so `/banlist` and `/checkban` show it and expiry lifts it once its
+    /// date is reached. The number learned. A master is never learned: automation never bans
+    /// one.
+    pub async fn learn_from_saves(&self) -> usize {
+        let Some(directory) = self
+            .saves
+            .as_ref()
+            .and_then(|s| s.directory())
+            .map(ToOwned::to_owned)
+        else {
+            return 0;
+        };
+        let found = match tokio::task::spawn_blocking(move || {
+            all_saves(&directory)
+                .into_iter()
+                .filter_map(|(stem, _, save)| save.ban().map(|ban| (stem, ban)))
+                .collect::<Vec<_>>()
+        })
+        .await
+        {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::error!(%error, "could not scan the saves for bans");
+                return 0;
+            }
+        };
+        let found: Vec<(String, SaveBan)> = found
+            .into_iter()
+            .filter(|(player, _)| !self.untouchable(player))
+            .collect();
+        if found.is_empty() {
+            return 0;
+        }
+        let now = self.clock.now();
+        let mut learned: Vec<String> = Vec::new();
+        let written = self
+            .store
+            .update(TEMP_BANS, Vec::new, |mut bans: Vec<BanRecord>| {
+                for (player, ban) in &found {
+                    // Re-checked inside the update: a lift or a ban racing this wins.
+                    if bans
+                        .iter()
+                        .any(|b| BanRules::same_player(Some(&b.player_id), Some(player)))
+                    {
+                        continue;
+                    }
+                    bans.push(learned_record(player, ban, now));
+                    learned.push(player.clone());
+                }
+                (!learned.is_empty()).then_some(bans)
+            })
+            .await;
+        if let Err(error) = written {
+            tracing::error!(%error, "could not record the bans found in saves");
+            return 0;
+        }
+        for player in &learned {
+            tracing::info!(player, "recorded a ban found only in their save");
+        }
+        learned.len()
     }
 
     /// Lift every expired temp ban through [`lift`](Self::lift). The bans lifted.

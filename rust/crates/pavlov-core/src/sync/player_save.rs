@@ -37,6 +37,14 @@ const UNBAN_DATE: &str = "unban_date";
 /// permanent.
 pub const UNBAN_DATE_FORMAT: &str = "%m/%d/%y";
 
+/// The day an `unban_date` names, or `None` when it is blank (permanent) or not a date the mod
+/// writes. The ban ends when that day begins, server local time: the date is when it is lifted,
+/// and lifting is the bot's job (the mod does not lift on its own).
+#[must_use]
+pub fn parse_unban_date(text: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(text.trim(), UNBAN_DATE_FORMAT).ok()
+}
+
 /// A ban as the save holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveBan {
