@@ -20,14 +20,17 @@ use pavlov_core::time::SystemClock;
 use pavlov_host::feeds::FeedWebhooks;
 use pavlov_host::logs::{FlaggedJoin, IpTrackingService, LogLine};
 use pavlov_host::metrics::MetricsRegistry;
+use pavlov_host::moderation::evasion::EVASION_REASON;
 use pavlov_host::moderation::{
     AuditLog, AutoBanOutcome, BanService, EvasionResponder, MasterNames, StoredMasterNames,
 };
 use pavlov_host::registry::RconRegistry;
 use pavlov_storage::datasets::{AUTOBAN_EXEMPT, KNOWN_PLAYERS, TEMP_BANS};
+use pavlov_storage::game_files::GameFileGuard;
+use pavlov_storage::ledger_store::LedgerFileStore;
 
 struct Fixture {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     store: Arc<SerializedStore>,
     tracking: Arc<IpTrackingService>,
     masters: Arc<StoredMasterNames>,
@@ -56,12 +59,20 @@ impl Fixture {
             Arc::clone(&metrics),
             clock.clone(),
         ));
-        let bans = Arc::new(BanService::new(
-            rcon,
-            Arc::clone(&store),
-            Arc::clone(&masters) as _,
-            clock.clone(),
-        ));
+        let modsave = dir.path().join("ModSave");
+        std::fs::create_dir_all(&modsave).unwrap();
+        let bans = Arc::new(
+            BanService::new(
+                rcon,
+                Arc::clone(&store),
+                Arc::clone(&masters) as _,
+                clock.clone(),
+            )
+            .with_saves(Arc::new(LedgerFileStore::new(
+                Some(modsave),
+                Arc::new(GameFileGuard::none()),
+            ))),
+        );
         let feeds = Arc::new(FeedWebhooks::new(
             Arc::new(FakeHttp::canned(204, "")),
             Arc::clone(&metrics),
@@ -79,7 +90,7 @@ impl Fixture {
             None,
         );
         Self {
-            _dir: dir,
+            dir,
             store,
             tracking,
             masters,
@@ -89,6 +100,27 @@ impl Fixture {
 
     fn bans(&self) -> Vec<BanRecord> {
         self.store.read(TEMP_BANS, Vec::new()).unwrap()
+    }
+
+    fn save_path(&self, player: &str) -> std::path::PathBuf {
+        self.dir
+            .path()
+            .join("ModSave")
+            .join(format!("{player}.json"))
+    }
+
+    /// The game made their save: they have joined before.
+    fn joined(&self, player: &str) {
+        std::fs::write(
+            self.save_path(player),
+            format!("{{\n\t\"name\": \"{player}\",\n\t\"money\": 0\n}}\n"),
+        )
+        .unwrap();
+    }
+
+    fn save_ban(&self, player: &str) -> serde_json::Value {
+        let text = std::fs::read_to_string(self.save_path(player)).unwrap();
+        serde_json::from_str::<serde_json::Value>(&text).unwrap()["ban"].clone()
     }
 
     async fn seed_bans(&self, bans: Vec<BanRecord>) {
@@ -154,7 +186,53 @@ async fn a_flagged_join_is_banned_and_recorded() {
     assert_eq!(bans[0].player_id, "Evader");
     assert!(bans[0].permanent);
     assert_eq!(bans[0].moderator.as_deref(), Some("auto"));
-    assert!(bans[0].reason.as_deref().unwrap().contains("Ban evasion"));
+    assert_eq!(bans[0].reason.as_deref(), Some(EVASION_REASON));
+}
+
+#[tokio::test]
+async fn an_evader_with_a_save_gets_ban_evasion_written_permanently() {
+    // Owner, 2026-11-20: an account tied by EOS id or address to a banned one is written as
+    // "Ban Evasion", with the date blank for permanent.
+    let f = Fixture::new();
+    f.joined("Evader");
+
+    f.responder.respond(&evader()).await;
+
+    assert_eq!(
+        f.save_ban("Evader"),
+        serde_json::json!({"banned": true, "reason": "Ban Evasion", "unban_date": ""})
+    );
+}
+
+#[tokio::test]
+async fn an_evader_with_no_save_is_recorded_and_written_once_the_save_exists() {
+    let f = Fixture::new();
+    f.responder.respond(&evader()).await;
+    assert!(
+        !f.save_path("Evader").exists(),
+        "the bot never creates a save"
+    );
+    assert_eq!(f.bans()[0].reason.as_deref(), Some(EVASION_REASON));
+
+    f.joined("Evader"); // they came back and the game made the file
+    let bans = BanService::new(
+        Arc::new(RconRegistry::with_system_clock(
+            &[],
+            Duration::from_secs(60),
+            Arc::new(MetricsRegistry::default()),
+        )),
+        Arc::clone(&f.store),
+        Arc::clone(&f.masters) as _,
+        Arc::new(SystemClock),
+    )
+    .with_saves(Arc::new(LedgerFileStore::new(
+        Some(f.dir.path().join("ModSave")),
+        Arc::new(GameFileGuard::none()),
+    )));
+    bans.enforce_sweep().await;
+
+    assert_eq!(f.save_ban("Evader")["reason"], "Ban Evasion");
+    assert_eq!(f.save_ban("Evader")["unban_date"], "");
 }
 
 #[tokio::test]

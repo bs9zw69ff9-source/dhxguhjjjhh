@@ -828,4 +828,10 @@ impl BanEvidence for IpTrackingService {
             Ok(())
         })
     }
+
+    fn flag_banned<'a>(&'a self, account_id: &'a str, permanent: bool) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let _ = self.request_flag(account_id, permanent).await;
+        })
+    }
 }

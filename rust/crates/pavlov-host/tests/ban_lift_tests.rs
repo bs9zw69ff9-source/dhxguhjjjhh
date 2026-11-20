@@ -39,6 +39,7 @@ const ACCOUNT: &str = "0002a1b7c3d4e5f60718293a4b5c6d7e";
 struct FakeEvidence {
     accounts: HashMap<String, String>,
     cleared: Mutex<Vec<String>>,
+    flagged: Mutex<Vec<(String, bool)>>,
 }
 
 impl FakeEvidence {
@@ -62,6 +63,14 @@ impl BanEvidence for FakeEvidence {
     fn clear_flags<'a>(&'a self, account_id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         self.cleared.lock().unwrap().push(account_id.to_owned());
         Box::pin(async { Ok(()) })
+    }
+
+    fn flag_banned<'a>(&'a self, account_id: &'a str, permanent: bool) -> BoxFuture<'a, ()> {
+        self.flagged
+            .lock()
+            .unwrap()
+            .push((account_id.to_owned(), permanent));
+        Box::pin(async {})
     }
 }
 
@@ -657,4 +666,21 @@ async fn a_masters_save_ban_is_never_learned() {
         0
     );
     assert!(f.bans().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ban_learned_from_a_save_flags_the_account_so_alts_are_caught() {
+    let f = Fixture::new().await;
+    f.ban_in_save(NAME, "set in game", "");
+    let evidence = Arc::new(FakeEvidence::knowing(NAME, ACCOUNT));
+
+    f.build(Arc::new(RecordingMasters::default()), Arc::clone(&evidence))
+        .learn_from_saves()
+        .await;
+
+    assert_eq!(
+        *evidence.flagged.lock().unwrap(),
+        [(ACCOUNT.to_owned(), true)],
+        "permanent: the id is flagged as well as the addresses"
+    );
 }
