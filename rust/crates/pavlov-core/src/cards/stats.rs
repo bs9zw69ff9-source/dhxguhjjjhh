@@ -29,9 +29,7 @@ pub fn card(profile: &PlayerProfile) -> Embed {
     if !profile.known() {
         return theme::notice(
             &title,
-            Some(
-                "Never seen on any server. Check the spelling - names are exactly as they are in game.",
-            ),
+            Some("Never seen on any server. Check the spelling."),
         );
     }
 

@@ -339,9 +339,7 @@ impl FlushCommand {
         if roster.taken_at.is_none() {
             return Ok(theme::failure(
                 "No roster yet",
-                Some(&format!(
-                    "**{server}** has not reported who is online, so there is nobody to choose from."
-                )),
+                Some(&format!("**{server}** has not reported who is online.")),
             ));
         }
         let candidates: Vec<_> = roster
@@ -384,7 +382,7 @@ impl FlushCommand {
             theme::success(
                 "Slot freed",
                 Some(&format!(
-                    "**{}** was chosen at random and kicked from **{server}**.",
+                    "**{}** kicked from **{server}**.",
                     Sanitize::code(Some(&chosen.name))
                 )),
             )

@@ -161,8 +161,7 @@ impl DeleteServerCommand {
                 theme::warning(
                     &format!("Deleting server {slot}"),
                     Some(&format!(
-                        "Removing `{}` and erasing `{}`. Watch the checklist in this channel; the bot restarts itself \
-                         at the end.",
+                        "Removing `{}` and erasing `{}`. The bot restarts itself at the end.",
                         Sanitize::code(Some(&unit)),
                         Sanitize::code(Some(&install_dir))
                     )),
@@ -276,7 +275,7 @@ impl SlashCommand for DeleteServerCommand {
                     .reply(Reply::embed(
                         theme::notice(
                             "Nothing deleted",
-                            Some("Set `confirm` to True if you really mean it - this erases the install directory."),
+                            Some("Set `confirm` to True. This erases the install directory."),
                         )
                         .brand(None),
                     ))

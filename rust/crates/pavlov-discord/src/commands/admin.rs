@@ -105,11 +105,8 @@ impl SetPinCommand {
         let pin = match supplied {
             Some(pin) if !is_valid_pin(pin) => {
                 return theme::failure(
-                    "That PIN will not work",
-                    Some(
-                        "Pavlov treats the PIN as a number: **1 to 4 digits, no leading zero**. `0123` and `12345` \
-                         are both rejected by the server.",
-                    ),
+                    "Invalid PIN",
+                    Some("Use **1 to 4 digits, no leading zero**."),
                 );
             }
             Some(pin) => pin.to_owned(),
@@ -142,7 +139,7 @@ impl SetPinCommand {
             )
         } else {
             theme::success(
-                &format!("{} Locked", theme::DENY),
+                "Locked",
                 Some(&format!(
                     "**{}** now requires the PIN **{pin}**.",
                     applied.join(", ")
@@ -239,7 +236,7 @@ impl SlashCommand for RemovePinCommand {
                     )
                 } else {
                     theme::success(
-                        &format!("{} Unlocked", theme::UP),
+                        "Unlocked",
                         Some(&format!(
                             "**{}** no longer requires a PIN.",
                             cleared.join(", ")
@@ -348,8 +345,7 @@ impl IpLookupCommand {
                 theme::warning(
                     "No verdict",
                     Some(
-                        "Nothing could be determined for that address - every detector failed or is unconfigured. \
-                         This is **not** the same as a clean result.",
+                        "Every detector failed or is unconfigured. This is **not** a clean result.",
                     ),
                 )
                 .brand(None),
@@ -518,7 +514,7 @@ impl SlashCommand for VpnCheckCommand {
                 if probes.is_empty() {
                     theme::warning(
                         "No detectors configured",
-                        Some("VPN screening is off entirely. Set at least one API key."),
+                        Some("VPN screening is off. Set at least one API key."),
                     )
                 } else {
                     probe_report(ip, &probes, self.vpn.configuration_warning().as_deref())

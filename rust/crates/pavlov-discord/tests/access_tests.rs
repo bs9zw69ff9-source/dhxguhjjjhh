@@ -227,7 +227,7 @@ async fn a_refusal_names_the_unresolved_member_case() {
     let refusal = with_roles()
         .await
         .explain_refusal(&Caller::user(STRANGER), RequiredAccess::Mod);
-    assert!(refusal.contains("could not read your roles"));
+    assert!(refusal.contains("roles could not be read"));
 }
 
 #[tokio::test]
@@ -236,9 +236,9 @@ async fn a_refusal_tells_a_resolved_member_with_no_roles_where_to_look() {
         .await
         .explain_refusal(&member(STRANGER, &[]), RequiredAccess::Mod);
 
-    assert!(refusal.contains("reads no roles on you"));
+    assert!(refusal.contains("No roles were read on you"));
     assert!(refusal.contains("HOME_GUILD_ID"));
-    assert!(!refusal.contains("could not read your roles"));
+    assert!(!refusal.contains("roles could not be read"));
     assert!(!refusal.contains("No moderator role is configured"));
 }
 
@@ -247,7 +247,7 @@ fn a_refusal_still_says_unconfigured_when_the_member_has_roles_but_none_mapped()
     let refusal = build().explain_refusal(&member(STRANGER, &[999]), RequiredAccess::Mod);
 
     assert!(refusal.contains("No moderator role is configured"));
-    assert!(!refusal.contains("reads no roles on you"));
+    assert!(!refusal.contains("No roles were read on you"));
 }
 
 #[test]

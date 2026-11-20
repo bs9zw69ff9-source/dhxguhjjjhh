@@ -24,7 +24,7 @@ pub const FEEDS: [(&str, &str, &str); 5] = [
     (
         feeds::JOIN,
         "JOIN_WEBHOOK_URL",
-        "Public join and leave lines. No addresses - safe in a public channel.",
+        "Join and leave lines. No addresses.",
     ),
     (
         feeds::CONNECT,
@@ -35,12 +35,12 @@ pub const FEEDS: [(&str, &str, &str); 5] = [
     (
         feeds::RCON,
         "RCON_WEBHOOK_URL",
-        "Every RCON and RCON+ command from Pavlov.log - bans, kicks, mod changes, Godmode, GiveItem. Private channel only.",
+        "Every RCON command from Pavlov.log. Private channel only.",
     ),
     (
         feeds::STAFF,
         "STAFF_WEBHOOK_URL",
-        "Every staff action as it happens - bans, kicks, menu grants, /serverswitch. Private channel only.",
+        "Every staff action. Private channel only.",
     ),
 ];
 
@@ -84,24 +84,16 @@ pub fn report(status: &IndexMap<String, String>, tested: bool) -> Embed {
             )
         })
         .collect();
-    let next = if tested {
-        "A test line went to every feed, plus a sample **connection card** to `connect`. Cards take a different \
-         path to plain lines, so seeing one and not the other narrows it down.\nAnything still showing \
-         *configured* did not accept it."
+    let embed = theme::notice("Feed webhooks", Some(&lines.join("\n\n")));
+    if tested {
+        embed.field(
+            "Test sent",
+            "A line to every feed and a sample card to `connect`. Anything still *configured* did not accept it.",
+            false,
+        )
     } else {
-        "Run `/feeds test:true` to post a line to each one, and a sample card to `connect`."
-    };
-    theme::notice("Feed webhooks", Some(&lines.join("\n\n"))).field(
-        "Reading this",
-        format!(
-            "{} delivering · {} configured but nothing sent yet · {} failing · {} no URL set\n\n{next}",
-            theme::OK,
-            theme::WARN,
-            theme::BAD,
-            theme::DOT
-        ),
-        false,
-    )
+        embed.footer("/feeds test:true posts a test line to each feed")
+    }
 }
 
 impl FeedsCommand {

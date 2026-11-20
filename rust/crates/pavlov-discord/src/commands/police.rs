@@ -355,20 +355,17 @@ fn percent(rate: f64) -> String {
 #[must_use]
 pub fn settings(config: &PoliceConfig) -> Embed {
     let cap = if config.max_jail_minutes > 0 {
-        format!(
-            "Jail is capped at **{} min** per booking, however many charges stack. Bail is never capped.",
-            config.max_jail_minutes
-        )
+        format!("**{} min** per booking", config.max_jail_minutes)
     } else {
-        "Jail is **uncapped** — stacked charges add up with no limit. Set one with `/bail jailcap minutes:20`.".into()
+        "**Uncapped** — set with `/bail jailcap`".to_owned()
     };
-    theme::notice(
-        "Police settings",
-        Some(&format!(
-            "Bail is **{}%** of the base prices.\n{cap}",
-            percent(config.bail_rate)
-        )),
-    )
+    theme::notice("Police settings", None)
+        .field(
+            "Bail",
+            format!("**{}%** of the base prices", percent(config.bail_rate)),
+            true,
+        )
+        .field("Jail cap", cap, true)
 }
 
 impl BailCommand {
@@ -382,8 +379,8 @@ impl BailCommand {
         if action == "jailcap" {
             let Some(minutes) = invocation.integer("minutes").filter(|m| *m >= 0) else {
                 return Ok(theme::failure(
-                    "Give a number of minutes",
-                    Some("For example `20`. Use `0` to remove the cap entirely."),
+                    "Invalid minutes",
+                    Some("Use a whole number such as `20`, or `0` for no cap."),
                 ));
             };
             let minutes = i32::try_from(minutes).unwrap_or(i32::MAX);
@@ -400,11 +397,10 @@ impl BailCommand {
                 "Sentence cap updated",
                 Some(&if minutes > 0 {
                     format!(
-                        "A booking now tops out at **{minutes} min** of jail, however many charges stack.\n\nBail is \
-                         **not** capped."
+                        "Jail is capped at **{minutes} min** per booking. Bail is **not** capped."
                     )
                 } else {
-                    "The cap is off. Stacked charges add up with no limit.".to_owned()
+                    "The cap is off.".to_owned()
                 }),
             ));
         }
@@ -413,8 +409,8 @@ impl BailCommand {
         } else {
             let Some(given) = invocation.integer("percent").filter(|p| *p >= 0) else {
                 return Ok(theme::failure(
-                    "Give a percentage",
-                    Some("For example `150` for one and a half times the base price."),
+                    "Invalid percentage",
+                    Some("Use a whole number such as `150`."),
                 ));
             };
             #[allow(clippy::cast_precision_loss)]

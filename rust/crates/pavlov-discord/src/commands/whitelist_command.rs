@@ -258,7 +258,7 @@ impl WhitelistCommand {
                     theme::failure(
                         &format!("{} has no ranks", faction.name),
                         Some(&format!(
-                            "**{}** is spawn access only - there is no ladder to start anybody on. Leave the rank out.",
+                            "**{}** is spawn access only. Leave the rank out.",
                             faction.name
                         )),
                     ),
@@ -271,7 +271,7 @@ impl WhitelistCommand {
                     theme::failure(
                         "No such rank",
                         Some(&format!(
-                            "**{}** has no rank called **{}**.\n\nIts ranks are: {}.",
+                            "**{}** has no rank **{}**.\nRanks: {}.",
                             faction.name,
                             code(&requested),
                             ranks_list(&faction)
@@ -374,18 +374,12 @@ impl WhitelistCommand {
         };
         // STATED EITHER WAY: off is what somebody reporting it "not working" is looking at.
         if joined {
-            let (name, value) = if hold_ranks {
-                (
-                    "Holds every rank",
-                    "They keep the ranks below too, so they hold every loadout up to their own. A demotion still takes back anything above.",
-                )
+            let value = if hold_ranks {
+                "On — they keep every rank up to their own."
             } else {
-                (
-                    "Holds one rank",
-                    "A promotion moves them up and takes the rank below away. Run this again with `hold_ranks:true` to keep them all.",
-                )
+                "Off — set `hold_ranks:true` to keep the ranks below."
             };
-            reply = reply.field(name, value, false);
+            reply = reply.field("Hold ranks", value, false);
         }
         Self::reply(context, reply).await
     }
@@ -410,11 +404,7 @@ impl WhitelistCommand {
                 context,
                 theme::failure(
                     &format!("{} has no ranks", faction.name),
-                    Some(&format!(
-                        "**{}** is spawn access only - there is no ladder to place {} on.",
-                        faction.name,
-                        mention(member)
-                    )),
+                    Some(&format!("**{}** is spawn access only.", faction.name)),
                 ),
             )
             .await;
@@ -440,7 +430,7 @@ impl WhitelistCommand {
                 theme::failure(
                     "Not whitelisted",
                     Some(&format!(
-                        "{} is recorded as **{}**, who is not on any roster. The stale record has been cleared.",
+                        "{} is recorded as **{}**, who is not on any roster. The record was cleared.",
                         mention(member),
                         code(&player)
                     )),
@@ -481,7 +471,7 @@ impl WhitelistCommand {
         }
         let embed = match decision.outcome {
             MembershipOutcome::Allowed => theme::success(
-                &format!("{} Rank set", theme::RANK),
+                "Rank set",
                 Some(&format!(
                     "**{}** — {} → **{after}**",
                     code(&player),
@@ -489,16 +479,13 @@ impl WhitelistCommand {
                 )),
             ),
             MembershipOutcome::NoChange => theme::notice(
-                "Already there",
-                Some(&format!(
-                    "**{}** is already **{after}**. Nothing was written.",
-                    code(&player)
-                )),
+                "No change",
+                Some(&format!("**{}** is already **{after}**.", code(&player))),
             ),
             MembershipOutcome::NoSuchRank => theme::failure(
                 "No such rank",
                 Some(&format!(
-                    "**{}** has no rank called **{}**.\n\nIts ranks are: {}.",
+                    "**{}** has no rank **{}**.\nRanks: {}.",
                     faction.name,
                     code(&rank),
                     ranks_list(&faction)
@@ -520,8 +507,8 @@ impl WhitelistCommand {
                 theme::failure(
                     "No membership on record",
                     Some(&format!(
-                        "{} has no faction on record. They may still be whitelisted in game under a name the bot \
-                         does not know — `/whitelist add` links the two, then remove.",
+                        "{} has no faction on record. If they are whitelisted in game, link them with \
+                         `/whitelist add` first.",
                         mention(member)
                     )),
                 ),
@@ -587,9 +574,8 @@ impl WhitelistCommand {
         let embed = theme::denied(
             &format!("Wipe the {} whitelist?", faction.name),
             Some(&format!(
-                "Clears **{}** member(s) from every **{}** roster file, spawn file included. They lose access \
-                 in game as soon as it is written.\n\nBackups are kept on the server, so it is recoverable by \
-                 hand — not from Discord.",
+                "Clears **{}** member(s) from every **{}** roster file. They lose access in game at once.\n\
+                 Recoverable only by hand, from the server's backups.",
                 roster.len(),
                 faction.name
             )),
@@ -708,8 +694,8 @@ fn wipe_reply(result: &RosterWipe, faction: &FactionDefinition) -> Embed {
         MembershipOutcome::Allowed => theme::success(
             &format!("{} whitelist wiped", faction.name),
             Some(&format!(
-                "**{}** member(s) cleared from every **{}** roster file. A pre-write copy of each file is in the backup directory.",
-                result.removed, faction.name
+                "**{}** member(s) cleared. A copy of each file is in the backup directory.",
+                result.removed
             )),
         ),
         MembershipOutcome::RosterUnavailable => membership_reply::fallback(&MembershipDecision {
@@ -721,8 +707,7 @@ fn wipe_reply(result: &RosterWipe, faction: &FactionDefinition) -> Embed {
         _ => theme::warning(
             "Partly wiped",
             Some(&format!(
-                "**{}** cleared. These files could not be written and still hold members: {}.\n\nThe log has the reason. \
-                 Run the wipe again after fixing it.",
+                "**{}** cleared. Still holding members: {}.\nThe log has the reason.",
                 result.removed,
                 result
                     .failed
@@ -781,10 +766,7 @@ impl WhitelistWipe {
         let Some(faction) = self.rosters.factions().get(id.argument(1)).cloned() else {
             return Self::close(
                 responder,
-                theme::failure(
-                    "That faction is gone",
-                    Some("It was removed from the bot between the prompt and the press. Nothing was changed."),
-                ),
+                theme::failure("That faction is gone", Some("Nothing was changed.")),
             )
             .await;
         };

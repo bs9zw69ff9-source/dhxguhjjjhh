@@ -79,7 +79,7 @@ pub fn report(
     let title = format!("Server {number} — {}", verb(action).to_lowercase());
     let mut embed = if result.ok {
         theme::success(
-            &format!("{title} ✓"),
+            &title,
             Some(&format!(
                 "`{}` is {}.",
                 Sanitize::code(Some(unit)),
@@ -98,8 +98,8 @@ pub fn report(
     };
     if result.ok && action == UnitAction::Stop {
         embed = embed.field(
-            format!("{} It will stay down", theme::WARN),
-            "Nothing brings it back on its own — run `/serverswitch` again with **Start** when you want it up.",
+            format!("{} Stays down", theme::WARN),
+            "Start it again with `/serverswitch`.",
             false,
         );
     }
@@ -123,11 +123,7 @@ pub fn report(
         );
     }
     if let Some(advice) = advice {
-        embed = embed.field(
-            format!("{} How to fix this", theme::WARN),
-            advice.to_owned(),
-            false,
-        );
+        embed = embed.field(format!("{} Fix", theme::WARN), advice.to_owned(), false);
     }
     embed
 }
@@ -158,10 +154,7 @@ impl ServerSwitchCommand {
             .and_then(|n| i32::try_from(n).ok())
             .unwrap_or(0);
         let Some(action) = invocation.integer("action").and_then(action_of) else {
-            return Ok(theme::failure(
-                "Unknown action",
-                Some("Pick one of the offered actions."),
-            ));
+            return Ok(theme::failure("Unknown action", None));
         };
         let Some(unit) = self.services.unit_for(number).map(str::to_owned) else {
             return Ok(theme::failure(
@@ -188,7 +181,7 @@ impl ServerSwitchCommand {
             context
                 .reply(Reply::embed(
                     theme::notice(
-                        &format!("{} {} Server {number}", theme::WARN, verb(action)),
+                        &format!("{} Server {number}", verb(action)),
                         Some(&format!("`{unit}` — {said}. In {}s…", GRACE.as_secs())),
                     )
                     .brand(None),

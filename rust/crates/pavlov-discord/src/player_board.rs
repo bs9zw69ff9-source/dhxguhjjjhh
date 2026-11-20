@@ -248,7 +248,7 @@ pub fn build(servers: &[BoardRoster], at: DateTime<Utc>) -> Option<Embed> {
     }
     let mut footer = format!("Updated {} Eastern", EasternTime::stamp(Some(at)));
     if dropped > 0 {
-        footer.push_str(&format!(" · {dropped} column(s) would not fit"));
+        footer.push_str(&format!(" · {dropped} column(s) not shown"));
     }
     Some(embed.brand(Some(&footer)))
 }

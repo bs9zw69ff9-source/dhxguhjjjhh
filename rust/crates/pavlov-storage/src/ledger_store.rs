@@ -24,8 +24,7 @@ use crate::game_files::GameFileGuard;
 
 const STRIPES: usize = 64;
 const EXTENSION: &str = "json";
-const UNRECOGNISED: &str =
-    "their save file is not in a shape the bot recognises, so it will not rewrite it";
+const UNRECOGNISED: &str = "their save file is not in a recognised format";
 
 /// How a licence change went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,7 +192,7 @@ impl LedgerFileStore {
 
     fn gate(&self, player_id: &str) -> Option<String> {
         let Some(path) = self.path_for(player_id) else {
-            return Some("there is no ledger directory configured".into());
+            return Some("`MODSAVE_PATH` is not set".into());
         };
         if let Some(directory) = self.directory.as_ref().filter(|d| !d.is_dir()) {
             return Some(format!(
@@ -202,7 +201,7 @@ impl LedgerFileStore {
             ));
         }
         if !path.exists() {
-            return Some("they have no save file yet. The bot never creates one - the game does that the first time they join".into());
+            return Some("they have no save file yet; the game creates it on first join".into());
         }
         None
     }

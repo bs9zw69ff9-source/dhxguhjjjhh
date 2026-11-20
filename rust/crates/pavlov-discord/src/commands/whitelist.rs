@@ -123,13 +123,13 @@ pub fn describe(decision: &MembershipDecision, player: &str, faction: &FactionDe
         MembershipOutcome::AlreadyInAnotherFaction => theme::denied(
             "Already in another faction",
             Some(&format!(
-                "**{}** belongs to **{}**. Remove them from that faction first - a player may only belong to one.",
+                "**{}** belongs to **{}**. Remove them from it first.",
                 code(player),
                 decision.conflict.as_deref().unwrap_or("another faction")
             )),
         ),
         MembershipOutcome::NoChange => theme::notice(
-            "Nothing to do",
+            "No change",
             Some(&format!("**{}** is already in that state.", code(player))),
         ),
         MembershipOutcome::NotWhitelisted => theme::failure(

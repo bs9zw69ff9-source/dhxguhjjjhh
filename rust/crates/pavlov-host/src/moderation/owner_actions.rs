@@ -84,7 +84,7 @@ impl std::fmt::Debug for OwnerActionParts {
 
 const NO_BLACKLIST: &str = "The command blacklist is not available.";
 const NO_NEVER_BAN: &str = "The never-ban list is not available.";
-const NO_SNAPSHOTS: &str = "Whitelist snapshots are not wired up on this bot.";
+const NO_SNAPSHOTS: &str = "Whitelist snapshots are not available.";
 
 fn flag_count(flags: &FlagSet) -> usize {
     flags.ips.len() + flags.manual_ips.len() + flags.names.len() + flags.ids.len()
@@ -143,7 +143,7 @@ impl OwnerActions {
     pub async fn blacklist(&self, target: &str) -> OwnerActionResult {
         let target = target.trim().to_owned();
         if target.is_empty() {
-            return OwnerActionResult::refused("Nothing to blacklist - the value was empty.");
+            return OwnerActionResult::refused("No address or username given.");
         }
         let is_address = target.parse::<IpAddr>().is_ok();
         let flagged = target.clone();
@@ -166,12 +166,9 @@ impl OwnerActions {
             (Some(firewall), true) => {
                 let result = firewall.deny(&target).await;
                 Some(if result.ok {
-                    "🧱 Also denied at the OS firewall (ufw).".to_owned()
+                    "Also denied at the firewall (ufw).".to_owned()
                 } else {
-                    format!(
-                        "⚠️ Blacklisted, but the firewall rule did not apply: {}",
-                        result.detail
-                    )
+                    format!("⚠️ The firewall rule did not apply: {}", result.detail)
                 })
             }
             _ => None,
@@ -191,12 +188,10 @@ impl OwnerActions {
         };
         let kind = if is_address { "address" } else { "username" };
         let summary = if matched.is_empty() {
-            format!(
-                "{kind} `{target}` blacklisted. No account on record matches it yet; future connections will be caught."
-            )
+            format!("{kind} `{target}` blacklisted. No known account matches it yet.")
         } else {
             format!(
-                "{kind} `{target}` blacklisted. It matches **{}** known account(s), listed below - ban them with `/permban`.",
+                "{kind} `{target}` blacklisted. Matches **{}** known account(s) - ban them with `/permban`.",
                 matched.len()
             )
         };
@@ -220,19 +215,19 @@ impl OwnerActions {
             flags
                 .manual_ips
                 .iter()
-                .map(|ip| format!("🚫 address `{ip}` *(set by an owner)*")),
+                .map(|ip| format!("• address `{ip}` *(set by an owner)*")),
         );
         lines.extend(
             flags
                 .ips
                 .iter()
-                .map(|ip| format!("🚫 address `{ip}` *(from a ban)*")),
+                .map(|ip| format!("• address `{ip}` *(from a ban)*")),
         );
-        lines.extend(flags.names.iter().map(|n| format!("🚫 username **{n}**")));
-        lines.extend(flags.ids.iter().map(|id| format!("🚫 account `{id}`")));
+        lines.extend(flags.names.iter().map(|n| format!("• username **{n}**")));
+        lines.extend(flags.ids.iter().map(|id| format!("• account `{id}`")));
         if !lines.is_empty() {
             return OwnerActionResult::list(
-                format!("**{}** blacklist entr(ies).", lines.len()),
+                format!("**{}** on the blacklist.", lines.len()),
                 lines,
             );
         }
@@ -245,16 +240,12 @@ impl OwnerActions {
         let raw = raw.trim();
         if raw.chars().count() > 2 {
             return OwnerActionResult::done(format!(
-                "**The blacklist could not be read.**\n\n`{IP_FLAGS}` holds {} characters that did not parse, so this list \
-                 is empty while the matcher may still be banning on what is in there. That is a corrupt or \
-                 foreign-format row.\n\n**Clear every flag** on this panel rewrites it from scratch and fixes it.",
+                "**The blacklist could not be read.** `{IP_FLAGS}` holds {} characters that did not parse.\n\
+                 **Clear every flag** on this panel rewrites it.",
                 raw.chars().count()
             ));
         }
-        OwnerActionResult::done(
-            "Nothing is blacklisted.\n\nThis is only what an owner blacklisted by hand. VPN screening and the \
-             game's own ban list are separate - `/checkban <name>` says which one caught somebody.",
-        )
+        OwnerActionResult::done("Nothing is blacklisted.")
     }
 
     /// Accounts sharing a CONFIRMED address with this name's account.
@@ -295,7 +286,7 @@ impl OwnerActions {
         let before = self.tracking.load_flags();
         let was_manual = before.manual_ips.contains(&ip);
         if !was_manual && !before.ips.contains(&ip) {
-            return OwnerActionResult::done(format!("`{ip}` was not flagged. Nothing changed."));
+            return OwnerActionResult::done(format!("`{ip}` was not flagged."));
         }
         let cleared = ip.clone();
         if let Err(error) = self
@@ -308,17 +299,14 @@ impl OwnerActions {
         {
             return OwnerActionResult::refused(format!("The flag could not be cleared. ({error})"));
         }
-        let done = format!("`{ip}` un-flagged. Anyone on that address can connect again.");
+        let done = format!("`{ip}` un-flagged.");
         match (&self.parts.firewall, was_manual) {
             (Some(firewall), true) => {
                 let result = firewall.undeny(&ip).await;
                 let note = if result.ok {
-                    "🧱 The OS firewall (ufw) rule was removed too.".to_owned()
+                    "The firewall (ufw) rule was removed too.".to_owned()
                 } else {
-                    format!(
-                        "⚠️ The bot flag is gone, but the firewall rule may remain: {}",
-                        result.detail
-                    )
+                    format!("⚠️ The firewall rule may remain: {}", result.detail)
                 };
                 OwnerActionResult::done(format!("{done}\n{note}"))
             }
@@ -337,7 +325,7 @@ impl OwnerActions {
             .await
         {
             Ok(()) => OwnerActionResult::done(format!(
-                "**{}** username flag(s) cleared. Address and account flags are untouched.",
+                "**{}** username flag(s) cleared.",
                 before.names.len()
             )),
             Err(error) => OwnerActionResult::refused(format!("Nothing was cleared. ({error})")),
@@ -358,8 +346,7 @@ impl OwnerActions {
             return OwnerActionResult::refused(format!("The wipe did not complete. ({error})"));
         }
         OwnerActionResult::done(format!(
-            "Wiped **{accounts}** account record(s) and **{}** flag(s). Bans themselves are untouched - \
-             this only clears what the evasion tracker knows.",
+            "Wiped **{accounts}** account record(s) and **{}** flag(s). Bans are untouched.",
             flag_count(&flags)
         ))
     }
@@ -368,7 +355,7 @@ impl OwnerActions {
         let count = flag_count(&self.tracking.load_flags());
         match self.store.write(IP_FLAGS, &FlagSet::default()).await {
             Ok(()) => OwnerActionResult::done(format!(
-                "**{count}** address, account and name flag(s) cleared. Ban records are unchanged."
+                "**{count}** flag(s) cleared. Ban records are unchanged."
             )),
             Err(error) => OwnerActionResult::refused(format!("Nothing was cleared. ({error})")),
         }
@@ -402,13 +389,12 @@ impl OwnerActions {
             lifted = true;
         }
         let tail = if lifted {
-            " Any ban on them has been lifted and their evasion flags cleared."
+            " Their ban is lifted and their flags cleared."
         } else {
             " Run `/unban` if they are still banned."
         };
         OwnerActionResult::done(format!(
-            "**{player}** will never be auto-banned again - not by evasion matching, not by VPN screening, \
-             not by the enforcement sweep.{tail}\n\nA moderator can still ban them by hand."
+            "**{player}** will never be auto-banned again.{tail}\nStaff can still ban them by hand."
         ))
     }
 
@@ -447,7 +433,7 @@ impl OwnerActions {
             format!("**{}** player(s) can never be auto-banned.", entries.len()),
             sorted
                 .iter()
-                .map(|(name, at)| format!("✅ **{name}** — since <t:{at}:R>"))
+                .map(|(name, at)| format!("• **{name}** — since <t:{at}:R>"))
                 .collect(),
         )
     }
@@ -471,9 +457,9 @@ impl OwnerActions {
             BarOutcome::AlreadyBarred => {
                 OwnerActionResult::done(format!("`{id}` is already barred."))
             }
-            BarOutcome::Owner => OwnerActionResult::refused(format!(
-                "`{id}` is an owner. Owners can never be barred from the bot."
-            )),
+            BarOutcome::Owner => {
+                OwnerActionResult::refused(format!("`{id}` is an owner. Owners cannot be barred."))
+            }
             _ => OwnerActionResult::refused(format!(
                 "`{id}` was NOT barred: the bar list could not be saved. ({})",
                 result.error.unwrap_or_default()
@@ -493,9 +479,7 @@ impl OwnerActions {
             BarOutcome::Unbarred => {
                 OwnerActionResult::done(format!("`{id}` may use bot commands again."))
             }
-            BarOutcome::NotBarred => {
-                OwnerActionResult::done(format!("`{id}` was not barred. Nothing changed."))
-            }
+            BarOutcome::NotBarred => OwnerActionResult::done(format!("`{id}` was not barred.")),
             _ => OwnerActionResult::refused(format!(
                 "`{id}` is STILL barred: the change could not be saved. ({})",
                 result.error.unwrap_or_default()
@@ -554,7 +538,7 @@ impl OwnerActions {
         }
         self.tracking.untrack(name);
         OwnerActionResult::done(format!(
-            "**{name}**'s addresses will no longer be recorded. Existing records are kept - clear those with a full wipe."
+            "**{name}**'s addresses will no longer be recorded. Existing records are kept."
         ))
     }
 
@@ -656,7 +640,7 @@ impl OwnerActions {
             format!("Deleted **{deleted}** player save(s).")
         } else {
             format!(
-                "Deleted **{deleted}** player save(s). **{failed}** could not be deleted - most likely held open by the game server."
+                "Deleted **{deleted}** player save(s). **{failed}** could not be deleted (likely held open by the game)."
             )
         })
     }
@@ -681,7 +665,7 @@ impl OwnerActions {
         }
         OwnerActionResult::done(format!(
             "Cleared **{accounts}** account record(s), **{playtime}** playtime entr(ies) and **{last_seen}** last-seen entr(ies).\n\
-             Bans, blacklist flags, warrants, whitelists and donators were **not** touched."
+             Bans, flags, warrants, whitelists and donators are untouched."
         ))
     }
 
@@ -699,7 +683,7 @@ impl OwnerActions {
         self.clear_bans(
             |_| true,
             "ban record(s)",
-            "Native server bans are untouched - lift those with `/unban`.",
+            "Bans in player saves are untouched - lift those with `/unban`.",
         )
         .await
     }
@@ -731,23 +715,19 @@ impl OwnerActions {
             Ok(result) if result.ok || result.is_vetoed() => {}
             Ok(result) => {
                 return OwnerActionResult::refused(format!(
-                    "The ban list could not be updated, so nothing was cleared. ({})",
+                    "Nothing was cleared. ({})",
                     result.error.unwrap_or_default()
                 ));
             }
             Err(error) => {
-                return OwnerActionResult::refused(format!(
-                    "The ban list could not be updated, so nothing was cleared. ({error})"
-                ));
+                return OwnerActionResult::refused(format!("Nothing was cleared. ({error})"));
             }
         }
         let (removed, kept) = *counts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let protected = if kept > 0 {
-            format!(
-                "\n**{kept}** Master Owner ban(s) were kept - only a Master Owner can lift those, with `/unban`."
-            )
+            format!("\n**{kept}** Master Owner ban(s) kept - only a Master Owner can lift those.")
         } else {
             String::new()
         };

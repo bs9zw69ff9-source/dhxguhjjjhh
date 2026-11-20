@@ -78,23 +78,17 @@ impl WarnCommand {
         reason: &str,
     ) -> Result<Embed, CommandError> {
         if player.is_empty() {
-            return Ok(theme::failure(
-                "That name has nothing usable in it",
-                Some("After sanitising there was no identifier left to warn."),
-            ));
+            return Ok(theme::failure("Invalid name", None));
         }
         let outcome = match self.warnings.warn(player, reason, username).await {
             Ok(outcome) => outcome,
             Err(WarningError::NoPlayer) => {
-                return Ok(theme::failure(
-                    "That name has nothing usable in it",
-                    Some("After sanitising there was no identifier left to warn."),
-                ));
+                return Ok(theme::failure("Invalid name", None));
             }
             Err(error) => return Err(CommandError(format!("warnings: {error}"))),
         };
         let mut embed = theme::warning(
-            &format!("{} Warned", theme::WARN),
+            "Warned",
             Some(&format!(
                 "**{}** — {}",
                 Sanitize::code(Some(player)),
@@ -221,7 +215,7 @@ impl WarnCommand {
         let mut all = self.warnings.for_player(player);
         if all.is_empty() {
             return theme::success(
-                &format!("{} Clean record", theme::OK),
+                "Clean record",
                 Some(&format!(
                     "**{}** has no warnings.",
                     Sanitize::code(Some(player))
@@ -252,18 +246,10 @@ impl WarnCommand {
             .next()
             .unwrap_or_default();
         let mut embed = theme::notice(
-            &format!(
-                "{} Warnings for {}",
-                theme::WARN,
-                Sanitize::code(Some(player))
-            ),
+            &format!("Warnings for {}", Sanitize::code(Some(player))),
             Some(&first),
         )
-        .field(
-            "Active",
-            format!("{} (counts toward escalation)", active.len()),
-            true,
-        )
+        .field("Active", active.len().to_string(), true)
         .field("On record", all.len().to_string(), true);
         if let Some(remaining) = warnings_until_ban(active.len()) {
             embed = embed.field(
@@ -284,7 +270,7 @@ impl WarnCommand {
         }
         Ok(if self.warnings.remove(player, id).await? {
             theme::success(
-                &format!("{} Warning removed", theme::OK),
+                "Warning removed",
                 Some(&format!(
                     "`{id}` is off **{}**'s record.",
                     Sanitize::code(Some(player))
@@ -314,10 +300,9 @@ impl WarnCommand {
             )
         } else {
             theme::success(
-                &format!("{} Record cleared", theme::OK),
+                "Record cleared",
                 Some(&format!(
-                    "Removed {cleared} warning(s) from **{}**.\nAn existing escalation ban is NOT lifted by this - use \
-                     `/unban` for that.",
+                    "Removed {cleared} warning(s) from **{}**.\nAn escalation ban stays until `/unban`.",
                     Sanitize::code(Some(player))
                 )),
             )
@@ -327,10 +312,7 @@ impl WarnCommand {
     fn standings(&self) -> Embed {
         let rows = self.warnings.standings();
         if rows.is_empty() {
-            return theme::success(
-                &format!("{} Nobody is warned", theme::OK),
-                Some("No player has an active warning."),
-            );
+            return theme::success("No active warnings", None);
         }
         let lines: Vec<String> = rows
             .iter()
@@ -346,11 +328,8 @@ impl WarnCommand {
                 )
             })
             .collect();
-        theme::warning(
-            &format!("{} Active warnings", theme::WARN),
-            Some(&lines.join("\n")),
-        )
-        .brand(Some(&format!("Decays after {} days", days(DECAY_WINDOW))))
+        theme::warning("Active warnings", Some(&lines.join("\n")))
+            .brand(Some(&format!("Decays after {} days", days(DECAY_WINDOW))))
     }
 
     async fn run(&self, context: &CommandContext<'_>) -> Result<Embed, CommandError> {

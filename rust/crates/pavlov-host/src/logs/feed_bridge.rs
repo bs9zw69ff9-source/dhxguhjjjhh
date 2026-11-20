@@ -303,12 +303,18 @@ impl FeedBridge {
         let alert = SecurityAlert {
             kind: SecurityAlertKind::Alts,
             player: name.to_owned(),
-            headline: format!("They share an address with {} other account(s).", alts.len()),
-            action: "Nothing. Linked accounts are not evasion on their own - this is for a human to look at.".into(),
+            headline: format!(
+                "They share an address with {} other account(s).",
+                alts.len()
+            ),
+            action: "Nothing. Linked accounts are not evasion on their own.".into(),
             account_id: Some(confirmed.account_id.clone()),
             ip: Some(confirmed.ip.clone()),
             server: Some(server.to_owned()),
-            alts: alts.iter().map(|a| a.name().map_or_else(|| a.id.clone(), str::to_owned)).collect(),
+            alts: alts
+                .iter()
+                .map(|a| a.name().map_or_else(|| a.id.clone(), str::to_owned))
+                .collect(),
             at: Some(confirmed.at),
         };
         alerts.post(&alert).await;

@@ -132,8 +132,7 @@ impl Session {
             .unwrap_or_default();
         let rows: Vec<String> = self.page_of().iter().map(summary).collect();
         let body = format!(
-            "**{}** server(s){matched}, **{populated}** with players on, **{players}** playing in total.\n\nPick one \
-             from the menu for the full details.\n\n{}",
+            "**{}** server(s){matched}, **{populated}** populated, **{players}** playing.\n\n{}",
             self.all.len(),
             rows.join("\n")
         );
@@ -245,89 +244,82 @@ fn describe(label: &str, raw: &str) -> String {
 pub fn card(server: &ServerListing, ours: bool) -> Embed {
     let players = format!("{}/{}", server.players, server.max_players);
     let suffix = if ours { " · yours" } else { "" };
-    theme::notice(
-        &format!("{}{suffix}", trim(&server.name, 240)),
-        Some(&format!(
-            "**{players}** playing **{}** on **{}**.",
-            Sanitize::message(Some(&server.game_mode_label)),
-            Sanitize::message(Some(&server.map_label))
-        )),
-    )
-    .field("Connect", format!("`{}:{}`", server.ip, server.port), true)
-    .field(
-        "Players",
-        if server.full() {
-            format!("{players} (full)")
-        } else {
-            players
-        },
-        true,
-    )
-    .field(
-        "Game mode",
-        describe(&server.game_mode_label, &server.game_mode),
-        true,
-    )
-    .field("Map", Sanitize::message(Some(&server.map_label)), true)
-    .field(
-        "Map ID",
-        if server.map_id.is_empty() {
-            "*none*".into()
-        } else {
-            format!("`{}`", Sanitize::code(Some(&server.map_id)))
-        },
-        true,
-    )
-    .field(
-        "Workshop",
-        if server.is_workshop_map() {
-            "Custom map"
-        } else {
-            "Stock map"
-        },
-        true,
-    )
-    .field(
-        "Version",
-        if server.version.is_empty() {
-            "*unknown*".into()
-        } else {
-            server.version.clone()
-        },
-        true,
-    )
-    .field(
-        "Password",
-        if server.password_protected {
-            "🔒 Required"
-        } else {
-            "Open"
-        },
-        true,
-    )
-    .field(
-        "Anti-cheat",
-        if server.secured {
-            "Enforced"
-        } else {
-            "⚠️ Not enforced"
-        },
-        true,
-    )
-    .field(
-        "Last seen",
-        server.updated.map_or_else(
-            || "*unknown*".to_owned(),
-            |at| {
-                format!(
-                    "<t:{}:R> ({})",
-                    at.timestamp(),
-                    EasternTime::stamp(Some(at))
-                )
+    theme::notice(&format!("{}{suffix}", trim(&server.name, 240)), None)
+        .field("Connect", format!("`{}:{}`", server.ip, server.port), true)
+        .field(
+            "Players",
+            if server.full() {
+                format!("{players} (full)")
+            } else {
+                players
             },
-        ),
-        false,
-    )
+            true,
+        )
+        .field(
+            "Game mode",
+            describe(&server.game_mode_label, &server.game_mode),
+            true,
+        )
+        .field("Map", Sanitize::message(Some(&server.map_label)), true)
+        .field(
+            "Map ID",
+            if server.map_id.is_empty() {
+                "*none*".into()
+            } else {
+                format!("`{}`", Sanitize::code(Some(&server.map_id)))
+            },
+            true,
+        )
+        .field(
+            "Workshop",
+            if server.is_workshop_map() {
+                "Custom map"
+            } else {
+                "Stock map"
+            },
+            true,
+        )
+        .field(
+            "Version",
+            if server.version.is_empty() {
+                "*unknown*".into()
+            } else {
+                server.version.clone()
+            },
+            true,
+        )
+        .field(
+            "Password",
+            if server.password_protected {
+                "🔒 Required"
+            } else {
+                "Open"
+            },
+            true,
+        )
+        .field(
+            "Anti-cheat",
+            if server.secured {
+                "Enforced"
+            } else {
+                "⚠️ Not enforced"
+            },
+            true,
+        )
+        .field(
+            "Last seen",
+            server.updated.map_or_else(
+                || "*unknown*".to_owned(),
+                |at| {
+                    format!(
+                        "<t:{}:R> ({})",
+                        at.timestamp(),
+                        EasternTime::stamp(Some(at))
+                    )
+                },
+            ),
+            false,
+        )
 }
 
 /// The browser: the component handler behind `/server lookup`.
@@ -391,9 +383,9 @@ impl ServerBrowser {
         );
         if session.all.is_empty() {
             let why = if snapshot.failed {
-                "The Pavlov master server could not be reached, and nothing was cached yet. Try again shortly."
+                "The Pavlov master server could not be reached."
             } else {
-                "Nothing in the public list matched that. Try a shorter search, or drop it entirely."
+                "Try a shorter search."
             };
             return responder
                 .edit_original(Reply::embed(

@@ -37,12 +37,15 @@ pub fn report(targets: &Targets, lines: &[String]) -> Embed {
     let body = body.join("\n");
     let mut embed = if failed > 0 {
         theme::failure(
-            &format!("{failed} of {} channel(s) could not be updated", lines.len()),
+            &format!(
+                "{failed} of {} channel(s) could not be updated",
+                lines.len()
+            ),
             Some(&body),
         )
         .field(
             "Most likely",
-            "**needs Manage Channels** — *on each voice channel*, not just the server. Usually this one.\n\
+            "**needs Manage Channels** — on each voice channel, not just the server.\n\
              **not visible** — wrong id, or the bot cannot see that channel.",
             false,
         )
@@ -54,12 +57,7 @@ pub fn report(targets: &Targets, lines: &[String]) -> Embed {
     if let Some((title, text)) = missing_half(targets) {
         embed = embed.field(title, text, false);
     }
-    embed.field(
-        "Note",
-        "The timer already does this every 5 minutes. Discord allows two renames per 10 minutes *per channel*, and \
-         running it by hand spends one.",
-        false,
-    )
+    embed.footer("Discord allows 2 renames per 10 minutes per channel")
 }
 
 impl SlashCommand for CountsCommand {
@@ -90,10 +88,9 @@ impl SlashCommand for CountsCommand {
                 && self.targets.total_channel.is_none()
             {
                 theme::warning(
-                    "No count channels are configured",
+                    "No count channels configured",
                     Some(
-                        "Set `PLAYER_COUNT_CHANNELS` to the voice channel ids in server order, and \
-                         `SHACK_TOTAL_CHANNEL` to the platform-total channel, then restart.\n\n\
+                        "Set these, then restart. Channel ids go in server order.\n\
                          ```\nPLAYER_COUNT_CHANNELS=111,222,333\nSHACK_TOTAL_CHANNEL=444\n```",
                     ),
                 )

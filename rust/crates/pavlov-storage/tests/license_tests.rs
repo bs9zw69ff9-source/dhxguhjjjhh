@@ -118,7 +118,12 @@ fn a_file_in_neither_shape_is_refused_not_overwritten() {
     let store = f.store();
 
     assert!(!store.write("Alice", 60));
-    assert!(store.refusal("Alice").unwrap().contains("shape"));
+    assert!(
+        store
+            .refusal("Alice")
+            .unwrap()
+            .contains("recognised format")
+    );
     assert_eq!(f.contents("Alice"), other_mod);
 }
 

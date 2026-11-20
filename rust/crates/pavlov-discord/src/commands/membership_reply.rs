@@ -11,25 +11,18 @@ use pavlov_core::skin::theme;
 pub fn fallback(decision: &MembershipDecision) -> Embed {
     match decision.outcome {
         MembershipOutcome::RosterUnavailable => theme::failure(
-            "The roster files are unreachable",
+            "Roster unreachable",
             Some(
-                "Nothing was changed — the bot cannot reach the roster directory.\n\n\
-                 Check `FACTION_ROLES_PATH` on the process running this command. It has to point at \
-                 the folder holding the faction `.txt` files, and that folder has to exist already.",
+                "Nothing was changed. `FACTION_ROLES_PATH` must point at an existing roster folder.",
             ),
         ),
         MembershipOutcome::WriteFailed => theme::failure(
-            "The roster could not be written",
-            Some(
-                "Nothing was changed. The files read fine but the write failed — permissions, a full \
-                 disk, or the guard blocking a change that would have emptied the roster. The log has the reason.",
-            ),
+            "Roster not written",
+            Some("Nothing was changed. Check permissions and disk space; the log has the reason."),
         ),
         MembershipOutcome::UnknownFaction => theme::failure(
-            "No such faction",
-            Some(
-                "That faction is not in the registry. Anyone recorded against it needs re-adding to a current one.",
-            ),
+            "Unknown faction",
+            Some("Anyone recorded against it needs re-adding to a current faction."),
         ),
         other => theme::failure(
             "Refused",

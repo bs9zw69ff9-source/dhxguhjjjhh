@@ -175,7 +175,7 @@ impl Boards {
             standing.ledgers
         );
         if shown < standing.top.len() {
-            footer.push_str(&format!(" - showing {shown}, the rest would not fit"));
+            footer.push_str(&format!(" - showing {shown}"));
         }
         footer.push_str(&format!(
             " - updated {} Eastern",

@@ -135,8 +135,7 @@ impl SubclassCommand {
                 theme::failure(
                     "No membership on record",
                     Some(&format!(
-                        "<@{member}> has no faction recorded against their account. Re-add them with \
-                         `/whitelist add` to link their in-game name, then try again."
+                        "<@{member}> has no faction on record. Add them with `/whitelist add` first."
                     )),
                 ),
             )
@@ -152,8 +151,7 @@ impl SubclassCommand {
                 theme::failure(
                     "Not whitelisted",
                     Some(&format!(
-                        "<@{member}> is recorded as **{code}**, who is not on any roster. Sub-classes are additive \
-                         to a rank. The stale record has been cleared."
+                        "<@{member}> is recorded as **{code}**, who is not on any roster. The record was cleared."
                     )),
                 ),
             )
@@ -182,8 +180,8 @@ impl SubclassCommand {
                 theme::failure(
                     "Wrong faction's sub-class",
                     Some(&format!(
-                        "That is a **{chosen}** sub-class, and **{code}** is in **{}**. Pick the {} one.",
-                        membership.faction, membership.faction
+                        "That is a **{chosen}** sub-class; **{code}** is in **{}**.",
+                        membership.faction
                     )),
                 ),
             )
@@ -209,20 +207,18 @@ impl SubclassCommand {
                 } else {
                     "Sub-class assigned"
                 },
-                Some(&format!(
-                    "**{code}** — {subclass}\nThey keep their rank of **{}**.",
-                    membership.rank
-                )),
-            ),
+                Some(&format!("**{code}** — {subclass}")),
+            )
+            .field("Rank", membership.rank.clone(), true),
             MembershipOutcome::AlreadyHasSubclass => theme::denied(
-                "They already hold one",
+                "Already holds a sub-class",
                 Some(&format!(
                     "**{code}** is **{}**. A member may hold at most one sub-class.",
                     decision.conflict.as_deref().unwrap_or("")
                 )),
             ),
             MembershipOutcome::NoSuchSubclass => theme::failure(
-                "Not a sub-class of that faction",
+                "Unknown sub-class",
                 Some(&format!(
                     "**{}** does not define `{}`.",
                     faction.name,
@@ -230,7 +226,7 @@ impl SubclassCommand {
                 )),
             ),
             MembershipOutcome::NoChange => theme::notice(
-                "Nothing to do",
+                "No change",
                 Some(if removing {
                     "They do not hold it."
                 } else {

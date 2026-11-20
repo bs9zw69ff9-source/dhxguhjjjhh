@@ -87,27 +87,20 @@ pub fn overview(report: &FactionReport, faction: &FactionDefinition) -> Embed {
             .collect();
         embed = embed.field("Ranks", ranks.join("\n"), false);
     }
-    embed.field(
-        "Active means",
-        format!(
-            "Seen inside the last {} days. Worth reviewing means idle for {}+ days, or under {} minutes of recorded \
-             playtime.",
-            FactionActivity::active_window().num_days(),
-            FactionActivity::inactive_after().num_days(),
-            FactionActivity::MINIMUM_MONTHLY_MINUTES
-        ),
-        false,
-    )
+    // The thresholds the two counts are measured against, kept to the footer.
+    embed.footer(format!(
+        "Active: seen in {} days · Review: idle {}+ days or under {} min played",
+        FactionActivity::active_window().num_days(),
+        FactionActivity::inactive_after().num_days(),
+        FactionActivity::MINIMUM_MONTHLY_MINUTES
+    ))
 }
 
 /// Who to review, idle and never-seen apart.
 #[must_use]
 pub fn inactive(report: &FactionReport) -> Embed {
     if report.inactive.is_empty() {
-        return theme::success(
-            &format!("{} — everybody is active", report.faction),
-            Some("Nobody meets the review thresholds."),
-        );
+        return theme::success(&format!("{} — everybody is active", report.faction), None);
     }
     let (idle, unknown): (Vec<_>, Vec<_>) = report.inactive.iter().partition(|i| i.days.is_some());
     let mut embed = theme::warning(
@@ -142,8 +135,7 @@ pub fn inactive(report: &FactionReport) -> Embed {
         embed = embed.field(
             format!("No record ({})", unknown.len()),
             format!(
-                "{}\n\nThe bot has never seen these connect — usually they predate its tracking or play under \
-                 another name. **Not** the same as inactive.",
+                "{}\n\nNever seen connecting. **Not** the same as inactive.",
                 first_page(lines.iter().map(String::as_str))
             ),
             false,
@@ -183,10 +175,7 @@ impl FactionStatsCommand {
             return theme::failure("Unknown faction", None);
         };
         if !self.rosters.enabled() {
-            return theme::failure(
-                "The roster files are unreachable",
-                Some("Check `FACTION_ROLES_PATH`. Without it there is no roster to report on."),
-            );
+            return theme::failure("Roster unreachable", Some("Check `FACTION_ROLES_PATH`."));
         }
         let report = FactionActivity::report(faction, &self.members(faction), self.clock.now());
         if sub == Some("inactive") {

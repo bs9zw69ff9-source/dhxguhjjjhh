@@ -86,13 +86,7 @@ pub fn report(subject: &AccountRecord, alts: &[AccountRecord]) -> Embed {
             .field("Seen", seen(subject), true)
     };
     if alts.is_empty() {
-        return facts(theme::success(
-            &format!("{} No shared addresses", theme::OK),
-            Some(&header),
-        ))
-        .brand(Some(
-            "No other account has connected from a confirmed address of theirs",
-        ));
+        return facts(theme::success("No shared addresses", Some(&header))).brand(None);
     }
     let shared: HashSet<&str> = subject.confirmed_ips.iter().map(String::as_str).collect();
     // Most overlapping addresses first: one is a household, four is the same connection.
@@ -122,7 +116,7 @@ pub fn report(subject: &AccountRecord, alts: &[AccountRecord]) -> Embed {
         })
         .collect();
     let mut embed = facts(theme::warning(
-        &format!("{} {} linked account(s)", theme::WARN, alts.len()),
+        &format!("{} linked account(s)", alts.len()),
         Some(&format!("{header}\n\n{}", lines.join("\n"))),
     ));
     if alts.len() > MAX_ROWS {
@@ -135,14 +129,8 @@ pub fn report(subject: &AccountRecord, alts: &[AccountRecord]) -> Embed {
             false,
         );
     }
-    embed
-        .field(
-            format!("{} What this means", theme::INFO),
-            "Evidence, not proof. Households, tethering and shared VPN exits all put strangers on one address. \
-             Confirmed sightings only.",
-            false,
-        )
-        .brand(Some("Alt detection"))
+    // The one caution a shared address needs, kept to the footer.
+    embed.brand(Some("Shared addresses are evidence, not proof"))
 }
 
 impl AltsCommand {
@@ -160,7 +148,7 @@ impl AltsCommand {
             return theme::notice(
                 "Never seen",
                 Some(&format!(
-                    "No account on record for **{}**.\nThe bot only knows players it has watched connect.",
+                    "No account on record for **{}**.",
                     Sanitize::code(Some(&query))
                 )),
             )

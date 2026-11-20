@@ -146,9 +146,9 @@ async fn showing_is_public_and_changing_is_not() {
     assert!(run(&command, &reset).await.contains("Not allowed"));
     assert!(
         settings(&PoliceConfig::default())
-            .description
-            .as_deref()
+            .field_named("Jail cap")
             .unwrap()
-            .contains("uncapped")
+            .value
+            .contains("Uncapped")
     );
 }

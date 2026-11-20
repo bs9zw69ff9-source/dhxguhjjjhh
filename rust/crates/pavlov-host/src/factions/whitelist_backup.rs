@@ -147,7 +147,7 @@ impl WhitelistBackup {
             && let Some(existing) = self.current().filter(|e| e.names() > 0)
         {
             return Ok(WhitelistBackupResult::refused(format!(
-                "Not saved: every roster is empty, and saving would replace the snapshot from {} UTC holding **{}** name(s). Load it first if the rosters were wiped.",
+                "Not saved: every roster is empty, and the snapshot from {} UTC holds **{}** name(s). Load it first if the rosters were wiped.",
                 existing.at().format("%Y-%m-%d %H:%M"),
                 existing.names()
             )));
@@ -159,7 +159,7 @@ impl WhitelistBackup {
             "whitelist snapshot saved"
         );
         Ok(WhitelistBackupResult::ok(format!(
-            "Snapshot saved: **{count}** roster file(s), **{}** name(s). Loading it overwrites the current rosters.",
+            "Snapshot saved: **{count}** roster file(s), **{}** name(s).",
             snapshot.names()
         )))
     }

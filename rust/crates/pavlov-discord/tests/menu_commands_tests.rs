@@ -228,7 +228,7 @@ async fn a_name_bound_to_somebody_else_is_refused() {
 
     let reply = run(&r.give(), &give(OWNER, "Officer", "staff")).await;
 
-    assert!(reply.contains("belongs to someone else"), "{reply}");
+    assert!(reply.contains("Name already bound"), "{reply}");
     assert!(r.lines("staff.txt").is_empty());
 }
 
@@ -318,7 +318,7 @@ async fn unlinking_breaks_the_binding() {
         OptionKind::User,
         OptionValue::User(MEMBER),
     ));
-    assert!(run(&command, &invocation).await.contains("Binding broken"));
+    assert!(run(&command, &invocation).await.contains("Binding removed"));
     assert!(
         !r.store
             .read_raw("menu_links")

@@ -112,7 +112,7 @@ async fn a_bad_pin_is_refused_before_anything_is_sent() {
             .with(text("pin", "0123")),
     )
     .await;
-    assert!(reply.contains("That PIN will not work"));
+    assert!(reply.contains("Invalid PIN"));
     assert!(fake.commands().is_empty());
 }
 

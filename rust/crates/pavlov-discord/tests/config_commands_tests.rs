@@ -106,11 +106,7 @@ async fn a_bad_duration_or_unknown_member_changes_nothing() {
     let bad = Invocation::new("suspendrank", Caller::user(OWNER))
         .with(text("playerid", "X"))
         .with(text("time", "soon"));
-    assert!(
-        run(&command, &bad)
-            .await
-            .contains("That duration makes no sense")
-    );
+    assert!(run(&command, &bad).await.contains("Invalid duration"));
     let unknown = Invocation::new("suspendrank", Caller::user(OWNER))
         .with(text("playerid", "Nobody"))
         .with(text("time", "1h"));

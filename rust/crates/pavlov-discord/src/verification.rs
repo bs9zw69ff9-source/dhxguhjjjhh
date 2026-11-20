@@ -314,8 +314,7 @@ impl VerificationService {
             theme::success(
                 "Request sent",
                 Some(&format!(
-                    "Staff will review your request to verify as `{}`. You will get the role once \
-                     it is approved.",
+                    "Staff will review your request to verify as `{}`.",
                     Sanitize::code(Some(&name))
                 )),
             ),
@@ -338,7 +337,7 @@ impl VerificationService {
             return false;
         }
         let addresses = if ips.is_empty() {
-            "**none on record** — this name has never been seen on the server".to_owned()
+            "**none on record** — name never seen on the server".to_owned()
         } else {
             format!("{} on record", ips.len())
         };
@@ -391,7 +390,7 @@ impl VerificationService {
         let (Some(token), Some(request)) = (token, request) else {
             close(theme::warning(
                 "Already handled",
-                Some("This request has already been decided or has expired."),
+                Some("Already decided, or expired."),
             ))
             .await;
             return;
@@ -421,11 +420,8 @@ impl VerificationService {
             {
                 tracing::warn!(%error, "could not audit a verification denial");
             }
-            close(
-                theme::failure("Denied", Some(&format!("`{shown}` was not verified.")))
-                    .field("By", by, true),
-            )
-            .await;
+            close(theme::failure("Denied", Some(&format!("`{shown}`"))).field("By", by, true))
+                .await;
             return;
         }
 
@@ -459,11 +455,7 @@ impl VerificationService {
             .await;
         if !saved.as_ref().is_ok_and(|r| r.ok) {
             tracing::error!("could not record an approved verification");
-            close(theme::failure(
-                "Could not record it",
-                Some("The verification could not be saved. Try again."),
-            ))
-            .await;
+            close(theme::failure("Verification not saved", Some("Try again."))).await;
             return;
         }
         let role = self.grant_role(invocation, &request.discord_id).await;
@@ -487,12 +479,9 @@ impl VerificationService {
             );
         }
         close(
-            theme::success(
-                police().words.verified,
-                Some(&format!("`{shown}` is now verified.")),
-            )
-            .field("By", by, true)
-            .field("Role", role, true),
+            theme::success(police().words.verified, Some(&format!("`{shown}`")))
+                .field("By", by, true)
+                .field("Role", role, true),
         )
         .await;
     }

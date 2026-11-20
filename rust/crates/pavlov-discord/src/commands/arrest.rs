@@ -150,7 +150,7 @@ impl ArrestRecorder {
             embed = embed.field(
                 "Capped",
                 format!(
-                    "Charges totalled more than the **{} min** limit. Bail is not capped.",
+                    "Sentence held at **{} min**. Bail is not capped.",
                     booking.cap_minutes.unwrap_or(0)
                 ),
                 false,
@@ -232,7 +232,7 @@ impl Open {
         );
         let note = if result.capped {
             format!(
-                "\n*Charges total more than the {} min cap. Bail is not capped.*",
+                "\n*Capped at {} min. Bail is not capped.*",
                 result.cap_minutes.unwrap_or(0)
             )
         } else {
@@ -246,8 +246,7 @@ impl Open {
         theme::warning(
             &format!("Booking: {who}"),
             Some(&format!(
-                "Pick the player, then a section, then the charges. Confirm when done.\n**Set time** overrides the \
-                 sentence; bail still stacks.\n\n{sentence}{note}\n{lines}"
+                "**Set time** overrides the sentence; bail still stacks.\n\n{sentence}{note}\n{lines}"
             )),
         )
         .brand(None)
@@ -494,11 +493,8 @@ impl ArrestBooking {
             Ok(receipt) => receipt.brand(None),
             Err(error) => {
                 tracing::error!(player = %booking.player, %error, "booking failed to record");
-                theme::failure(
-                    "Arrest not recorded",
-                    Some("That failed. The error has been logged."),
-                )
-                .brand(None)
+                theme::failure("Arrest not recorded", Some("The error has been logged."))
+                    .brand(None)
             }
         };
         // Replaces the booking, so the picker does not sit re-clickable beside its arrest.
@@ -585,8 +581,7 @@ impl ArrestBooking {
                 self.open().remove(&invocation.message_id);
                 responder
                     .update(Reply::embed(
-                        theme::notice("Arrest cancelled", Some("No booking was recorded."))
-                            .brand(None),
+                        theme::notice("Arrest cancelled", None).brand(None),
                     ))
                     .await
             }

@@ -81,7 +81,7 @@ fn no_servers_configured_is_its_own_answer() {
         &registry(&[]),
         &[],
     ));
-    assert!(text.contains("No RCON servers are configured"));
+    assert!(text.contains("No RCON servers configured"));
     assert!(text.contains("RCON_HOST_1"));
 }
 

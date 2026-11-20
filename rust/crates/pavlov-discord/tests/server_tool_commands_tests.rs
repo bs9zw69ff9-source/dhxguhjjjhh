@@ -200,9 +200,9 @@ fn the_most_overlapping_account_is_listed_first_with_the_caveat() {
     assert!(body.find("sameperson").unwrap() < body.find("household").unwrap());
     assert!(
         embed
-            .fields
-            .iter()
-            .any(|f| f.name.ends_with("What this means"))
+            .footer
+            .as_deref()
+            .is_some_and(|f| f.contains("evidence, not proof"))
     );
 }
 

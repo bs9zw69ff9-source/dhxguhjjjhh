@@ -320,15 +320,14 @@ impl Access {
     pub fn explain_refusal(&self, caller: &Caller, required: RequiredAccess) -> String {
         let mut lines = vec![
             refusal(required),
-            format!("You currently hold: **{}**.", self.describe_access(caller)),
+            format!("You hold: **{}**.", self.describe_access(caller)),
         ];
         let roles = self.roles();
         if self.member(caller).is_none() {
             // No member anywhere: distinct from lacking a role, and it used to look identical.
             lines.push(
-                "The bot could not read your roles here, so only owner access - which goes by \
-                 user id - was checked. Outside the server your roles come from the staff guild; \
-                 if you are not in it, there is nothing to read."
+                "Your roles could not be read here; only owner access was checked. Outside the \
+                 server they come from the staff guild."
                     .into(),
             );
         } else if required == RequiredAccess::Mod && roles.mod_role.is_none() {
@@ -342,18 +341,13 @@ impl Access {
             // SEEN, BUT WITH NO ROLES: after the unconfigured checks, since "run /setroles" is
             // the fix whatever roles the caller has when nothing is mapped.
             lines.push(
-                "The bot can see you but reads no roles on you at all. If you do hold a staff \
-                 role, either the bot is not a member of THIS server - a user-installed app \
-                 cannot read roles in a server it was only carried into - or the **Server \
-                 Members** intent is off in the developer portal. When your staff roles live \
-                 in another server, set `HOME_GUILD_ID` to it so they can be read from there."
+                "No roles were read on you. Check the bot is a member of this server and the \
+                 **Server Members** intent is on, or set `HOME_GUILD_ID` to the staff server."
                     .into(),
             );
         }
         if required == RequiredAccess::Owner && self.configured_owner_count == 0 {
-            lines.push(
-                "No owners are configured at all - set `OWNER_IDS` in the bot's `.env`.".into(),
-            );
+            lines.push("No owners are configured. Set `OWNER_IDS` in `.env`.".into());
         }
         lines.join("\n")
     }
@@ -362,5 +356,5 @@ impl Access {
 /// The one-line refusal.
 #[must_use]
 pub fn refusal(required: RequiredAccess) -> String {
-    format!("You need **{required}** access to use that.")
+    format!("Requires **{required}** access.")
 }

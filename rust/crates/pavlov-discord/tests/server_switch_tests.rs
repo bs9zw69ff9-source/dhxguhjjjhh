@@ -123,12 +123,7 @@ async fn a_stop_runs_on_the_chosen_unit_and_says_it_stays_down() {
         panic!()
     };
     let embed = &reply.embeds[0];
-    assert!(
-        embed
-            .fields
-            .iter()
-            .any(|f| f.name.ends_with("It will stay down"))
-    );
+    assert!(embed.fields.iter().any(|f| f.name.ends_with("Stays down")));
     assert!(
         embed
             .field_named("Players warned")
@@ -184,10 +179,5 @@ async fn a_failure_carries_systemds_answer_and_the_fix() {
             .value
             .contains("Access denied")
     );
-    assert!(
-        embed
-            .fields
-            .iter()
-            .any(|f| f.name.ends_with("How to fix this"))
-    );
+    assert!(embed.fields.iter().any(|f| f.name.ends_with("Fix")));
 }

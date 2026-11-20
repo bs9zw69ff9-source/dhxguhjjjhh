@@ -33,11 +33,7 @@ impl std::fmt::Debug for Asker<'_> {
 #[must_use]
 pub fn barred_reply() -> Reply {
     Reply::embed(
-        theme::denied(
-            "Blacklisted",
-            Some("You are blacklisted from this bot, so no commands will work for you."),
-        )
-        .brand(None),
+        theme::denied("Blacklisted", Some("You are blacklisted from this bot.")).brand(None),
     )
 }
 

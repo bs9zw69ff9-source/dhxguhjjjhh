@@ -113,7 +113,7 @@ pub fn build(action: &ModAction) -> Embed {
             theme::punishment(&format!("{} {kind}", theme::DENY), None)
         }
     } else {
-        theme::notice(&format!("{} {kind}", theme::DOT), None)
+        theme::notice(&kind, None)
     };
     let mut embed = embed
         .field(

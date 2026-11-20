@@ -64,10 +64,14 @@ pub fn report(results: &[AlertDelivery]) -> Embed {
             Some(&body),
         );
     }
-    theme::failure(&format!("Test alert reached {delivered} of {}", results.len()), Some(&body)).field(
+    theme::failure(
+        &format!("Test alert reached {delivered} of {}", results.len()),
+        Some(&body),
+    )
+    .field(
         "Why a DM does not arrive",
-        "**Closed DMs** — Privacy Settings → *Direct Messages* must allow messages from server members, for a \
-         server this bot is in.\n**No shared server** — the bot can only DM somebody it shares a server with.",
+        "**Closed DMs** — they must allow direct messages from server members.\n\
+         **No shared server** — the bot can only DM somebody it shares a server with.",
         false,
     )
 }
@@ -76,19 +80,18 @@ impl TestAlertCommand {
     async fn run(&self) -> Embed {
         if !self.alerts.enabled() || self.recipients.is_empty() {
             return theme::warning(
-                "Nobody is set to receive security alerts",
+                "No alert recipients",
                 Some(
-                    "Set `SECURITY_DM_IDS` to the Discord user id(s) that should get them and restart.\n\n\
-                     ```\nSECURITY_DM_IDS=307052224087851009\n```\n\
-                     With it unset the owners get them, and with no owners configured either, nothing is sent.",
+                    "Set `SECURITY_DM_IDS` to the Discord user id(s) and restart.\n\
+                     ```\nSECURITY_DM_IDS=307052224087851009\n```",
                 ),
             );
         }
         let sample = SecurityAlert {
             kind: SecurityAlertKind::Evasion,
             player: "TestSubject".into(),
-            headline: "This is a test. No player matched anything.".into(),
-            action: "Nothing - `/testalert` sent this to prove the alerts reach you.".into(),
+            headline: "Test alert. No player matched anything.".into(),
+            action: "None — sent by `/testalert`.".into(),
             account_id: Some("0002913af4f445df86da1be6a2a01728".into()),
             // RFC 5737 documentation address: never a real player's.
             ip: Some("203.0.113.9".into()),

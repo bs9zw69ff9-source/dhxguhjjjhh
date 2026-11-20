@@ -310,7 +310,12 @@ impl EvasionResponder {
                 Sanitize::message(Some(name))
             ),
         );
-        self.alert(name, join, "Their own served ban's leftovers, not evasion. The stale flags were lifted rather than re-banning.").await;
+        self.alert(
+            name,
+            join,
+            "Their own served ban's leftovers, not evasion. The stale flags were lifted.",
+        )
+        .await;
         AutoBanOutcome::Served
     }
 

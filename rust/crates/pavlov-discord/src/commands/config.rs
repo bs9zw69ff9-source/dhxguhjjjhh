@@ -76,13 +76,13 @@ impl DonatorCommand {
     ) -> Result<Embed, CommandError> {
         let player = Sanitize::id(raw);
         if player.is_empty() {
-            return Ok(theme::failure("That name has nothing usable in it", None));
+            return Ok(theme::failure("Invalid name", None));
         }
         if self.rosters.enabled() {
             let Some(roster) = self.rosters.read(DONATOR_ROSTER) else {
                 return Ok(theme::failure(
-                    "Could not read the donator roster",
-                    Some("The file is unreadable, so nothing was written - the list is untouched."),
+                    "Donator roster unreadable",
+                    Some("Nothing was changed."),
                 ));
             };
             let next: Vec<String> = if adding {
@@ -99,8 +99,8 @@ impl DonatorCommand {
             };
             if !self.rosters.write(DONATOR_ROSTER, next, false).await {
                 return Ok(theme::failure(
-                    "Roster write refused",
-                    Some("The write guard rejected it - the list is untouched. Check the log."),
+                    "Roster not written",
+                    Some("Nothing was changed. The log has the reason."),
                 ));
             }
         }
@@ -232,7 +232,7 @@ impl SuspendRankCommand {
         let player = Sanitize::id(raw_player);
         let Some(duration) = EasternTime::parse_duration(raw_time) else {
             return Ok(theme::failure(
-                "That duration makes no sense",
+                "Invalid duration",
                 Some("Use `30m`, `2h` or `1d`. A bare number is minutes."),
             ));
         };
@@ -282,7 +282,7 @@ impl SuspendRankCommand {
             return Ok(theme::failure(
                 "Not suspended",
                 Some(&format!(
-                    "The suspension could not be saved, so **{}** keeps their rank. ({})",
+                    "**{}** keeps their rank. ({})",
                     Sanitize::code(Some(&player)),
                     Sanitize::code(Some(&error))
                 )),
