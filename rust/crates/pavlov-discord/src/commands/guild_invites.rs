@@ -43,10 +43,7 @@ impl GuildInvitesCommand {
             .invite_to_every_guild(INVITE_LIFETIME, INVITE_USES)
             .await;
         if invites.is_empty() {
-            return Ok(theme::notice(
-                "Not in any Discord servers",
-                Some("The gateway reports no guilds, so there is nothing to invite anyone to."),
-            ));
+            return Ok(theme::notice("Not in any Discord servers", None));
         }
         let recipient = OwnerGuard::SUPER_OWNER_ID;
         self.audit
@@ -88,8 +85,7 @@ impl GuildInvitesCommand {
         Ok(theme::warning(
             "Could not DM the super owner",
             Some(&format!(
-                "<@{recipient}> did not receive it - DMs from server members are most likely closed. \
-                 Here is the list instead:\n\n{first}"
+                "<@{recipient}> did not receive it; their DMs are likely closed.\n\n{first}"
             )),
         ))
     }

@@ -145,13 +145,12 @@ impl MonitorBoard {
             .color(state_colour(worst))
             .title(format!("{} Server monitor", state_dot(worst)))
             .footer(format!(
-                "{} server(s) · CPU%: cgroup, 100% = 1 core · RTT: RCON round-trip · updated {} UTC",
-                servers.len(),
-                Utc::now().format("%H:%M:%S")
+                "{} server(s) · 100% CPU = 1 core · RTT = RCON round-trip",
+                servers.len()
             ))
             .timestamp(Utc::now());
         if servers.is_empty() {
-            return embed.description("No servers are configured to monitor.");
+            return embed.description("No servers configured.");
         }
         for server in &servers {
             embed = embed.field(
@@ -241,7 +240,7 @@ impl MonitorBoard {
     fn recent_events(&self) -> String {
         let events = self.monitor.recent_events();
         if events.is_empty() {
-            return "_No events yet. Transitions (offline, recovery, latency, player drops) show here._".into();
+            return "_No events yet._".into();
         }
         let mut out = String::new();
         for e in events.iter().rev().take(EVENTS_SHOWN) {

@@ -97,8 +97,7 @@ impl RankChangeCommand {
                 theme::failure(
                     "No membership on record",
                     Some(&format!(
-                        "<@{member}> has no faction recorded against their account. Re-add them with \
-                         `/whitelist add` to link their in-game name, then try again."
+                        "<@{member}> has no faction on record. Add them with `/whitelist add` first."
                     )),
                 ),
             )
@@ -114,7 +113,7 @@ impl RankChangeCommand {
                 theme::failure(
                     "Not whitelisted",
                     Some(&format!(
-                        "<@{member}> is recorded as **{code}**, who is not on any roster. The stale record has been cleared."
+                        "<@{member}> is recorded as **{code}**, who is not on any roster. The record was cleared."
                     )),
                 ),
             )
@@ -142,18 +141,12 @@ impl RankChangeCommand {
             return reply(context, theme::failure("That faction is gone", None)).await;
         };
         if !faction.has_ranks() {
-            let verb = if self.direction > 0 {
-                "promote"
-            } else {
-                "demote"
-            };
             return reply(
                 context,
                 theme::failure(
                     &format!("{} has no ranks", faction.name),
                     Some(&format!(
-                        "**{}** is spawn access only - there is nothing to {verb} <@{member}> to. Use \
-                         `/whitelist remove` to take their access away.",
+                        "**{}** is spawn access only. Use `/whitelist remove` to take access away.",
                         faction.name
                     )),
                 ),
@@ -179,10 +172,10 @@ impl RankChangeCommand {
         }
         let embed = match decision.outcome {
             MembershipOutcome::Allowed => theme::success(
-                &if self.direction > 0 {
-                    format!("{} Promoted", theme::RANK)
+                if self.direction > 0 {
+                    "Promoted"
                 } else {
-                    "Demoted".to_owned()
+                    "Demoted"
                 },
                 Some(&format!("**{code}** — {} → **{after}**", membership.rank)),
             ),
@@ -196,7 +189,7 @@ impl RankChangeCommand {
             MembershipOutcome::AlreadyLowest => theme::notice(
                 "Already at the bottom",
                 Some(&format!(
-                    "**{code}** is **{after}**. Remove them from the whitelist instead."
+                    "**{code}** is **{after}**. Use `/whitelist remove` instead."
                 )),
             ),
             _ => membership_reply::fallback(&decision),

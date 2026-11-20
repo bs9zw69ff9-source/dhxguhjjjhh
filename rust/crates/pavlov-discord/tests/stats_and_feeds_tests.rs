@@ -111,9 +111,9 @@ fn every_feed_is_reported_with_its_state() {
     );
     assert!(
         embed
-            .field_named("Reading this")
-            .unwrap()
-            .value
-            .contains("/feeds test:true")
+            .footer
+            .as_deref()
+            .is_some_and(|f| f.contains("/feeds test:true"))
     );
+    assert!(report(&status, true).field_named("Test sent").is_some());
 }

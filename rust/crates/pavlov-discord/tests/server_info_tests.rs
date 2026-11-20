@@ -40,13 +40,7 @@ fn an_unreachable_server_is_reported_not_dropped() {
     let views = [online("one", 2, Some(24)), ServerView::unreachable("two")];
     let all = embeds(&views);
     assert_eq!(all.len(), 2);
-    assert!(
-        all[1]
-            .description
-            .as_deref()
-            .unwrap()
-            .contains("looks offline")
-    );
+    assert_eq!(all[1].description.as_deref(), Some("Offline"));
     assert_eq!(
         all[0].field_named("All servers").unwrap().value,
         "**2/24** online across 2 server(s)."
@@ -57,7 +51,7 @@ fn an_unreachable_server_is_reported_not_dropped() {
 fn a_long_roster_is_cut_with_a_count() {
     let embed = view_embed(&online("one", MAX_NAMES_SHOWN + 5, None));
     let body = embed.description.as_deref().unwrap();
-    assert!(body.contains("with **20** players"), "{body}");
+    assert!(body.contains("**20** playing"), "{body}");
     assert!(body.ends_with(" and 5 more"), "{body}");
 }
 
@@ -122,10 +116,8 @@ async fn serverinfo_sends_refreshlist_and_serverinfo_to_each_server() {
     sent.sort();
     assert_eq!(sent, ["RefreshList", "ServerInfo"]);
     let text = responder.last_text();
-    assert!(
-        text.contains("**Precinct** is online with **1/16** players"),
-        "{text}"
-    );
+    assert!(text.contains("Precinct"), "{text}");
+    assert!(text.contains("**1/16** playing"), "{text}");
 }
 
 #[test]
@@ -166,7 +158,8 @@ fn never_seen_members_are_kept_apart_from_idle_ones() {
     assert!(ghost.value.contains("Ghost") && ghost.value.contains("**Not** the same as inactive"));
     assert!(
         overview(&report, &faction)
-            .field_named("Active means")
-            .is_some()
+            .footer
+            .as_deref()
+            .is_some_and(|f| f.contains("Active: seen in"))
     );
 }

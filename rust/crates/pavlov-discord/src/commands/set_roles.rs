@@ -52,9 +52,9 @@ impl std::fmt::Debug for SetRolesCommand {
 
 fn standing(standing: RoleStanding) -> &'static str {
     match standing {
-        RoleStanding::Held => "  ✅ *you hold this*",
-        RoleStanding::NotHeld => "  ❌ *the bot does not see this on you*",
-        RoleStanding::NoMember => "  ⚠️ *your roles could not be read*",
+        RoleStanding::Held => "  ✅ *held*",
+        RoleStanding::NotHeld => "  ❌ *not held*",
+        RoleStanding::NoMember => "  ⚠️ *unreadable*",
         RoleStanding::Unset => "",
     }
 }
@@ -162,24 +162,21 @@ impl SetRolesCommand {
             .collect();
         let mut embed = theme::success("Roles updated", Some(&lines.join("\n"))).field(
             "Owners",
-            "Set through the environment, never a role.",
+            "Set in `.env` (`OWNER_IDS`).",
             false,
         );
         match self.access.visible_roles(caller) {
             None => {
                 embed = embed.field(
-                    format!("{} The bot cannot read your roles here", theme::WARN),
-                    "Nothing above can grant you anything in this context - only owner access, which goes by \
-                     user id, is checked. In a DM your roles come from the staff guild; set `HOME_GUILD_ID` to \
-                     the guild your staff roles live in.",
+                    format!("{} Your roles cannot be read here", theme::WARN),
+                    "Only owner access is checked. Set `HOME_GUILD_ID` to the staff server.",
                     false,
                 );
             }
             Some(visible) if visible.is_empty() => {
                 embed = embed.field(
-                    format!("{} The bot sees you with no roles at all", theme::WARN),
-                    "It can see you as a member and reads zero roles, which usually means the **Server Members \
-                     Intent** is off in the Discord developer portal.",
+                    format!("{} No roles read on you", theme::WARN),
+                    "Usually the **Server Members Intent** is off in the developer portal.",
                     false,
                 );
             }

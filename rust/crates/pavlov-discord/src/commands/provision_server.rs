@@ -157,27 +157,25 @@ fn started(
     refilling: bool,
 ) -> Embed {
     let source = match copy_from {
-        None => "SteamCMD downloads several GB, so this".to_owned(),
+        None => "SteamCMD downloads several GB.".to_owned(),
         Some(from) => format!(
-            "Copying `{}` rather than downloading, so this",
+            "Copying `{}` instead of downloading.",
             Sanitize::code(Some(from))
         ),
     };
     let mut embed = theme::notice(
         &format!("Provisioning server {} started", spec.slot),
         Some(&format!(
-            "Installing **{}** as `{}`. {source} runs in the background - watch the checklist I just posted in \
-             this channel. The bot restarts itself at the end.",
+            "Installing **{}** as `{}`. {source} The bot restarts itself at the end.",
             Sanitize::code(Some(&spec.server_name)),
             spec.unit_name
         )),
     );
     if refilling {
         embed = embed.field(
-            format!("{} Filling in an existing slot", theme::INFO),
+            format!("{} Existing slot", theme::INFO),
             format!(
-                "Server {} is already configured but has no install on disk, so this builds THAT rather than adding \
-                 another. Its RCON settings are replaced.",
+                "Server {} is configured but has no install on disk. Its RCON settings are replaced.",
                 spec.slot
             ),
             false,

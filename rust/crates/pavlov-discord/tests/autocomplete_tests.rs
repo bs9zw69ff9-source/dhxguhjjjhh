@@ -61,7 +61,12 @@ fn the_leaderboard_numbers_its_rows_and_says_what_it_is_not() {
     let embed = leaderboard("7d", &[("mod1".into(), 1_200), ("mod2".into(), 3)]);
     let body = embed.description.as_deref().unwrap();
     assert!(body.contains("` 1.` **mod1** — 1,200 action(s)"), "{body}");
-    assert!(embed.field_named("Reading this").is_some());
+    assert!(
+        embed
+            .footer
+            .as_deref()
+            .is_some_and(|f| f.contains("Automated actions excluded"))
+    );
     assert!(
         leaderboard("24h", &[])
             .description

@@ -70,11 +70,7 @@ impl LicenseCommand {
             .map(str::trim)
             .filter(|r| !r.is_empty());
         if player.is_empty() {
-            return reply(
-                context,
-                theme::failure("That name has nothing usable in it", None),
-            )
-            .await;
+            return reply(context, theme::failure("Invalid name", None)).await;
         }
         if licenses.is_empty() {
             let all: Vec<&str> = Licenses::ALL.iter().map(|l| l.label).collect();
@@ -90,10 +86,7 @@ impl LicenseCommand {
         let Some(saves) = &self.saves else {
             return reply(
                 context,
-                theme::failure(
-                    "Not available",
-                    Some("This bot is not reading the game's save files, so it has no licenses to change."),
-                ),
+                theme::failure("Not available", Some("`MODSAVE_PATH` is not set.")),
             )
             .await;
         };
@@ -125,19 +118,16 @@ impl LicenseCommand {
                 reply(context, embed).await
             }
             LicenseOutcome::AlreadySo => {
-                let (heading, state) = if give {
-                    ("Nothing to grant", "already holds")
+                let state = if give {
+                    "already holds"
                 } else {
-                    ("Nothing to revoke", "does not hold")
+                    "does not hold"
                 };
                 reply(
                     context,
                     theme::notice(
-                        heading,
-                        Some(&format!(
-                            "**{name}** {state} {}. Their save file is unchanged.",
-                            describe(&licenses)
-                        )),
+                        "No change",
+                        Some(&format!("**{name}** {state} {}.", describe(&licenses))),
                     ),
                 )
                 .await

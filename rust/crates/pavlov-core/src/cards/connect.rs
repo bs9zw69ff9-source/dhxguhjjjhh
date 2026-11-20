@@ -214,7 +214,7 @@ pub fn build(input: &ConnectCardInput<'_>) -> Embed {
                 if input.confident_ip {
                     ""
                 } else {
-                    "  ⚠️ *unconfirmed - correlated, not paired*"
+                    "  ⚠️ *unconfirmed*"
                 }
             )
         },
@@ -277,7 +277,7 @@ pub fn build(input: &ConnectCardInput<'_>) -> Embed {
     add(
         "Flag match",
         if input.flagged {
-            "**Flagged** — matches a standing blacklist entry".into()
+            "**Flagged** — blacklist entry".into()
         } else {
             "No matches".into()
         },

@@ -48,9 +48,7 @@ pub fn card(profile: &PlayerProfile) -> Embed {
     if !profile.known() {
         return theme::notice(
             &format!("{mark} {who}"),
-            Some(
-                "Never seen on any server. Check the spelling - names are exactly as they are in game.",
-            ),
+            Some("Never seen on any server. Check the spelling."),
         );
     }
     let combat = profile.combat.unwrap_or_default();
@@ -139,10 +137,7 @@ impl StatsCommand {
         if player.is_empty() {
             return theme::failure(
                 "Which player?",
-                Some(
-                    "Give an in-game name. Yours is filled in automatically once you have been whitelisted with \
-                     `/whitelist add`.",
-                ),
+                Some("Give an in-game name. Yours is used once you are whitelisted."),
             );
         }
         card(

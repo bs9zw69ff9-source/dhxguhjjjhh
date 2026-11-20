@@ -163,10 +163,8 @@ async fn a_block_is_confirmed_by_reading_the_table_back() {
     let (_ufw, landed) = block(true, "203.0.113.5").await;
     assert!(landed.contains("Blocked at the firewall"), "{landed}");
     let (_ufw, missing) = block(false, "203.0.113.5").await;
-    assert!(
-        missing.contains("the rule is not in the table"),
-        "{missing}"
-    );
+    assert!(missing.contains("Not blocked"), "{missing}");
+    assert!(missing.contains("NOT blocked"), "{missing}");
 }
 
 #[tokio::test]

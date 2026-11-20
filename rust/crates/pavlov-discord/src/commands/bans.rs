@@ -38,27 +38,20 @@ use crate::interaction::Reply;
 use crate::slash::{CommandContext, CommandError, SlashCommand};
 
 /// What the server's own ban file adds to a NEGATIVE answer, or `None` when nothing worth
-/// saying: terse on the clean case, said only where it changes the answer.
+/// saying: terse on the clean case, said only where the file could not be checked. A player
+/// the file LISTS is not a negative answer; the callers render that themselves.
 #[must_use]
 pub fn describe_ban_file(lookup: &BanFileLookup) -> Option<String> {
     match lookup.status {
-        BanFileStatus::Read => lookup.entry.as_ref().map(|entry| {
-            format!(
-                "{} The server's ban file still lists them, so they're banned in game: {} — {}",
-                theme::DENY,
-                Sanitize::code(Some(&Sanitize::redact_private(Some(&entry.reason)))),
-                Sanitize::code(Some(&entry.unban))
-            )
-        }),
         BanFileStatus::Missing => Some(format!(
-            "{} Couldn't check the server's ban file (missing) - set `BLACKLIST_PATH`.",
+            "{} `blacklist.txt` not found. Set `BLACKLIST_PATH`.",
             theme::WARN
         )),
         BanFileStatus::Unreadable => Some(format!(
-            "{} Couldn't read the server's ban file - check its permissions.",
+            "{} `blacklist.txt` is unreadable. Check its permissions.",
             theme::WARN
         )),
-        BanFileStatus::Disabled => None,
+        BanFileStatus::Read | BanFileStatus::Disabled => None,
     }
 }
 
@@ -120,10 +113,7 @@ impl BanParts {
     ) -> Result<Embed, CommandError> {
         let name = Sanitize::id(Some(player));
         if name.is_empty() {
-            return Ok(theme::failure(
-                "That name has nothing usable in it",
-                Some("After sanitising there was no identifier left to ban."),
-            ));
+            return Ok(theme::failure("Invalid name", None));
         }
         let account = self.tracking.account_by_name(&name);
         let tier = self.access.tier_of(caller);
@@ -174,7 +164,7 @@ impl BanParts {
             return Ok(theme::denied(
                 "Above your authority",
                 Some(&format!(
-                    "**{}** is already banned by a **{}**, and a new ban would replace it. You are **{}**.",
+                    "**{}** is banned by a **{}**. You are **{}**.",
                     Sanitize::code(Some(&name)),
                     StaffHierarchy::name(standing.tier.unwrap_or(StaffTier::None)),
                     StaffHierarchy::name(tier)
@@ -187,7 +177,7 @@ impl BanParts {
             return Ok(theme::failure(
                 "Ban not issued",
                 Some(&format!(
-                    "The ban record could not be saved, so nothing was enforced. ({})",
+                    "The ban record could not be saved. ({})",
                     Sanitize::code(Some(&error))
                 )),
             ));
@@ -256,9 +246,8 @@ impl BanParts {
         embed = with_enforcement(embed, &enforcement);
         if flags.is_some_and(|f| f.pending) {
             embed = embed.field(
-                "Address not yet known",
-                "They have never been seen disconnecting, so no address is confirmed. It will be flagged automatically \
-                 the moment one is.",
+                "Address flag",
+                "Pending until their address is confirmed.",
                 false,
             );
         }
@@ -305,31 +294,25 @@ impl SlashCommand for TempBanCommand {
         Box::pin(async move {
             let invocation = context.invocation;
             let p = &self.parts;
-            let embed = if let Some(refusal) =
-                refuse(&p.access, &invocation.caller, RequiredAccess::Mod)
-            {
-                refusal
-            } else {
-                let choice = invocation.string("duration").unwrap_or("");
-                let duration = BanDurations::length(Some(choice));
-                if duration.is_none() && !choice.eq_ignore_ascii_case(BanDurations::PERMANENT) {
-                    theme::failure(
-                        "That duration makes no sense",
-                        Some(
-                            "Use a length like `1d`, `3d 4h` or `1mo`. Calendar dates are not accepted.",
-                        ),
-                    )
+            let embed =
+                if let Some(refusal) = refuse(&p.access, &invocation.caller, RequiredAccess::Mod) {
+                    refusal
                 } else {
-                    p.issue(
-                        &invocation.caller,
-                        &invocation.username,
-                        invocation.string("playerid").unwrap_or(""),
-                        invocation.string("reason").unwrap_or("No reason given"),
-                        duration,
-                    )
-                    .await?
-                }
-            };
+                    let choice = invocation.string("duration").unwrap_or("");
+                    let duration = BanDurations::length(Some(choice));
+                    if duration.is_none() && !choice.eq_ignore_ascii_case(BanDurations::PERMANENT) {
+                        theme::failure("Invalid duration", Some("Use `1d`, `3d 4h` or `1mo`."))
+                    } else {
+                        p.issue(
+                            &invocation.caller,
+                            &invocation.username,
+                            invocation.string("playerid").unwrap_or(""),
+                            invocation.string("reason").unwrap_or("No reason given"),
+                            duration,
+                        )
+                        .await?
+                    }
+                };
             context.reply(Reply::embed(embed.brand(None))).await
         })
     }
@@ -416,7 +399,7 @@ impl UnbanCommand {
             tracing::warn!(player, by = username, "MASTER PARDON");
             embed.field(
                 "Master Owner pardon",
-                "Nobody below a Master Owner can ban them again, and automatic bans will not touch them.",
+                "Only a Master Owner can ban them again. Automatic bans skip them.",
                 false,
             )
         } else {
@@ -426,7 +409,7 @@ impl UnbanCommand {
             );
             embed.field(
                 format!("{} Pardon not saved", theme::WARN),
-                "They are unbanned, but the pardon could not be written, so staff can still ban them.",
+                "Unbanned, but staff can still ban them.",
                 false,
             )
         }
@@ -465,10 +448,7 @@ impl UnbanCommand {
                     .await?;
                 let mut embed = theme::success(
                     "Ban cleared from their save",
-                    Some(&format!(
-                        "**{}** had no record with this bot, but their save held a ban. It is cleared.",
-                        Sanitize::code(Some(&player))
-                    )),
+                    Some(&format!("**{}**", Sanitize::code(Some(&player)))),
                 )
                 .field(
                     "Was",
@@ -493,9 +473,7 @@ impl UnbanCommand {
                 return Ok(theme::notice(
                     "Listed in blacklist.txt only",
                     Some(&format!(
-                        "**{}** has no ban with this bot or in their save, but the server's own `blacklist.txt` lists them, \
-                         and the game refuses them for that. The bot no longer edits that file: remove their entry by hand in \
-                         `{}`.",
+                        "**{}** is refused by the game. Remove their entry by hand in `{}`.",
                         Sanitize::code(Some(&player)),
                         Sanitize::code(Some(listed.path.as_deref().unwrap_or("blacklist.txt")))
                     )),
@@ -558,22 +536,18 @@ pub fn enforcement_problem(result: &EnforcementResult) -> Option<(String, String
     match &result.save {
         Some(SaveBanWrite::NoSave) => Some((
             "No save yet".into(),
-            "They have never joined, so there is no save to write the ban into. They are kicked whenever they are \
-             seen, and the ban is written the moment the game creates their save."
-                .into(),
+            "Kicked on sight. The ban is written once their save exists.".into(),
         )),
         Some(SaveBanWrite::Refused(reason)) => Some((
             format!("{} Not written to their save", theme::WARN),
             format!(
-                "{}. The record is saved and they were kicked; the sweep retries every 30 seconds.",
+                "{}. Retrying every 30 seconds.",
                 Sanitize::code(Some(reason))
             ),
         )),
         None => Some((
             format!("{} Not enforced", theme::WARN),
-            "MODSAVE_PATH is not set, so there is no save to write the ban into. It is recorded, and they are \
-             kicked whenever they are seen."
-                .into(),
+            "`MODSAVE_PATH` is not set. Recorded only; they are kicked on sight.".into(),
         )),
         Some(_) => None,
     }
@@ -598,8 +572,7 @@ fn with_lift_problems(
             embed = embed.field(
                 format!("{} Not cleared from their save", theme::WARN),
                 format!(
-                    "The record is removed, but their save still holds the ban: {}. The game will keep refusing them \
-                     until it is cleared.",
+                    "{}. The game still refuses them.",
                     Sanitize::code(Some(reason))
                 ),
                 false,
@@ -607,8 +580,8 @@ fn with_lift_problems(
         }
         None => {
             embed = embed.field(
-                format!("{} No save written", theme::WARN),
-                "MODSAVE_PATH is not set, so there is no save to clear. Only the record was removed.",
+                format!("{} Save not cleared", theme::WARN),
+                "`MODSAVE_PATH` is not set. Only the record was removed.",
                 false,
             );
         }
@@ -618,8 +591,7 @@ fn with_lift_problems(
         embed = embed.field(
             format!("{} Still in blacklist.txt", theme::WARN),
             format!(
-                "The server's own `blacklist.txt` lists them, and the game refuses them for that. The bot no longer \
-                 edits that file: remove their entry by hand in `{}`.",
+                "The game still refuses them. Remove their entry by hand in `{}`.",
                 Sanitize::code(Some(listed.path.as_deref().unwrap_or("blacklist.txt")))
             ),
             false,
@@ -671,21 +643,6 @@ impl std::fmt::Debug for CheckBanCommand {
     }
 }
 
-/// What the moderator field means: "in-game" and "auto" are opaque otherwise.
-#[must_use]
-pub fn ban_origin(moderator: Option<&str>) -> &'static str {
-    match moderator {
-        Some("in-game") => {
-            "Found in their save, set in game or by hand rather than by this bot, and recorded here. It is lifted \
-             when its date is reached, and `/unban` clears it from the save."
-        }
-        Some("auto") => {
-            "This bot, automatically - VPN screening or ban evasion. The reason above says which. Nobody typed it."
-        }
-        _ => "A moderator, using the ban commands.",
-    }
-}
-
 impl CheckBanCommand {
     fn with_history(&self, embed: Embed, player: &str) -> Embed {
         let p = &self.parts;
@@ -712,14 +669,33 @@ impl CheckBanCommand {
             .find(|b| BanRules::same_player(Some(&b.player_id), Some(&player)))
         else {
             let listed = p.ban_file.find(&player).await;
-            let body = not_banned(&player, describe_ban_file(&listed).as_deref());
-            let embed = if listed.listed() {
+            let name = format!("**{}**", Sanitize::code(Some(&player)));
+            let embed = if let Some(entry) = &listed.entry {
+                // The game refuses them for the file's entry; the bot reads that file and
+                // never edits it, so lifting this one is done by hand.
                 theme::punishment(
                     &format!("{} {}", theme::DENY, words.banned_by_the_server),
-                    Some(&body),
+                    Some(&name),
                 )
-                .field("Lift it", "`/unban` removes them from that file.", false)
+                .field(
+                    "Reason",
+                    Sanitize::code(Some(&Sanitize::redact_private(Some(&entry.reason)))),
+                    false,
+                )
+                .field("Expires", Sanitize::code(Some(&entry.unban)), true)
+                .field(
+                    "Lift it",
+                    format!(
+                        "Remove their entry by hand in `{}`.",
+                        Sanitize::code(Some(listed.path.as_deref().unwrap_or("blacklist.txt")))
+                    ),
+                    false,
+                )
             } else {
+                let body = match describe_ban_file(&listed) {
+                    Some(note) => format!("{name}\n\n{note}"),
+                    None => name,
+                };
                 theme::success("No active ban", Some(&body))
             };
             return self.with_history(embed, &player);
@@ -732,7 +708,7 @@ impl CheckBanCommand {
                 theme::notice(
                     words.ban_served,
                     Some(&format!(
-                        "**{}** served their ban; it expired {when}.",
+                        "**{}** — expired {when}.",
                         Sanitize::code(Some(&player))
                     )),
                 ),
@@ -773,11 +749,6 @@ impl CheckBanCommand {
                     .map_or_else(|| "unknown".to_owned(), theme::relative)
             },
             true,
-        )
-        .field(
-            "Where this came from",
-            ban_origin(record.moderator.as_deref()),
-            false,
         );
         // The ORIGINAL offence behind an auto-ban, or an appeal gets "banned because banned".
         if !BanRules::is_real_ban(Some(record)) {

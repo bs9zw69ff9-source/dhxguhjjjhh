@@ -96,7 +96,7 @@ async fn give_refuses_a_minus_rather_than_guessing() {
     let balances = Arc::new(Balances::default());
     balances.write("Alice", 100);
     let text = run(&command(true, Arc::clone(&balances)), "Alice", -50).await;
-    assert!(text.contains("That is a deduction, not a payout"), "{text}");
+    assert!(text.contains("Negative amount"), "{text}");
     assert!(text.contains("/adjustmoney"));
     assert_eq!(balances.read("Alice"), Some(100));
 }

@@ -244,8 +244,7 @@ fn not_written(failed: &TierWriteFailed) -> Embed {
     theme::failure(
         "Not written",
         Some(&format!(
-            "The menu files could not be updated ({}). Check that `FACTION_ROLES_PATH` points at \
-             `ModSave/ServerRoles` and that the bot can write there.",
+            "Could not update: {}. `FACTION_ROLES_PATH` must point at a writable `ModSave/ServerRoles`.",
             failed.0.join(", ")
         )),
     )
@@ -255,8 +254,7 @@ fn unavailable() -> Embed {
     theme::failure(
         "Not available",
         Some(
-            "`FACTION_ROLES_PATH` is not set or does not exist, so there are no menu files to \
-             write. It should point at `ModSave/ServerRoles`.",
+            "`FACTION_ROLES_PATH` is not set or does not exist. It must point at `ModSave/ServerRoles`.",
         ),
     )
 }
@@ -285,10 +283,7 @@ impl GiveMenuCommand {
     ) -> Result<Embed, CommandError> {
         let requested = Sanitize::id(raw);
         let (Some(member), Some(tier)) = (member.filter(|_| !requested.is_empty()), tier) else {
-            return Ok(theme::failure(
-                "Need a member, a usable in-game name and a tier",
-                None,
-            ));
+            return Ok(theme::failure("Missing member, name or tier", None));
         };
         let is_owner = self.access.is_owner(caller);
         if !tier.may_grant(is_owner, true) {
@@ -306,15 +301,14 @@ impl GiveMenuCommand {
                 return Ok(theme::denied(
                     "Bound to another name",
                     Some(&format!(
-                        "<@{member}> is permanently bound to `{}`. Use `/unlinkname` if they genuinely changed their \
-                         Pavlov name.",
+                        "<@{member}> is bound to `{}`. Use `/unlinkname` for a real name change.",
                         Sanitize::code(decision.bound_name.as_deref())
                     )),
                 ));
             }
             MenuClaimAction::Taken => {
                 return Ok(theme::denied(
-                    "That name belongs to someone else",
+                    "Name already bound",
                     Some(&format!(
                         "`{}` is bound to <@{}>.",
                         Sanitize::code(Some(&requested)),
@@ -353,7 +347,7 @@ impl GiveMenuCommand {
         .field(
             "Binding",
             if bound.is_none() {
-                "newly bound to this name"
+                "newly bound"
             } else {
                 "already bound"
             },
@@ -453,7 +447,7 @@ impl StripMenuCommand {
         Ok(theme::success(
             "Menu access removed",
             Some(&format!(
-                "<@{member}> (`{}`) no longer has menu access. Their name binding is unchanged.",
+                "<@{member}> — `{}`",
                 Sanitize::code(Some(&player))
             )),
         )
@@ -538,16 +532,11 @@ impl UnlinkNameCommand {
             .await?;
         tracing::warn!(member = %id, was = %existing.in_game_name, by = username, "unlinkname");
         Ok(theme::success(
-            "Binding broken",
+            "Binding removed",
             Some(&format!(
-                "<@{member}> was bound to `{}` and may now bind to a new name.",
+                "<@{member}> was bound to `{}`.",
                 Sanitize::code(Some(&existing.in_game_name))
             )),
-        )
-        .field(
-            format!("{} Note", theme::WARN),
-            "This is the only way a binding is removed. It exists for a real name change.",
-            false,
         ))
     }
 }

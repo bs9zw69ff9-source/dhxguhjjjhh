@@ -427,12 +427,12 @@ impl ServiceControl {
                 .join(", ");
             let user = std::env::var("USER").unwrap_or_else(|_| "pavlov-bot".into());
             return Some(format!(
-                "systemctl has to run as **root**, and the bot is not allowed to. Grant it exactly these units and verbs and nothing else — run `visudo` and add one line, using the user the bot runs as:\n```\n{user} ALL=(root) NOPASSWD: {permitted}\n```\nNo bot restart is needed after that. If the bot itself runs as root, this is already unnecessary and something else is wrong."
+                "The bot may not run `systemctl` as root. Add this line with `visudo`:\n```\n{user} ALL=(root) NOPASSWD: {permitted}\n```\nNo bot restart is needed."
             ));
         }
         if any(&["not found", "no such file"]) {
             return Some(format!(
-                "systemd does not know these unit names. Check them with `systemctl list-units 'pavlov*'` and set `PAVLOV_UNITS` in `.env` to the real ones (currently `{}`).",
+                "systemd does not know these unit names. Check with `systemctl list-units 'pavlov*'` and set `PAVLOV_UNITS` (currently `{}`).",
                 self.units.join(", ")
             ));
         }

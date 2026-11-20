@@ -95,20 +95,17 @@ impl MoneyCommand {
         let player = Sanitize::id(invocation.string("playerid"));
         let amount = invocation.integer("amount").unwrap_or(0);
         if player.is_empty() {
-            return Ok(theme::failure("That name has nothing usable in it", None));
+            return Ok(theme::failure("Invalid name", None));
         }
         if amount == 0 {
-            return Ok(theme::failure(
-                "Nothing to move",
-                Some("An amount of zero does nothing."),
-            ));
+            return Ok(theme::failure("Amount cannot be zero", None));
         }
         let words = &police().words;
         if !self.allow_negative && amount < 0 {
             return Ok(theme::failure(
-                "That is a deduction, not a payout",
+                "Negative amount",
                 Some(&format!(
-                    "`/{}` only ever adds. Use `/{}` to correct a balance downwards.",
+                    "`/{}` only adds. Use `/{}` to deduct.",
                     words.give_money_command, words.adjust_money_command
                 )),
             ));
@@ -208,17 +205,32 @@ pub fn wages_card(payroll: &Payroll, player: &str) -> Embed {
     let period = payroll.period().as_secs() / 60;
     let carried = payroll.earned_toward_next_period(player).as_secs() / 60;
     theme::notice(
-        &format!("{} Wages — {}", police().words.money_glyph, Sanitize::code(Some(player))),
+        &format!(
+            "{} Wages — {}",
+            police().words.money_glyph,
+            Sanitize::code(Some(player))
+        ),
         None,
     )
-    .field("Earned, not yet banked", lore::amount(payroll.owed_to(player)), true)
-    .field("Banked to date", lore::amount(payroll.total_paid_to(player)), true)
-    .field("Toward the next payment", format!("{carried} of {period} minutes"), true)
     .field(
-        "How pay works",
+        "Earned, not yet banked",
+        lore::amount(payroll.owed_to(player)),
+        true,
+    )
+    .field(
+        "Banked to date",
+        lore::amount(payroll.total_paid_to(player)),
+        true,
+    )
+    .field(
+        "Toward the next payment",
+        format!("{carried} of {period} minutes"),
+        true,
+    )
+    .field(
+        "Rate",
         format!(
-            "**{}** per **{period}** minutes on duty. Part periods carry forward rather than rounding.\n\nIt banks to \
-             the in-game balance when they go off duty.",
+            "**{}** per **{period}** minutes on duty",
             lore::amount(payroll.amount())
         ),
         false,
@@ -254,14 +266,12 @@ impl SlashCommand for WagesCommand {
             let embed = if !self.payroll.enabled() {
                 theme::warning(
                     "Payroll is off",
-                    Some(
-                        "`PAYROLL_AMOUNT` is unset or the faction rosters are unreachable, so nothing is being earned.",
-                    ),
+                    Some("`PAYROLL_AMOUNT` is unset or the faction rosters are unreachable."),
                 )
             } else {
                 let player = Sanitize::id(context.invocation.string("player"));
                 if player.is_empty() {
-                    theme::failure("That name has nothing usable in it", None)
+                    theme::failure("Invalid name", None)
                 } else {
                     wages_card(&self.payroll, &player)
                 }

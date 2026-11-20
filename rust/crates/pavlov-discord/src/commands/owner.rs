@@ -200,7 +200,8 @@ impl BotStatsCommand {
         if let Some(kills) = &self.kills {
             let all = kills.all();
             let value = if all.is_empty() {
-                "**nothing recorded** — either nobody has died yet, or the kill lines are not being parsed".to_owned()
+                "**nothing recorded** — no kills yet, or the kill lines are not being parsed"
+                    .to_owned()
             } else {
                 let recorded: i64 = all.iter().map(|k| k.kills).sum();
                 let last = all.iter().filter_map(|k| k.last_at).max();
@@ -370,8 +371,7 @@ impl std::fmt::Debug for FirewallCommand {
     }
 }
 
-const UFW_HINT: &str =
-    "This usually means ufw is not installed, or the bot is not running as root.";
+const UFW_HINT: &str = "Usually ufw is not installed, or the bot is not running as root.";
 
 impl FirewallCommand {
     async fn run(&self, username: &str, action: &str, raw_ip: &str) -> Result<Embed, CommandError> {
@@ -397,7 +397,7 @@ impl FirewallCommand {
             return Ok(theme::failure(
                 "Not an IP address",
                 Some(&format!(
-                    "`{}` could not be parsed. Nothing was run.",
+                    "`{}` could not be parsed.",
                     Sanitize::code(Some(raw_ip))
                 )),
             ));
@@ -432,21 +432,20 @@ impl FirewallCommand {
         let table = self.firewall.status().await;
         Ok(if table.ok && table.detail.contains(&canonical) {
             theme::warning(
-                &format!("{} Blocked at the firewall", theme::DENY),
-                Some(&format!("`{shown}` is now denied, ahead of the port allows.")),
+                "Blocked at the firewall",
+                Some(&format!("`{shown}` is now denied.")),
             )
             .field(
-                format!("{} That is an address, not an account", theme::WARN),
-                "On a shared or CGNAT connection it hits everyone behind it. Only `/firewall unblock` undoes it.",
+                format!("{} Affects everyone on that address", theme::WARN),
+                "Undo with `/firewall unblock`.",
                 false,
             )
         } else {
             theme::failure(
-                "ufw accepted it, but the rule is not in the table",
+                "Not blocked",
                 Some(&format!(
-                    "`{shown}` did not appear in `ufw status` afterwards, so it is NOT actually blocked. The most likely \
-                     cause is the bot not having permission to change the live ruleset - it must run as root, or with \
-                     a sudoers grant for `ufw`."
+                    "`{shown}` is not in `ufw status`, so it is NOT blocked. The bot must run as root, or with a \
+                     sudoers grant for `ufw`."
                 )),
             )
             .field("ufw said", format!("```\n{}\n```", truncate(&result.detail)), false)
@@ -528,8 +527,7 @@ impl InspectCommand {
         );
         match self.tracking.account_by_name(&player) {
             None => {
-                embed.description =
-                    Some("The bot has never recorded this account. They have not connected while it was running.".into());
+                embed.description = Some("No account on record.".into());
             }
             Some(account) => {
                 let seen = |at: Option<chrono::DateTime<chrono::Utc>>| {
@@ -567,8 +565,15 @@ impl InspectCommand {
                         .map(|ip| format!("`{ip}`"))
                         .collect();
                     embed = embed.field(
-                        format!("{} Guessed addresses ({})", theme::WARN, account.guessed_ips.len()),
-                        format!("{}\nCorrelated from a join, **not certain** - never act on these alone.", ips.join("\n")),
+                        format!(
+                            "{} Guessed addresses ({})",
+                            theme::WARN,
+                            account.guessed_ips.len()
+                        ),
+                        format!(
+                            "{}\n**Not certain** — never act on these alone.",
+                            ips.join("\n")
+                        ),
                         false,
                     );
                 }

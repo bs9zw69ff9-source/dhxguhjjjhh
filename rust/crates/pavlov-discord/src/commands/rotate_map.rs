@@ -68,14 +68,11 @@ fn truncate(text: &str) -> String {
 pub fn report(results: &[RotationResult]) -> Embed {
     let ok = results.iter().filter(|r| r.ok()).count();
     let mut embed = if ok == results.len() {
-        theme::success(
-            &format!("Rotated {ok} server(s)"),
-            Some(&format!("`{ROTATE_COMMAND}` accepted by {ok} server(s).")),
-        )
+        theme::success(&format!("Rotated {ok} server(s)"), None)
     } else {
         theme::failure(
             &format!("Rotated {ok} of {} server(s)", results.len()),
-            Some("The servers below did not confirm the rotation."),
+            None,
         )
     };
     for result in results {
@@ -114,7 +111,7 @@ impl RotateMapCommand {
         context
             .reply(Reply::embed(
                 theme::notice(
-                    &format!("{} Rotating {} server(s)", theme::WARN, targets.len()),
+                    &format!("Rotating {} server(s)", targets.len()),
                     Some(&format!("Sending `{ROTATE_COMMAND}`…")),
                 )
                 .brand(None),

@@ -312,16 +312,9 @@ pub fn panel() -> Reply {
         })
         .collect();
     Reply::embed(
-        theme::notice(
-            "Owner Control Panel",
-            Some(
-                "Pick an action. Destructive ones ask you to type a word first.\n\n🚫 **Enforcement** — blacklist, \
-                 alts, clear flags\n🛡️ **Never-ban** — stop the bot banning one player\n⛔ **Access** — bar / un-bar \
-                 Discord users\n👁️ **Tracking** — ignore lists\n💾 **Whitelists** — save / restore\n🧨 **Data** — wipe \
-                 money or player records",
-            ),
-        )
-        .brand(Some("Owner only")),
+        // The select menu below lists every action with its description; the embed only
+        // titles it.
+        theme::notice("Owner Control Panel", None).brand(Some("Owner only")),
     )
     .with_components(vec![ActionRow::Select(SelectMenu {
         custom_id: id(&["menu"]),
@@ -495,7 +488,7 @@ impl ConfigPanel {
                     return say(theme::warning(
                         "Cancelled",
                         Some(&format!(
-                            "You have to type **{word}** exactly. Nothing was changed."
+                            "Type **{word}** exactly to confirm. Nothing was changed."
                         )),
                     ))
                     .await;

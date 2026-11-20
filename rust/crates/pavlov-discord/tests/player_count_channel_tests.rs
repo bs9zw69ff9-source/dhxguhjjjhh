@@ -364,7 +364,7 @@ async fn a_missing_permission_still_reads_as_a_failure() {
 fn no_per_server_channels_is_called_out_by_name() {
     let (_, body) = missing_half(&targets(&[], Some(999))).unwrap();
     assert!(body.contains("PLAYER_COUNT_CHANNELS"));
-    assert!(body.contains("down"));
+    assert!(body.contains("in server order"), "{body}");
 }
 
 #[test]

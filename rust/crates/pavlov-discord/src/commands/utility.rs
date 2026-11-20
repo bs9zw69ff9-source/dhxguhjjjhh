@@ -161,10 +161,7 @@ impl AnnounceCommand {
     async fn run(&self, context: &CommandContext<'_>) -> Embed {
         let message = Sanitize::message(context.invocation.string("message"));
         if message.is_empty() {
-            return theme::failure(
-                "Nothing to say",
-                Some("The message was empty after sanitising."),
-            );
+            return theme::failure("Empty message", None);
         }
         let command = broadcast_command(&message);
         let mut delivered = 0;
@@ -413,7 +410,7 @@ pub fn help_embed(catalog: &CommandCatalog, level: &str) -> Embed {
     let pages = theme::paginate(lines.iter().map(String::as_str), theme::MAX_DESCRIPTION);
     let footer = (pages.len() > 1).then(|| format!("Page 1 of {}", pages.len()));
     theme::notice(
-        &format!("{} {}", theme::INFO, police().words.help_title),
+        police().words.help_title,
         Some(&format!(
             "Your access: **{level}**\n\n{}",
             pages.first().map_or("", String::as_str)

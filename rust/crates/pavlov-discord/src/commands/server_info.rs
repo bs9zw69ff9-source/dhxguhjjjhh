@@ -91,22 +91,17 @@ pub fn view_embed(view: &ServerView) -> Embed {
             palette::SERVER_DOWN
         });
     if !view.online {
-        return embed.description(format!(
-            "**{}** looks offline right now.",
-            view.display_name
-        ));
+        return embed.description("Offline");
     }
     let capacity = view.max_players.map_or_else(
         || view.player_count.to_string(),
         |max| format!("{}/{max}", view.player_count),
     );
     let mut lines = vec![format!(
-        "**{}** is online with **{capacity}** players, playing **{}** on **{}**.",
-        view.display_name, view.mode, view.map
+        "**{capacity}** playing **{}** on **{}**.",
+        view.mode, view.map
     )];
-    if view.roster.is_empty() {
-        lines.push("Nobody is on right now.".into());
-    } else {
+    if !view.roster.is_empty() {
         let shown: Vec<String> = view
             .roster
             .iter()

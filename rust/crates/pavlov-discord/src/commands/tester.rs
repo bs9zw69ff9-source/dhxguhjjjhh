@@ -100,12 +100,12 @@ pub fn test_mode_report(
             &format!("Test mode {state} — server {number}"),
             Some(&if enabled {
                 format!(
-                    "`{}` is back up and will only admit the **{listed}** name(s) on its whitelist.",
+                    "`{}` is up. Only the **{listed}** whitelisted name(s) may join.",
                     Sanitize::code(Some(unit))
                 )
             } else {
                 format!(
-                    "`{}` is back up and open to everyone again.",
+                    "`{}` is up and open to everyone.",
                     Sanitize::code(Some(unit))
                 )
             }),
@@ -114,7 +114,7 @@ pub fn test_mode_report(
         theme::failure(
             &format!("Test mode {state} — server {number} did not restart"),
             Some(&format!(
-                "`bWhitelist={enabled}` IS written, but `{}` did not come back - so the change has NOT taken effect yet.",
+                "`bWhitelist={enabled}` is written, but `{}` did not come back, so it has NOT taken effect.",
                 Sanitize::code(Some(unit))
             )),
         )
@@ -146,11 +146,7 @@ pub fn test_mode_report(
         );
     }
     if let Some(advice) = advice {
-        embed = embed.field(
-            format!("{} How to fix this", theme::WARN),
-            advice.to_owned(),
-            false,
-        );
+        embed = embed.field(format!("{} Fix", theme::WARN), advice.to_owned(), false);
     }
     embed
 }
@@ -194,8 +190,7 @@ impl TestModeCommand {
             return Ok(theme::failure(
                 "The whitelist is empty",
                 Some(&format!(
-                    "Turning test mode on now would lock out **everyone**, yourself included.\nAdd names first - \
-                     `/tester add` writes to this file:\n`{}`",
+                    "Test mode would lock out **everyone**. Add names first with `/tester add`:\n`{}`",
                     Sanitize::code(Some(&whitelist))
                 )),
             ));
@@ -206,8 +201,7 @@ impl TestModeCommand {
                 return Ok(theme::failure(
                     "No Game.ini",
                     Some(&format!(
-                        "`{}` does not exist, so there is nothing to change. Start the server once so it writes its \
-                         config, or provision it with `/provisionserver`.",
+                        "`{}` does not exist. Start the server once, or provision it with `/provisionserver`.",
                         Sanitize::code(Some(&game_ini))
                     )),
                 ));
@@ -229,8 +223,7 @@ impl TestModeCommand {
             return Ok(theme::notice(
                 &format!("Already {}", if enabled { "on" } else { "off" }),
                 Some(&format!(
-                    "`bWhitelist` on server {number} is already `{enabled}`. Nothing was changed and the server was not \
-                     restarted."
+                    "`bWhitelist` on server {number} is already `{enabled}`. The server was not restarted."
                 )),
             ));
         }
@@ -261,9 +254,12 @@ impl TestModeCommand {
         context
             .reply(Reply::embed(
                 theme::notice(
-                    &format!("{} Test mode {} for server {number}", theme::WARN, if enabled { "on" } else { "off" }),
+                    &format!(
+                        "Test mode {} for server {number}",
+                        if enabled { "on" } else { "off" }
+                    ),
                     Some(&format!(
-                        "`bWhitelist={enabled}` written to `{}`.\nRestarting `{unit}` in {}s so the game reads it…",
+                        "`bWhitelist={enabled}` written to `{}`.\nRestarting `{unit}` in {}s…",
                         Sanitize::code(Some(&game_ini)),
                         GRACE.as_secs()
                     )),
@@ -442,10 +438,7 @@ impl TesterCommand {
         if missing > 0 {
             embed = embed.field(
                 "Add them by hand",
-                format!(
-                    "The bot does not write files the game server owns. Append this line to each whitelist below \
-                     that is missing it:\n```\n{code}\n```"
-                ),
+                format!("Append this line to each whitelist below:\n```\n{code}\n```"),
                 false,
             );
             for (install, path, _) in listed.iter().filter(|(_, _, has)| !has) {

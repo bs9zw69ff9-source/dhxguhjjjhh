@@ -20,7 +20,7 @@ pub fn explain(
     if attempts.is_empty() {
         return embed.field(
             "Why",
-            "No RCON servers are configured. Set `RCON_HOST_1`, `RCON_PORT_1` and `RCON_PASSWORD_1`.",
+            "No RCON servers configured. Set `RCON_HOST_1`, `RCON_PORT_1` and `RCON_PASSWORD_1`.",
             false,
         );
     }
@@ -32,9 +32,7 @@ pub fn explain(
             let reason = problem
                 .clone()
                 .or_else(|| rcon.last_error(server))
-                .unwrap_or_else(|| {
-                    "refused the command without an error - RCON+ may not implement it".to_owned()
-                });
+                .unwrap_or_else(|| "refused the command without an error".to_owned());
             format!(
                 "{} **{}** — {}",
                 theme::DOT,
@@ -45,9 +43,9 @@ pub fn explain(
         .collect();
     embed.field("Why", lines.join("\n"), false).field(
         "Usually",
-        "**Connection refused** — the server is not running, or its RCON port is not the one configured.\n\
-         **Authentication failed** — `RCON_PASSWORD_n` does not match the server's `RconPassword`.\n\
-         **Timed out** — the server is up but wedged; `/serverinfo` says whether anything answers.",
+        "**Connection refused** — server down, or wrong RCON port.\n\
+         **Authentication failed** — `RCON_PASSWORD_n` does not match `RconPassword`.\n\
+         **Timed out** — server up but not answering; check `/serverinfo`.",
         false,
     )
 }

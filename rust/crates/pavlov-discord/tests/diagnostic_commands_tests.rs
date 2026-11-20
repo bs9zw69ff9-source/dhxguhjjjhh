@@ -217,7 +217,7 @@ fn a_half_configured_count_setup_names_the_missing_half() {
     );
     assert!(
         embed
-            .field_named("Per-server channels are not configured")
+            .field_named("Per-server channels not configured")
             .is_some()
     );
     let failed = counts::report(

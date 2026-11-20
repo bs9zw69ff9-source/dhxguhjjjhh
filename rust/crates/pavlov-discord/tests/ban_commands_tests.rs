@@ -15,9 +15,7 @@ use pavlov_core::security::OwnerGuard;
 use pavlov_core::time::SystemClock;
 use pavlov_discord::caller::Caller;
 use pavlov_discord::command::OptionKind;
-use pavlov_discord::commands::bans::{
-    BanParts, CheckBanCommand, TempBanCommand, UnbanCommand, ban_origin,
-};
+use pavlov_discord::commands::bans::{BanParts, CheckBanCommand, TempBanCommand, UnbanCommand};
 use pavlov_discord::interaction::{Invocation, InvokedOption, OptionValue};
 use pavlov_discord::slash::{CommandContext, SlashCommand};
 use pavlov_host::logs::ip_tracking::IpTrackingService;
@@ -217,7 +215,7 @@ async fn a_date_is_not_a_duration() {
     assert!(
         run(&command, &invocation)
             .await
-            .contains("That duration makes no sense")
+            .contains("Invalid duration")
     );
     assert!(rig.fake.commands().is_empty());
 }
@@ -256,10 +254,8 @@ async fn unban_never_edits_blacklist_txt_and_says_to_do_it_by_hand() {
     };
     let ask = Invocation::new("checkban", Caller::user(OWNER)).with(text("playerid", "Ghost"));
     let before = run(&check, &ask).await;
-    assert!(
-        before.contains("The server's ban file still lists them"),
-        "{before}"
-    );
+    assert!(before.contains("Banned by the server"), "{before}");
+    assert!(before.contains("by hand"), "{before}");
 
     let unban = UnbanCommand {
         parts: Arc::clone(&rig.parts),
@@ -296,11 +292,4 @@ async fn checkban_says_not_banned_plainly_when_the_file_agrees() {
         !reply.contains("ban file"),
         "terse on the clean case: {reply}"
     );
-}
-
-#[test]
-fn the_moderator_field_is_explained() {
-    assert!(ban_origin(Some("in-game")).contains("Found in their save"));
-    assert!(ban_origin(Some("auto")).contains("Nobody typed it"));
-    assert!(ban_origin(Some("mod1")).contains("A moderator"));
 }

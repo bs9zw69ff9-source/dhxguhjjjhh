@@ -348,7 +348,7 @@ impl ServerHealth {
                             SignalKind::PlayerCountZero,
                             Severity::Warning,
                             format!(
-                                "Players fell from {prev} to 0 while the server was still answering RCON - worth a look."
+                                "Players fell from {prev} to 0 while the server was still answering RCON."
                             ),
                         )
                     } else {

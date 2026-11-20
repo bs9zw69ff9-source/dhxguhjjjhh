@@ -54,7 +54,7 @@ pub fn window_option() -> OptionSpec {
 pub fn leaderboard(label: &str, rows: &[(String, u64)]) -> Embed {
     let title = format!("Staff activity — last {label}");
     if rows.is_empty() {
-        return theme::notice(&title, Some("No staff actions recorded in this window."));
+        return theme::notice(&title, Some("No staff actions recorded."));
     }
     let lines: Vec<String> = rows
         .iter()
@@ -69,11 +69,7 @@ pub fn leaderboard(label: &str, rows: &[(String, u64)]) -> Embed {
             )
         })
         .collect();
-    theme::notice(&title, Some(&lines.join("\n"))).field(
-        "Reading this",
-        "A count of work done, not a ranking of quality. Automated actions are excluded.",
-        false,
-    )
+    theme::notice(&title, Some(&lines.join("\n"))).footer("Automated actions excluded")
 }
 
 /// `/staff`.

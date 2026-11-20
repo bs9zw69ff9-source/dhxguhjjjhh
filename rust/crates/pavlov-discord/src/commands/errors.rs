@@ -52,12 +52,7 @@ impl ErrorsCommand {
     pub fn list(&self) -> Embed {
         let all = self.errors.all();
         if all.is_empty() {
-            return theme::success(
-                "No recent failures",
-                Some(
-                    "Nothing has thrown since the last restart.\n\nThis list is in memory, so a restart clears it.",
-                ),
-            );
+            return theme::success("No recent failures", Some("None since the last restart."));
         }
         let lines: Vec<String> = all
             .iter()
@@ -76,11 +71,7 @@ impl ErrorsCommand {
             &format!("{} recent failure(s)", all.len()),
             Some(&lines.join("\n")),
         )
-        .field(
-            "Next",
-            "`/errors id:<the id>` for the message and stack trace.",
-            false,
-        )
+        .field("Details", "`/errors id:<id>`", false)
     }
 
     #[must_use]
@@ -89,8 +80,7 @@ impl ErrorsCommand {
             return theme::failure(
                 "No such error",
                 Some(&format!(
-                    "Nothing recorded under `{}`. Only the last {CAPACITY} are kept, and a restart clears them.\n\n\
-                     Run `/errors` on its own to see what is left.",
+                    "Nothing recorded under `{}`. Only the last {CAPACITY} are kept; `/errors` lists them.",
                     Sanitize::code(Some(id))
                 )),
             );

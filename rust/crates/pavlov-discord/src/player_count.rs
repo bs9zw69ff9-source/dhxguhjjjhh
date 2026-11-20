@@ -101,19 +101,16 @@ pub fn resolve_capacity(live: Option<i32>, last_known: Option<i32>, fallback: i3
 pub fn missing_half(targets: &Targets) -> Option<(&'static str, &'static str)> {
     if targets.server_channels.is_empty() {
         return Some((
-            "Per-server channels are not configured",
-            "`PLAYER_COUNT_CHANNELS` is empty, so only the platform total updates - nothing \
-             shows a per-server count, including when one is down.\n\n\
-             Set one voice channel id per server, **in server order** (first id is the server \
-             behind `RCON_HOST_1`), then restart:\n\
+            "Per-server channels not configured",
+            "Only the platform total updates. Set one voice channel id per server, **in server \
+             order**, then restart:\n\
              ```\nPLAYER_COUNT_CHANNELS=111,222,333\n```",
         ));
     }
     if targets.total_channel.is_none() {
         return Some((
-            "The platform total is not configured",
-            "`SHACK_TOTAL_CHANNEL` is empty, so the Pavlov Shack total is not being updated. \
-             The per-server channels above are unaffected.",
+            "Platform total not configured",
+            "`SHACK_TOTAL_CHANNEL` is empty.",
         ));
     }
     None

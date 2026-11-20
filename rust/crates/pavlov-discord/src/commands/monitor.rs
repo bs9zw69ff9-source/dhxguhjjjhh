@@ -237,10 +237,7 @@ impl MonitorCommand {
         let wanted = Sanitize::id(invocation.string("server"));
         let servers = self.monitor.servers();
         if servers.is_empty() {
-            return theme::notice(
-                "No servers configured",
-                Some("There is nothing to monitor."),
-            );
+            return theme::notice("No servers configured", None);
         }
         let one = (!wanted.is_empty())
             .then(|| servers.iter().find(|s| eq_ignore_case(s, &wanted)).cloned());
