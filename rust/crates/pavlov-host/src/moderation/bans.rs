@@ -170,6 +170,9 @@ pub trait MasterNames: Send + Sync {
 pub trait BanEvidence: Send + Sync {
     fn account_id_for(&self, name: &str) -> Option<String>;
     fn clear_flags<'a>(&'a self, account_id: &'a str) -> BoxFuture<'a, Result<(), String>>;
+    /// Flag a banned account for evasion: its confirmed addresses, and its id when the ban is
+    /// permanent. Without this a ban set in game would catch nobody's alt.
+    fn flag_banned<'a>(&'a self, account_id: &'a str, permanent: bool) -> BoxFuture<'a, ()>;
 }
 
 fn summarise(reply: &str) -> String {
@@ -554,6 +557,17 @@ impl BanService {
         }
         for player in &learned {
             tracing::info!(player, "recorded a ban found only in their save");
+            // Evasion catches alts by the banned account's id and addresses, so a ban set in
+            // game is flagged like one issued here. An account never seen has nothing to flag.
+            if let Some(evidence) = &self.evidence
+                && let Some(account) = evidence.account_id_for(player)
+            {
+                let permanent = found
+                    .iter()
+                    .find(|(p, _)| p == player)
+                    .is_some_and(|(_, ban)| unban_moment(&ban.unban_date).is_none());
+                evidence.flag_banned(&account, permanent).await;
+            }
         }
         learned.len()
     }

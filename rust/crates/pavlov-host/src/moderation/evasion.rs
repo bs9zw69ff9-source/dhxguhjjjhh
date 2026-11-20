@@ -23,6 +23,9 @@ use crate::feeds::{CONNECT, FeedWebhooks};
 use crate::logs::{FlaggedJoin, IpTrackingService};
 use crate::metrics::{MetricLabels, MetricsRegistry};
 
+/// The reason written for a ban-evasion auto-ban, into the record and the player's save.
+pub const EVASION_REASON: &str = "Ban Evasion";
+
 /// What the responder did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoBanOutcome {
@@ -162,7 +165,16 @@ impl EvasionResponder {
         }
 
         let now = self.clock.now();
-        let reason = format!("Ban evasion - {detail}");
+        /* THE REASON THE SAVE CARRIES (owner, 2026-11-20): an account tied by EOS id or address
+        to a banned one is banned for "Ban Evasion", permanently, and that is what is written.
+        Which flag matched goes to the audit log, the feed and the alert. An owner's manual
+        blacklist entry is not evasion and keeps saying what it is. */
+        let reason = if join.verdict.manual {
+            format!("Ban evasion - {detail}")
+        } else {
+            EVASION_REASON.to_owned()
+        };
+        let audit_reason = format!("Ban evasion - {detail}");
         /* THE SERVED-BAN CHECK: from expiry until the sweep, a temp ban's own leftover flags
         look exactly like evasion, and banning there turns the days served into forever. */
         let existing = self
@@ -224,7 +236,7 @@ impl EvasionResponder {
             .await;
         if let Err(error) = self
             .audit
-            .record("autoban", "auto", &name, Some(&reason))
+            .record("autoban", "auto", &name, Some(&audit_reason))
             .await
         {
             tracing::error!(name = %name, %error, "could not write the auto-ban to the audit log");
@@ -235,7 +247,7 @@ impl EvasionResponder {
             1.0,
             Some("Auto-bans issued for a flagged join"),
         );
-        tracing::warn!(name = %name, account = %join.account_id, kicked_on = enforcement.servers, save = enforcement.summary(), reason = %reason, "AUTO-BANNED");
+        tracing::warn!(name = %name, account = %join.account_id, kicked_on = enforcement.servers, save = enforcement.summary(), reason = %reason, detail = %audit_reason, "AUTO-BANNED");
         // Beside the join it responded to, where staff watch joins. Which list the flag came
         // from changes the answer to "why was this person banned".
         self.feeds.post(
